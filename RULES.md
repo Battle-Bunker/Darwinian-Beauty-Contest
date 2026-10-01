@@ -144,9 +144,13 @@ Here N is the number of teams. Your own patch and your own bee count like any ot
 up: the game score uses the ledgers of all rounds together, and each round also shows its own score.
 
 So you want **lots of different bees to feed at your patch**, including at your orchid, and **your
-bee to find nectar at lots of different patches**. A clover that bees can recognise attracts feeds.
-An orchid that looks like a clover steals feeds without paying. But if orchids copy clovers too well,
-bees stop trusting anything that looks like a clover... including yours.
+bee to find nectar at lots of different patches**.
+
+A clover that bees can recognise attracts feeds. An orchid gets fed when it answers like a clover
+that bees trust, and every bee it fools learns to trust that kind of answer a little less. If your
+orchid imitates **your own** clover, your clover's reputation pays the price. If it imitates
+**another team's** clover, theirs does. Bees fight back by remembering exactly which answers paid off,
+and by asking questions an orchid can't predict.
 
 ## After the game
 

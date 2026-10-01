@@ -36,10 +36,13 @@ await api(mate, "POST", `${g}/teams/join`, { joinCode: players[0].team.joinCode 
 
 const view0 = await api(players[0].token, "GET", g);
 const st = view0.starters;
+const view1 = await api(players[1].token, "GET", g);
+assert.notEqual(view1.starters.clover, st.clover, "each team gets its own starter constants");
+const clover = (a, b) => `def flower(challenge):\n    return (challenge * ${a} + ${b}) % 1000\n`;
 const variants = [
-  { clover: st.clover, orchid: st.orchid, bee: st.bee },
-  { clover: st.clover.replace("* 3 + 1", "* 5 + 2"), orchid: st.orchid, bee: st.bee.replace("QUESTION = 42", "QUESTION = 500") },
-  { clover: st.clover.replace("* 3 + 1", "* 7 + 3"), orchid: st.clover.replace("* 3 + 1", "* 7 + 3"), bee: st.bee },
+  { clover: clover(3, 1), orchid: clover(5, 2), bee: st.bee },          // orchid imitates Bo's clover
+  { clover: clover(5, 2), orchid: clover(9, 4), bee: view1.starters.bee },
+  { clover: clover(7, 3), orchid: clover(7, 3), bee: st.bee },          // orchid is a twin of its own clover
 ];
 for (const [i, p] of players.entries()) {
   for (const kind of ["clover", "orchid", "bee"]) {
@@ -52,7 +55,7 @@ const big = await api(players[0].token, "POST", `${g}/check`, { kind: "clover", 
 assert.equal(big.ok, false);
 console.log("complexity budget rejects:", big.errors[0]);
 // Try tools.
-const tf = await api(players[0].token, "POST", `${g}/try`, { kind: "orchid", code: st.orchid, challenges: [1, 2, 500] });
+const tf = await api(players[0].token, "POST", `${g}/try`, { kind: "orchid", code: variants[0].orchid, challenges: [1, 2, 500] });
 console.log("try orchid:", JSON.stringify(tf.results));
 const tb = await api(players[0].token, "POST", `${g}/try`, { kind: "bee", code: st.bee });
 console.log("try bee:", tb.visits.length, "visits, nectar", tb.nectar);

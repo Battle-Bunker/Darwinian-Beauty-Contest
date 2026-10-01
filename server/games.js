@@ -221,7 +221,7 @@ export async function tryProgram(game, user, kind, code, challenges) {
   // The bee forages a garden of just your own two flowers (latest submitted, else last round's, else starters).
   const subs = (await query("SELECT kind, code FROM submissions WHERE game_id = $1 AND team_id = $2", [game.id, team.id])).rows;
   const prev = game.rounds_played ? await previousPrograms(game.id, team.id, game.rounds_played) : {};
-  const st = starters(cfg);
+  const st = starters(cfg, team.id);
   const pick = (k) => subs.find((s) => s.kind === k)?.code ?? prev[k] ?? st[k];
   const result = await simulateRound({ config: cfg, teams: [{ id: team.id, programs: { clover: pick("clover"), orchid: pick("orchid"), bee: code } }], seed: 1 });
   return { visits: result.visits, problems: result.problems[0], feeds: result.feeds[0][0], nectar: result.nectar[0][0] };
@@ -382,7 +382,7 @@ export async function viewGame(room, game, user) {
       }])),
       previous: Object.fromEntries(KINDS.filter((k) => latestProg[mine.id]?.[k]).map((k) => [k, latestProg[mine.id][k].code])),
     } : null,
-    starters: starters(cfg),
+    starters: starters(cfg, mine?.id ?? ""),
     rounds: rounds.map((r) => ({
       no: r.round_no, startedAt: r.started_at, finishedAt: r.finished_at,
       feeds: r.feeds, nectar: r.nectar, scores: r.scores, totals: r.totals,

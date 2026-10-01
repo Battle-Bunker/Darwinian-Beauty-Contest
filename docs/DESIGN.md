@@ -83,9 +83,61 @@ Readings:
 - **Twin patches suffer most when twins are rare** (6/8 honest: 0.80–0.90). Strict bees punish them hardest.
 - **Lax vs. strict bees earn about the same forage** (within ±4% in every mix), so neither bee
   policy is dominant and the bee side stays open.
-- What scripted bots *can't* show: cross-patch mimicry, meaning orchids that copy *other* teams'
-  clovers using what their own bee learned, and how the change budget throttles that arms race. The
-  LLM arena (`arena/`) explores that part.
+- This probe only compares *self*-imitation (twin) with honesty. The next section covers imitating
+  other teams' clovers.
+
+## Imitate whose clover? Your own vs. a rival's
+
+An orchid gets fed when it answers like a clover bees trust, and every bee it fools trusts that
+answer a little less. **Imitating your own clover spends your own clover's reputation. Imitating a
+rival's clover spends theirs.** Since fitness is relative (shares of the garden), hurting a rival's
+allure is worth almost as much as raising your own.
+
+`analysis/cross-mimic.mjs` tests this with 8 scripted teams on the real engine:
+
+- 2 **cross-mimics**: the orchid is an exact copy of a rival's clover
+- 2 **victims**: honest patches whose clovers are being copied
+- 2 **twins**: the orchid is a copy of their own clover
+- 2 **untouched honest** patches
+
+Bees fingerprint answers to a random question and keep a nectar tally per answer. Mean fitness, with
+allure share × N and forage share × N in brackets (3 rounds × 4 seeds):
+
+| feedCost | bees | cross-mimic | victim | twin | untouched honest |
+|---|---|---|---|---|---|
+| 3 | lax | **1.11** (1.16, 0.96) | 0.85 | 0.94 | 1.09 |
+| 3 | strict | **1.13** (1.18, 0.96) | 0.84 | 0.85 | 1.16 |
+| 5 | lax | **1.06** (1.08, 0.98) | 0.93 | 0.92 | 1.08 |
+| 5 | strict | **1.06** (1.09, 0.97) | 0.92 | 0.91 | 1.11 |
+| 10 | lax/strict | 0.95 (1.01, 0.94) | 0.96 | 0.94 | 1.15 |
+
+- At the default and cheaper feed costs, **cross-mimicry beats self-mimicry** (1.06–1.13 vs 0.85–0.94).
+  The victim takes about the same damage a twin does to itself.
+- The mimic's forage dips slightly, because its own bee is fooled by its own orchid's borrowed
+  answer. A smarter mimic bee would exclude it.
+- Expensive feeding (10) makes bees picky enough that 50/50 answers stop paying, and mimicry dies.
+- This is the *best case* for mimics: they know the victim's function exactly. In play, an orchid can
+  only copy what its team learned from its bee's log (challenge → response pairs at clovers it fed
+  at). So the defence is a clover whose answers on *unpredictable* questions can't be extrapolated
+  from a log: secret, salted, or simply complicated. Meanwhile it must stay recognisable to bees
+  that remember answers within a round. Flower logs reveal which questions rival bees ask, so bees
+  that reuse fixed questions are the easiest to fool.
+
+**What the LLM arena did early on** (`analysis/orchid-targets.mjs` runs every orchid and clover on the
+challenges bees actually asked each round; 98 orchid-rounds, games 1–3 rounds in):
+
+| orchid answers ≥50% like | share |
+|---|---|
+| a rival's clover only | 1% |
+| its own clover only | 24% |
+| both (own and rival clovers were identical) | 28% |
+| neither | 47% |
+
+The "both" share was an artifact of the original starters: every team got the same starter clover
+and an orchid starter that copied it, and 3–4 of 6 teams in the int→int arenas never changed the
+starter clover. So a copy of "the starter clover" imitated everyone at once. That priming has been
+removed. Starters now use per-team random constants, and the orchid starter is a neutral formula
+whose comment names both options (imitate your own clover or another team's).
 
 ### A back-of-envelope threshold
 
