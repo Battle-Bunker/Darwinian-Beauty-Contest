@@ -1,7 +1,7 @@
 // Scores for a round (or the game so far): Darwinian fitness and the two ledgers it's built from.
 import { useMemo, useState } from "react";
 import type { GameView, Round, Team, TeamScore } from "../types";
-import { fmt2, fmt3, pct } from "../lib/format";
+import { fmt2, fmt3, pct, poss } from "../lib/format";
 import { InfoTip, TeamChip } from "./ui";
 import { TrophyIcon } from "./Icons";
 
@@ -130,7 +130,7 @@ function Ledger({ title, hint, matrix, order, teams, myTeamId, tone, verb }: {
             <tr>
               <th className="corner"><span>bee ↓</span><span>patch →</span></th>
               {order.map((id) => (
-                <th key={id} scope="col" className="heat-col" title={`${teams[id]?.name}'s patch`}>
+                <th key={id} scope="col" className="heat-col" title={`${poss(teams[id]?.name)} patch`}>
                   <span className="swatch" style={{ background: teams[id]?.color }} />
                   <span className="heat-colname">{short(teams[id]?.name)}</span>
                 </th>
@@ -147,7 +147,7 @@ function Ledger({ title, hint, matrix, order, teams, myTeamId, tone, verb }: {
                   return (
                     <td key={colId} className={`${i === j ? "self" : ""} ${level > 0.55 ? "hi" : ""} ${v === 0 ? "zero" : ""}`}
                       style={{ ["--lvl" as string]: `${Math.round(8 + level * 92)}%` }}
-                      title={`${teams[rowId]?.name}'s bee ${verb} ${v} time${v === 1 ? "" : "s"} at ${teams[colId]?.name}'s patch${i === j ? " (its own)" : ""}`}>
+                      title={`${poss(teams[rowId]?.name)} bee ${verb} ${v} time${v === 1 ? "" : "s"} at ${poss(teams[colId]?.name)} patch${i === j ? " (its own)" : ""}`}>
                       {v}
                     </td>
                   );

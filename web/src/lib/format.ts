@@ -40,3 +40,6 @@ export function inkOn(hex: string): string {
 }
 
 export const KIND_LABEL = { clover: "Clover", orchid: "Orchid", bee: "Bee" } as const;
+
+/** "Ada's", but "Honey Hunters'" */
+export const poss = (name: string | undefined) => (!name ? "?'s" : /s$/i.test(name) ? `${name}'` : `${name}'s`);

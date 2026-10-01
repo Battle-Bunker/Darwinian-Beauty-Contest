@@ -4,6 +4,7 @@
 // Public viewers never learn which flower in a patch a bee visited; the patch owner (visit.kind
 // present) and everyone after a reveal see the exact flower and the clover/orchid labels.
 import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { poss } from "../lib/format";
 import type { GameView, Round, Team } from "../types";
 import { useElementWidth, storage } from "../hooks";
 import {
@@ -266,7 +267,7 @@ const Patch = memo(function Patch({ team, look, p, mine, showKinds, dim, maxChar
   const cloverVariety = look.cloverLeft ? left : right;
   return (
     <g transform={`translate(${p.x} ${p.y})`} className={`patch ${dim ? "dim" : ""}`}>
-      <title>{`${team.name}'s patch: one clover and one orchid.${showKinds ? ` The ${cloverVariety} is the clover.` : ""}`}</title>
+      <title>{`${poss(team.name)} patch: one clover and one orchid.${showKinds ? ` The ${cloverVariety} is the clover.` : ""}`}</title>
       {mine && <ellipse cy={-12} rx={112} ry={84} className="patch-mine" />}
       <ellipse cy={24} rx={70} ry={15} className="soil" />
       <FlowerShape x={-FLOWER_DX} color={team.color} variety={left} />
@@ -289,7 +290,7 @@ function Bee({ f, team, mine, showName }: { f: BeeFrame & { teamId: string }; te
   const label = team.name.length > 12 ? team.name.slice(0, 11) + "…" : team.name;
   return (
     <g transform={`translate(${f.x.toFixed(1)} ${f.y.toFixed(1)})`} className={`bee ${resting ? "resting" : ""} ${f.mode === "done" ? "done" : ""}`}>
-      <title>{`${team.name}'s bee`}</title>
+      <title>{`${poss(team.name)} bee`}</title>
       {mine && <circle r={19} className="bee-halo" />}
       <g transform={`rotate(${f.tilt.toFixed(1)}) scale(${f.flip ? -1 : 1} 1)`}>
         <ellipse cx="-3" cy="-9" rx="7" ry="5" className="bee-wing" />

@@ -1,6 +1,7 @@
 // Private logs for one round: a team's bee visits and the visitors to its flowers, plus its programs'
 // problems. Your own team always; every team once the game is finished and revealed.
 import { useMemo, useState } from "react";
+import { poss } from "../lib/format";
 import { KINDS, type GameView, type Round } from "../types";
 import { ActionText, Steps } from "./ProgramEditors";
 import { Alert, TeamChip } from "./ui";
@@ -49,7 +50,7 @@ export function Logs({ view, round }: { view: GameView; round: Round }) {
   return (
     <div className="logs">
       <TeamPicker view={view} ids={ids} value={teamId} onChange={setPick} label="Show logs for" />
-      <h3>{mine ? "Your" : `${team?.name}'s`} programs in round {round.no}</h3>
+      <h3>{mine ? "Your" : `${poss(team?.name)}`} programs in round {round.no}</h3>
       <div className="table-scroll">
         <table className="data-table">
           <thead><tr><th className="left">Program</th><th>Size</th><th>Changes</th><th className="left">Played</th><th className="left">Problem</th></tr></thead>
@@ -71,7 +72,7 @@ export function Logs({ view, round }: { view: GameView; round: Round }) {
       </div>
 
       <details className="log-section" open>
-        <summary><h3>{mine ? "Your" : `${team?.name}'s`} bee: {beeVisits.length} visits</h3></summary>
+        <summary><h3>{mine ? "Your" : `${poss(team?.name)}`} bee: {beeVisits.length} visits</h3></summary>
         {beeVisits.length === 0 ? <p className="muted">The bee didn't visit any flowers this round.</p> : (
           <div className="table-scroll tall">
             <table className="data-table log-table">
@@ -96,7 +97,7 @@ export function Logs({ view, round }: { view: GameView; round: Round }) {
       </details>
 
       <details className="log-section" open>
-        <summary><h3>Visitors to {mine ? "your" : `${team?.name}'s`} flowers: {flowerVisits.length}</h3></summary>
+        <summary><h3>Visitors to {mine ? "your" : `${poss(team?.name)}`} flowers: {flowerVisits.length}</h3></summary>
         {!flowerSteps && <Alert kind="info">Flower logs are off in this game: you see who visited and what happened, but not what they asked.</Alert>}
         {flowerVisits.length === 0 ? <p className="muted">No bee visited this patch.</p> : (
           <div className="table-scroll tall">
