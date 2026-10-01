@@ -85,16 +85,23 @@ export interface GameView {
   participants: string[] | null;
   teams: Team[];
   myTeam: MyTeam | null;
-  starters: Record<Kind, string>;
+  interface: ProgramInterface;
   rounds: Round[];
   final: TeamScore[] | null;
 }
 
 export interface CheckResult { ok: boolean; kind: Kind; nodes: number; distance: number | null; errors: string[]; budget: Budget; submitted?: boolean }
 
+/** What every team knows before writing code: signatures and type rules (no starter code). */
+export interface ProgramInterface {
+  flower: string;
+  bee: string;
+  types: { challenge: string; response: string; challengeMeans: string; responseMeans: string; rules: string[] };
+}
+
 export interface TryFlowerResult { results: { c: unknown; r: unknown; error?: string }[]; error?: string }
 export interface TryBeeVisit {
-  bee: number; patch: number; kind: FlowerKind; start: number; end: number; seq: number;
+  bee: string; patch: string; kind: FlowerKind; start: number; end: number; seq: number; asks: number;
   steps: Step[]; action: "feed" | "leave" | "error"; nectar: boolean | null; beeError?: string; beeLog?: string; note?: string;
 }
 export interface TryBeeResult { visits: TryBeeVisit[]; problems: Record<Kind, string | null>; feeds: number; nectar: number }

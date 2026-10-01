@@ -7,7 +7,7 @@ export interface EditorStats { nodes: number; syntaxError: boolean; distance: nu
 
 interface Highlight { code: string; syntax: Mark[]; diff: Mark[]; prevHtml: string | null }
 
-export function CodeEditor({ value, onChange, language, previous = null, readOnly = false, onStats, label, showPrevious = false }: {
+export function CodeEditor({ value, onChange, language, previous = null, readOnly = false, onStats, label, showPrevious = false, placeholder }: {
   value: string;
   onChange?: (code: string) => void;
   language: Language;
@@ -16,6 +16,7 @@ export function CodeEditor({ value, onChange, language, previous = null, readOnl
   onStats?: (s: EditorStats | null) => void;
   label: string;
   showPrevious?: boolean;
+  placeholder?: string;
 }) {
   const [hl, setHl] = useState<Highlight>({ code: "", syntax: [], diff: [], prevHtml: null });
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -132,7 +133,7 @@ export function CodeEditor({ value, onChange, language, previous = null, readOnl
               onScroll={readOnly ? () => { if (gutter.current && pre.current) gutter.current.scrollTop = pre.current.scrollTop; } : undefined} />
             {!readOnly && (
               <textarea ref={ta} className="code-input" value={value} spellCheck={false} autoCapitalize="off" autoComplete="off" autoCorrect="off"
-                wrap="off" aria-label={label} onChange={(e) => onChange?.(e.target.value)} onScroll={sync} onKeyDown={onKeyDown}
+                wrap="off" aria-label={label} placeholder={placeholder} onChange={(e) => onChange?.(e.target.value)} onScroll={sync} onKeyDown={onKeyDown}
                 onKeyUp={sync} onSelect={sync} />
             )}
           </div>

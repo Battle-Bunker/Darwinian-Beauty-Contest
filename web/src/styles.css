@@ -432,6 +432,43 @@ input[type="range"] { accent-color: var(--honey); }
 .try .field { width: min(560px, 100%); }
 .try-bee { width: 100%; }
 
+/* editor + interface box */
+.editor-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
+.editor-main { display: grid; gap: 4px; min-width: 0; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 1000px) { .editor-layout { grid-template-columns: minmax(0, 1fr) 320px; } .iface { position: sticky; top: 76px; } }
+@media (max-width: 999px) { .iface { order: -1; } }
+.iface { background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; min-width: 0; }
+.iface > summary { cursor: pointer; list-style: revert; }
+.iface > summary h3 { display: inline; margin: 0; }
+.iface[open] > summary { margin-bottom: 6px; }
+.iface-label { font-size: 13px; font-weight: 800; color: var(--ink-soft); margin-top: 6px; }
+.iface-sig { margin: 4px 0 10px; padding: 8px 10px; background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; font: 12.5px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; }
+.iface-types { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 10px; margin: 0 0 8px; font-size: 14px; }
+.iface-types dt { font-weight: 800; }
+.iface-types dd { margin: 0; overflow-wrap: anywhere; }
+.iface-rules { margin: 0 0 8px; padding-left: 18px; font-size: 13.5px; display: grid; gap: 3px; overflow-wrap: anywhere; }
+.try-input { width: 100%; background: var(--surface); border: 1.5px solid var(--line); border-radius: 10px; padding: 7px 10px; resize: vertical; min-height: 40px; }
+.try-input:focus { border-color: var(--focus); outline: none; }
+
+/* structured values */
+.val { display: inline-block; vertical-align: top; max-width: 100%; }
+.val > summary { cursor: pointer; font-size: 13px; font-weight: 700; color: var(--ink-soft); list-style: none; display: inline-flex; align-items: center; gap: 4px; }
+.val > summary::-webkit-details-marker { display: none; }
+.val > summary::before { content: "▸"; font-size: 11px; color: var(--muted); transition: transform .15s; }
+.val[open] > summary::before { transform: rotate(90deg); }
+.val-sum { white-space: nowrap; }
+.val-full { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; margin-top: 4px; }
+.val-json { margin: 0; padding: 4px 8px; background: var(--code-bg); border: 1px dashed var(--line); border-radius: 6px; font: 12px/1.45 var(--mono); white-space: pre-wrap; word-break: break-all; max-width: min(420px, 100%); max-height: 180px; overflow: auto; }
+.mini-graph, .mini-tree { flex: none; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+.mini-edge { stroke: var(--muted); stroke-width: 1.4; }
+.mini-arrow { fill: var(--muted); }
+.mini-node { fill: var(--surface-2); stroke: var(--ink-soft); stroke-width: 1.2; }
+.mini-node.first { fill: var(--accent-soft); stroke: var(--accent); }
+.mini-node.last { fill: color-mix(in srgb, var(--honey) 35%, var(--surface)); stroke: var(--honey); }
+.mini-label { font: 700 7.5px var(--mono); fill: var(--ink); text-anchor: middle; }
+.steps-col { flex-direction: column; align-items: flex-start; }
+.steps-col .step { padding: 2px 8px; align-items: flex-start; flex-wrap: wrap; }
+
 /* code editor */
 .code-wrap { display: grid; gap: 10px; min-width: 0; }
 .code-pane { min-width: 0; }
@@ -450,6 +487,7 @@ input[type="range"] { accent-color: var(--honey); }
 .code-hl { pointer-events: none; overflow: hidden; color: var(--ink); background: transparent; }
 .code-hl.code-ro { pointer-events: auto; overflow: auto; }
 .code-input { background: transparent; color: transparent; -webkit-text-fill-color: transparent; caret-color: var(--ink); resize: none; outline: none; }
+.code-input::placeholder { color: var(--muted); -webkit-text-fill-color: var(--muted); font-family: var(--font-body); font-style: italic; }
 .code-input::selection { background: color-mix(in srgb, var(--focus) 30%, transparent); }
 .tk-kw { color: var(--tk-kw); font-weight: 700; }
 .tk-str { color: var(--tk-str); }

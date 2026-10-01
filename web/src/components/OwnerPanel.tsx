@@ -5,7 +5,8 @@ import { KINDS, type GameConfig, type GameView, type Kind } from "../types";
 import { Alert, Spinner } from "./ui";
 import { PlayIcon } from "./Icons";
 
-const TYPES = ["int", "float", "bool", "str", "list[int]", "list[float]", "list[bool]", "list[str]"];
+const TYPES = ["int", "float", "bool", "str", "list[int]", "list[float]", "list[bool]", "list[str]", "tree[int]", "graph", "digraph"];
+const SIMPLE = ["int", "float", "bool"];
 
 export function RunRound({ view, base }: { view: GameView; base: string }) {
   const g = view.game;
@@ -90,7 +91,7 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
         <label className="field"><span>Feed cost (turns)</span>{num(draft.feedCost, (v) => set("feedCost", v), 0, 1000, "Feed cost")}</label>
         <label className="field"><span>Challenge type</span>{typeSelect(draft.challengeType, (v) => set("challengeType", v), "Challenge type")}</label>
         <label className="field"><span>Response type</span>{typeSelect(draft.responseType, (v) => set("responseType", v), "Response type")}</label>
-        <label className="field"><span>Max string/list length</span>{num(draft.maxLen, (v) => set("maxLen", v), 1, 1024, "Max length")}</label>
+        <label className="field"><span>Max size (string/list length, tree/graph nodes)</span>{num(draft.maxLen, (v) => set("maxLen", v), 1, 1024, "Max length")}</label>
       </div>
       <div className="settings-checks">
         <label className="check"><input type="checkbox" checked={draft.flowerLogs} onChange={(e) => set("flowerLogs", e.target.checked)} /> Flower logs: teams see what bees asked their flowers</label>
@@ -130,7 +131,7 @@ export function SettingsSummary({ cfg }: { cfg: GameConfig }) {
         <span className="chip">{cfg.turns} turns per bee</span>
         <span className="chip">feed costs {cfg.feedCost}</span>
         <span className="chip mono">{cfg.challengeType} → {cfg.responseType}</span>
-        {(cfg.challengeType.includes("str") || cfg.challengeType.includes("list") || cfg.responseType.includes("str") || cfg.responseType.includes("list")) && <span className="chip">max length {cfg.maxLen}</span>}
+        {!(SIMPLE.includes(cfg.challengeType.toLowerCase()) && SIMPLE.includes(cfg.responseType.toLowerCase())) && <span className="chip">max size {cfg.maxLen}</span>}
         <span className="chip">{cfg.flowerLogs ? "flower logs on" : "flower logs off"}</span>
         <span className="chip">{cfg.revealOnFinish ? "code revealed at the end" : "code stays secret"}</span>
       </div>

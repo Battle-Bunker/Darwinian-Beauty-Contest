@@ -12,6 +12,7 @@ import { TeamsPanel } from "../components/Teams";
 import { ProgramEditors } from "../components/ProgramEditors";
 import { Podium, Scores } from "../components/Scores";
 import { CodeBrowser, Logs, visibleTeams } from "../components/Logs";
+import { ValueTypes } from "../components/Value";
 
 export function GamePage({ room, game }: { room: string; game: string }) {
   useDocumentTitle(`Game ${game} · Room ${room} · Darwinian Beauty Contest`);
@@ -127,6 +128,7 @@ export function GamePage({ room, game }: { room: string; game: string }) {
   ) : null;
 
   return (
+    <ValueTypes.Provider value={{ challenge: cfg.challengeType, response: cfg.responseType }}>
     <div className="stack game-page">
       <section className="card game-head">
         <div className="game-title">
@@ -180,5 +182,6 @@ export function GamePage({ room, game }: { room: string; game: string }) {
         </div>
       )}
     </div>
+    </ValueTypes.Provider>
   );
 }
