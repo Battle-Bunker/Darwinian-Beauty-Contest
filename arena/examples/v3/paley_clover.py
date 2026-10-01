@@ -150,7 +150,9 @@ def find_clique(p, odd_primes, deadline):
 
 
 def flower(challenge):
-    deadline = time.time() + 0.6 * GAME["ms"] / 1000
+    # Stop at 65% of the budget: a prime that is under way can take a few ms more, and a flower that
+    # runs out of time gives no answer at all.
+    deadline = time.time() + 0.65 * GAME["ms"] / 1000
     sieve = bytearray([0, 0]) + bytearray([1]) * (WINDOW - 1)
     for i in range(2, int(WINDOW**0.5) + 1):
         if sieve[i]:

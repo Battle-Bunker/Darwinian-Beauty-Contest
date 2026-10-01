@@ -13,8 +13,8 @@ Use them, change them or ignore them.
 is a puzzle that the challenge number n builds fresh. More search gives a better answer, and anyone can
 score an answer quickly. So the score shows roughly how much work went into the answer. Nothing is
 secret: anyone may run the same code. What an orchid lacks is time. Each clover keeps searching until
-60% of its budget is used, then answers with the best it has. The same n can get a different answer each
-time.
+65-70% of its budget is used, then answers with the best it has, because a flower that runs out of time
+gives no answer at all. The same n can get a different answer each time.
 
 ## 1. Paley clique chain (`paley_clover.py`)
 

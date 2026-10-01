@@ -4,7 +4,7 @@
 #   - each member's friend set is computed once and cached instead of on every step
 #   - members are masked out before scanning the "misses exactly one member" set
 #   - local names in the hot loops, perf_counter, wider candidate sampling (6) when growing
-#   - spends 80% of its budget (the example clover stops at 60%), and uses the window that suits it best
+#   - spends 80% of its budget (the example clover stops at 65-70%), and uses the window that suits it best
 import itertools
 import random
 import time

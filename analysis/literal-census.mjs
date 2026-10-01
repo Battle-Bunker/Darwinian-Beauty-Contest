@@ -6,7 +6,7 @@
 //   - per program: the largest of each, the share of the code's characters inside literals, and whether long
 //     literals are decoded at run time (base64 / zlib / bytes.fromhex / int(…, 16) / json.loads)
 // When these games were played the complexity budget counted syntax-tree nodes, so a literal's length was free; this
-// measures how much that was used. (round_programs now stores complexity as minified characters, `chars`.)
+// measures how much that was used. (round_programs now stores complexity in the game's unit, `size`.)
 //
 //   node analysis/literal-census.mjs
 // Writes arena/runs/literal-census.json.
@@ -28,7 +28,7 @@ for (const lang of ["python", "typescript"]) {
 }
 
 const rows = await all(`
-  SELECT rp.code, rp.kind, rp.round_no, rp.chars AS complexity, g.config->>'language' AS lang, t.name AS team,
+  SELECT rp.code, rp.kind, rp.round_no, rp.size AS complexity, g.config->>'language' AS lang, t.name AS team,
          ag.arena_id AS arena, ag.generation AS gen, ag.game_url AS url
     FROM round_programs rp JOIN games g ON g.id = rp.game_id JOIN teams t ON t.id = rp.team_id
     LEFT JOIN arena.games ag ON ag.game_url = (SELECT '/room/' || substr(rr.code, 1, rr.prefix_len) || '/game/' || substr(g.code, 1, g.prefix_len) FROM rooms rr WHERE rr.id = g.room_id)
