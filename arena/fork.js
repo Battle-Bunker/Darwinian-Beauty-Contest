@@ -98,7 +98,8 @@ for (const cid of cohorts) {
     // The team's own helper scripts (top-level files it wrote), so its tooling carries over like its notebook.
     if (fs.existsSync(srcDir)) for (const f of fs.readdirSync(srcDir)) {
       const p = path.join(srcDir, f);
-      if (fs.statSync(p).isFile() && f.endsWith(".py") && !KINDS.has(f)) fs.copyFileSync(p, path.join(dir, f));
+      // Absolute paths to the source workspace would point outside the new one: rewrite them.
+      if (fs.statSync(p).isFile() && f.endsWith(".py") && !KINDS.has(f)) fs.writeFileSync(path.join(dir, f), fs.readFileSync(p, "utf8").replaceAll(srcDir, dir));
     }
     await writeTop2(g0, srcUuid, srcEntries);
     const evs = await all("SELECT j.name, j.age, v.* FROM arena.evaluations v JOIN arena.judges j ON j.id = v.judge_id WHERE v.game_id = $1 AND v.persona_id = $2", [srcGame.id, e.persona_id]);
