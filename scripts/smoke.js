@@ -114,6 +114,8 @@ for (const v of adaLive.rounds[0].visits) {
   if (v.bee === myId && v.patch !== myId) assert.ok(!v.kind, "bee learns flower kind without being the owner");
 }
 assert.ok(adaLive.rounds[0].programs[myId].bee.code && !Object.entries(adaLive.rounds[0].programs).some(([t, p]) => t !== myId && p.bee.code));
+assert.ok(adaLive.rounds[0].programs[myId].clover.compute?.budgetMs, "own flowers' compute use is in the view");
+assert.ok(Object.entries(pubLive.rounds[0].programs).every(([, p]) => p.clover.compute === undefined), "public view leaks compute use");
 console.log("visibility checks passed;", pubLive.rounds[0].visits.length, "visits in live game");
 
 // Short ids: the full 26-char code resolves too, case-insensitively.

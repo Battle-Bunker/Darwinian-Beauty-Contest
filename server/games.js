@@ -428,7 +428,7 @@ function roundViewOf(r, visits, { cfg, mine, revealed, participants, progs, mems
       const p = progs.find((x) => x.round_no === r.round_no && x.team_id === teamId && x.kind === kind);
       if (!p) return [kind, null];
       const own = canSeeTeam(teamId);
-      return [kind, { nodes: p.nodes, distance: p.distance, carriedOver: p.carried_over, ...(own ? { code: p.code, problem: p.problem } : {}) }];
+      return [kind, { nodes: p.nodes, distance: p.distance, carriedOver: p.carried_over, ...(own ? { code: p.code, problem: p.problem, compute: p.compute } : {}) }];
     }))])),
     // Size of what each bee kept for later rounds (your own team's, or everyone's once revealed).
     memory: Object.fromEntries(mems.filter((m) => m.round_no === r.round_no && canSeeTeam(m.team_id)).map((m) => [m.team_id, { bytes: m.bytes, note: m.note }])),
