@@ -9,7 +9,7 @@
 // logs/history/memory, the standings, the top-2 teams' final code and the panel's feedback. The team's final programs
 // become its current code, and the helper scripts it wrote in its workspace come along. Membership is fixed (no
 // retirement or breeding), and every cohort plays identical seeds. Options:
-//   --config '{...}'  game config overrides (the rest comes from the source game: language, types, rounds)
+//   --config '{...}'  game config overrides (language and types come from the source game; the rest are server defaults)
 //   --notice NAME     a named round-1 notice for game 1 (NOTICES in lib/prompts.js)
 //   --treat A,B       treatment cohorts: with --examples DIR, the WHOLE cohort gets DIR copied into examples/ and a
 //                     round-1 notice in every game saying that every team in the garden got the same files
@@ -36,8 +36,8 @@ const srcUuid = srcView.game.id;
 // Same game settings as the source game, except what the new experiment changes.
 const srcConfig = srcView.game.config;
 const CONFIG = {
-  language: srcConfig.language, challengeType: srcConfig.challengeType, responseType: srcConfig.responseType, rounds: srcConfig.rounds,
-  revealOnFinish: false,
+  language: srcConfig.language, challengeType: srcConfig.challengeType, responseType: srcConfig.responseType,
+  revealOnFinish: false, // rounds, turns and budgets: the server's current defaults unless --config says otherwise
   ...(args.config ? JSON.parse(args.config) : {}),
 };
 const srcEntries = await all("SELECT e.*, p.slug, p.name, p.team_name AS ptn, p.model, p.archetype, p.is_kid, p.persona_prompt FROM arena.entries e JOIN arena.personas p ON p.id = e.persona_id WHERE e.game_id = $1 ORDER BY p.slug", [srcGame.id]);

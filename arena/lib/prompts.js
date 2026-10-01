@@ -121,8 +121,9 @@ export const NOTICES = {
 - Program size is now measured in characters after the game minifies your program: comments, spacing and the lengths of
   names you define are free; keywords, strings and numbers count character by character. Budgets are in those characters
   (the numbers are in config.json).
-- After round 1 the three programs take turns to change, one per round: the orchid before rounds 2, 5, 8, …, the clover
-  before rounds 3, 6, 9, …, the bee before rounds 4, 7, 10, … A change is measured in characters of the minified programs.
+- Games have 6 rounds. After round 1 the three programs take turns to change, one per round: the bee before rounds 2
+  and 5, the orchid before rounds 3 and 6, the clover before round 4. A change is measured in characters of the
+  minified programs.
 - Programs run in minified form, so names don't exist at runtime. A bee keeps only its top-level variable keep from one
   round to the next: MEMORY[k] is the value keep had at the end of round k+1 (read-only). Bees that read named variables
   from MEMORY must change; round 1 of this game allows full rewrites.`,
@@ -142,7 +143,7 @@ export function changeText(roundNo, changeable, budgets, nextTurns = {}) {
   return `Before round ${roundNo} it is your ${listKinds(changeable)}'s turn to change (change budget: ` +
     changeable.map((k) => `${budgets[k].changes} characters`).join(", ") + `). Your ${listKinds(locked)} ${locked.length > 1 ? "are" : "is"} locked ` +
     `and play${locked.length > 1 ? "" : "s"} round ${roundNo} unchanged${next.length ? `; ${next.join(", ")}` : ""}. ` +
-    `(After round 1 the three programs take turns: orchid, then clover, then bee, one per round.)`;
+    `(After round 1 the three programs take turns to change, one per round.)`;
 }
 
 /** The per-round brief (the session's user message). */

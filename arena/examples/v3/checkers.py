@@ -5,7 +5,7 @@
 
 # ---- Paley clique chain (paley_clover.py) ----
 
-CLIQUE_SIZE = 17
+CLIQUE_SIZE = 24
 START = 10**7
 
 
@@ -40,25 +40,23 @@ def chain_primes(n):
 
 
 def check_paley(challenge, response, enough=None):
-    # How many cliques in a row, from the start of the chain, are real: node labels in blocks of
-    # CLIQUE_SIZE, block k for the k-th prime of the chain, every pair's difference a square mod p.
-    # Each clique costs 136 pow() calls to check, so pass enough=k to stop counting at k.
+    # How many cliques in a row, from the start of the chain, are real: node k's label must be
+    # CLIQUE_SIZE whole numbers whose differences are all squares mod the k-th prime of the chain.
+    # Each clique costs 276 pow() calls (about 0.3 ms), so pass enough=k to stop counting at k.
     try:
-        labels = response["labels"]
-        if not all(type(x) is int for x in labels):
-            return None
+        score = 0
+        for clique, p in zip(response["labels"], chain_primes(challenge)):
+            if len(clique) != CLIQUE_SIZE or not all(type(x) is int for x in clique):
+                break
+            half = (p - 1) // 2
+            if any(pow(a - b, half, p) != 1 for i, a in enumerate(clique) for b in clique[:i]):
+                break
+            score += 1
+            if score == enough:
+                break
+        return score
     except Exception:
         return None
-    score = 0
-    for start, p in zip(range(0, len(labels) - CLIQUE_SIZE + 1, CLIQUE_SIZE), chain_primes(challenge)):
-        clique = labels[start:start + CLIQUE_SIZE]
-        half = (p - 1) // 2
-        if any(pow(a - b, half, p) != 1 for i, a in enumerate(clique) for b in clique[:i]):
-            break
-        score += 1
-        if score == enough:
-            break
-    return score
 
 
 # ---- Graceful labelling (graceful_clover.py) ----
