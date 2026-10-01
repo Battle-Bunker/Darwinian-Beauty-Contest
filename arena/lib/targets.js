@@ -30,7 +30,7 @@ function graphFeatures(g, directed) {
 export function features(v, responseType) {
   if (v === null || v === undefined) return null;
   if (/^tree/.test(responseType)) return treeFeatures(v);
-  if (responseType === "graph" || responseType === "digraph") return graphFeatures(v, responseType === "digraph");
+  if (/^(di)?graph/.test(responseType)) return graphFeatures(v, responseType.startsWith("digraph"));
   return null;
 }
 

@@ -218,3 +218,13 @@ CREATE TABLE IF NOT EXISTS arena.violations (
   detail      text,
   created_at  timestamptz NOT NULL DEFAULT now()
 );
+-- Cohort experiment: which catalogue ideas each team's code/notes show, per round (keyword and haiku classifier).
+CREATE TABLE IF NOT EXISTS arena.adoption (
+  game_id     int NOT NULL,
+  round_no    int NOT NULL,
+  persona_id  text NOT NULL,
+  method      text NOT NULL,                     -- keyword | llm
+  ideas       jsonb,                             -- keyword: {code: [ids], notes: [ids]}; llm: {clover, orchid, bee}
+  detail      text,
+  PRIMARY KEY (game_id, round_no, persona_id, method)
+);

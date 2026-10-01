@@ -14,10 +14,11 @@ export async function seedJudges() {
   }
 }
 
-export async function loadLedger() {
+/** The idea ledger. `exclude`: arenas whose ideas this judging must not see (sibling cohorts in the experiment). */
+export async function loadLedger(exclude = []) {
   return all(`SELECT i.id, i.tag, i.description, i.first_team, i.first_arena, i.first_game_id,
                      (SELECT count(DISTINCT s.game_id)::int FROM arena.idea_sightings s WHERE s.idea_id = i.id) AS games
-                FROM arena.ideas i ORDER BY i.id`);
+                FROM arena.ideas i WHERE i.first_arena IS NULL OR NOT (i.first_arena = ANY($1)) ORDER BY i.id`, [exclude]);
 }
 
 export const normTag = (t) => String(t || "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
@@ -79,7 +80,7 @@ export async function judgeGame({ arena, gameRow, config, teams, log }) {
   await q("DELETE FROM arena.idea_sightings WHERE game_id = $1", [gameRow.id]);
   await q("DELETE FROM arena.ideas i WHERE first_game_id = $1 AND NOT EXISTS (SELECT 1 FROM arena.idea_sightings s WHERE s.idea_id = i.id)", [gameRow.id]);
   await q("DELETE FROM arena.evaluations WHERE game_id = $1", [gameRow.id]);
-  const ideasBefore = await loadLedger();
+  const ideasBefore = await loadLedger(arena.settings?.cohort?.siblings || []);
   const known = new Map(ideasBefore.map((i) => [i.tag, i]));
   const firstIdx = gameRow.id % judges.length;
   const first = judges[firstIdx], rest = judges.filter((_, i) => i !== firstIdx);

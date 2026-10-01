@@ -197,6 +197,66 @@ if (v2games.length) {
   table(["model", "purpose", "calls", "USD", "USD/call", "avg turns", "avg s"], sess.map((r) => [r.model, r.purpose, r.n, f2(r.usd), f3(r.usd / r.n), f2(r.turns), (r.s ?? 0).toFixed(0)]));
 }
 
+// ---------- cohort experiment (int→graph[any]; control vs treatment vs control2)
+const cohortArenas = arenas.filter((a) => a.settings?.cohort);
+if (cohortArenas.length) {
+  p("## Cohort experiment");
+  const cgames = await all(`SELECT g.* FROM arena.games g WHERE g.arena_id = ANY($1) AND g.stage IN ('played','interviewed','judged','done') AND g.contaminated IS NULL ORDER BY g.generation, g.arena_id`, [cohortArenas.map((a) => a.id)]);
+  const roleOf = Object.fromEntries(cohortArenas.map((a) => [a.id, a.id === "gx-treat" ? "treatment" : a.id]));
+  // Per cohort/game summary.
+  const srows = [];
+  for (const g of cgames) {
+    const m = g.metrics || {};
+    const ent = await all("SELECT e.*, p.slug FROM arena.entries e JOIN arena.personas p ON p.id = e.persona_id WHERE e.game_id = $1 ORDER BY e.fitness_rank", [g.id]);
+    const rms = await all("SELECT metrics FROM arena.round_metrics WHERE game_id = $1", [g.id]);
+    const avg = (k) => f3(mean(rms.map((r) => r.metrics[k])));
+    const ot = m.orchidTargets || {}, of = m.orchidFeatureTargets || {};
+    srows.push([`${g.arena_id} g${g.generation}`, `[${g.game_short_id}](${WEB}${g.game_url})`, ent[0] ? `${ent[0].slug} ${f2(ent[0].fitness)}` : "-", ent.map((e) => `${e.slug} ${f2(e.fitness)}`).join(", "),
+      avg("precision"), avg("nectarPerTurn"), avg("feedsPerBeePerFlower"), avg("cloverComputeFrac"), avg("fedVisitsWithPostFeedAsks"), f2(mean(rms.map((r) => r.metrics.beesReadingMemory))),
+      `${ot.self ?? 0}/${ot.rival ?? 0}/${ot.convention ?? 0}/${ot.none ?? 0}`, `${of.self ?? 0}/${of.rival ?? 0}/${of.convention ?? 0}/${of.none ?? 0}`, (m.collapses || []).map((c) => c.mode).join(", ") || "-"]);
+  }
+  table(["cohort game", "link", "winner", "final fitness by team", "precision", "nectar/turn", "feeds/bee/flower", "clover compute/budget", "fed visits w/ post-feed asks", "bees reading MEMORY",
+    "orchid targets s/r/c/n", "structural s/r/c/n", "game flags"], srows);
+  // Paired comparison: each persona's fitness and rank in treatment vs its twins.
+  const holders = cohortArenas.find((a) => a.settings.cohort.role === "treatment")?.settings.cohort.holders || {};
+  const fit = await all(`SELECT g.arena_id, g.generation, p.slug, e.fitness, e.fitness_rank, e.social FROM arena.entries e JOIN arena.personas p ON p.id = e.persona_id JOIN arena.games g ON g.id = e.game_id
+                          WHERE g.arena_id = ANY($1) AND e.fitness IS NOT NULL`, [cohortArenas.map((a) => a.id)]);
+  const slugs = [...new Set(fit.map((x) => x.slug))].sort();
+  const gens = [...new Set(fit.map((x) => x.generation))].sort();
+  const prow = [];
+  const diffs = { holder: [], other: [], noise: [] };
+  for (const sl of slugs) for (const g of gens) {
+    const get = (a) => fit.find((x) => x.arena_id === a && x.slug === sl && x.generation === g);
+    const t = get("gx-treat"), c = get("gx-control"), c2 = get("gx-control2");
+    if (!t && !c) continue;
+    if (t && c) (holders[sl] ? diffs.holder : diffs.other).push(t.fitness - (c2 ? (c.fitness + c2.fitness) / 2 : c.fitness));
+    if (c && c2) diffs.noise.push(Math.abs(c.fitness - c2.fitness));
+    prow.push([sl, holders[sl] || "-", g, t ? `${f2(t.fitness)} (#${t.fitness_rank})` : "-", c ? `${f2(c.fitness)} (#${c.fitness_rank})` : "-", c2 ? `${f2(c2.fitness)} (#${c2.fitness_rank})` : "-",
+      t && c ? f2(t.fitness - (c2 ? (c.fitness + c2.fitness) / 2 : c.fitness)) : "-", c && c2 ? f2(Math.abs(c.fitness - c2.fitness)) : "-"]);
+  }
+  p("Paired comparison (same persona, same games, same seeds; Δ = treatment − mean of controls; noise = |control − control2|):");
+  table(["persona", "card", "game", "treatment", "control", "control2", "Δ fitness", "noise"], prow);
+  p(`Mean Δ fitness, card holders: ${f3(mean(diffs.holder))} (n=${diffs.holder.length}); other treatment teams: ${f3(mean(diffs.other))} (n=${diffs.other.length}); noise floor (mean |control − control2|): ${f3(mean(diffs.noise))} (n=${diffs.noise.length}).`);
+  p();
+  // Adoption of catalogue ideas: per cohort, game.round: teams whose code implements each idea (haiku classifier), holders marked *.
+  const ad = await all(`SELECT g.arena_id, g.generation, a.round_no, p.slug, a.method, a.ideas FROM arena.adoption a JOIN arena.games g ON g.id = a.game_id JOIN arena.personas p ON p.id = a.persona_id
+                         WHERE g.arena_id = ANY($1) ORDER BY g.generation, a.round_no`, [cohortArenas.map((a) => a.id)]);
+  const ideaIds = ["paley", "times-table", "graceful", "golomb", "schur", "necklace", "graded-score", "certificate"];
+  const arow = [];
+  for (const a of cohortArenas) for (const g of gens) for (const r of [1, 2, 3, 4, 5]) {
+    const rows = ad.filter((x) => x.arena_id === a.id && x.generation === g && x.round_no === r && x.method === "llm");
+    if (!rows.length) continue;
+    const kw = ad.filter((x) => x.arena_id === a.id && x.generation === g && x.round_no === r && x.method === "keyword");
+    arow.push([`${a.id} g${g}.r${r}`, ...ideaIds.map((id) => {
+      const who = rows.filter((x) => ["clover", "orchid", "bee"].some((k) => (x.ideas[k] || []).includes(id))).map((x) => x.slug + (holders[x.slug] ? "*" : ""));
+      const kwWho = kw.filter((x) => (x.ideas.code || []).includes(id) || (x.ideas.notes || []).includes(id)).length;
+      return who.length || kwWho ? `${who.join(" ") || "-"}${kwWho ? ` (kw ${kwWho})` : ""}` : "";
+    })]);
+  }
+  p("Adoption of catalogue ideas (teams whose code implements the idea per the haiku classifier; * = card holder or its twin; kw = teams whose code or notes mention it):");
+  table(["cohort game.round", ...ideaIds], arow);
+}
+
 // ---------- leaderboards (separately)
 p("## Fitness leaderboard (mean final fitness per persona; par 1.0)");
 const lb = await all(`SELECT p.id, p.name, p.team_name, p.model, p.archetype, p.is_kid, p.status, p.breeder_id, count(e.*)::int AS games, avg(e.fitness) AS fit, avg(e.fitness_rank::float / nullif((SELECT count(*) FROM arena.entries x WHERE x.game_id = e.game_id),0)) AS relrank,

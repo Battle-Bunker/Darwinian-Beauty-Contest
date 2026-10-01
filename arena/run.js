@@ -14,6 +14,8 @@ import { Api, ApiError, gamePath, login } from "./lib/api.js";
 import { ARENA_DIR, all, migrate, one, pool, q } from "./lib/db.js";
 import { BudgetError, PAUSE_FILE, SessionLimitError, isPaused, llmStats, setArenaCap, spend, waitIfPaused } from "./lib/llm.js";
 import { storeMetrics } from "./lib/gamemetrics.js";
+import { fullView } from "./lib/dbview.js";
+import { classifyGame } from "./lib/adoption.js";
 import { FOUNDERS } from "./lib/personas.js";
 import { breed, decideRetirements, retire, seedBreeders } from "./lib/population.js";
 import { PRESETS } from "./lib/presets.js";
@@ -192,7 +194,9 @@ async function playGame(arena, generation, { ownerTok, gameRow, gPath, entries }
     }));
     const tAgents = Date.now() - t0;
     await waitIfPaused(); // games don't advance while paused
-    await Api.runRound(ownerTok, gPath);
+    // Cohort experiment: one fixed seed per (game, round), identical in every cohort (same deck order, bee randomness).
+    const seed = arena.settings.cohort ? (arena.settings.cohort.seedBase + 1009 * generation + 31 * r) % 2 ** 31 : undefined;
+    await Api.runRound(ownerTok, gPath, seed);
     view = await Api.view(ownerTok, gPath);
     const rd = view.rounds[r - 1];
     const names = Object.fromEntries(view.teams.map((t) => [t.id, t.name]));
@@ -205,8 +209,8 @@ async function playGame(arena, generation, { ownerTok, gameRow, gPath, entries }
 }
 
 async function analyseGame(arena, generation, { ownerTok, gameRow, gPath, entries }, log) {
-  const view = await Api.view(ownerTok, gPath);
-  if (!view.game.revealed) throw new Error("game not revealed; metrics need revealOnFinish");
+  let view = await Api.view(ownerTok, gPath);
+  if (!view.game.revealed) view = await fullView(view.game.id); // unrevealed (cohort experiment): read the game's tables
   const { gm } = await storeMetrics(arena, gameRow, view);
   const final = [...view.final].sort((a, b) => b.fitness - a.fitness);
   for (const e of entries) {
@@ -216,6 +220,10 @@ async function analyseGame(arena, generation, { ownerTok, gameRow, gPath, entrie
       [gameRow.id, e.persona_id, s.fitness, final.indexOf(s) + 1, s.allure, s.forage]);
   }
   log(`gen ${generation} final: ${final.map((x) => `${entries.find((e) => e.team_id === x.teamId)?.team_name} ${x.fitness.toFixed(2)}`).join(", ")}; collapses: ${gm.collapses.map((f) => f.mode).join(", ") || "none"}; orchid targets ${JSON.stringify(gm.orchidTargets)}`);
+  if (arena.settings.cohort) {
+    const teamToPersona = Object.fromEntries(entries.filter((e) => view.participants.includes(e.team_id)).map((e) => [e.team_id, e.persona_id]));
+    await classifyGame({ arena, gameRow, view, teamToPersona, log });
+  }
   return view;
 }
 
@@ -240,7 +248,8 @@ async function socialEvaluation(arena, generation, ctx, log) {
     log(`gen ${generation}: interviews done`);
   }
   if (!atLeast(gameRow.stage, "judged")) {
-    const view = await Api.view(null, gPath, "none");
+    let view = await Api.view(null, gPath, "none");
+    if (!view.game.revealed) view = await fullView(view.game.id); // judges see all code even when players can't
     const last = view.rounds[view.rounds.length - 1];
     const fresh = await all("SELECT * FROM arena.entries WHERE game_id = $1 AND NOT sat_out", [gameRow.id]);
     const teams = fresh.map((e) => ({
@@ -257,6 +266,10 @@ async function socialEvaluation(arena, generation, ctx, log) {
 
 async function evolve(arena, generation, isLast, gameRow, log) {
   if (atLeast(gameRow.stage, "done")) return;
+  if (arena.settings.noEvolution) { // cohort experiment: fixed membership
+    await q("UPDATE arena.games SET stage = 'done' WHERE id = $1", [gameRow.id]);
+    return;
+  }
   const already = await one("SELECT count(*)::int AS n FROM arena.population_events WHERE arena_id = $1 AND generation = $2 AND event = 'retired'", [arena.id, generation]);
   if (!already.n) {
     const out = await decideRetirements(arena, generation, log);

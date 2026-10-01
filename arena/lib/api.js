@@ -56,11 +56,11 @@ export const Api = {
   memory: (tok, g, no) => api(tok, "GET", `${g}/memory/${no}`),
   version: (g) => api(null, "GET", `${g}/version`),
   /** Start the next round and poll until it has been stored (avoids long-held HTTP requests). */
-  async runRound(tok, g) {
+  async runRound(tok, g, seed) {
     const before = await api(null, "GET", `${g}/version`);
     let round;
     for (let attempt = 0; round === undefined; attempt++) {
-      try { ({ round } = await api(tok, "POST", `${g}/rounds`, undefined, { retries: 0 })); }
+      try { ({ round } = await api(tok, "POST", `${g}/rounds`, seed !== undefined ? { seed } : undefined, { retries: 0 })); }
       catch (e) {
         // A network blip (e.g. the server restarting): did the round start anyway?
         if (e.status !== 0 || attempt >= 5) throw e;

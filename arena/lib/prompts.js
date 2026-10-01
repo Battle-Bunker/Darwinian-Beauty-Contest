@@ -313,7 +313,7 @@ ${rules()}`;
 }
 
 /** The per-round brief (the session's user message). */
-export function roundBrief({ view, entry, generation, roundNo, maxTurns, ext, fix }) {
+export function roundBrief({ view, entry, generation, roundNo, maxTurns, ext, fix, cohort, hasIdeas }) {
   const c = view.game.config;
   const names = Object.fromEntries(view.teams.map((t) => [t.id, t.name]));
   if (fix) {
@@ -324,6 +324,18 @@ export function roundBrief({ view, entry, generation, roundNo, maxTurns, ext, fi
   if (roundNo === 1 && generation === 1) {
     parts.push(`This is the first round of the first game: there are no logs yet. The program files are empty; write all three from scratch ` +
       `(see interface.txt and RULES.md).`);
+  } else if (roundNo === 1 && cohort) {
+    parts.push(`A new game starts. Your program files hold your final programs from the previous game. Round 1 has no change budget, ` +
+      `so you may rewrite freely. previous-games/game-${generation - 1}/ has the standings and the final code of the top 2 teams ` +
+      `(top2/), your own logs (own/) and the panel's feedback (panel.md).` +
+      (generation === 1 ? `
+
+RULE CHANGE from this game on: the response type is now ${view.game.config.responseType} (a labelled graph: ` +
+        `{"nodes": n, "edges": [[a, b], ...], "labels": [one label per node]}; any plain JSON label). See RULES.md and interface.txt. ` +
+        `The warm-up game (game 0) used plain graphs, so update your programs.` : "") +
+      (hasIdeas ? `
+
+There's a new file in your workspace, ideas.md: optional ideas some players are exploring.` : ""));
   } else if (roundNo === 1) {
     parts.push(`A new game starts. Your program files hold your final programs from game ${generation - 1} (or are empty if you're new). ` +
       `Round 1 has no change budget, so you may rewrite freely. previous-games/ has every team's revealed final code and full logs ` +

@@ -8,7 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { Api, gamePath, login } from "./api.js";
 import { ARENA_DIR, all, one, q } from "./db.js";
-import { ideaCard } from "./personas.js";
+import { COHORT_CARDS, ideaCard } from "./personas.js";
 import { rules } from "./prompts.js";
 
 export const WS_ROOT = process.env.ARENA_WS_ROOT || "/home/user/arena-ws";
@@ -19,7 +19,7 @@ const extOf = (config) => (config.language === "typescript" ? "ts" : "py");
 const write = (file, data) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, data); };
 const json = (x) => JSON.stringify(x, null, 1);
 
-const README = (ext) => `# Your workspace
+const README = (ext, cohort) => `# Your workspace
 
 | file | what |
 |---|---|
@@ -34,9 +34,10 @@ const README = (ext) => `# Your workspace
 | logs/round-N/my-patch.jsonl | just the visits to your patch (which flower, which bee, what it asked) |
 | logs/game.json | scores and ledgers for every round so far, teams (id -> name), no visits |
 | memory/round-N.txt | the snapshot your bee kept at the end of round N (it reads it as MEMORY[N-1]) |
-| previous-games/ | earlier games in this arena, revealed: every team's final code and every round's full visits; panel.md has the standings, panel scores and what the judges said about you |
+${cohort ? "| previous-games/game-N/ | earlier games: standings.md, the final code of the top 2 teams (top2/), your own logs/history/memory (own/), and panel.md (panel scores and what the judges said about you) |"
+    : "| previous-games/ | earlier games in this arena, revealed: every team's final code and every round's full visits; panel.md has the standings, panel scores and what the judges said about you |"}
 | notebook.md | your private notes; they persist across rounds and games |
-| idea-card.md | (only some teams) ideas other players are exploring |
+| idea-card.md or ideas.md | (only some teams) ideas other players are exploring |
 
 A visit line: {"bee", "patch", "seq", "start", "end", "asks", "asksBeforeFeed", "action", "nectar", "kind"?, "steps"?: [{"c", "r", "after"?}]}.
 Teams are ids (logs/game.json maps ids to names). "after": true marks asks made after feeding.
@@ -73,7 +74,7 @@ export async function prepareWorkspace({ arena, gameRow, persona, entry, gPath, 
   write(marker, String(gameRow.generation));
 
   write(path.join(dir, "RULES.md"), rules());
-  write(path.join(dir, "README.md"), README(ext));
+  write(path.join(dir, "README.md"), README(ext, !!arena.settings.cohort));
   const it = view.interface;
   write(path.join(dir, "interface.txt"), `challenge: ${it.types.challenge} (${it.types.challengeMeans})\nresponse: ${it.types.response} (${it.types.responseMeans})\n` +
     `rules: ${(it.types.rules || []).join(" ")}\n\nclover and orchid:\n${it.flower}\n\nbee:\n${it.bee}\n`);
@@ -81,8 +82,11 @@ export async function prepareWorkspace({ arena, gameRow, persona, entry, gPath, 
   write(path.join(dir, "config.json"), json({ ...config, teams: n, flowers: 2 * n, turns_per_round: turns, file_extension: ext,
     game: gameRow.generation, next_round: roundNo, your_team: entry.team_name, sample_challenges: sampleFor(config) }));
   write(path.join(dir, "notebook.md"), (await one("SELECT notebook FROM arena.personas WHERE id = $1", [persona.id])).notebook || "");
-  const card = persona.idea_card ? ideaCard(persona.idea_card, config.responseType) : null;
+  // Idea cards: the earlier A/B cards (idea-card.md, also in the system prompt), or the cohort experiment's catalogue
+  // slices (ideas.md only: pointed at once in the brief).
+  const card = persona.idea_card && !COHORT_CARDS[persona.idea_card] ? ideaCard(persona.idea_card, config.responseType) : null;
   if (card) write(path.join(dir, "idea-card.md"), card + "\n");
+  if (COHORT_CARDS[persona.idea_card]) write(path.join(dir, "ideas.md"), COHORT_CARDS[persona.idea_card]);
 
   // No tools/ scripts and no token in workspaces: interpreters aren't approved in agent sessions (safety), so the
   // runner validates and submits after the session instead. Remove anything left from older layouts.
@@ -111,7 +115,8 @@ export async function prepareWorkspace({ arena, gameRow, persona, entry, gPath, 
   const { rounds, ...rest } = view;
   write(path.join(dir, "logs", "game.json"), json({ ...rest, rounds: rounds.map(({ visits, ...r }) => r) }));
   // Earlier games in this arena (revealed): every team's code and full round logs. Written once per game.
-  if (arena.settings.recap !== "scores") await writePreviousGames(arena, dir, gameRow.generation);
+  if (arena.settings.cohort) await writeCohortPrevious(arena, dir, gameRow.generation);
+  else if (arena.settings.recap !== "scores") await writePreviousGames(arena, dir, gameRow.generation);
   await writePanelFeedback(arena, dir, gameRow.generation, persona.id);
   return { dir, ext, view, card };
 }
@@ -154,6 +159,39 @@ async function writePreviousGames(arena, dir, generation) {
     for (const r of view.rounds) writeRound(path.join(gdir, "rounds", `round-${r.no}`), await Api.round(null, gp, r.no), null);
     const { rounds, ...rest } = view;
     write(path.join(gdir, "game.json"), json({ ...rest, rounds: rounds.map(({ visits, ...r }) => r) }));
+  }
+}
+
+/** Cohort experiment diffusion channel: standings plus the final code of ONLY the top 2 teams of each earlier game
+ * (identical rule in every cohort). Read from the DB because the games stay unrevealed. */
+export async function writeTop2(gdir, gameUuid, entries) {
+  const top = entries.filter((e) => e.fitness_rank === 1 || e.fitness_rank === 2).sort((a, b) => a.fitness_rank - b.fitness_rank);
+  const g = await one("SELECT rounds_played, config FROM games WHERE id = $1", [gameUuid]);
+  const ext = extOf(g.config);
+  write(path.join(gdir, "standings.md"), `# Final standings
+
+| rank | team | fitness |
+|---|---|---|
+` +
+    [...entries].filter((e) => e.fitness != null).sort((a, b) => a.fitness_rank - b.fitness_rank).map((e) => `| ${e.fitness_rank} | ${e.team_name} | ${e.fitness.toFixed(2)} |`).join("\n") +
+    `
+
+The final code of the top 2 teams is in top2/ (other teams' code isn't shown).
+`);
+  for (const e of top) {
+    const progs = await all("SELECT kind, code FROM round_programs WHERE game_id = $1 AND team_id = $2 AND round_no = $3", [gameUuid, e.team_id, g.rounds_played]);
+    for (const p of progs) write(path.join(gdir, "top2", `${e.fitness_rank}-${e.team_name.replace(/[^A-Za-z0-9_-]+/g, "_")}`, `${p.kind}.${ext}`), p.code);
+  }
+}
+
+async function writeCohortPrevious(arena, dir, generation) {
+  const games = await all("SELECT * FROM arena.games WHERE arena_id = $1 AND generation < $2 AND stage IN ('played','interviewed','judged','done') ORDER BY generation", [arena.id, generation]);
+  for (const g of games) {
+    const gdir = path.join(dir, "previous-games", `game-${g.generation}`);
+    if (fs.existsSync(path.join(gdir, "standings.md"))) continue;
+    const ent = await all("SELECT * FROM arena.entries WHERE game_id = $1", [g.id]);
+    const uuid = (await Api.view(null, gamePath(arena.room_short_id, g.game_short_id), "none")).game.id;
+    await writeTop2(gdir, uuid, ent);
   }
 }
 

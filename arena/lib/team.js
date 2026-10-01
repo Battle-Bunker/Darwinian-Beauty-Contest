@@ -205,7 +205,8 @@ export async function playTurnTools(ctx) {
     try {
       s = await runSession({
         model: persona.model, cwd: dir, appendSystem: system, maxTurns, maxBudgetUsd: attempt ? lim.usd / 3 : lim.usd, transcriptFile: transcript,
-        prompt: roundBrief({ view, entry, generation: gameRow.generation, roundNo, maxTurns, ext, fix }),
+        prompt: roundBrief({ view, entry, generation: gameRow.generation, roundNo, maxTurns, ext, fix, cohort: !!arena.settings.cohort,
+          hasIdeas: !!arena.settings.cohort && roundNo === 1 && gameRow.generation === 1 && /^G\d$/.test(persona.idea_card || "") }),
         ctx: { purpose: attempt ? "team-fix" : "team-session", arenaId: arena.id, gameId: gameRow.id, personaId: persona.id },
       });
     } catch (e) {
