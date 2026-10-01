@@ -21,6 +21,11 @@ const waiters = [];
 let coolUntil = 0; // global pause after a rate limit / overload
 
 export function setConcurrency(n) { maxConcurrent = n; pump(); }
+// Live tuning without a restart: echo 16 > arena/runs/concurrency
+const CONTROL = path.join(ARENA_DIR, "runs", "concurrency");
+setInterval(() => {
+  try { const n = Number(fs.readFileSync(CONTROL, "utf8").trim()); if (n > 0 && n !== maxConcurrent) { console.log(`[llm] concurrency ${maxConcurrent} -> ${n}`); setConcurrency(n); } } catch {}
+}, 20_000).unref();
 function pump() {
   while (active < maxConcurrent && waiters.length) { active++; waiters.shift()(); }
 }

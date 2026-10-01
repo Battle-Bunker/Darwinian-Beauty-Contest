@@ -43,13 +43,16 @@ for (const a of arenas) {
     const newIdeas = await all("SELECT DISTINCT i.tag FROM arena.idea_sightings s JOIN arena.ideas i ON i.id = s.idea_id WHERE s.game_id = $1 AND s.new_in_game", [g.id]);
     const allTags = await all("SELECT DISTINCT i.tag FROM arena.idea_sightings s JOIN arena.ideas i ON i.id = s.idea_id WHERE s.game_id = $1", [g.id]);
     const corr = ent.filter((e) => e.social != null).length > 2 ? spearman(ent.filter((e) => e.social != null).map((e) => e.fitness), ent.filter((e) => e.social != null).map((e) => e.social)) : null;
-    rows.push([g.generation, `[${g.game_short_id}](${WEB}${g.game_url})`, ent[0] ? `${ent[0].team_name} (${ent[0].model}) ${f2(ent[0].fitness)}` : "-",
+    const ot = m?.orchidTargets, oft = m?.orchidFeatureTargets;
+    const sat = ent.filter((e) => e.sat_out).length;
+    rows.push([g.generation, g.condition || "-", `[${g.game_short_id}](${WEB}${g.game_url})`, ent[0] ? `${ent[0].team_name} (${ent[0].model}) ${f2(ent[0].fitness)}` : "-",
       f2(m?.fitnessStd), f2(m?.topRatio), f2(m?.avg?.precision), f2(m?.avg?.feedRate), f2(m?.avg?.feedsPerBee), f2(m?.avg?.orchidFeedShare), f2(m?.avg?.orchidSelfMimicry),
       f2(m?.avg?.topChallengeShare), f2(m?.avg?.cumRankTau), m ? `${f2(m.changeUse.clover)}/${f2(m.changeUse.orchid)}/${f2(m.changeUse.bee)}` : "-",
       m ? `${f2(m.lastSimilarity.clover)}/${f2(m.lastSimilarity.orchid)}/${f2(m.lastSimilarity.bee)}` : "-",
-      `${newIdeas.length}/${allTags.length}`, f2(corr), (m?.collapses || []).map((c) => c.mode).join(", ") || "-"]);
+      `${newIdeas.length}/${allTags.length}`, f2(corr), ot ? `${ot.self ?? 0}/${ot.rival ?? 0}/${ot.convention ?? 0}/${ot.none ?? 0}` : "-",
+      oft ? `${oft.self ?? 0}/${oft.rival ?? 0}/${oft.convention ?? 0}/${oft.none ?? 0}` : "-", sat || "-", (m?.collapses || []).map((c) => c.mode).join(", ") || "-"]);
   }
-  table(["gen", "game", "winner", "fit std", "top/2nd", "precision", "feed rate", "feeds/bee", "orchid feed share", "orchid self-mimicry", "top challenge share", "cum rank tau", "change use c/o/b", "similarity c/o/b", "new/all ideas", "ρ(fit,social)", "game collapse flags"], rows);
+  table(["gen", "condition", "game", "winner", "fit std", "top/2nd", "precision", "feed rate", "feeds/bee", "orchid feed share", "orchid self-mimicry", "top challenge share", "cum rank tau", "change use c/o/b", "similarity c/o/b", "new/all ideas", "ρ(fit,social)", "orchid targets self/rival/conv/none (team-rounds)", "feature-level targets", "sat out", "game collapse flags"], rows);
   // Round-level detail
   p(`<details><summary>Round metrics</summary>\n`);
   const rrows = [];
@@ -58,10 +61,11 @@ for (const a of arenas) {
     const cev = await all("SELECT round_no, mode FROM arena.collapse_events WHERE game_id = $1 AND round_no IS NOT NULL", [g.id]);
     for (const r of rms) {
       const m = r.metrics;
-      rrows.push([`${g.generation}.${r.round_no}`, m.feeds, f2(m.precision), f2(m.feedRate), m.beesNotFeeding, f2(m.orchidFeedShare), f2(m.orchidSelfMimicry), f2(m.orchidCrossMimicry), f2(m.cloverAgreement), f2(m.topChallengeShare), m.distinctFirstChallenges, f2(m.asksPerVisit), f2(m.rankTau), f2(m.fitnessStd), `${m.change.clover.total}/${m.change.orchid.total}/${m.change.bee.total}`, f2(m.errorRate), m.timeouts, f2(m.selfFeedShare), cev.filter((c) => c.round_no === r.round_no).map((c) => c.mode).join(", ")]);
+      const o = m.orchidTargets;
+      rrows.push([`${g.generation}.${r.round_no}`, o?.counts ? `${o.counts.self}/${o.counts.rival}/${o.counts.convention}/${o.counts.none}` : "-", o?.victims ? `${o.victims.length}: ${f2(o.victimCloverFedRate)} vs ${f2(o.otherCloverFedRate)}` : "-", m.feeds, f2(m.precision), f2(m.feedRate), m.beesNotFeeding, f2(m.orchidFeedShare), f2(m.orchidSelfMimicry), f2(m.orchidCrossMimicry), f2(m.cloverAgreement), f2(m.topChallengeShare), m.distinctFirstChallenges, f2(m.asksPerVisit), f2(m.rankTau), f2(m.fitnessStd), `${m.change.clover.total}/${m.change.orchid.total}/${m.change.bee.total}`, f2(m.errorRate), m.timeouts, f2(m.selfFeedShare), cev.filter((c) => c.round_no === r.round_no).map((c) => c.mode).join(", ")]);
     }
   }
-  table(["gen.round", "feeds", "precision", "feed rate", "bees not feeding", "orchid feed share", "orchid self-mimic", "orchid cross-mimic", "clover agreement", "top challenge share", "distinct 1st challenges", "asks/visit", "rank tau", "fit std", "edits c/o/b", "error rate", "timeouts", "self-feed", "flags"], rrows);
+  table(["gen.round", "orchid targets s/r/c/n", "victims: clover fed rate vs others", "feeds", "precision", "feed rate", "bees not feeding", "orchid feed share", "orchid self-mimic", "orchid cross-mimic", "clover agreement", "top challenge share", "distinct 1st challenges", "asks/visit", "rank tau", "fit std", "edits c/o/b", "error rate", "timeouts", "self-feed", "flags"], rrows);
   p(`</details>\n`);
   // Winners, social tops and new ideas per generation; dominance across generations.
   p("Per generation: fitness winner, social winner, ideas new to the ledger (by team):");
@@ -88,6 +92,35 @@ for (const a of arenas) {
     for (const e of ev) p(`- gen ${e.generation}: ${e.event} ${e.name} / "${e.team_name}" (${e.model}, ${e.archetype}): ${e.reason}${e.details?.rationale ? ` Rationale: ${e.details.rationale}` : ""}`);
     p();
   }
+}
+
+// ---------- conditions: primed (old shared starter code) vs post-primed vs unprimed, by round number
+p("## Conditions by round (int→int arenas only, so the conditions are comparable)");
+p("primed = round-1 prompts showed the old shared starter code (and the old RULES text); post-primed = no starters but the arena's history began primed (recaps, notebooks); unprimed = arena never saw starter code.");
+p();
+const cond = await all(`SELECT g.condition, rm.round_no, rm.metrics FROM arena.round_metrics rm JOIN arena.games g ON g.id = rm.game_id JOIN arena.arenas a ON a.id = g.arena_id
+                         WHERE a.id = ANY($1) AND g.config->>'challengeType' = 'int' AND g.config->>'responseType' = 'int' AND g.condition IS NOT NULL`, [ids]);
+const crow = [];
+for (const c of ["primed", "post-primed", "unprimed"]) for (let r = 1; r <= 5; r++) {
+  const ms = cond.filter((x) => x.condition === c && x.round_no === r).map((x) => x.metrics);
+  if (!ms.length) continue;
+  const ot = ms.reduce((acc, m) => { for (const [k, v] of Object.entries(m.orchidTargets?.counts || {})) acc[k] = (acc[k] || 0) + v; return acc; }, {});
+  const tot = Object.values(ot).reduce((a, b) => a + b, 0) || 1;
+  crow.push([c, r, ms.length, f2(mean(ms.map((m) => m.precision))), f2(mean(ms.map((m) => m.feedRate))), f2(mean(ms.map((m) => m.similarity?.clover))), f2(mean(ms.map((m) => m.similarity?.orchid))), f2(mean(ms.map((m) => m.similarity?.bee))),
+    f2(mean(ms.map((m) => m.cloverAgreement))), f2(mean(ms.map((m) => m.topChallengeShare))), f2(mean(ms.map((m) => m.distinctFirstChallenges))),
+    `${Math.round(100 * (ot.self || 0) / tot)}/${Math.round(100 * (ot.rival || 0) / tot)}/${Math.round(100 * (ot.convention || 0) / tot)}/${Math.round(100 * (ot.none || 0) / tot)}`,
+    f2(mean(ms.map((m) => m.orchidTargets?.victimCloverFedRate))), f2(mean(ms.map((m) => m.orchidTargets?.otherCloverFedRate)))]);
+}
+table(["condition", "round", "games", "precision", "feed rate", "sim clover", "sim orchid", "sim bee", "clover agreement", "top challenge share", "distinct 1st challenges", "orchid targets % s/r/c/n", "victim clover fed rate", "other clover fed rate"], crow);
+
+// Structured arenas: exact vs feature-level imitation by round.
+const st = await all(`SELECT g.arena_id, g.generation, rm.round_no, rm.metrics FROM arena.round_metrics rm JOIN arena.games g ON g.id = rm.game_id
+                       WHERE g.arena_id = ANY($1) AND g.config->>'responseType' ~ 'tree|graph' ORDER BY 1, 2, 3`, [ids]);
+if (st.length) {
+  p("## Trees and graphs: exact vs structural imitation, bees' structural tests");
+  table(["arena", "gen.round", "precision", "feed rate", "exact targets s/r/c/n", "feature targets s/r/c/n", "bees testing structure", "bees keyed on exact answer", "victims: fed rate vs others"],
+    st.map((x) => { const o = x.metrics.orchidTargets || {}; const c = o.counts || {}, fc = o.featCounts || {};
+      return [x.arena_id, `${x.generation}.${x.round_no}`, f2(x.metrics.precision), f2(x.metrics.feedRate), `${c.self ?? "-"}/${c.rival ?? "-"}/${c.convention ?? "-"}/${c.none ?? "-"}`, `${fc.self ?? "-"}/${fc.rival ?? "-"}/${fc.convention ?? "-"}/${fc.none ?? "-"}`, o.beesStructural ?? "-", o.beesExactKey ?? "-", o.victims ? `${o.victims.length}: ${f2(o.victimCloverFedRate)} vs ${f2(o.otherCloverFedRate)}` : "-"]; }));
 }
 
 // ---------- leaderboards (separately)
