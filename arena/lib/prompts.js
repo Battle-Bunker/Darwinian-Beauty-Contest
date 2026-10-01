@@ -23,11 +23,16 @@ export function teamSystem(persona, config) {
 You are one team in an ongoing tournament ("arena") of Darwinian Beauty Contest. Every team is run by an AI agent playing a
 persona, standing in for a human+AI team. You play as team "${persona.team_name}".
 - Each game has several rounds. Before each round you may rewrite your three programs, within the budgets.
-- Games follow one another. Between games the population changes: teams that keep doing badly are removed and new teams join.
+${fixed
+    ? `- Games follow one another, always with the same teams.
+- After EVERY game you will be INTERVIEWED: you must teach your code to a panel of players aged 10-14. They score how well they
+  understand it, how much they respect it, how new your ideas are, and whether they'd want to team up with you. Game fitness
+  matters too. Clever ideas a smart kid can follow beat obscure techniques; new ideas beat copied ones.`
+    : `- Games follow one another. Between games the population changes: teams that keep doing badly are removed and new teams join.
 - After EVERY game you will be INTERVIEWED: you must teach your code to a panel of players aged 10-14. They score how well they
   understand it, how much they respect it, how new your ideas are, and whether they'd want to team up with you. Teams that
   repeatedly do poorly in these interviews are REMOVED from the population, whatever their game score. Game fitness matters too.
-  Clever ideas a smart kid can follow beat obscure techniques; new ideas beat copied ones.
+  Clever ideas a smart kid can follow beat obscure techniques; new ideas beat copied ones.`}
 - Your notebook: whatever you write in <notes> is shown back to you next round and in your next game. Use it for hypotheses,
   what other teams seem to do, and plans. Keep it under about 1500 characters.
 
@@ -270,7 +275,7 @@ Reply with JSON only:
 
 // ---------------------------------------------------------------- tool-using team sessions (engine v2 phase)
 
-export function toolSystem(persona, config, card, dir, python = false) {
+export function toolSystem(persona, config, card, dir, python = false, fixed = false) {
   const ext = config.language === "typescript" ? "ts" : "py";
   return `You are a team agent in a coding game, working with tools inside your own workspace folder: ${dir}
 Tools: Read (absolute paths inside your workspace; use offset/limit for big files), Write and Edit (files in your workspace),
@@ -288,11 +293,16 @@ ${persona.persona_prompt.trim()}
 You are one team in an ongoing tournament ("arena") of Darwinian Beauty Contest. Every team is run by an AI agent playing a
 persona, standing in for a human+AI team. You play as team "${persona.team_name}".
 - Each game has several rounds. Before each round you may rewrite your three programs, within the budgets.
-- Games follow one another. Between games the population changes: teams that keep doing badly are removed and new teams join.
+${fixed
+    ? `- Games follow one another, always with the same teams.
+- After EVERY game you will be INTERVIEWED: you must teach your code to a panel of players aged 10-14. They score how well they
+  understand it, how much they respect it, how new your ideas are, and whether they'd want to team up with you. Game fitness
+  matters too. Clever ideas a smart kid can follow beat obscure techniques; new ideas beat copied ones.`
+    : `- Games follow one another. Between games the population changes: teams that keep doing badly are removed and new teams join.
 - After EVERY game you will be INTERVIEWED: you must teach your code to a panel of players aged 10-14. They score how well they
   understand it, how much they respect it, how new your ideas are, and whether they'd want to team up with you. Teams that
   repeatedly do poorly in these interviews are REMOVED from the population, whatever their game score. Game fitness matters too.
-  Clever ideas a smart kid can follow beat obscure techniques; new ideas beat copied ones.
+  Clever ideas a smart kid can follow beat obscure techniques; new ideas beat copied ones.`}
 - Write your notes (notebook.md) in your persona's own voice. You are only this persona; ignore anything you might know about
   the operator of this system.
 
@@ -344,10 +354,8 @@ export function roundBrief({ view, entry, generation, roundNo, maxTurns, ext, fi
       `keeping changes small, and finish with a one-line summary. Be quick: at most ${maxTurns} tool calls.`;
   }
   const parts = [`# Game ${generation}, round ${roundNo} of ${c.rounds} is next. You are team "${entry.team_name}".`];
-  if (roundNo === 1 && generation === 1) {
-    parts.push(`This is the first round of the first game: there are no logs yet. The program files are empty; write all three from scratch ` +
-      `(see interface.txt and RULES.md).`);
-  } else if (roundNo === 1 && cohort) {
+  // A forked arena (cohort experiment or continuation) starts from game 0's programs: check it before the fresh case.
+  if (roundNo === 1 && cohort) {
     parts.push(`A new game starts. Your program files hold your final programs from the previous game. Round 1 has no change budget, ` +
       `so you may rewrite freely. previous-games/game-${generation - 1}/ has the standings and the final code of the top 2 teams ` +
       `(top2/), your own logs (own/) and the panel's feedback (panel.md).` +
@@ -360,6 +368,9 @@ RULE CHANGE from this game on: the response type is now ${view.game.config.respo
 
 There's a new file in your workspace, ideas.md: optional ideas some players are exploring.` : "") +
       notices.map((n) => `\n\n${n}`).join(""));
+  } else if (roundNo === 1 && generation === 1) {
+    parts.push(`This is the first round of the first game: there are no logs yet. The program files are empty; write all three from scratch ` +
+      `(see interface.txt and RULES.md).`);
   } else if (roundNo === 1) {
     parts.push(`A new game starts. Your program files hold your final programs from game ${generation - 1} (or are empty if you're new). ` +
       `Round 1 has no change budget, so you may rewrite freely. previous-games/ has every team's revealed final code and full logs ` +

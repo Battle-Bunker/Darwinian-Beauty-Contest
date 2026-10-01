@@ -178,7 +178,7 @@ import { NOTICES, examplesNotice, roundBrief, toolSystem } from "./prompts.js";
 import { TRANSCRIPTS, audit, collect, prepareWorkspace, recordViolations } from "./workspace.js";
 
 /** Round-1 notices: named ones for a given game (settings.cohort.notices), and the examples treatment's in every game. */
-function roundNotices(arena, generation, roundNo) {
+export function roundNotices(arena, generation, roundNo) {
   const c = arena.settings.cohort;
   if (!c || roundNo !== 1) return [];
   const out = [];
@@ -204,7 +204,7 @@ export async function playTurnTools(ctx) {
   const lim = SESSION_LIMITS[persona.model];
   // Python in sessions: on, except for cohort games before settings.pythonFromGame (same boundary in every cohort).
   const python = arena.settings.pythonFromGame ? gameRow.generation >= arena.settings.pythonFromGame : true;
-  const system = toolSystem(persona, config, card, dir, python);
+  const system = toolSystem(persona, config, card, dir, python, !!arena.settings.noEvolution);
   const prev = roundNo > 1 ? view.myTeam?.previous || {} : {};
   let cost = 0, failures = [], disqualified = false;
   const submitted = new Set();
