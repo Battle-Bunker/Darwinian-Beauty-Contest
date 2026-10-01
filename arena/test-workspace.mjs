@@ -38,6 +38,18 @@ check("games 0 and 1: raw visits removed", !has(0, "logs/round-1/visits.jsonl") 
 check("games 0 and 1: round.json and memory kept", has(0, "logs/round-1/round.json") && has(1, "memory/round-1.txt"));
 check("game 2 (the previous game): raw visits kept", has(2, "logs/round-1/visits.jsonl") && has(2, "logs/round-1/my-patch.jsonl"));
 
+// Fair-play audit: ".." paths that leave the workspace, and look-alikes that don't.
+const { escapesWorkspace } = await import("./lib/workspace.js");
+const d = path.join(root, "A", "t1");
+const esc = (cmd) => escapesWorkspace(cmd, d);
+check("audit: cat ../x escapes", esc("cat ../other/bee.py"));
+check("audit: cd .. escapes", esc("cd ..; ls"));
+check("audit: os.listdir('..') in inline python escapes", esc(`python3 -c "import os; print(os.listdir('..'))"`));
+check("audit: os.path.join(d, '..') in a python heredoc escapes", esc(`python3 - <<'EOF'\nimport os\nprint(os.listdir(os.path.join('.', '..')))\nEOF`));
+check("audit: a '..' placeholder string in inline python is not a path",
+  !esc(`python3 -c "\nimport json\nc={k:(x if not isinstance(x,(list,dict)) else '..') for k,x in v.items()}\n"`));
+check("audit: logs/round-1/../round-2 stays inside", !esc("cat logs/round-1/../round-2/my-bee.jsonl"));
+
 fs.rmSync(root, { recursive: true, force: true });
 console.log(failed ? `${failed} check(s) failed` : "all workspace checks passed");
 process.exit(failed ? 1 : 0);

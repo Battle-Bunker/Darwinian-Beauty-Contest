@@ -329,6 +329,13 @@ export function stripDataHeredocs(cmd) {
   return cmd.replace(/(\b(?:cat|tee)\b[^\n]*?<<-?[ \t]*(['"]?)(\w+)\2[^\n]*\n)[\s\S]*?\n(\t*\3[ \t]*)(?=\n|$)/g, "$1$4");
 }
 
+/** A quoted '..' in inline Python that is not passed to a call (`else '..'`, `x = '..'`): a placeholder string, not a
+ * path. `os.listdir('..')` and `join(d, '..')` still count as paths. */
+function inlinePythonString(cmd, at, tok) {
+  const before = cmd.slice(0, at);
+  return tok === ".." && /\bpython3?\s+(-c\b|-\s*<<)/.test(before) && /(^|[^(,\s])\s*['"]$/.test(before) && /^['"]/.test(cmd.slice(at + 2));
+}
+
 /** Does any ".." path in a shell command resolve outside the workspace? Paths are tried against the workspace and
  * every directory the command cd's into (all of which must themselves stay inside). */
 export function escapesWorkspace(cmd, dir, start = dir) {
@@ -344,6 +351,7 @@ export function escapesWorkspace(cmd, dir, start = dir) {
     if (!/(^|\/)\.\.(\/|$)/.test(tok)) continue; // "..." or "a..b" aren't parent paths
     const segment = cmd.slice(0, m.index).split(/[;&|]/).pop().trim();
     if (/^(echo|printf)\b/.test(segment)) continue; // `echo ..` prints a separator; it touches no file
+    if (inlinePythonString(cmd, m.index, tok)) continue;
     if (!bases.some((b) => path.resolve(b, tok).startsWith(dir))) return true;
   }
   return false;
