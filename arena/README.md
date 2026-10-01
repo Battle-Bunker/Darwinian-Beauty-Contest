@@ -38,19 +38,51 @@ PORT=4000 MAX_CONCURRENT_ROUNDS=8 nohup node server/index.js > arena/runs/server
 node arena/run.js --arena pilot --preset pilot --generations 1
 
 # 3. several arenas concurrently (arena id = preset name; a suffix like "-2" reuses the preset;
-#    ":n" after an id sets that arena's number of generations)
-ARENA_CONCURRENCY=20 ARENA_BUDGET_USD=370 nohup node arena/run.js \
-  --arenas baseline:5,strdark:5,lists:5,tight:5,cheapfeed:5,norecap:5,unprimed:6,trees:6,graphs:6 >> arena/runs/main.out 2>&1 &
-echo 16 > arena/runs/concurrency      # change the concurrency of a running runner (polled every 20 s)
+#    ":n" after an id sets that arena's number of generations). Keep concurrency modest: the account's
+#    usage limit is shared with every other session.
+ARENA_CONCURRENCY=8 ARENA_BUDGET_USD=370 nohup node arena/run.js \
+  --arenas baseline:4,strdark:5,lists:4,tight:4,cheapfeed:3,norecap:4,unprimed:5,trees:5,graphs:6 >> arena/runs/main.out 2>&1 &
+echo 6 > arena/runs/concurrency       # change the concurrency of a running runner (polled every 20 s)
 
-# 4. summary
+# 4. summary (also: node arena/backfill.js recomputes stored metrics for every played game)
 node arena/analyze.js > arena/runs/analysis.md
 ```
 
-Re-running the same command **resumes**: every game records its stage (`created → playing → played → interviewed →
-judged → done`) and the runner skips finished work, including team turns whose reply was already processed, and
-judging restarts cleanly. Running more generations later just extends the arena. Kill the runner, not the API server,
-mid-round; restart the server only when no round is simulating (`SELECT count(*) FROM games WHERE running_round IS NOT NULL`).
+### Pause, resume, restart
+
+**Automatic pause on usage limits.** Any `claude -p` failure whose text matches a usage or session limit pauses the
+whole runner. That means "session limit", "usage limit", "limit · resets", "hit your … limit", "resets 3:10am", 429 or
+rate_limit. When it fires:
+- it writes `arena/runs/PAUSED` (the time, then the raw error text, including the "resets …" time)
+- it logs `[arena] PAUSED: usage limit hit (<msg>). Resume: rm arena/runs/PAUSED`
+- it starts no new model calls and doesn't advance any game: no new round, no new game
+- calls that come back limit-failed are **held**: they don't count as attempts, don't fail a team, an interview or a
+  judge, and are re-issued unchanged on resume
+
+Calls already in flight finish normally.
+
+| to | do |
+|---|---|
+| pause by hand | `echo manual > arena/runs/PAUSED` (in-flight calls finish; nothing new starts) |
+| resume | `rm arena/runs/PAUSED`. The runner polls every 30 s and carries on. It never resumes on a timer: delete the file once the platform says usage is available again |
+| check | `cat arena/runs/PAUSED`; `grep -E "PAUSED\|RESUMED" arena/runs/main.out` |
+| stop | `kill <pid of node arena/run.js>`, then kill its `claude -p` children (orphans keep running and spending otherwise): `for p in $(pgrep -f "claude -p --model"); do [ "$(head -c 9 /proc/$p/cmdline \| tr '\0' ' ')" = "claude -p" ] && kill $p; done` |
+| restart | run the same `node arena/run.js --arenas …` command again. If `arena/runs/PAUSED` still exists it starts paused and waits |
+
+**Restarting resumes from the database.** Every game records its stage (`created → playing → played → interviewed →
+judged → done`), and the runner skips finished work:
+- **rounds**: finished rounds are never replayed; the current round's turns are re-run, except turns whose reply was
+  already processed
+- **interviews**: only the missing ones are redone
+- **judging**: it restarts cleanly, dropping any partial evaluations and ledger entries for that game
+- **breeding**: unfilled slots are refilled before the next game
+
+Running more generations later just extends an arena. Calls that were in flight when the runner was killed are lost
+(their cost isn't in the ledger). Kill the runner, not the API server, mid-round. Restart the API server only when no
+round is simulating: `SELECT count(*) FROM games WHERE running_round IS NOT NULL` returns 0.
+
+**Quarantine.** Games hurt by an outage carry a reason in `arena.games.contaminated`. `analyze.js`, selection
+(retirements) and breeder scores ignore them, and they stay in the database for replay.
 
 | Env | Default | |
 |---|---|---|
@@ -59,6 +91,7 @@ mid-round; restart the server only when no round is simulating (`SELECT count(*)
 | `ARENA_BUDGET_USD` | `300` | global spend cap over all of `arena.llm_calls`; arenas stop cleanly when reached |
 | `ARENA_TEAM_EFFORT` | `{}` | JSON overrides of per-model effort for team turns (default haiku low, others medium) |
 | `ARENA_SOCIAL_FLOOR` | `4.0` | mean social score below which a persona is retired |
+| `ARENA_PAUSE_FILE` | `arena/runs/PAUSED` | the pause file (tests point it elsewhere) |
 | `--budget <usd>` | | per-arena cap (stored in the arena's settings) |
 
 ## How a generation works
