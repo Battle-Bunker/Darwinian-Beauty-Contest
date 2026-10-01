@@ -11,6 +11,7 @@ to study the ecosystem the game creates and hunt for **complexity-collapse** sce
 | `run.js` | the arena runner: creates rooms and games, runs team agents each round, interviews, judges, retirements, breeding |
 | `analyze.js` | prints a Markdown summary of everything in the `arena` schema (spend, leaderboards, metrics, conditions, orchid targets, collapses, judges, ideas, breeders) |
 | `backfill.js` | recomputes and stores metrics (incl. orchid targets) for every played game; safe to re-run |
+| `test-pause.mjs` | self-contained check of usage-limit detection and pause/resume, with a stub `claude` (no real calls) |
 | `schema.sql` | the `arena` Postgres schema (same `dbc` database as the game), applied on every run |
 | `lib/llm.js` | `claude -p` wrapper: concurrency limiter, retries, rate-limit cool-down, spend guard, cost ledger (`arena.llm_calls`) |
 | `lib/api.js` | HTTP client for the game API (dev login with Bearer tokens) |
