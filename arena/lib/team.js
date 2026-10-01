@@ -190,12 +190,14 @@ export async function playTurnTools(ctx) {
   const { dir, ext, view, card } = await prepareWorkspace({ arena, gameRow, persona, entry, gPath, roundNo });
   const config = view.game.config;
   const lim = SESSION_LIMITS[persona.model];
-  const system = toolSystem(persona, config, card);
+  const system = toolSystem(persona, config, card, dir);
   const prev = roundNo > 1 ? view.myTeam?.previous || {} : {};
   let cost = 0, failures = [], disqualified = false;
   const submitted = new Set();
 
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+  // Round 1 gets more fix attempts: a team without valid programs sits the whole game out (fixes are cheap).
+  const maxAttempts = roundNo === 1 ? 4 : MAX_RETRIES;
+  for (let attempt = 0; attempt <= maxAttempts; attempt++) {
     const fix = attempt ? failures.map((f) => `- ${f.kind}: ${f.errors.join("; ")}`).join("\n") : null;
     const maxTurns = attempt ? Math.min(15, lim.turns) : lim.turns;
     const transcript = path.join(TRANSCRIPTS, arena.id, persona.slug, `g${gameRow.generation}-r${roundNo}-a${attempt}.jsonl`);

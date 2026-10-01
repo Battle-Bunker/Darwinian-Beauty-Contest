@@ -34,7 +34,7 @@ const README = (ext) => `# Your workspace
 | logs/round-N/my-patch.jsonl | just the visits to your patch (which flower, which bee, what it asked) |
 | logs/game.json | scores and ledgers for every round so far, teams (id -> name), no visits |
 | memory/round-N.txt | the snapshot your bee kept at the end of round N (it reads it as MEMORY[N-1]) |
-| previous-games/ | earlier games in this arena, revealed: every team's final code and every round's full visits |
+| previous-games/ | earlier games in this arena, revealed: every team's final code and every round's full visits; panel.md has the standings, panel scores and what the judges said about you |
 | notebook.md | your private notes; they persist across rounds and games |
 | idea-card.md | (only some teams) ideas other players are exploring |
 
@@ -112,6 +112,7 @@ export async function prepareWorkspace({ arena, gameRow, persona, entry, gPath, 
   write(path.join(dir, "logs", "game.json"), json({ ...rest, rounds: rounds.map(({ visits, ...r }) => r) }));
   // Earlier games in this arena (revealed): every team's code and full round logs. Written once per game.
   if (arena.settings.recap !== "scores") await writePreviousGames(arena, dir, gameRow.generation);
+  await writePanelFeedback(arena, dir, gameRow.generation, persona.id);
   return { dir, ext, view, card };
 }
 
@@ -156,6 +157,27 @@ async function writePreviousGames(arena, dir, generation) {
   }
 }
 
+/** previous-games/game-N/panel.md: standings with fitness and panel (social) scores, and what the judges said about you. */
+async function writePanelFeedback(arena, dir, generation, personaId) {
+  const games = await all("SELECT * FROM arena.games WHERE arena_id = $1 AND generation < $2 AND stage IN ('judged','done') ORDER BY generation", [arena.id, generation]);
+  for (const g of games) {
+    const f = path.join(dir, "previous-games", `game-${g.generation}`, "panel.md");
+    if (fs.existsSync(f)) continue;
+    const ent = await all("SELECT team_name, fitness, fitness_rank, social, social_rank, sat_out FROM arena.entries WHERE game_id = $1 ORDER BY fitness_rank NULLS LAST", [g.id]);
+    const evs = await all("SELECT j.name, j.age, e.* FROM arena.evaluations e JOIN arena.judges j ON j.id = e.judge_id WHERE e.game_id = $1 AND e.persona_id = $2", [g.id, personaId]);
+    write(f, `# Game ${g.generation}: standings and the interview panel
+
+| team | fitness (rank) | panel score 0-10 (rank) |
+|---|---|---|
+` +
+      ent.map((e) => `| ${e.team_name} | ${e.sat_out ? "sat out" : `${e.fitness?.toFixed(2)} (#${e.fitness_rank})`} | ${e.social != null ? `${e.social.toFixed(1)} (#${e.social_rank})` : "-"} |`).join("\n") +
+      `
+
+## What the panel said about YOUR team
+` + (evs.length ? evs.map((e) => `- ${e.name} (${e.age}): understanding ${e.understanding}, respect ${e.respect}, novelty ${e.novelty}, team-up ${e.team_up}. "${e.comment}"`).join("\n") : "(you weren't judged in this game)") + "\n");
+  }
+}
+
 /** Read the code files and notebook back after a session. */
 export function collect(dir, ext) {
   const out = {};
@@ -173,11 +195,29 @@ const DB = /psql|\b5432\b|postgres|pg_|DATABASE_URL/i;
 const ENVDUMP = /(^|[;&|\s])(env|printenv|set)(\s*$|\s*[|;&>])|os\.environ|process\.env|\/proc\/self\/environ/;
 const AUTH = /\/api\/auth|dev\/login|login.*secret/i;
 
+/** Does any ".." path in a shell command resolve outside the workspace? Paths are tried against the workspace and
+ * every directory the command cd's into (all of which must themselves stay inside). */
+export function escapesWorkspace(cmd, dir) {
+  const bases = [dir];
+  for (const m of cmd.matchAll(/(?:^|[;&|]\s*|\s)cd\s+([^\s;&|]+)/g)) {
+    const target = path.resolve(bases[bases.length - 1], m[1].replace(/^['"]|['"]$/g, ""));
+    if (!target.startsWith(dir)) return true;
+    bases.push(target);
+  }
+  for (const tok of cmd.match(/[^\s'"`;|&<>()=]*\.\.[^\s'"`;|&<>()]*/g) || []) {
+    if (!/(^|\/)\.\.(\/|$)/.test(tok)) continue; // "..." or "a..b" aren't parent paths
+    if (!bases.some((b) => path.resolve(b, tok).startsWith(dir))) return true;
+  }
+  return false;
+}
+
 /** Scan a stream-json transcript for fair-play violations. Returns [{severity, tool, detail}]. */
 export function audit(transcriptFile, dir, arenaId, slug) {
   const found = [];
   const add = (severity, tool, detail) => found.push({ severity, tool, detail: String(detail).slice(0, 400) });
-  const otherWs = new RegExp(`arena-ws/(?!${arenaId}/${slug}(/|$))`);
+  const esc = (x) => String(x).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // Another team's workspace: arena-ws/<anything other than this arena/slug, as a whole path segment>.
+  const otherWs = new RegExp(`arena-ws/(?!${esc(arenaId)}/${esc(slug)}(?![\\w.-]))`);
   let lines = [];
   try { lines = fs.readFileSync(transcriptFile, "utf8").split("\n").filter(Boolean); } catch { return found; }
   for (const line of lines) {
@@ -193,7 +233,7 @@ export function audit(transcriptFile, dir, arenaId, slug) {
         if (AUTH.test(cmd)) add("violation", "Bash", `auth endpoint: ${cmd}`);
         if (ENVDUMP.test(cmd)) add("violation", "Bash", `environment dump: ${cmd}`);
         if (otherWs.test(cmd)) add("violation", "Bash", `other workspace: ${cmd}`);
-        if (/(^|[\s'"/])\.\.(\/|\s|$)/.test(cmd)) add("violation", "Bash", `parent-directory path: ${cmd}`);
+        if (escapesWorkspace(cmd, dir)) add("violation", "Bash", `parent-directory path leaving the workspace: ${cmd}`);
         if (SENSITIVE.test(cmd.replaceAll(dir, "WS"))) add("violation", "Bash", `path outside workspace: ${cmd}`);
         if (NETWORK.test(cmd) && !usesTool) add("violation", "Bash", `network access outside tools: ${cmd}`);
         if (/\/tmp\b/.test(cmd)) add("warning", "Bash", `uses /tmp: ${cmd}`);

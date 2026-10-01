@@ -129,6 +129,74 @@ if (st.length) {
       return [x.arena_id, `${x.generation}.${x.round_no}`, f2(x.metrics.precision), f2(x.metrics.feedRate), `${c.self ?? "-"}/${c.rival ?? "-"}/${c.convention ?? "-"}/${c.none ?? "-"}`, `${fc.self ?? "-"}/${fc.rival ?? "-"}/${fc.convention ?? "-"}/${fc.none ?? "-"}`, o.beesStructural ?? "-", o.beesExactKey ?? "-", o.victims ? `${o.victims.length}: ${f2(o.victimCloverFedRate)} vs ${f2(o.otherCloverFedRate)}` : "-"]; }));
 }
 
+// ---------- engine v2 phase (tool-using teams, idea cards)
+const v2games = await all(`SELECT g.* FROM arena.games g WHERE g.arena_id = ANY($1) AND g.condition = 'v2' AND g.contaminated IS NULL AND g.metrics IS NOT NULL ORDER BY g.arena_id, g.generation`, [ids]);
+if (v2games.length) {
+  p("## Engine v2 (tool-using teams)");
+  const vrows = [];
+  for (const g of v2games) {
+    for (const r of await all("SELECT * FROM arena.round_metrics WHERE game_id = $1 ORDER BY round_no", [g.id])) {
+      const m = r.metrics, o = m.orchidTargets || {}, c = o.counts || {}, fc = o.featCounts || {};
+      vrows.push([`${g.arena_id} ${g.generation}.${r.round_no}`, f2(m.precision), f3(m.nectarPerTurn), f2(m.feedsPerBeePerFlower), f2(m.fedVisitsWithPostFeedAsks), m.beesReadingMemory ?? "-",
+        `${f2(m.cloverComputeFrac)} (max ${f2(m.cloverComputeMaxFrac)})`, f2(m.orchidComputeFrac), `${c.self ?? "-"}/${c.rival ?? "-"}/${c.convention ?? "-"}/${c.none ?? "-"}`,
+        o.featCounts ? `${fc.self}/${fc.rival}/${fc.convention}/${fc.none}` : "-", o.victims ? `${o.victims.length}: ${f2(o.victimCloverFedRate)} vs ${f2(o.otherCloverFedRate)}` : "-",
+        `${m.change.clover.teamsChanged}/${m.change.orchid.teamsChanged}/${m.change.bee.teamsChanged}`, f2(m.rankTau),
+        (await all("SELECT mode FROM arena.collapse_events WHERE game_id = $1 AND round_no = $2", [g.id, r.round_no])).map((x) => x.mode).join(", ")]);
+    }
+  }
+  table(["arena gen.round", "precision", "nectar/turn", "feeds/bee/flower", "fed visits with post-feed asks", "bees reading MEMORY", "clover compute/budget", "orchid compute/budget",
+    "orchid targets s/r/c/n", "structural s/r/c/n", "victims: fed vs others", "teams changed c/o/b", "rank τ", "flags"], vrows);
+  // Hinted vs unhinted: per persona-game, from the round metrics' team features and the entries.
+  const hrows = await all(`SELECT p.id, p.idea_card, p.model, e.game_id, e.fitness, e.social, e.team_id, e.sat_out FROM arena.entries e JOIN arena.personas p ON p.id = e.persona_id
+                            WHERE e.game_id = ANY($1)`, [v2games.map((g) => g.id)]);
+  const feats = {};
+  for (const g of v2games) for (const r of await all("SELECT metrics FROM arena.round_metrics WHERE game_id = $1", [g.id])) {
+    const tf = r.metrics.teamFeatures || {}, per = r.metrics.orchidTargets?.perTeam || [];
+    for (const [team, f] of Object.entries(tf)) (feats[`${g.id}:${team}`] ||= []).push({ ...f, orchidCat: per.find((x) => x.team === team)?.category, orchidFeatCat: per.find((x) => x.team === team)?.feature?.category });
+  }
+  const grp = {};
+  for (const h of hrows) {
+    const key = h.idea_card ? `card ${h.idea_card}` : "no card";
+    const fs_ = feats[`${h.game_id}:${h.team_id}`] || [];
+    const g = (grp[key] ||= { n: 0, models: {}, fit: [], soc: [], prec: [], npt: [], cc: [], post: [], mem: [], keyed: [], rival: [], self: [], sat: 0 });
+    g.n++; g.models[h.model] = (g.models[h.model] || 0) + 1;
+    if (h.sat_out) { g.sat++; continue; }
+    g.fit.push(h.fitness); g.soc.push(h.social);
+    for (const f of fs_) {
+      g.prec.push(f.precision); g.npt.push(f.nectarPerTurn); g.cc.push(f.cloverComputeFrac); g.post.push(f.postFeedAsks > 0 ? 1 : 0); g.mem.push(f.beeReadsMemory ? 1 : 0);
+      g.keyed.push(f.cloverKeyedMod ? 1 : 0); g.rival.push(f.orchidCat === "rival" || f.orchidFeatCat === "rival" ? 1 : 0); g.self.push(f.orchidCat === "self" ? 1 : 0);
+    }
+  }
+  p("Hinted vs unhinted teams (per persona-game; behaviour shares are over team-rounds):");
+  table(["group", "persona-games", "models", "sat out", "fitness", "social", "bee precision", "nectar/turn", "clover compute/budget", "bee asks after feeding", "bee reads MEMORY", "clover keyed on challenge (mod)", "orchid imitates a rival", "orchid imitates own clover"],
+    Object.entries(grp).map(([k, g]) => [k, g.n, Object.entries(g.models).map(([m, c]) => `${m} ${c}`).join(", "), g.sat, f2(mean(g.fit)), f2(mean(g.soc)), f2(mean(g.prec)), f3(mean(g.npt)), f2(mean(g.cc)),
+      f2(mean(g.post)), f2(mean(g.mem)), f2(mean(g.keyed)), f2(mean(g.rival)), f2(mean(g.self))]));
+  // Adoption over rounds among UNHINTED teams (spread of the card ideas).
+  const arows = [];
+  for (const g of v2games) for (const r of await all("SELECT round_no, metrics FROM arena.round_metrics WHERE game_id = $1 ORDER BY round_no", [g.id])) {
+    const tf = r.metrics.teamFeatures || {}, per = r.metrics.orchidTargets?.perTeam || [];
+    const hinted = new Set(hrows.filter((h) => h.game_id === g.id && h.idea_card).map((h) => h.team_id));
+    const un = Object.entries(tf).filter(([t]) => !hinted.has(t)), hi = Object.entries(tf).filter(([t]) => hinted.has(t));
+    const share = (rows, fn) => (rows.length ? `${rows.filter(fn).length}/${rows.length}` : "-");
+    const rivalOf = (t) => { const x = per.find((y) => y.team === t); return x?.category === "rival" || x?.feature?.category === "rival"; };
+    arows.push([`${g.arena_id} ${g.generation}.${r.round_no}`,
+      share(hi, ([, f]) => f.cloverComputeFrac > 0.25), share(un, ([, f]) => f.cloverComputeFrac > 0.25),
+      share(hi, ([, f]) => f.cloverKeyedMod), share(un, ([, f]) => f.cloverKeyedMod),
+      share(hi, ([, f]) => f.postFeedAsks > 0), share(un, ([, f]) => f.postFeedAsks > 0),
+      share(hi, ([, f]) => f.beeReadsMemory), share(un, ([, f]) => f.beeReadsMemory),
+      share(hi, ([t]) => rivalOf(t)), share(un, ([t]) => rivalOf(t))]);
+  }
+  p("Adoption of the card ideas, hinted | unhinted (teams per round):");
+  table(["arena gen.round", "clover compute >25% (H)", "(U)", "clover keyed mod (H)", "(U)", "post-feed asks (H)", "(U)", "bee reads MEMORY (H)", "(U)", "orchid imitates rival (H)", "(U)"], arows);
+  const viol = await all("SELECT arena_id, severity, count(*)::int AS n, count(DISTINCT persona_id)::int AS teams FROM arena.violations WHERE arena_id = ANY($1) GROUP BY 1, 2 ORDER BY 1, 2", [ids]);
+  p("Fair-play audit of tool sessions:");
+  table(["arena", "severity", "findings", "teams"], viol.map((v) => [v.arena_id, v.severity, v.n, v.teams]));
+  const sess = await all(`SELECT c.model, c.purpose, count(*)::int AS n, sum(c.cost_usd) AS usd, avg(c.turns) AS turns, avg(c.duration_ms) / 1000 AS s FROM arena.llm_calls c
+                           WHERE c.arena_id = ANY($1) AND c.arena_id LIKE 'v2-%' GROUP BY 1, 2 ORDER BY 2, 1`, [ids]);
+  p("v2 spend by purpose and model:");
+  table(["model", "purpose", "calls", "USD", "USD/call", "avg turns", "avg s"], sess.map((r) => [r.model, r.purpose, r.n, f2(r.usd), f3(r.usd / r.n), f2(r.turns), (r.s ?? 0).toFixed(0)]));
+}
+
 // ---------- leaderboards (separately)
 p("## Fitness leaderboard (mean final fitness per persona; par 1.0)");
 const lb = await all(`SELECT p.id, p.name, p.team_name, p.model, p.archetype, p.is_kid, p.status, p.breeder_id, count(e.*)::int AS games, avg(e.fitness) AS fit, avg(e.fitness_rank::float / nullif((SELECT count(*) FROM arena.entries x WHERE x.game_id = e.game_id),0)) AS relrank,

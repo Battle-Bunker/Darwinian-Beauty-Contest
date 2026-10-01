@@ -89,6 +89,12 @@ export const PRESETS = {
       ["founder:milo", "sonnet"], ["from:norecap/wren-12", "sonnet"], ["founder:gremlin", "haiku"]],
   },
   // Pilot for the tool-using v2 setup: measures cost per team-round by model.
+  "v2-pilot2": {
+    description: "Pilot (rerun after audit/system-prompt fixes): engine v2, tool-using team sessions, int→graph, 3 teams, 2 rounds",
+    config: { language: "python", challengeType: "int", responseType: "graph", rounds: 2 },
+    condition: "v2", mode: "tools",
+    lineup: [["from:graphs/mallory", "opus"], ["founder:luna", "sonnet", "A"], ["founder:grace", "haiku", "B"]],
+  },
   "v2-pilot": {
     description: "Pilot: engine v2, tool-using team sessions, int→graph, 3 teams, 2 rounds",
     config: { language: "python", challengeType: "int", responseType: "graph", rounds: 2 },

@@ -213,7 +213,9 @@ function runSessionCli({ model, cwd, appendSystem, prompt, maxTurns, maxBudgetUs
   return new Promise((resolve) => {
     const args = ["-p", "--model", model, "--tools", "Bash,Read,Write,Edit,Glob,Grep", "--permission-mode", "acceptEdits",
       "--max-turns", String(maxTurns), "--output-format", "stream-json", "--verbose", "--no-session-persistence",
-      "--append-system-prompt", appendSystem];
+      // A full system prompt (not appended): Claude Code's default one advertises an auto-memory directory under
+      // ~/.claude/projects/ (outside the workspace, next to the other teams'), plus env and cwd details.
+      "--system-prompt", appendSystem];
     if (maxBudgetUsd) args.push("--max-budget-usd", String(maxBudgetUsd));
     fs.mkdirSync(path.dirname(transcriptFile), { recursive: true });
     const out = fs.createWriteStream(transcriptFile);

@@ -268,9 +268,14 @@ Reply with JSON only:
 
 // ---------------------------------------------------------------- tool-using team sessions (engine v2 phase)
 
-export function toolSystem(persona, config, card) {
+export function toolSystem(persona, config, card, dir) {
   const ext = config.language === "typescript" ? "ts" : "py";
-  return `# Who you are
+  return `You are a team agent in a coding game, working with tools inside your own workspace folder: ${dir}
+Tools: Read (absolute paths inside your workspace; use offset/limit for big files), Write and Edit (files in your workspace),
+Glob and Grep (search inside your workspace), and Bash for simple read-only commands inside your workspace (ls, grep, wc,
+sort, uniq, cut, head). Interpreters are not available. Work step by step, then stop with a short summary.
+
+# Who you are
 ${persona.persona_prompt.trim()}
 
 # Your situation
