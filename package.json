@@ -9,7 +9,7 @@
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
     "migrate": "node server/db/migrate.js",
-    "test": "node --test test/",
+    "test": "node --test test/*.test.js",
     "smoke": "node scripts/smoke.js"
   },
   "dependencies": {
