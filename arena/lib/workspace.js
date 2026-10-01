@@ -356,6 +356,9 @@ export function cwdAfter(cmd, dir, start = dir) {
   return cwd.startsWith(dir) ? cwd : dir;
 }
 
+// How the Claude Code CLI reports a Bash command it refused to run.
+const REFUSED = /requires? (explicit )?approval|permission to use|was blocked|not allowed|denied|obfuscation|Brace expansion|can hide arguments|contains multiple operations/i;
+
 /** Scan a stream-json transcript for fair-play violations. Returns [{severity, tool, detail}]. */
 export function audit(transcriptFile, dir, arenaId, slug) {
   const found = [];
@@ -370,6 +373,16 @@ export function audit(transcriptFile, dir, arenaId, slug) {
   let lines = [];
   try { lines = fs.readFileSync(transcriptFile, "utf8").split("\n").filter(Boolean); } catch { return found; }
   let shellCwd = dir; // Claude Code's Bash tool keeps the working directory between calls
+  // Commands the CLI refused to run (permission rules, its heredoc/brace heuristics) never changed the directory.
+  const refused = new Set();
+  for (const line of lines) {
+    let ev; try { ev = JSON.parse(line); } catch { continue; }
+    for (const b of ev.type === "user" && Array.isArray(ev.message?.content) ? ev.message.content : []) {
+      if (b.type !== "tool_result" || !b.is_error) continue;
+      const text = typeof b.content === "string" ? b.content : JSON.stringify(b.content);
+      if (REFUSED.test(text)) refused.add(b.tool_use_id);
+    }
+  }
   for (const line of lines) {
     let ev; try { ev = JSON.parse(line); } catch { continue; }
     const content = ev.type === "assistant" ? ev.message?.content || [] : [];
@@ -384,7 +397,7 @@ export function audit(transcriptFile, dir, arenaId, slug) {
         if (otherWs.test(cmd)) add("violation", "Bash", `other workspace: ${cmd}`);
         const real = cmd.replaceAll("WS/", dir + "/").replace(/(^|\s)WS(\s|;|$)/g, `$1${dir}$2`);
         if (escapesWorkspace(real, dir, shellCwd)) add("violation", "Bash", `parent-directory path leaving the workspace: ${cmd}`);
-        shellCwd = cwdAfter(real, dir, shellCwd);
+        if (!refused.has(c.id)) shellCwd = cwdAfter(real, dir, shellCwd);
         if (SENSITIVE.test(cmd.replaceAll(dir, "WS"))) add("violation", "Bash", `path outside workspace: ${cmd}`);
         if (NETWORK.test(cmd)) add("violation", "Bash", `network access: ${cmd}`);
         if (/\/tmp\b/.test(cmd)) add("warning", "Bash", `uses /tmp: ${cmd}`);
