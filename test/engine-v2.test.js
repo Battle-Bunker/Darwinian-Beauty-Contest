@@ -98,4 +98,5 @@ test("compute budgets are per program: a clover can be given far more compute th
   const byKind = Object.fromEntries(r.visits.map((v) => [v.kind, v.steps[0]]));
   assert.equal(typeof byKind.clover.r, "number", JSON.stringify(byKind.clover));
   assert.match(byKind.orchid.flowerError, /Timeout/);
+  assert.ok(r.compute[0].clover.meanMs > 50 && r.compute[0].clover.budgetMs === 400, JSON.stringify(r.compute[0]));
 });

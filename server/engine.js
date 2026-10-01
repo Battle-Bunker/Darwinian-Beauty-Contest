@@ -101,6 +101,7 @@ export async function simulateRound({ config, teams, seed }) {
     for (const f of flowers) {
       f.pool = new FlowerPool(config.language, { code: f.code, ms: config.budgets[f.kind].ms, game, maxChars: MAX_CHARS });
       f.cache = new Map(); // pure functions: one answer per challenge per round
+      f.times = [];        // milliseconds per answered call: do clovers spend their compute as a signal?
       killers.push(f.pool);
     }
     const bees = teams.map((t, ti) => {
@@ -117,7 +118,9 @@ export async function simulateRound({ config, teams, seed }) {
     async function ask(flower, c) {
       const key = JSON.stringify(c);
       if (!flower.cache.has(key)) {
+        const t0 = performance.now();
         flower.cache.set(key, flower.pool.call({ c }).then((res) => {
+          flower.times.push(performance.now() - t0);
           if (res.e) return { r: null, flowerError: res.e };
           const bad = checkValue(rType, res.v, limits, "response");
           return bad ? { r: null, flowerError: bad } : { r: res.v };
@@ -227,7 +230,19 @@ export async function simulateRound({ config, teams, seed }) {
         if (res.flowerError) { problems[f.team][f.kind] = res.flowerError; break; }
       }
     }
-    return { visits, feeds, nectar, problems, memories, turns: TURNS };
+    // Compute used per flower (wall ms per distinct question, including ~1-3 ms of process overhead).
+    const compute = teams.map(() => ({ clover: null, orchid: null }));
+    for (const f of flowers) {
+      if (!f.times.length) continue;
+      const sorted = [...f.times].sort((a, b) => a - b);
+      compute[f.team][f.kind] = {
+        calls: sorted.length,
+        meanMs: +(sorted.reduce((a, b) => a + b, 0) / sorted.length).toFixed(1),
+        p90Ms: +sorted[Math.floor(0.9 * (sorted.length - 1))].toFixed(1),
+        budgetMs: config.budgets[f.kind].ms,
+      };
+    }
+    return { visits, feeds, nectar, problems, memories, compute, turns: TURNS };
   } finally {
     for (const k of killers) k.kill();
   }

@@ -323,8 +323,8 @@ async function executeRound(gameId, { roundNo, participants, programs, config, s
       for (const kind of KINDS) {
         const p = programs[teamId][kind];
         await c.query(
-          "INSERT INTO round_programs (game_id, round_no, team_id, kind, code, nodes, distance, carried_over, problem) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
-          [gameId, roundNo, teamId, kind, p.code, p.nodes, p.distance, p.carriedOver, sim.problems[ti][kind]]);
+          "INSERT INTO round_programs (game_id, round_no, team_id, kind, code, nodes, distance, carried_over, problem, compute) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+          [gameId, roundNo, teamId, kind, p.code, p.nodes, p.distance, p.carriedOver, sim.problems[ti][kind], kind === "bee" ? null : sim.compute[ti][kind]]);
       }
     }
     // Bulk insert visits in chunks.

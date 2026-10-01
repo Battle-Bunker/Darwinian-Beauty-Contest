@@ -97,7 +97,8 @@ returns everything that has happened so far, filtered to what this viewer is all
     "no", "startedAt", "finishedAt", "turns",    // turns each bee had this round
     "feeds":  [[...]],  "nectar": [[...]],        // ledgers: row = bee team, column = patch team (participants order)
     "scores": [teamScore], "totals": [teamScore],  // this round alone / all rounds so far
-    "programs": { teamId: { kind: { nodes, distance, carriedOver, code?, problem? } } },  // code: own team or revealed
+    "programs": { teamId: { kind: { nodes, distance, carriedOver, code?, problem?, compute? } } },  // code: own team or revealed
+                                                  // compute (flowers): { calls, meanMs, p90Ms, budgetMs }
     "memory": { teamId: { bytes, note } },        // what each bee kept for later rounds: own team or revealed
     "visits": [visit]
   }],
