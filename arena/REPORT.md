@@ -1096,9 +1096,9 @@ code and its comments:
 
 - **Bees with a checker,** at the start of games 1/2/3: 4 → 6 → 6 of 6 in v3-hidden-treat, and 3 → 5 → 5 in
   v3-open-treat.
-- **The teams improved the examples rather than copying them.** The Paley clover (2,500 characters) didn't fit the
-  2,400 budget. Kenji replaced Miller–Rabin with a sieve, and both he and Mallory stopped at 75–80% of the budget
-  instead of 65%. In the public cohort, Kenji and Mallory each labelled the graceful graph in build order, which
+- **The teams improved the examples rather than copying them.** Kenji estimated the Paley clover at about 2,500
+  characters and thought it was over the 2,400 budget. The engine measures it at 2,252, so it did fit. He replaced
+  Miller–Rabin with a sieve to shrink it, and both he and Mallory stopped at 75–80% of the budget instead of 65%. In the public cohort, Kenji and Mallory each labelled the graceful graph in build order, which
   reaches about 930 against the example's 915.
 - **Measurement notes.**
   - `arena/lib/v3.js`'s code markers miss Paley clovers squeezed to fit, so its Paley counts are low.
