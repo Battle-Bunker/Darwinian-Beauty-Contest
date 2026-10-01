@@ -42,33 +42,27 @@ def flower(challenge):
     for a, b in links:
         count[abs(label[a] - label[b])] += 1
 
-    def relabel(u, x):
-        # Give dot u the label x; whoever had x takes u's old label. Returns the change in the
-        # number of different differences.
-        v = owner[x]
-        touched = [(u, w) for w in neighbours[u]]
-        if v is not None:
-            touched += [(v, w) for w in neighbours[v] if w != u]
-        gain = 0
-        for a, b in touched:
-            d = abs(label[a] - label[b])
-            count[d] -= 1
-            gain -= count[d] == 0
-        old = label[u]
-        label[u], owner[x] = x, u
-        if v is not None:
-            label[v] = old
-        owner[old] = v
-        for a, b in touched:
-            d = abs(label[a] - label[b])
-            gain += count[d] == 0
-            count[d] += 1
-        return gain
-
-    # Hill climbing: try a random change, keep it unless it loses a difference.
-    while time.time() < deadline:
+    # Hill climbing: move a random dot u to a random free label x, and keep the move unless it
+    # loses a difference. (About half the labels are free. The clock is read every 64 moves.)
+    moves = 0
+    while moves % 64 or time.time() < deadline:
+        moves += 1
         u, x = random.randrange(VERTICES), random.randrange(top + 1)
-        old = label[u]
-        if x != old and relabel(u, x) < 0:
-            relabel(u, old)
-    return dict(nodes=VERTICES, edges=[list(link) for link in links], labels=label)
+        if owner[x] is not None:
+            continue
+        old, lost, found = label[u], 0, 0
+        for w in neighbours[u]:
+            d = abs(old - label[w])
+            count[d] -= 1
+            lost += count[d] == 0
+        for w in neighbours[u]:
+            d = abs(x - label[w])
+            found += count[d] == 0
+            count[d] += 1
+        if found >= lost:
+            label[u], owner[x], owner[old] = x, u, None
+        else:
+            for w in neighbours[u]:  # undo
+                count[abs(x - label[w])] -= 1
+                count[abs(old - label[w])] += 1
+    return dict(nodes=VERTICES, edges=[list(pair) for pair in links], labels=label)

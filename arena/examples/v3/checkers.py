@@ -5,8 +5,8 @@
 
 # ---- Paley clique chain (paley_clover.py) ----
 
-CLIQUE_SIZE = 24
-START = 10**7
+CLIQUE_SIZE = 18
+START = 10**8
 
 
 def is_prime(m):
@@ -42,7 +42,7 @@ def chain_primes(n):
 def check_paley(challenge, response, enough=None):
     # How many cliques in a row, from the start of the chain, are real: node k's label must be
     # CLIQUE_SIZE whole numbers whose differences are all squares mod the k-th prime of the chain.
-    # Each clique costs 276 pow() calls (about 0.3 ms), so pass enough=k to stop counting at k.
+    # Each clique costs 153 pow() calls (about 0.2 ms), so pass enough=k to stop counting at k.
     try:
         score = 0
         for clique, p in zip(response["labels"], chain_primes(challenge)):

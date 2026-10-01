@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { ARENA_DIR } from "./db.js";
+import { changeable } from "../../server/lib/schedule.js";
 
 // Read fresh for every prompt: RULES.md is the players' document and may be edited while arenas run.
 export const rules = () => fs.readFileSync(path.join(ARENA_DIR, "..", "RULES.md"), "utf8");
@@ -110,9 +111,18 @@ best idea in your code. Aim it at smart 10-14-year-olds. At most about 250 words
 Reply with <explanation>...</explanation>`;
 }
 
-/** Round-1 notices an arena can name in settings.cohort.notices ({game: name}). Neutral: what changed, no strategy. */
+/** The change turns of a game as text, from server/lib/schedule.js: "the bee before rounds 2 and 5, ...". */
+function turnsText(rounds) {
+  const by = {};
+  for (let r = 2; r <= rounds; r++) for (const k of changeable(r)) (by[k] ||= []).push(r);
+  const and = (xs) => (xs.length > 1 ? `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}` : `${xs[0]}`);
+  return Object.entries(by).sort((a, b) => a[1][0] - b[1][0]).map(([k, rs]) => `the ${k} before round${rs.length > 1 ? "s" : ""} ${and(rs)}`).join(", ");
+}
+
+/** Round-1 notices an arena can name in settings.cohort.notices ({game: name}): text, or a function of the game config.
+ * Neutral: what changed, no strategy. */
 export const NOTICES = {
-  "v3-rules": `RULES CHANGED since your last game (RULES.md and interface.txt have the details):
+  "v3-rules": (config) => `RULES CHANGED since your last game (RULES.md and interface.txt have the details):
 - Flowers are still stateless: the whole program runs fresh for every question and keeps nothing between calls. But each
   call now gets fresh randomness (random is newly seeded on every call) and the clock (import time). GAME["ms"] is your
   program's own compute budget per call, in milliseconds; a flower that runs out of time gives no answer.
@@ -121,13 +131,20 @@ export const NOTICES = {
 - Program size is now measured in characters after the game minifies your program: comments, spacing and the lengths of
   names you define are free; keywords, strings and numbers count character by character. Budgets are in those characters
   (the numbers are in config.json).
-- Games have 6 rounds. After round 1 the three programs take turns to change, one per round: the bee before rounds 2
-  and 5, the orchid before rounds 3 and 6, the clover before round 4. A change is measured in characters of the
-  minified programs.
+- Games have ${config.rounds} rounds. After round 1 the three programs take turns to change, one per round: ${turnsText(config.rounds)}.
+  A change is measured in characters of the minified programs.
 - Programs run in minified form, so names don't exist at runtime. A bee keeps only its top-level variable keep from one
   round to the next: MEMORY[k] is the value keep had at the end of round k+1 (read-only). Bees that read named variables
   from MEMORY must change; round 1 of this game allows full rewrites.`,
 };
+
+/** What everyone can see after each round, in one neutral sentence (both log variants get one). */
+export const logsText = (config) => config.publicLogs
+  ? `Logs in this game are public: after each round every team sees every visit in the garden, including which flower (clover or orchid) ` +
+    `was visited, the challenges and responses, the feeds and the nectar (logs/round-N/visits.jsonl). Code, bee logs, flower errors, ` +
+    `compute use and MEMORY stay private.`
+  : `Logs in this game are private: after each round you see your own bee's visits and the visits to your own patch in full ` +
+    `(challenges, responses, which flower); for other teams' visits you see only who visited whom and what happened.`;
 
 /** The round-1 notice for the examples treatment: plain common knowledge, no code. */
 export const examplesNotice = (files) => `Shared examples: every team in this garden received the same two example flowers and checkers, in examples/ ` +
@@ -180,6 +197,7 @@ export function roundBrief({ view, entry, generation, roundNo, maxTurns, ext, fi
   parts.push(changeText(roundNo, changeable, c.budgets, nextTurns));
   if (restored.length) parts.push(`Last round you edited ${files(restored)} while ${restored.length > 1 ? "they were" : "it was"} locked: ` +
     `those edits were not submitted, and the file${restored.length > 1 ? "s were" : " was"} restored to the version that played.`);
+  if (roundNo === 1) parts.push(logsText(c));
   for (const n of roundNo === 1 ? notices : []) parts.push(n);
   parts.push(`Update the program files you may change (they're checked and submitted when you finish), update notebook.md, and end with a ` +
     `one-paragraph summary of what you changed and why. You have at most about ${maxTurns} tool calls, so be efficient.`);

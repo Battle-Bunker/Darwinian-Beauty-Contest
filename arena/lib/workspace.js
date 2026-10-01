@@ -28,7 +28,7 @@ const README = (ext, cohort, examples) => `# Your workspace
 | clover.${ext}, orchid.${ext}, bee.${ext} | YOUR CURRENT PROGRAMS. Edit the ones you may change this round (your brief says which; config.json too) in place: when you finish they are checked and submitted. Edits to a locked one are discarded |
 | history/round-N/ | the programs that played round N of this game |
 | logs/round-N/round.json | round N as your team may see it, without visits: scores, ledgers, your programs' sizes and compute use, MEMORY sizes |
-| logs/round-N/visits.jsonl | every visit in the garden that round, one JSON object per line (your team's private details included) |
+| logs/round-N/visits.jsonl | every visit in the garden that round, one JSON object per line, as your team may see it: your own bee's and patch's visits in full; other visits in full too when the game's logs are public (config.json: all_visits_public), otherwise only who visited whom and what happened |
 | logs/round-N/my-bee.jsonl | just your bee's visits (with every challenge and response) |
 | logs/round-N/my-patch.jsonl | just the visits to your patch (which flower, which bee, what it asked) |
 | logs/game.json | scores and ledgers for every round so far, teams (id -> name), no visits |
@@ -85,7 +85,7 @@ export async function prepareWorkspace({ arena, gameRow, persona, entry, gPath, 
     `rules: ${(it.types.rules || []).join(" ")}\n\nclover and orchid:\n${it.flower}\n\nbee:\n${it.bee}\n`);
   const turns = view.game.turns ?? config.turnsPerFlower * 2 * n;
   write(path.join(dir, "config.json"), json({ ...config, teams: n, flowers: 2 * n, turns_per_round: turns, file_extension: ext,
-    game: gameRow.generation, next_round: roundNo, may_change_before_next_round: view.game.changeable, your_team: entry.team_name, sample_challenges: sampleFor(config) }));
+    game: gameRow.generation, next_round: roundNo, may_change_before_next_round: view.game.changeable, all_visits_public: !!config.publicLogs, your_team: entry.team_name, sample_challenges: sampleFor(config) }));
   write(path.join(dir, "notebook.md"), (await one("SELECT notebook FROM arena.personas WHERE id = $1", [persona.id])).notebook || "");
 
   // Current programs: exactly what played last round (the change budget is measured against these).

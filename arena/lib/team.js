@@ -72,12 +72,13 @@ async function beeRuntime(tok, g, code, flowers) {
 }
 
 /** Round-1 notices: named ones for a given game (settings.cohort.notices), and the examples treatment's in every game. */
-export function roundNotices(arena, generation, roundNo) {
+export function roundNotices(arena, generation, roundNo, config) {
   const c = arena.settings.cohort;
   if (!c || roundNo !== 1) return [];
   const out = [];
   const named = c.notices?.[generation];
-  if (named) out.push(NOTICES[named] || named);
+  const n = named && (NOTICES[named] || named);
+  if (n) out.push(typeof n === "function" ? n(config) : n);
   if (c.examples) out.push(examplesNotice(c.examples.files));
   return out;
 }
@@ -113,7 +114,7 @@ export async function playTurn(ctx) {
       s = await runSession({
         model: persona.model, cwd: dir, appendSystem: system, maxTurns, python: true, maxBudgetUsd: attempt ? lim.usd / 3 : lim.usd, transcriptFile: transcript,
         prompt: roundBrief({ view, entry, generation: gameRow.generation, roundNo, maxTurns, ext, fix, forked: !!arena.settings.cohort,
-          notices: roundNotices(arena, gameRow.generation, roundNo), changeable: open, nextTurns, restored: attempt ? [] : restored }),
+          notices: roundNotices(arena, gameRow.generation, roundNo, config), changeable: open, nextTurns, restored: attempt ? [] : restored }),
         ctx: { purpose: attempt ? "team-fix" : "team-session", arenaId: arena.id, gameId: gameRow.id, personaId: persona.id },
       });
     } catch (e) {

@@ -10,13 +10,14 @@
 # of CLIQUE_SIZE numbers. It answers with as many cliques in a row as it finds before its time is up:
 # a path of nodes, where node k is labelled with the clique for the k-th prime.
 # A bee checks every pair with one pow() each, which is quick. Finding the cliques is the slow part.
+import functools
 import itertools
 import random
 import time
 
-CLIQUE_SIZE = 24
-WINDOW = 24576        # look for cliques among the numbers 0..WINDOW
-START = 10**7         # the chain starts somewhere from 10**7 to 10**8, chosen by n
+CLIQUE_SIZE = 18
+WINDOW = 40960        # look for cliques among the numbers 0..WINDOW
+START = 10**8         # the chain starts somewhere from 10**8 to 10**9, chosen by n
 
 
 def is_prime(m):
@@ -50,7 +51,7 @@ def chain_primes(n):
 
 
 FLIP = bytes.maketrans(b"\0\1", b"\1\0")
-DIGITS = bytes.maketrans(b"\0\1", b"10")
+DIGITS = bytes.maketrans(b"\0\1", b"01")
 
 
 def squares_mod(p, odd_primes):
@@ -77,6 +78,7 @@ def find_clique(p, odd_primes, deadline):
     square, pattern = squares_mod(p, odd_primes)
     everyone = (1 << (WINDOW + 1)) - 1
 
+    @functools.cache
     def friends(x):
         return (pattern >> (WINDOW - x)) & everyone
 
@@ -113,20 +115,21 @@ def find_clique(p, odd_primes, deadline):
             if len(clique) >= CLIQUE_SIZE or time.time() > deadline:
                 break
             # Sort every number by how many members it is NOT friends with: none, exactly one, more.
-            none_missed, one_missed = everyone, 0
+            # (Each member misses only itself, so take the members out of the "exactly one" set.)
+            none_missed, one_missed, member_bits = everyone, 0, 0
             for v in clique:
                 f = friends(v)
                 one_missed = (one_missed & f) | (none_missed & ~f)
                 none_missed &= f
+                member_bits |= 1 << v
             if none_missed:
                 clique = grow(clique, none_missed)
                 continue
             # A number that misses only member v could take v's place.
             replacements = {}
-            for u in members(one_missed):
+            for u in members(one_missed & ~member_bits):
                 v = next(v for v in clique if not square[abs(u - v)])
-                if v != u:
-                    replacements.setdefault(v, []).append(u)
+                replacements.setdefault(v, []).append(u)
             # If two of v's replacements are friends, swapping v out for both makes the clique bigger.
             pair = next(((v, a, b) for v, us in replacements.items()
                          for a, b in itertools.combinations(us, 2) if square[abs(a - b)]), None)

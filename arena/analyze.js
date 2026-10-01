@@ -209,9 +209,20 @@ if (v2games.length) {
 const cohortGroups = {};
 for (const a of arenas.filter((x) => x.settings?.cohort)) (cohortGroups[a.settings.cohort.experiment || "gx"] ||= []).push(a);
 for (const [experiment, cohortArenas] of Object.entries(cohortGroups)) {
-  const T = cohortArenas.find((a) => a.settings.cohort.role === "treatment")?.id;
-  const [C1, C2] = cohortArenas.filter((a) => a.settings.cohort.role === "control").map((a) => a.id).sort((a, b) => a.length - b.length || a.localeCompare(b));
   const examplesArm = !!cohortArenas.find((a) => a.settings.cohort.examples);
+  // Comparisons: each treatment against the control(s) with the same log variant (a second control gives the noise
+  // floor); a group without treatments but with both log variants compares public logs with private logs.
+  const variant = (a) => (a.settings.config?.publicLogs ? "open" : "hidden");
+  const byId = (a, b) => a.length - b.length || a.localeCompare(b);
+  const pairs = [];
+  for (const t of cohortArenas.filter((a) => a.settings.cohort.role === "treatment")) {
+    const cs = cohortArenas.filter((a) => a.settings.cohort.role === "control" && variant(a) === variant(t)).map((a) => a.id).sort(byId);
+    if (cs.length) pairs.push({ A: t.id, B: cs[0], B2: cs[1], what: `treatment ${t.id} − control ${cs[0]}${cs[1] ? ` (and ${cs[1]})` : ""}` });
+  }
+  if (!pairs.length) {
+    const open = cohortArenas.filter((a) => variant(a) === "open").map((a) => a.id), hidden = cohortArenas.filter((a) => variant(a) === "hidden").map((a) => a.id);
+    if (open.length && hidden.length) pairs.push({ A: open[0], B: hidden[0], what: `public logs ${open[0]} − private logs ${hidden[0]}` });
+  }
   p(`## Cohort experiment \`${experiment}\` (${cohortArenas.map((a) => `${a.id}: ${a.settings.cohort.role}`).join(", ")})`);
   const cgames = await all(`SELECT g.* FROM arena.games g WHERE g.arena_id = ANY($1) AND g.stage IN ('played','interviewed','judged','done') AND g.contaminated IS NULL ORDER BY g.generation, g.arena_id`, [cohortArenas.map((a) => a.id)]);
   // Per cohort/game summary.
@@ -235,29 +246,30 @@ for (const [experiment, cohortArenas] of Object.entries(cohortGroups)) {
                           WHERE g.arena_id = ANY($1) AND e.fitness IS NOT NULL`, [cohortArenas.map((a) => a.id)]);
   const slugs = [...new Set(fit.map((x) => x.slug))].sort();
   const gens = [...new Set(fit.map((x) => x.generation))].sort();
-  const prow = [];
-  const diffs = { holder: [], other: [], noise: [] };
-  for (const sl of slugs) for (const g of gens) {
-    const get = (a) => fit.find((x) => x.arena_id === a && x.slug === sl && x.generation === g);
-    const t = T && get(T), c = C1 && get(C1), c2 = C2 && get(C2);
-    if (!t && !c) continue;
-    if (t && c) (holders[sl] || examplesArm ? diffs.holder : diffs.other).push(t.fitness - (c2 ? (c.fitness + c2.fitness) / 2 : c.fitness));
-    if (c && c2) diffs.noise.push(Math.abs(c.fitness - c2.fitness));
-    prow.push([sl, examplesArm ? "examples" : holders[sl] || "-", g, t ? `${f2(t.fitness)} (#${t.fitness_rank})` : "-", c ? `${f2(c.fitness)} (#${c.fitness_rank})` : "-", c2 ? `${f2(c2.fitness)} (#${c2.fitness_rank})` : "-",
-      t && c ? f2(t.fitness - (c2 ? (c.fitness + c2.fitness) / 2 : c.fitness)) : "-", c && c2 ? f2(Math.abs(c.fitness - c2.fitness)) : "-"]);
+  for (const { A, B, B2, what } of pairs) {
+    const prow = [], diffs = { holder: [], other: [], noise: [] };
+    for (const sl of slugs) for (const g of gens) {
+      const get = (a) => fit.find((x) => x.arena_id === a && x.slug === sl && x.generation === g);
+      const t = get(A), c = get(B), c2 = B2 && get(B2);
+      if (!t || !c) continue;
+      const d = t.fitness - (c2 ? (c.fitness + c2.fitness) / 2 : c.fitness);
+      (holders[sl] || examplesArm || !B2 ? diffs.holder : diffs.other).push(d);
+      if (c2) diffs.noise.push(Math.abs(c.fitness - c2.fitness));
+      prow.push([sl, holders[sl] || "-", g, `${f2(t.fitness)} (#${t.fitness_rank})`, `${f2(c.fitness)} (#${c.fitness_rank})`, c2 ? `${f2(c2.fitness)} (#${c2.fitness_rank})` : "-", f2(d), c2 ? f2(Math.abs(c.fitness - c2.fitness)) : "-"]);
+    }
+    if (!prow.length) continue;
+    p(`Paired fitness (same persona, same games, same seeds): ${what}; Δ = ${A} − ${B2 ? "mean of controls" : B}${B2 ? "; noise = |control − control2|" : ""}:`);
+    table(["persona", "card", "game", A, B, B2 || "-", "Δ fitness", "noise"], prow);
+    p(`Mean Δ fitness: ${f3(mean(diffs.holder))} (n=${diffs.holder.length})${diffs.other.length ? `; other treatment teams ${f3(mean(diffs.other))} (n=${diffs.other.length})` : ""}` +
+      `${diffs.noise.length ? `; noise floor (mean |control − control2|) ${f3(mean(diffs.noise))} (n=${diffs.noise.length})` : "; no second control here (the gx cohorts' noise floor was 0.26 fitness per persona-game)"}.`);
   }
-  if (T) {
-    p(`Paired comparison (same persona, same games, same seeds; treatment ${T}, controls ${C1}${C2 ? `, ${C2}` : ""}; Δ = treatment − mean of controls; noise = |control − control2|):`);
-    table(["persona", examplesArm ? "arm" : "card", "game", "treatment", "control", "control2", "Δ fitness", "noise"], prow);
-  }
-  if (T) p(`Mean Δ fitness, ${examplesArm ? "treatment teams (the whole cohort got the examples)" : "card holders"}: ${f3(mean(diffs.holder))} (n=${diffs.holder.length}); other treatment teams: ${f3(mean(diffs.other))} (n=${diffs.other.length}); noise floor (mean |control − control2|): ${f3(mean(diffs.noise))} (n=${diffs.noise.length}).`);
   p();
   // Adoption of catalogue ideas: per cohort, game.round: teams whose code implements each idea (haiku classifier), holders marked *.
   const ad = await all(`SELECT g.arena_id, g.generation, a.round_no, p.slug, a.method, a.ideas FROM arena.adoption a JOIN arena.games g ON g.id = a.game_id JOIN arena.personas p ON p.id = a.persona_id
                          WHERE g.arena_id = ANY($1) ORDER BY g.generation, a.round_no`, [cohortArenas.map((a) => a.id)]);
   const ideaIds = catalogueFor(experiment).map((c) => c.id);
   const arow = [];
-  for (const a of cohortArenas) for (const g of gens) for (const r of [1, 2, 3, 4, 5]) {
+  for (const a of cohortArenas) for (const g of gens) for (let r = 1; r <= 8; r++) {
     const rows = ad.filter((x) => x.arena_id === a.id && x.generation === g && x.round_no === r && x.method === "llm");
     if (!rows.length) continue;
     const kw = ad.filter((x) => x.arena_id === a.id && x.generation === g && x.round_no === r && x.method === "keyword");
@@ -307,46 +319,64 @@ for (const [experiment, cohortArenas] of Object.entries(cohortGroups)) {
   p("Diffusion through the top-2 code demo (token-shingle similarity of each non-demo program to the closest demo program of the same kind: before = own final code in the previous game; borrowed = up by > 0.25 to > 0.35):");
   table(["cohort game", "demo (top 2 of previous game)", "programs", "mean sim before", "round 1", "last round", "borrowed"], drow);
 
-  // Engine v3: per-round discrimination, fingerprinting, non-determinism, compute and example markers.
+  // Engine v3: per-round discrimination, fingerprinting, turn dynamics, non-determinism, compute and example markers.
   if (cohortArenas.some((a) => a.settings.cohort.experiment !== "gx") || args["v3-tables"]) {
-    const vrow = [], byKey = {};
+    const vrow = [], drow2 = [], byKey = {};
     for (const g of gens) for (const a of cohortArenas) {
       const G = await gameRef(a.id, g);
       if (!G || !G.rounds) continue;
       for (const r of await v3RoundStats(G)) {
         byKey[`${a.id}|${g}|${r.round}`] = r;
         const n = r.teams, mk = (k, m) => r.markers[k][m];
-        vrow.push([`${a.id} g${g}.r${r.round}`, f3(r.nectarPerTurn), f2(r.precision), `${f2(r.rivalCloverFed)} / ${f2(r.rivalOrchidFed)}`, f2(r.gap), f2(r.repeatShare),
-          `${f2(r.stolenShare)} / ${f2(r.twinShare)}`, `${r.nondet.clover}/${r.nondet.cloverAsked} · ${r.nondet.orchid}/${r.nondet.orchidAsked}`,
+        const label = `${a.id} g${g}.r${r.round}`;
+        vrow.push([label, f3(r.nectarPerTurn), f2(r.precision), `${f2(r.rivalCloverFed)} / ${f2(r.rivalOrchidFed)}`, f2(r.gap), f2(r.repeatShare), f2(r.freshShare),
+          `${f2(r.stolenShare)} / ${f2(r.genCopyShare)} / ${f2(r.twinShare)}`, `${r.nondet.clover}/${r.nondet.cloverAsked} · ${r.nondet.orchid}/${r.nondet.orchidAsked}`,
           `${mk("clover", "random")}/${mk("clover", "clock")}/${mk("clover", "gameMs")} of ${n}`,
           `${f2(r.compute.clover.mean)} (p90 max ${f2(r.compute.clover.p90max)})`, `${f2(r.compute.orchid.mean)} (p90 max ${f2(r.compute.orchid.p90max)})`,
           `${mk("clover", "paley")}/${mk("orchid", "paley")}/${mk("bee", "paley")}`, `${mk("clover", "graceful")}/${mk("orchid", "graceful")}/${mk("bee", "graceful")}`]);
+        drow2.push([label, r.turn, r.turnChanged ?? "-", r.turnChars != null ? r.turnChars.toFixed(0) : "-", `${f2(r.turnover.clover)} / ${f2(r.turnover.orchid)}`, f2(r.rankTau), f2(r.fitnessStd)]);
       }
     }
-    p("Engine v3, per round (rival = other teams' patches; fingerprinting = share of a bee's pre-feed asks repeating a challenge it already asked this game; " +
-      "stolen / twin = rival-orchid visits whose every pre-feed answer equals a rival's / its own clover's answer that round; non-deterministic = flowers seen giving 2+ answers to one challenge, of flowers asked; " +
-      "clover code using random / time / GAME[\"ms\"]; compute = mean share of the ms budget; example markers (Paley clique chain, graceful labelling) in clover/orchid/bee code):");
-    table(["arena game.round", "nectar/turn", "precision", "rival clover / orchid fed", "gap", "fingerprinting", "stolen / twin orchids", "non-det. clovers · orchids",
-      "clovers using random/time/ms", "clover compute", "orchid compute", "Paley c/o/b", "graceful c/o/b"], vrow);
-    if (T && C1) {
-      // Paired by (game, round): treatment − mean(controls); noise = |control − control2|.
-      const keys = ["nectarPerTurn", "precision", "gap", "repeatShare", "stolenShare"];
+    p("Engine v3, per round:");
+    p("- rival: other teams' patches");
+    p("- fingerprinting: share of a bee's pre-feed asks repeating a challenge it already asked this game");
+    p("- new challenges: share of pre-feed asks not asked by the same bee the round before");
+    p("- stolen / generator copy / twin: rival-orchid visits whose every pre-feed answer equals a rival clover's answer, has the same shape, size and edge count as one, or equals its own clover's answer");
+    p("- non-deterministic: flowers seen giving 2+ answers to one challenge, of the flowers asked");
+    p("- clover code using random / time / GAME[\"ms\"]");
+    p("- compute: mean share of the ms budget");
+    p("- example markers (Paley clique chain, graceful labelling) in clover/orchid/bee code");
+    p();
+    table(["arena game.round", "nectar/turn", "precision", "rival clover / orchid fed", "gap", "fingerprinting", "new challenges", "stolen / gen. copy / twin orchids",
+      "non-det. clovers · orchids", "clovers using random/time/ms", "clover compute", "orchid compute", "Paley c/o/b", "graceful c/o/b"], vrow);
+    p("Dynamism per round:");
+    p("- turn: the kind that could change before the round");
+    p("- teams / chars: teams that changed it, and their mean change in the game's size unit");
+    p("- style turnover: share of clovers / orchids whose modal answer shape differs from the round before");
+    p("- rank τ: per-round ranks vs the round before (lower = more churn)");
+    p();
+    table(["arena game.round", "turn", "teams changed", "mean change", "style turnover clover / orchid", "rank τ", "fitness σ"], drow2);
+    for (const { A, B, B2, what } of pairs) {
+      // Paired by (game, round): A − B (or − mean of B and B2, whose difference is the noise floor).
+      const keys = ["nectarPerTurn", "precision", "gap", "repeatShare", "freshShare", "stolenShare", "genCopyShare", "rankTau", "fitnessStd"];
       const prow2 = [];
       const acc = Object.fromEntries(keys.map((k) => [k, { d: [], n: [] }]));
-      for (const g of gens) for (let rn = 1; rn <= 5; rn++) {
-        const t = byKey[`${T}|${g}|${rn}`], c = byKey[`${C1}|${g}|${rn}`], c2 = C2 && byKey[`${C2}|${g}|${rn}`];
+      for (const g of gens) for (let rn = 1; rn <= 8; rn++) {
+        const t = byKey[`${A}|${g}|${rn}`], c = byKey[`${B}|${g}|${rn}`], c2 = B2 && byKey[`${B2}|${g}|${rn}`];
         if (!t || !c) continue;
         const cell = (k) => {
-          const cm = c2 ? (c[k] + c2[k]) / 2 : c[k], d = t[k] - cm, nz = c2 ? Math.abs(c[k] - c2[k]) : null;
+          if (t[k] == null || c[k] == null) return "-";
+          const cm = c2 && c2[k] != null ? (c[k] + c2[k]) / 2 : c[k], d = t[k] - cm, nz = c2 && c2[k] != null ? Math.abs(c[k] - c2[k]) : null;
           if (Number.isFinite(d)) acc[k].d.push(d);
           if (Number.isFinite(nz)) acc[k].n.push(nz);
           return `${f3(d)}${nz != null ? ` (±${f3(nz)})` : ""}`;
         };
         prow2.push([`g${g}.r${rn}`, ...keys.map(cell)]);
       }
-      prow2.push(["mean Δ (mean noise)", ...keys.map((k) => `${f3(mean(acc[k].d))} (${f3(mean(acc[k].n))})`)]);
-      p(`Paired by round, ${T} − mean(${C1}${C2 ? `, ${C2}` : ""}) (in brackets: |${C1} − ${C2 || "-"}|, the noise floor):`);
-      table(["game.round", "nectar/turn", "precision", "rival clover−orchid gap", "fingerprinting", "stolen-face orchids"], prow2);
+      if (!prow2.length) continue;
+      prow2.push(["mean Δ" + (B2 ? " (mean noise)" : ""), ...keys.map((k) => `${f3(mean(acc[k].d))}${B2 ? ` (${f3(mean(acc[k].n))})` : ""}`)]);
+      p(`Paired by round: ${what}${B2 ? " (in brackets: the control − control2 noise floor)" : ""}:`);
+      table(["game.round", "nectar/turn", "precision", "rival clover−orchid gap", "fingerprinting", "new challenges", "stolen-face orchids", "generator copies", "rank τ", "fitness σ"], prow2);
     }
     // Fitness spread and the model gap per game.
     const frow = [];

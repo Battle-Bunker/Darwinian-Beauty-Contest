@@ -1,15 +1,20 @@
 #!/usr/bin/env node
 // Fork a played game's population into one new arena that continues from that game, or into identical cohorts for a
 // controlled experiment.
-//   node arena/fork.js --from gx-control --game 3 --cohorts v3-base --experiment v3 --generations 2 --notice v3-rules --seed-base 20261020
-//   node arena/fork.js --from v3-base --game 2 --cohorts v3-treat,v3-control,v3-control2 --treat v3-treat \
-//        --examples arena/examples/v3 --experiment v3x --generations 3 --seed-base 20261030
+//   node arena/fork.js --from gx-control --game 3 --cohorts v3-hidden --siblings v3-open --experiment v3 --notice v3-rules --generations 2 --seed-base 20261020
+//   node arena/fork.js --from gx-control --game 3 --cohorts v3-open --siblings v3-hidden --config '{"publicLogs":true}' \
+//        --experiment v3 --notice v3-rules --generations 2 --seed-base 20261020
+//   node arena/fork.js --from v3-hidden --game 2 --cohorts v3-hidden-treat,v3-hidden-control --treat v3-hidden-treat \
+//        --siblings v3-open-treat,v3-open-control --examples arena/examples/v3 --experiment v3x --generations 3 --seed-base 20261030
 // Each new arena gets its own room, the same personas (prompt, model, team name), each persona's notebook as it was at
 // the END of the source game, and a workspace holding that game as previous-games/game-0/: the team's own
 // logs/history/memory, the standings, the top-2 teams' final code and the panel's feedback. The team's final programs
 // become its current code, and the helper scripts it wrote in its workspace come along. Membership is fixed (no
 // retirement or breeding), and every cohort plays identical seeds. Options:
-//   --config '{...}'  game config overrides (language and types come from the source game; the rest are server defaults)
+//   --config '{...}'  game config overrides (language, types and publicLogs come from the source game; the rest are
+//                     server defaults)
+//   --siblings A,B    other arenas of the same experiment forked by another command: the judges' idea ledger of each
+//                     new arena excludes its siblings' ideas
 //   --notice NAME     a named round-1 notice for game 1 (NOTICES in lib/prompts.js)
 //   --treat A,B       treatment cohorts: with --examples DIR, the WHOLE cohort gets DIR copied into examples/ and a
 //                     round-1 notice in every game saying that every team in the garden got the same files
@@ -26,6 +31,7 @@ const SEED_BASE = Number(args["seed-base"] || 20261001);
 const EXPERIMENT = args.experiment || "v3";
 const EXAMPLES = args.examples ? path.resolve(args.examples) : null;
 const NOTICE = args.notice || null; // a named round-1 notice for game 1 (see lib/prompts.js NOTICES)
+const SIBLINGS = String(args.siblings || "").split(",").filter(Boolean); // other arenas of the experiment (forked separately)
 
 await migrate();
 const src = await one("SELECT * FROM arena.arenas WHERE id = $1", [from]);
@@ -37,6 +43,7 @@ const srcUuid = srcView.game.id;
 const srcConfig = srcView.game.config;
 const CONFIG = {
   language: srcConfig.language, challengeType: srcConfig.challengeType, responseType: srcConfig.responseType,
+  publicLogs: !!srcConfig.publicLogs, // the log variant carries over from the source game
   revealOnFinish: false, // rounds, turns and budgets: the server's current defaults unless --config says otherwise
   ...(args.config ? JSON.parse(args.config) : {}),
 };
@@ -57,7 +64,7 @@ for (const cid of cohorts) {
   const room = await Api.createRoom(tok);
   const role = treat.includes(cid) ? "treatment" : cohorts.length === 1 ? "base" : "control";
   const cohort = {
-    experiment: EXPERIMENT, role, forkOf: `${from}/game-${gen}`, seedBase: SEED_BASE, siblings: cohorts.filter((c) => c !== cid),
+    experiment: EXPERIMENT, role, forkOf: `${from}/game-${gen}`, seedBase: SEED_BASE, siblings: [...cohorts, ...SIBLINGS].filter((c) => c !== cid),
     ...(role === "treatment" ? { examples: { source: path.relative(process.cwd(), EXAMPLES), files: exampleFiles } } : {}),
     ...(NOTICE ? { notices: { 1: NOTICE } } : {}),
   };
