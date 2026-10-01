@@ -48,7 +48,7 @@ async function ensureArena(id, presetName, generations) {
   const owner = `Arena owner ${id}`;
   const tok = await login(owner);
   const room = await Api.createRoom(tok);
-  const settings = { config: preset.config, teams: preset.lineup.length, generations, description: preset.description, budgetUsd: args.budget ? Number(args.budget) : null };
+  const settings = { config: preset.config, teams: preset.lineup.length, generations, description: preset.description, recap: preset.recap || "full", budgetUsd: args.budget ? Number(args.budget) : null };
   await q("INSERT INTO arena.arenas (id, preset, settings, owner_name, room_short_id, room_url) VALUES ($1,$2,$3,$4,$5,$6)",
     [id, presetName, settings, owner, room.shortId, room.url]);
   for (const [slug, model] of preset.lineup) {
@@ -77,6 +77,7 @@ async function recapFor(arena, generation) {
     const e = entries.find((x) => x.team_id === s.teamId);
     lines.push(`${i + 1}. ${names[s.teamId]}: fitness ${s.fitness.toFixed(2)} (allure ${s.allure.toFixed(2)}, forage ${s.forage.toFixed(2)}); social ${e?.social?.toFixed(1) ?? "-"} (#${e?.social_rank ?? "-"})`);
   });
+  if (arena.settings.recap === "scores") return { text: lines.join("\n") + "\n(Other teams' code is not shown in this arena.)", prevGameId: prev.id };
   lines.push(`\nFinal code of every team:`);
   for (const s of final) {
     const p = last.programs[s.teamId];
@@ -225,7 +226,7 @@ async function socialEvaluation(arena, generation, ctx, log) {
       persona_id: e.persona_id, name: e.team_name, explanation: e.explanation,
       code: Object.fromEntries(["clover", "orchid", "bee"].map((k) => [k, last.programs[e.team_id]?.[k]?.code || ""])),
     }));
-    const res = await judgeGame({ arena, gameRow, config: view.game.config, teams, log });
+    const res = await judgeGame({ arena, gameRow, config: view.game.config, teams, starters: view.starters, log });
     await q("UPDATE arena.games SET stage = 'judged' WHERE id = $1", [gameRow.id]);
     gameRow.stage = "judged";
     const rows = await all("SELECT team_name, social, social_rank, social_parts FROM arena.entries WHERE game_id = $1 ORDER BY social_rank NULLS LAST", [gameRow.id]);

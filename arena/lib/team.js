@@ -30,6 +30,18 @@ function samples(t, maxLen) {
   }
 }
 export const sampleChallenges = (config) => samples(parseType(config.challengeType), config.maxLen);
+const sampleResponse = (config, i) => samples(parseType(config.responseType), config.maxLen)[i];
+
+/** A minimal program for when the starter itself doesn't fit the budget (e.g. the TypeScript bee under tight budgets). */
+export function fallback(kind, config) {
+  const ex = JSON.stringify(sampleChallenges(config)[2]);
+  if (config.language === "typescript") {
+    return kind === "bee" ? `function forage(seen: any[], turnsLeft: number): any { return seen.length ? "feed" : ["ask", ${ex}]; }\n`
+      : `function flower(challenge: any): any { return ${JSON.stringify(sampleResponse(config, kind === "clover" ? 1 : 2))}; }\n`;
+  }
+  return kind === "bee" ? `def forage(seen, turns_left):\n    return "feed" if seen else ["ask", ${ex}]\n`
+    : `def flower(challenge):\n    return ${JSON.stringify(sampleResponse(config, kind === "clover" ? 1 : 2)).replace(/\btrue\b/g, "True").replace(/\bfalse\b/g, "False")}\n`;
+}
 
 /** Parse the reply: <clover>/<orchid>/<bee>/<notes> tags; falls back to a JSON object with the same keys. */
 export function parseReply(text) {
@@ -78,7 +90,9 @@ export async function playTurn(ctx) {
   const config = view.game.config;
   const system = teamSystem(persona, config);
   const notebook = (await all("SELECT notebook FROM arena.personas WHERE id = $1", [persona.id]))[0]?.notebook || "";
-  const base = teamRoundPrompt(view, { generation: gameRow.generation, recap: roundNo === 1 ? recap : null, nextRound: roundNo, notebook });
+  const starterNodes = {};
+  if (roundNo === 1) for (const k of KINDS) starterNodes[k] = (await Api.check(tok, gPath, k, view.starters[k])).nodes;
+  const base = teamRoundPrompt(view, { generation: gameRow.generation, recap: roundNo === 1 ? recap : null, nextRound: roundNo, notebook, starterNodes });
   let prompt = base;
   const submitted = new Set();
   let notes = null, cost = 0, failures = [];
@@ -132,8 +146,9 @@ export async function playTurn(ctx) {
   if (roundNo === 1) {
     for (const kind of KINDS) {
       if (submitted.has(kind)) continue;
-      const s = await Api.submit(tok, gPath, kind, view.starters[kind]);
-      if (s.submitted) log(`  ${persona.name}: using the starter ${kind}`);
+      let s = await Api.submit(tok, gPath, kind, view.starters[kind]);
+      if (!s.submitted) s = await Api.submit(tok, gPath, kind, fallback(kind, config));
+      log(`  ${persona.name}: using the ${s.submitted ? "starter/fallback" : "NOTHING (fallback rejected)"} ${kind}`);
     }
   }
   if (failed.length) await q("UPDATE arena.entries SET agent_errors = agent_errors + $3 WHERE game_id = $1 AND persona_id = $2", [gameRow.id, persona.id, failed.length]);

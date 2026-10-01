@@ -39,16 +39,16 @@ function matchTeam(name, teams) {
 
 const clamp = (x) => Math.max(0, Math.min(10, Number(x) || 0));
 
-async function runJudge({ judge, arena, gameRow, config, teams, ideas, extraIdeas, log }) {
+async function runJudge({ judge, arena, gameRow, config, teams, ideas, extraIdeas, starters, log }) {
   const ordered = shuffle(teams, gameRow.id * 31 + judge.id.length * 7 + judge.id.charCodeAt(0));
   const ledger = [...ideas, ...extraIdeas.map((x) => ({ ...x, description: x.description + " [NEW in this very game: first spotted by another judge just now, still counts as new]" }))];
-  const prompt = judgePrompt({ config, teams: ordered, ideas: ledger, arenaLabel: `arena ${arena.id}, game ${gameRow.generation}` });
+  const prompt = judgePrompt({ config, teams: ordered, ideas: ledger, starters, arenaLabel: `arena ${arena.id}, game ${gameRow.generation}` });
   let parsed = null, text = "";
   for (let attempt = 0; attempt < 2 && !parsed; attempt++) {
     const r = await callModel({
       model: judge.model, system: judgeSystem(judge),
       prompt: attempt ? prompt + `\n\nIMPORTANT: your last reply was not valid JSON. Reply with the JSON object only.` : prompt,
-      effort: "medium", ctx: { purpose: "judge", arenaId: arena.id, gameId: gameRow.id, personaId: "judge:" + judge.id },
+      effort: judge.model === "haiku" ? "low" : "medium", ctx: { purpose: "judge", arenaId: arena.id, gameId: gameRow.id, personaId: "judge:" + judge.id },
     });
     text = r.text;
     const j = extractJson(text);
@@ -73,7 +73,7 @@ async function runJudge({ judge, arena, gameRow, config, teams, ideas, extraIdea
  * teams: [{ persona_id, name, explanation, code: {clover, orchid, bee} }]
  * Two waves: one judge first (its new tags are shown to the others so tags converge), then the rest in parallel.
  */
-export async function judgeGame({ arena, gameRow, config, teams, log }) {
+export async function judgeGame({ arena, gameRow, config, teams, starters, log }) {
   const judges = await all("SELECT * FROM arena.judges ORDER BY id");
   const ideasBefore = await loadLedger();
   const known = new Map(ideasBefore.map((i) => [i.tag, i]));
@@ -81,7 +81,7 @@ export async function judgeGame({ arena, gameRow, config, teams, log }) {
   const first = judges[firstIdx], rest = judges.filter((_, i) => i !== firstIdx);
   const results = [];
   const safe = async (judge, extra) => {
-    try { return await runJudge({ judge, arena, gameRow, config, teams, ideas: ideasBefore, extraIdeas: extra, log }); }
+    try { return await runJudge({ judge, arena, gameRow, config, teams, ideas: ideasBefore, extraIdeas: extra, starters, log }); }
     catch (e) { if (e instanceof BudgetError) throw e; log(`  judge ${judge.name} failed: ${e.message}`); return []; }
   };
   const r1 = await safe(first, []);

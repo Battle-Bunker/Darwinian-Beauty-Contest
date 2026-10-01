@@ -31,4 +31,15 @@ export const PRESETS = {
     },
     lineup: [["rosie", "fable"], ["koan", "opus"], ["kenji", "opus"], ["bayes", "sonnet"], ["luna", "sonnet"], ["gremlin", "haiku"], ["echo", "haiku"], ["zoe", "haiku"]],
   },
+  cheapfeed: {
+    description: "Probe for blind trust: python int→int, feed cost 1 (feeding barely costs more than asking), 6 teams, 5 rounds",
+    config: { language: "python", challengeType: "int", responseType: "int", feedCost: 1, rounds: 5 },
+    lineup: [["mallory", "fable"], ["zoe", "opus"], ["ada", "sonnet"], ["rosie", "sonnet"], ["nash", "haiku"], ["theo", "haiku"]],
+  },
+  norecap: {
+    description: "Baseline twin with no code recap between games (agents see last game's standings and their own panel feedback, not other teams' code)",
+    config: { language: "python", challengeType: "int", responseType: "int", rounds: 5 },
+    recap: "scores",
+    lineup: [["nash", "fable"], ["kenji", "opus"], ["bayes", "sonnet"], ["milo", "sonnet"], ["grace", "haiku"], ["jayden", "haiku"]],
+  },
 };

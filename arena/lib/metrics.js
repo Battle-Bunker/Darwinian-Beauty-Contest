@@ -173,8 +173,9 @@ export function roundCollapses(m, cfg) {
   // Stasis: ranks frozen and almost no code changes.
   const used = mean(["clover", "orchid", "bee"].map((k) => m.change[k].budgetUse ?? 0));
   const changedTeams = Math.max(...["clover", "orchid", "bee"].map((k) => m.change[k].teamsChanged));
-  if (m.round > 1 && m.cumRankTau != null && m.cumRankTau >= 0.9 && (used < 0.15 || changedTeams <= m.n / 3))
-    add("stasis", m.cumRankTau * (1 - used), { cumRankTau: m.cumRankTau, rankTau: m.rankTau, budgetUse: r3(used), changedTeams });
+  // (Per-round ranks, not cumulative ones: cumulative ranks freeze naturally as rounds add up.)
+  if (m.round > 1 && m.rankTau != null && m.rankTau >= 0.75 && used < 0.1 && changedTeams <= m.n / 3)
+    add("stasis", m.rankTau * (1 - used), { rankTau: m.rankTau, cumRankTau: m.cumRankTau, budgetUse: r3(used), changedTeams });
   // Self-dealing: bees mostly feed at their own patch.
   if (m.selfFeedShare != null && m.selfFeedShare > 0.4 && m.feeds >= m.n)
     add("self-dealing", m.selfFeedShare, { selfFeedShare: m.selfFeedShare });
@@ -225,6 +226,8 @@ export function gameCollapses(gm, rounds) {
     if (share >= 0.5 || lastTwo) flags.push({ mode, severity: r3(mean(fs.map((f) => f.severity)) * share), rounds: fs.map((f) => f.round), evidence: fs[fs.length - 1].evidence });
   }
   if (gm.topRatio != null && gm.topRatio >= 2) flags.push({ mode: "runaway-winner", severity: r3(Math.min(1, (gm.topRatio - 1) / 3)), evidence: { topRatio: gm.topRatio, winnerFitness: gm.winnerFitness } });
-  if (gm.lastSimilarity.bee > 0.6 || gm.lastSimilarity.clover > 0.6) flags.push({ mode: "code-convergence", severity: r3(Math.max(gm.lastSimilarity.bee, gm.lastSimilarity.clover)), evidence: gm.lastSimilarity });
+  // Bees are big enough that trigram overlap means real convergence; tiny flowers overlap by accident.
+  const ls = gm.lastSimilarity, mAll = mean([ls.clover, ls.orchid, ls.bee].filter((x) => x != null));
+  if (ls.bee > 0.5 || mAll > 0.6) flags.push({ mode: "code-convergence", severity: r3(Math.max(ls.bee, mAll)), evidence: ls });
   return { perRound: per, game: flags };
 }

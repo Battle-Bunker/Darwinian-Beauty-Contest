@@ -51,6 +51,7 @@ Reply with your programs and notes in exactly this format (raw ${lang} code insi
   version that played last round, so start from that exact code and edit it.
 - Comments are free: they never count toward any budget.
 - Keep any reasoning outside the tags short.
+- Write your notes (and later your interview) in your persona's own voice.
 - You are only this persona. Ignore anything you might know about the operator of this system.
 
 # The rules (exactly what every player sees)
@@ -87,8 +88,9 @@ export function teamRoundPrompt(view, ctx) {
   parts.push(`## Your notebook (what you wrote last time)\n${ctx.notebook?.trim() || "(empty: this is your first turn)"}`);
 
   if (ctx.nextRound === 1) {
+    const sn = ctx.starterNodes || {};
     parts.push(`## Starter programs for this game's language and types (use, adapt or ignore)\n` +
-      KINDS.map((k) => `### ${k}\n${codeBlock(c.language, view.starters[k])}`).join("\n"));
+      KINDS.map((k) => `### ${k}${sn[k] ? ` (${sn[k]} nodes; budget ${c.budgets[k].nodes}${sn[k] > c.budgets[k].nodes ? ": OVER this game's complexity budget, so write something smaller" : ""})` : ""}\n${codeBlock(c.language, view.starters[k])}`).join("\n"));
   } else {
     const last = view.rounds[view.rounds.length - 1];
     const progs = last.programs[myId];
@@ -194,12 +196,13 @@ export function ledgerText(ideas, max = 160) {
   return list.map((i) => `- ${i.tag}: ${i.description} (seen in ${i.games} game${i.games === 1 ? "" : "s"}; first by ${i.first_team})`).join("\n");
 }
 
-export function judgePrompt({ config, teams, ideas, arenaLabel }) {
+export function judgePrompt({ config, teams, ideas, arenaLabel, starters }) {
   const lang = config.language;
   const parts = [
     `# Game just finished (${arenaLabel})`,
     `Settings: ${lang}, challenges are ${config.challengeType}, answers are ${config.responseType}, ${config.turns} turns per bee, feeding costs ${config.feedCost} turns.`,
     `## Idea ledger (ideas already seen in earlier games)\n${ledgerText(ideas)}`,
+    ...(starters ? [`## Starter programs every team was given (ideas in these are NOT new and earn no novelty)\n` + KINDS.map((k) => `${k}:\n${codeBlock(lang, starters[k])}`).join("\n")] : []),
     `## The teams (${teams.length})`,
   ];
   for (const t of teams) {
