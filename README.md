@@ -9,7 +9,8 @@ beauty. Teams of humans and AIs ("centaurs") write three programs:
 
 Flowers answer each challenge from scratch (they keep nothing between questions, but can use
 randomness and the clock to search for a good answer within their time limit). Bees remember things
-within a round and, via `MEMORY`, across rounds. Your
+within a round and, via `keep` and `MEMORY`, across rounds. Programs are measured and run in minified
+form, and orchids, clovers and bees take turns to change their code between rounds. Your
 fitness rewards *diverse* success on both sides of the arms race: getting bees from many teams to
 feed at your patch (**allure**) and getting real nectar from many teams' patches (**forage**).
 

@@ -10,11 +10,17 @@
 // They may use fresh randomness and the clock, so the same challenge can get a different answer every
 // time, and every ask runs the flower again. At the end of the round each bee's top-level data is
 // snapshotted; later rounds see those snapshots, read-only, as MEMORY.
+// Every program runs in its minified form (vendor/measure.js): the same text its size is measured on,
+// so names, which minifying shortens, can't hide data.
 import os from "node:os";
 import { ProgramProcess } from "./runners/proc.js";
 import { checkValue, parseType } from "./lib/types.js";
 import { zeroLedger } from "./lib/scoring.js";
 import { limitsOf, turnsFor } from "./lib/gameConfig.js";
+import { size } from "./lib/measure.js";
+
+/** The text the game actually runs: the program minified. */
+const runnable = async (language, code) => (await size(language, code)).minified;
 
 export const KINDS = ["clover", "orchid", "bee"];
 
@@ -100,7 +106,9 @@ export async function simulateRound({ config, teams, seed }) {
   const game = gameInfo(config, n);
   const TURNS = game.turns;
   const memoryBytes = config.beeMemoryKb * 1024;
-  const flowers = teams.flatMap((t, ti) => ["clover", "orchid"].map((kind) => ({ team: ti, kind, code: t.programs[kind] })));
+  const flowers = await Promise.all(teams.flatMap((t, ti) => ["clover", "orchid"].map(async (kind) =>
+    ({ team: ti, kind, code: await runnable(config.language, t.programs[kind]) }))));
+  const beeCode = await Promise.all(teams.map((t) => runnable(config.language, t.programs.bee)));
   const killers = [];
   const problems = teams.map(() => ({ clover: null, orchid: null, bee: null }));
   const memories = teams.map(() => ({ snapshot: null, bytes: 0, note: null }));
@@ -114,7 +122,7 @@ export async function simulateRound({ config, teams, seed }) {
     }
     const bees = teams.map((t, ti) => {
       const proc = new ProgramProcess(config.language, "bee", {
-        code: t.programs.bee, ms: config.budgets.bee.ms, seed: (seed + 7919 * (ti + 1)) >>> 0, game: { ...game, ms: config.budgets.bee.ms },
+        code: beeCode[ti], ms: config.budgets.bee.ms, seed: (seed + 7919 * (ti + 1)) >>> 0, game: { ...game, ms: config.budgets.bee.ms },
         maxChars: MAX_CHARS, memory: t.memory || [],
       });
       killers.push(proc);
@@ -251,7 +259,7 @@ export async function simulateRound({ config, teams, seed }) {
 export async function tryFlower({ config, code, kind, challenges, nTeams = 2 }) {
   const cType = parseType(config.challengeType), rType = parseType(config.responseType);
   const limits = limitsOf(config);
-  const proc = new ProgramProcess(config.language, "flower", flowerSetup(config, kind, code, gameInfo(config, nTeams)));
+  const proc = new ProgramProcess(config.language, "flower", flowerSetup(config, kind, await runnable(config.language, code), gameInfo(config, nTeams)));
   try {
     const load = await proc.ready;
     if (!load.ok) return { error: load.e, results: [] };

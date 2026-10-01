@@ -4,13 +4,15 @@
 #                                   `random` is freshly seeded on every call and `time` is
 #                                   available, so a flower can run an anytime search until its
 #                                   budget (GAME["ms"]) is nearly spent.
-#   python3 py_runner.py bee      — stateful for one round: module globals persist between calls,
-#                                   and earlier rounds' globals arrive read-only as MEMORY
+#   python3 py_runner.py bee      — stateful for one round: module globals persist between calls.
+#                                   At the end of the round the top-level variable `keep` is saved;
+#                                   later rounds read those values, read-only, as MEMORY
+# The code is the program's minified form (vendor/measure.js), so names can't carry data.
 # Protocol: JSON lines on stdin/stdout. First line is the setup {code, ms, seed, game, maxChars, memory}.
 # Compute budgets are wall-clock time per call. The engine runs at most one program per CPU core, so
 # wall time is effectively CPU time. (CPU-time timers, ITIMER_PROF, fire late on tickless kernels.)
 # NOT a security sandbox: restricted builtins + import whitelist + timeouts + memory cap only.
-import ast, builtins, copy, inspect, io, json, os, random, resource, select, signal, sys, types
+import ast, builtins, copy, inspect, io, json, os, random, resource, select, signal, sys
 
 ALLOWED_MODULES = {
     "math", "cmath", "random", "hashlib", "string", "itertools", "functools", "collections",
@@ -90,28 +92,18 @@ def freeze(v):
     return v
 
 
-SNAPSHOT_SKIP = {"GAME", "MEMORY"}
-
-
 def snapshot(ns, max_bytes):
-    """Top-level variables that are plain data (dict/list/tuple/set/str/numbers/bools/None), as a literal."""
-    parts, total, skipped = [], 2, []
-    for name, value in ns.items():
-        if name in SNAPSHOT_SKIP or name.startswith("__") or callable(value) or isinstance(value, types.ModuleType):
-            continue
-        try:
-            text = repr(value)
-            ast.literal_eval(text)
-        except BaseException:
-            skipped.append(name)
-            continue
-        piece = repr(name) + ": " + text
-        total += len(piece) + 2
-        if total > max_bytes:
-            return None, f"memory is over {max_bytes // 1024} KB, so nothing was kept this round"
-        parts.append(piece)
-    note = ("not kept (not plain data): " + ", ".join(skipped[:10])) if skipped else None
-    return "{" + ", ".join(parts) + "}", note
+    """The bee's top-level `keep` as a literal, if it's plain data (dict/list/tuple/set/str/numbers/bools/None)."""
+    if "keep" not in ns:
+        return None, None
+    try:
+        text = repr(ns["keep"])
+        ast.literal_eval(text)
+    except BaseException:
+        return None, "keep is not plain data (numbers, strings, True/False/None, lists, tuples, dicts, sets), so nothing was kept"
+    if len(text) > max_bytes:
+        return None, f"keep is over {max_bytes // 1024} KB, so nothing was kept this round"
+    return text, None
 
 
 # ---------- shared ----------

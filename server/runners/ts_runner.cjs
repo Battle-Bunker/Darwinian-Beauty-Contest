@@ -2,8 +2,10 @@
 //   node ts_runner.cjs flower — stateless: every call runs the program in a brand-new context, with
 //                               the context's own (unseeded) Math.random and Date.now(), so a flower
 //                               can run an anytime search until its budget (GAME.ms) is nearly spent.
-//   node ts_runner.cjs bee    — stateful for one round: one context reused between calls, and
-//                               earlier rounds' top-level variables arrive read-only as MEMORY
+//   node ts_runner.cjs bee    — stateful for one round: one context reused between calls. At the end
+//                               of the round the top-level variable `keep` is saved; later rounds read
+//                               those values, read-only, as MEMORY
+// The code is the program's minified form (vendor/measure.js), so names can't carry data.
 // Protocol: JSON lines on stdin/stdout. First line is the setup {code, ms, seed, game, maxChars, memory}.
 // Values cross the context boundary only as JSON strings, so no host objects leak in.
 // NOT a security sandbox: fresh contexts + timeouts + heap cap only.
@@ -57,9 +59,6 @@ const PRELUDE = (seed, game, memory) => `
 const EXPORTS = `;globalThis.__fns = { flower: typeof flower === "function" ? flower : undefined,
   forage: typeof forage === "function" ? forage : undefined, tasted: typeof tasted === "function" ? tasted : undefined };`;
 
-// Top-level variables (declared at the start of a line) are what a bee keeps for later rounds.
-const topLevelNames = (js) => [...new Set([...js.matchAll(/^(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)/gm)].map((m) => m[1]))]
-  .filter((n) => !["GAME", "MEMORY"].includes(n));
 
 const newContext = () => vm.createContext(Object.create(null), { microtaskMode: "afterEvaluate", codeGeneration: { strings: true, wasm: false } });
 
@@ -72,7 +71,7 @@ function encodeCall(name, argsExpr) {
 const jsonArgs = (args) => `JSON.parse(${JSON.stringify(JSON.stringify(args))})`;
 
 const lines = readline.createInterface({ input: process.stdin });
-let setup = null, script = null, ctx = null, loadError = null, names = [];
+let setup = null, script = null, ctx = null, loadError = null;
 const maxChars = () => setup.maxChars || 20000;
 
 lines.on("line", (line) => {
@@ -81,7 +80,6 @@ lines.on("line", (line) => {
     setup = req;
     try {
       const js = stripTypeScriptTypes(setup.code);
-      names = topLevelNames(js);
       script = new vm.Script(js + EXPORTS, { filename: "program.ts" });
     } catch (e) {
       loadError = short(e);
@@ -126,9 +124,8 @@ lines.on("line", (line) => {
       return out({ ok: true, out: r.o });
     }
     if (req.op === "snapshot") {
-      const body = names.map((n) => `try { if (typeof ${n} !== "function") o[${JSON.stringify(n)}] = ${n}; } catch (e) {}`).join("\n");
-      const snap = vm.runInContext(`(() => { const o = {};\n${body}\nreturn JSON.stringify(o, __replacer); })()`, ctx, { timeout: 5000 });
-      if (snap.length > req.maxBytes) return out({ snap: null, note: `memory is over ${Math.floor(req.maxBytes / 1024)} KB, so nothing was kept this round` });
+      const snap = vm.runInContext(`(() => { try { return typeof keep === "undefined" ? null : JSON.stringify(keep, __replacer) ?? null; } catch (e) { return null; } })()`, ctx, { timeout: 5000 });
+      if (snap !== null && snap.length > req.maxBytes) return out({ snap: null, note: `keep is over ${Math.floor(req.maxBytes / 1024)} KB, so nothing was kept this round` });
       return out({ snap, note: null });
     }
   } catch (e) {

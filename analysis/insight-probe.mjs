@@ -11,7 +11,7 @@
 import pg from "pg";
 import { simulateRound } from "../server/engine.js";
 import { score } from "../server/lib/scoring.js";
-import { measure } from "../server/lib/ast.js";
+import { size as measure } from "../server/lib/measure.js";
 
 const RESP = {
   int: `int(x[:8], 16) % 1000`,

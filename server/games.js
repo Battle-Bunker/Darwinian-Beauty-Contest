@@ -194,8 +194,8 @@ export async function checkProgram(game, team, kind, code) {
       const next = game.rounds_played + 1;
       if (!changeable(next).includes(kind)) {
         if (distance > 0) {
-          errors.push(`Your ${kind} is locked before round ${next}: clovers and orchids take turns to change ` +
-            `(orchids before even rounds, clovers before odd ones). It can change again before round ${nextChangeRound(kind, next)}.`);
+          errors.push(`Your ${kind} is locked before round ${next}: orchids, clovers and bees take turns to change, ` +
+            `and this round it's the ${changeable(next)[0]}s' turn. Your ${kind} can change again before round ${nextChangeRound(kind, next)}.`);
         }
       } else if (distance > budget.changes) {
         errors.push(`Too many changes: ${distance} characters changed (minified) > budget ${budget.changes}`);
@@ -424,7 +424,7 @@ export async function viewGame(room, game, user, opts = {}) {
       createdAt: g.created_at, finishedAt: g.finished_at, revealed, isOwner,
       // Turns per bee in the next round (depends on how many teams play).
       turns: turnsFor(cfg, participants ? participants.length : teams.length),
-      // Programs teams may change for the next round (clovers and orchids take turns).
+      // Programs teams may change for the next round (orchids, clovers and bees take turns).
       changeable: changeable(g.rounds_played + 1),
     },
     me: user ? { id: user.id, name: user.name, teamId: mine?.id ?? null } : null,

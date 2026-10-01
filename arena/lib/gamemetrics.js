@@ -1,8 +1,9 @@
-// Compute and store all metrics of a finished (revealed) game: round metrics (incl. orchid targets),
-// game metrics, and collapse events. Used by run.js after each game and by backfill.js.
+// Compute and store all metrics of a finished game: round metrics, game metrics, and collapse events (run.js, after
+// each game). Games played before engine v3 also stored "orchid targets", computed by re-running every flower on the
+// challenges bees asked; with non-pure flowers that is meaningless, so stolen-face and twin orchids are now measured
+// from the answers bees actually saw (lib/v3.js). analyze.js still reads the stored orchid targets of old games.
 import { all, q } from "./db.js";
 import { gameCollapses, gameMetrics, roundMetrics } from "./metrics.js";
-import { orchidTargets } from "./targets.js";
 
 export async function storeMetrics(arena, gameRow, view) {
   const rms = [];
@@ -13,15 +14,10 @@ export async function storeMetrics(arena, gameRow, view) {
     for (const c of comp.filter((x) => x.round_no === r.no)) (r.compute[c.team_id] ||= {})[c.kind] = c.compute;
   }
   for (const [i, r] of view.rounds.entries()) {
-    const m = roundMetrics(view, r, i ? view.rounds[i - 1] : null);
-    try { m.orchidTargets = await orchidTargets(view, r); } catch (e) { m.orchidTargets = { error: e.message }; }
-    rms.push(m);
+    rms.push(roundMetrics(view, r, i ? view.rounds[i - 1] : null));
   }
   for (const m of rms) await q("INSERT INTO arena.round_metrics (game_id, round_no, metrics) VALUES ($1,$2,$3) ON CONFLICT (game_id, round_no) DO UPDATE SET metrics = $3", [gameRow.id, m.round, m]);
   const gm = gameMetrics(view, rms);
-  const sum = (key) => rms.reduce((acc, m) => { for (const [k, v] of Object.entries(m.orchidTargets?.[key] || {})) acc[k] = (acc[k] || 0) + v; return acc; }, {});
-  gm.orchidTargets = sum("counts");
-  if (/tree|graph/.test(view.game.config.responseType)) gm.orchidFeatureTargets = sum("featCounts");
   const col = gameCollapses(gm, rms);
   gm.collapses = col.game;
   await q("UPDATE arena.games SET metrics = $2 WHERE id = $1", [gameRow.id, gm]);

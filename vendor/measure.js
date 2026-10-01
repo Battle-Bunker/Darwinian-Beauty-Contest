@@ -4,15 +4,18 @@
 // this same file and always agree. Everything works on web-tree-sitter syntax trees.
 //
 // size(root, source, language) → { chars, text }
-//   A program's size is the length of its automatically minified form, so readable code costs nothing:
+//   A program's size is the length of its automatically minified form, and the minified form is what
+//   the game runs. So readable code costs nothing, and names can't carry hidden data:
 //   - comments, blank lines and spacing are dropped (Python keeps one newline per statement and one
 //     space per indentation level; TypeScript gets one ";" per statement)
-//   - every name the program binds (variables, functions, classes, parameters, imports) is renamed to
-//     the shortest free name, most-used first. A name's first 20 characters are free; longer names pay
-//     for the rest, because a program can read its own names back (globals(), __name__, …)
+//   - every name the program binds (variables, functions, parameters, imports) is renamed to the
+//     shortest free name, most-used first. Renaming must never change what the program does, so a few
+//     names keep their spelling: names bound in a class body (they're attributes), parameters that are
+//     also passed by keyword somewhere, names that shadow a builtin, the first part of a dotted import,
+//     and the names the game looks up (flower, forage, tasted, keep, GAME, MEMORY)
 //   - TypeScript types are removed, as they are before the program runs
-//   Everything else counts as written: strings and numbers character by character, keywords,
-//   operators, attribute and keyword-argument names, and names the program uses but doesn't bind.
+//   Everything else stays as written: strings and numbers character by character, keywords, operators,
+//   attribute and keyword-argument names, and names the program uses but doesn't bind.
 //
 // changes(oldRoot, oldSource, newRoot, newSource, language) → number
 //   How much a program changed between rounds: the edit distance (characters inserted, deleted or
@@ -22,8 +25,16 @@
 // marks(oldSource, newSource) → { old, new }
 //   Character ranges [start, end, "del" | "ins"] that differ between two sources, for the editor.
 var DbcMeasure = (() => {
-  const FREE_NAME_CHARS = 20;
-  const KEEP = new Set(["flower", "forage", "tasted", "GAME", "MEMORY"]); // looked up by name
+  const KEEP = new Set(["flower", "forage", "tasted", "keep", "GAME", "MEMORY"]); // looked up by name
+  const BUILTINS = {
+    python: new Set("ArithmeticError AssertionError AttributeError BaseException BaseExceptionGroup BlockingIOError BrokenPipeError BufferError BytesWarning ChildProcessError ConnectionAbortedError ConnectionError ConnectionRefusedError ConnectionResetError DeprecationWarning EOFError Ellipsis EncodingWarning EnvironmentError Exception ExceptionGroup False FileExistsError FileNotFoundError FloatingPointError FutureWarning GeneratorExit IOError ImportError ImportWarning IndentationError IndexError InterruptedError IsADirectoryError KeyError KeyboardInterrupt LookupError MemoryError ModuleNotFoundError NameError None NotADirectoryError NotImplemented NotImplementedError OSError OverflowError PendingDeprecationWarning PermissionError ProcessLookupError RecursionError ReferenceError ResourceWarning RuntimeError RuntimeWarning StopAsyncIteration StopIteration SyntaxError SyntaxWarning SystemError SystemExit TabError TimeoutError True TypeError UnboundLocalError UnicodeDecodeError UnicodeEncodeError UnicodeError UnicodeTranslateError UnicodeWarning UserWarning ValueError Warning ZeroDivisionError abs aiter all anext any ascii bin bool breakpoint bytearray bytes callable chr classmethod compile complex copyright credits delattr dict dir divmod enumerate eval exec exit filter float format frozenset getattr globals hasattr hash help hex id input int isinstance issubclass iter len license list locals map max memoryview min next object oct open ord pow print property quit range repr reversed round set setattr slice sorted staticmethod str sum super tuple type vars zip".split(" ")),
+    typescript: new Set(("Infinity NaN undefined globalThis Object Function Array Number parseFloat parseInt Boolean String " +
+      "Symbol Date Promise RegExp Error AggregateError EvalError RangeError ReferenceError SyntaxError TypeError URIError " +
+      "JSON Math Intl ArrayBuffer SharedArrayBuffer DataView Uint8Array Int8Array Uint16Array Int16Array Uint32Array " +
+      "Int32Array Float32Array Float64Array Uint8ClampedArray BigUint64Array BigInt64Array Map Set WeakMap WeakSet WeakRef " +
+      "FinalizationRegistry BigInt Proxy Reflect Atomics decodeURI decodeURIComponent encodeURI encodeURIComponent escape " +
+      "unescape isFinite isNaN console structuredClone queueMicrotask arguments").split(" ")),
+  };
   const RESERVED = {
     python: new Set(["False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue", "def",
       "del", "elif", "else", "except", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "nonlocal",
@@ -45,8 +56,9 @@ var DbcMeasure = (() => {
   const isComment = (n) => n.type === "comment" || n.type === "line_continuation" || n.type === "hash_bang_line";
 
   // ---------------------------------------------------------------- which names the program binds
+  /** { bound, keepSpelling }: names the program binds, and those renaming could break. */
   function pythonBindings(root, src) {
-    const bound = new Set();
+    const bound = new Set(), keepSpelling = new Set(), params = new Set(), keywords = new Set();
     const text = (n) => src.slice(n.startIndex, n.endIndex);
     const targets = (n) => {
       if (!n) return;
@@ -60,11 +72,14 @@ var DbcMeasure = (() => {
       const t = n.type;
       const f = (name) => n.childForFieldName(name);
       if (t === "function_definition" || t === "class_definition") targets(f("name"));
-      else if (t === "parameters" || t === "lambda_parameters") {
+      if (t === "class_definition") classAttributes(f("body"));
+      if (t === "keyword_argument") keywords.add(text(f("name")));
+      if (t === "parameters" || t === "lambda_parameters") {
+        const param = (c) => { targets(c); if (c && c.type === "identifier") params.add(text(c)); };
         for (const [c] of kids(n)) {
-          if (c.type === "identifier") targets(c);
-          else if (c.type === "default_parameter" || c.type === "typed_default_parameter") targets(c.childForFieldName("name"));
-          else if (c.type === "typed_parameter") { for (const [d] of kids(c)) if (d.type === "identifier" || d.type.endsWith("splat_pattern")) { targets(d); break; } }
+          if (c.type === "identifier") param(c);
+          else if (c.type === "default_parameter" || c.type === "typed_default_parameter") param(c.childForFieldName("name"));
+          else if (c.type === "typed_parameter") { for (const [d] of kids(c)) if (d.type === "identifier" || d.type.endsWith("splat_pattern")) { param(d); break; } }
           else if (c.type.endsWith("splat_pattern")) targets(c);
         }
       } else if (t === "assignment" || t === "augmented_assignment" || t === "for_statement" || t === "for_in_clause") targets(f("left"));
@@ -77,14 +92,34 @@ var DbcMeasure = (() => {
           if (c.type === "aliased_import") targets(c.childForFieldName("alias"));
           else if (c.type === "dotted_name") {
             const ids = kids(c).map(([d]) => d).filter((d) => d.type === "identifier");
-            if (ids.length) bound.add(text(t === "import_statement" ? ids[0] : ids[ids.length - 1]));
+            if (!ids.length) continue;
+            if (t === "import_statement") {
+              bound.add(text(ids[0]));
+              if (ids.length > 1) keepSpelling.add(text(ids[0])); // import a.b binds a, and a.b must still work
+            } else bound.add(text(ids[ids.length - 1]));
           }
         }
       }
       for (const [c] of kids(n)) walk(c);
     };
+    // Names bound directly in a class body are attributes, read as obj.name.
+    function classAttributes(block) {
+      if (!block) return;
+      const visit = (m) => {
+        for (const [c] of kids(m)) {
+          if (c.type === "function_definition" || c.type === "class_definition") { const nm = c.childForFieldName("name"); if (nm) keepSpelling.add(text(nm)); continue; }
+          if (c.type === "assignment" || c.type === "augmented_assignment") {
+            const collect = (x) => { if (!x) return; if (x.type === "identifier") keepSpelling.add(text(x)); else for (const [d] of kids(x)) if (named(d)) collect(d); };
+            collect(c.childForFieldName("left"));
+          }
+          if (named(c) && c.type !== "lambda") visit(c);
+        }
+      };
+      visit(block);
+    }
     walk(root);
-    return bound;
+    for (const p of params) if (keywords.has(p)) keepSpelling.add(p); // f(size=3) needs the parameter named size
+    return { bound, keepSpelling };
   }
 
   function typescriptBindings(root, src) {
@@ -109,7 +144,7 @@ var DbcMeasure = (() => {
       for (const [c] of kids(n)) walk(c);
     };
     walk(root);
-    return bound;
+    return { bound, keepSpelling: new Set() };
   }
 
   // ---------------------------------------------------------------- short names, most-used first
@@ -157,9 +192,9 @@ var DbcMeasure = (() => {
     const text = (n) => source.slice(n.startIndex, n.endIndex);
 
     // Count how often each bound name is used, then hand out short names, most-used first.
-    const bound = ts ? typescriptBindings(root, source) : pythonBindings(root, source);
-    for (const k of KEEP) bound.delete(k);
-    for (const b of [...bound]) if (/^__.*__$/.test(b)) bound.delete(b);
+    const { bound, keepSpelling } = ts ? typescriptBindings(root, source) : pythonBindings(root, source);
+    const builtins = BUILTINS[ts ? "typescript" : "python"];
+    for (const b of [...bound]) if (KEEP.has(b) || keepSpelling.has(b) || builtins.has(b) || /^__.*__$/.test(b)) bound.delete(b);
     const isRenamable = (n, parent, field) => {
       if (n.type !== "identifier" || !bound.has(text(n))) return false;
       if (ts || !parent) return true;
@@ -293,9 +328,7 @@ var DbcMeasure = (() => {
   // ---------------------------------------------------------------- the three measures
   function size(root, source, language) {
     const m = minify(root, source, language);
-    let surcharge = 0;
-    for (const name of m.names.keys()) surcharge += Math.max(0, codePoints(name) - FREE_NAME_CHARS);
-    return { chars: codePoints(m.text) + surcharge, text: m.text };
+    return { chars: codePoints(m.text), text: m.text };
   }
 
   const MARK = "\u0001"; // stands for every renamed name when lining two versions up
@@ -416,7 +449,7 @@ var DbcMeasure = (() => {
     return prev[m];
   }
 
-  return { size, changes, marks, FREE_NAME_CHARS };
+  return { size, changes, marks };
 })();
 
 if (typeof module !== "undefined") module.exports = DbcMeasure;

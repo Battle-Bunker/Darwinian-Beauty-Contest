@@ -82,12 +82,12 @@ export function programInterface(config) {
     return {
       types,
       flower: `${aliases ? aliases + "\n" : ""}function flower(challenge: ${C}): ${R}\n${flowerNotes(true)}`,
-      bee: `${aliases ? aliases + "\n" : ""}function forage(seen: [${C}, ${R} | null][], turnsLeft: number, visit: { fed: boolean; nectar: boolean | null }): ["ask", ${C}] | "feed" | "leave"\nfunction tasted(seen: [${C}, ${R} | null][], nectar: boolean): void   // optional\n// MEMORY: read-only array of earlier rounds' top-level variables (MEMORY[0] = end of round 1)`,
+      bee: `${aliases ? aliases + "\n" : ""}function forage(seen: [${C}, ${R} | null][], turnsLeft: number, visit: { fed: boolean; nectar: boolean | null }): ["ask", ${C}] | "feed" | "leave"\nfunction tasted(seen: [${C}, ${R} | null][], nectar: boolean): void   // optional\n// let keep = …: whatever top-level keep holds when a round ends is saved (plain data)\n// MEMORY: read-only array of what keep held at the end of each earlier round (MEMORY[0] = end of round 1)`,
     };
   }
   return {
     types,
     flower: `def flower(challenge):    # challenge: ${c}  ->  return a ${r}\n${flowerNotes(false)}`,
-    bee: `def forage(seen, turns_left, visit):   # seen: [[challenge, response], ...] at this flower (response None if it failed)\n    # visit = {"fed": bool, "nectar": bool or None}; return ["ask", challenge], "feed" (once per visit) or "leave"\ndef tasted(seen, nectar):        # optional: called after you feed; nectar is True or False\n# MEMORY: read-only list of earlier rounds' top-level variables (MEMORY[0] = end of round 1)`,
+    bee: `def forage(seen, turns_left, visit):   # seen: [[challenge, response], ...] at this flower (response None if it failed)\n    # visit = {"fed": bool, "nectar": bool or None}; return ["ask", challenge], "feed" (once per visit) or "leave"\ndef tasted(seen, nectar):        # optional: called after you feed; nectar is True or False\n# keep = …: whatever top-level keep holds when a round ends is saved (plain data)\n# MEMORY: read-only list of what keep held at the end of each earlier round (MEMORY[0] = end of round 1)`,
   };
 }

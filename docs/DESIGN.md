@@ -189,30 +189,49 @@ What v3 does not prevent: nothing forces a flower to use randomness. A team can 
 deterministic clover, and bees can still fingerprint it by repeating a question. Whether the effort
 signal outcompetes that is what the v3 games test.
 
-## Programs are measured on their minified form
+## Programs are measured on, and run as, their minified form
 
 Size and change are both measured on the program after the game minifies it (vendor/measure.js, the
-same file in the server and the editor):
+same file in the server and the editor), and the minified program is what runs:
 - It drops comments, blank lines and spacing.
 - It renames every name the program defines to the shortest free name, most-used first.
 - It strips TypeScript types.
 
 **Size** is the length of what's left. Writing readable code costs nothing, so nobody gains by
 minifying by hand. Strings and numbers count character by character, so a long literal can't hide a
-lookup table. A name's characters beyond the first 20 are charged, because renaming makes names free and
-a program can read its own names back (`globals()`, `__name__`).
+lookup table. Running the minified text means names don't exist at runtime, so they can't hide data
+either.
+
+That needs renaming to be exactly safe. Names keep their spelling where renaming could change behaviour:
+- names bound in a class body (they're attributes)
+- parameters also passed by keyword somewhere
+- names that shadow a builtin
+- the first part of a dotted import
+- the names the game looks up
+
+`analysis/minify-equivalence.mjs` replays stored programs both ways through the real runners. Flowers are
+asked the challenges they were actually asked; bees are fed their recorded visits with the same MEMORY.
+It found no differences.
+
+For the same reason a bee's memory is one designated variable, `keep`. Saving every top-level variable
+under its source name would let names carry data from round to round.
 
 **Change** is the edit distance between last round's minified program and the new one. Before comparing,
 the new version's names are lined up with the old version's: both are minified with every name blanked
-out, the two texts are diffed, and names that fall in matching stretches are paired. So a rename,
-a comment or reformatting changes nothing, and a new variable doesn't reshuffle every other name. Budgets
+out, the two texts are diffed, and names that fall in matching stretches are paired. So a rename, a
+comment or reformatting changes nothing, and a new variable doesn't reshuffle every other name. Budgets
 are a share of the size budget: 70% for orchids, 20% for clovers and bees.
 
-## Clovers and orchids take turns to change
+## Orchids, clovers and bees take turns to change
 
-Before round 1 every program is written. After that, orchids may change before even rounds and clovers
-before odd ones; bees may change every round (server/lib/schedule.js). If both could change at once, a
-clover could rotate its password in the same round the orchids copied the old one, and imitating last
-round's behaviour would never pay. Taking turns gives each side a round in which the other stands still:
-orchids get to copy what clovers actually did, and clovers then get to respond to the copies. A flower out
-of its turn may still be resubmitted if its minified form is unchanged.
+Before round 1 every program is written. After that exactly one kind may change before each round, in
+rotation: orchids, then clovers, then bees (server/lib/schedule.js).
+
+If everyone could change at once, static signatures would stay competitive:
+- a bee can pick a new secret probe every round
+- a clover can answer with a keyed hash that bees recognise but orchids can't forge
+- whatever an orchid copies from last round is already stale
+
+With turns, orchids always get a round to imitate both the clovers' answers and the bees' probes before
+either can react. Then clovers respond to the imitations, and then bees respond to both. A program out of
+its turn may still be resubmitted if its minified form is unchanged.

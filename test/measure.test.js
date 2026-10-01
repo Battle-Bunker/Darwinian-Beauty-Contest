@@ -93,12 +93,6 @@ test("attribute and keyword-argument names count as written; GAME and the entry 
   assert.match(b.minified, /^function forage\(\w,\w\)\{return GAME\.turns>\w\?"leave":\["ask",\w\.length\];\}$/);
 });
 
-test("names are free up to 20 characters; longer ones pay for the rest", async () => {
-  const base = await py(`def flower(c):\n    ${"a".repeat(20)} = 1\n    return c\n`);
-  const long = await py(`def flower(c):\n    ${"a".repeat(1020)} = 1\n    return c\n`);
-  assert.equal(long.chars - base.chars, 1000);
-});
-
 test("the minified programs are valid code", async () => {
   const { starters } = await import("./fixtures/programs.js");
   const { normalizeConfig } = await import("../server/lib/gameConfig.js");
@@ -134,11 +128,28 @@ test("change: renames, comments and formatting are free; edits cost the characte
   assert.equal(await tc("function flower(c: number) { return c * 2 }", "// doubled\nfunction flower(challenge: number): number {\n  return challenge * 2;\n}\n"), 0);
 });
 
-test("clovers and orchids take turns to change; bees change every round", () => {
+test("orchids, clovers and bees take turns to change, one kind per round", () => {
   assert.deepEqual(changeable(1), ["clover", "orchid", "bee"]);
-  assert.deepEqual(changeable(2), ["orchid", "bee"]);
-  assert.deepEqual(changeable(3), ["clover", "bee"]);
-  assert.deepEqual(changeable(4), ["orchid", "bee"]);
+  assert.deepEqual([2, 3, 4, 5, 6, 7].map((r) => changeable(r)), [["orchid"], ["clover"], ["bee"], ["orchid"], ["clover"], ["bee"]]);
+});
+
+test("renaming never changes what a program does", async () => {
+  const code = `import collections.abc
+import random
+class Box:
+    width = 3
+    def area(self, scale=1):
+        return self.width * scale
+def helper(size, max=2):
+    return size + max
+def flower(challenge):
+    keep = 1
+    return [Box().area(scale=2), helper(size=challenge), len([1]), keep]
+`;
+  const { minified } = await py(code);
+  for (const kept of ["width", "area", "scale", "size", "max", "collections.abc", "keep", "len"]) assert.ok(minified.includes(kept), kept);
+  const run = (src) => execFileSync("python3", ["-c", src + "\nprint(flower(5))"]).toString();
+  assert.equal(run(minified), run(code));
 });
 
 test("the browser loads the same rules as a plain script", async () => {

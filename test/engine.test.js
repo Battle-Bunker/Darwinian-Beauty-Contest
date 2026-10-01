@@ -63,3 +63,19 @@ for (const language of ["python", "typescript"]) {
     assert.ok(r.compute[0].orchid.meanMs >= 25, `mean ${r.compute[0].orchid.meanMs} ms`);
   });
 }
+
+test("programs run minified: the names they define can't carry data", async () => {
+  const config = normalizeConfig({ turnsPerFlower: 10, responseType: "any" });
+  const helper = (name) => `def ${name}():\n    return 0\ndef flower(c):\n    return [len(${name}.__name__), sorted(k for k in globals() if not k.startswith("__"))]\n`;
+  const bee = `def forage(seen, t):\n    return ["ask", 1] if not seen else "leave"\n`;
+  const answers = async (code) => {
+    const r = await simulateRound({ config, seed: 1, teams: [{ id: "a", programs: { clover: code, orchid: code, bee } }] });
+    return new Set(r.visits.flatMap((v) => v.steps.map((s) => JSON.stringify(s.r))));
+  };
+  const long = await answers(helper("a_helper_with_a_very_long_and_meaningful_name"));
+  assert.equal(long.size, 1);
+  const [nameLength, globalNames] = JSON.parse([...long][0]);
+  assert.equal(nameLength, 1);
+  assert.ok(globalNames.every((k) => ["GAME", "flower"].includes(k) || k.length === 1), globalNames.join());
+  assert.deepEqual([...await answers(helper("h"))], [...long]);
+});

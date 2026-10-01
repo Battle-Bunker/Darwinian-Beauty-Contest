@@ -12,7 +12,7 @@ import { isStructured, Value } from "./Value";
 const BLURB: Record<Kind, string> = {
   clover: "Your honest flower. Bees that feed here get nectar. flower(challenge) runs fresh for every question: it keeps nothing between questions, but it can use randomness and the clock to search for a good answer within its time limit.",
   orchid: "Your trickster. Bees that feed here get nothing, but your patch still earns the visit. It can try to pass for any clover that bees trust: yours or another team's.",
-  bee: "Your bee visits one flower at a time: ask questions, then feed or leave. Top-level variables last the whole round.",
+  bee: "Your bee visits one flower at a time: ask questions, then feed or leave. Top-level variables last the whole round; whatever `keep` holds at the end of a round is saved for later rounds as MEMORY.",
 };
 
 const SCALARS = ["int", "float", "bool", "str"];
@@ -107,7 +107,7 @@ export function ProgramEditors({ view, base }: { view: GameView; base: string })
   const current = code[kind];
   const participant = g.roundsPlayed === 0 || !!view.participants?.includes(team.id);
   const locked = !!g.runningRound || g.status === "finished" || !participant;
-  // Clovers and orchids take turns to change: a flower that can't change this round has no change budget.
+  // Orchids, clovers and bees take turns to change: a program out of its turn has no change budget.
   const frozen = g.roundsPlayed > 0 && !g.changeable.includes(kind);
   const allowance = frozen ? 0 : budget.changes;
   const overSize = !!s && s.chars > budget.chars;
@@ -167,7 +167,7 @@ export function ProgramEditors({ view, base }: { view: GameView; base: string })
               <span className="tab-name">{k}</span>
               {submitted && !dirty && <span className="tab-mark ok" title="Submitted"><CheckIcon size={13} /></span>}
               {dirty && <span className="tab-mark dirty" title="Unsubmitted changes">•</span>}
-              {g.roundsPlayed > 0 && !g.changeable.includes(k) && <span className="tab-mark locked" title="Locked this round: clovers and orchids take turns">locked</span>}
+              {g.roundsPlayed > 0 && !g.changeable.includes(k) && <span className="tab-mark locked" title="Locked this round: orchids, clovers and bees take turns">locked</span>}
             </button>
           );
         })}
@@ -181,15 +181,15 @@ export function ProgramEditors({ view, base }: { view: GameView; base: string })
           <Meter label="Size (characters after minifying)" value={empty ? 0 : s?.chars ?? null} max={budget.chars} />
           {previous !== null
             ? (frozen
-              ? <div className="meter-note muted">Locked until the next round: clovers and orchids take turns to change.</div>
+              ? <div className="meter-note muted">Locked this round: orchids, clovers and bees take turns to change.</div>
               : <Meter label="Changes since last round (characters, minified)" value={s?.distance ?? null} max={allowance} />)
-            : <div className="meter-note muted">Round 1: write anything that fits the size budget. After that, clovers and orchids take turns to change (orchids before even rounds, clovers before odd ones), up to {budget.changes} characters each time; bees can change every round.</div>}
+            : <div className="meter-note muted">Round 1: write anything that fits the size budget. After that, programs take turns to change, one kind per round: orchids, then clovers, then bees, then orchids again. In its turn your {kind} may change up to {budget.changes} characters.</div>}
           <div className="meter-note muted">Time limit: {budget.ms} ms per {kind === "bee" ? "call" : "question"}</div>
         </div>
         {s?.syntaxError && !empty && <Alert kind="warn">Syntax error: this code doesn't parse yet, so it can't be submitted.</Alert>}
         {overSize && <Alert kind="error">Too big: {s!.chars} characters after minifying, but the budget is {budget.chars}. Make it {s!.chars - budget.chars} characters smaller to submit. Comments, spacing and long names are free; strings, numbers and keywords count.</Alert>}
         {!empty && s?.minified && <details className="minified"><summary className="muted small">What counts: your program minified ({s.chars} characters)</summary><pre>{s.minified}</pre></details>}
-        {frozen && <Alert kind="info">Your {kind} can't change before round {g.roundsPlayed + 1}: clovers and orchids take turns, and this round it's the {kind === "clover" ? "orchids'" : "clovers'"} turn. You can still try ideas out below.</Alert>}
+        {frozen && <Alert kind="info">Your {kind} can't change before round {g.roundsPlayed + 1}: orchids, clovers and bees take turns, and this round it's the {g.changeable[0]}s' turn. You can still try ideas out below.</Alert>}
         {overChanges && !frozen && <Alert kind="error">Too many changes: {s!.distance} characters changed since last round (minified), but the budget is {allowance}. Undo {s!.distance! - allowance} to submit.</Alert>}
         {incoming[kind] && (
           <Alert kind="info">
@@ -263,7 +263,7 @@ function InterfaceBox({ iface, kind, language }: { iface: ProgramInterface; kind
       {t.rules.length > 0 && <ul className="iface-rules">{t.rules.map((r, i) => <li key={i}>{r}</li>)}</ul>}
       <p className="small muted">
         Programs can also read <code>GAME</code> ({language === "python" ? 'GAME["turns"]' : "GAME.turns"}, feed_cost, challenge_type, response_type, max_len, max_nodes, flowers, and ms: this program's time limit per call).
-        {kind === "bee" && <> Your bee also gets <code>MEMORY</code>: what it kept at the end of each earlier round.</>}
+        {kind === "bee" && <> Your bee also gets <code>MEMORY</code>: what its top-level <code>keep</code> held at the end of each earlier round.</>}
         A response of the wrong type, a crash or a timeout reaches the bee as <code>{none}</code>.
       </p>
     </details>

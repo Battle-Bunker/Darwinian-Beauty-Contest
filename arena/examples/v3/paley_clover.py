@@ -38,8 +38,9 @@ def is_prime(m):
 
 
 def chain_primes(n):
-    # The primes p with p % 4 == 1, in order, starting from a point that n picks.
-    p = START + n % (9 * START)
+    # The primes p with p % 4 == 1, in order, from a starting point that n picks. Multiplying by
+    # 1234567 first sends nearby challenges to unrelated starting points.
+    p = START + n * 1234567 % (9 * START)
     p += (1 - p) % 4
     while True:
         if is_prime(p):

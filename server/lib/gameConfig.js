@@ -20,7 +20,7 @@ export const DEFAULT_CONFIG = Object.freeze({
   budgets: {
     //   chars: size, in characters of the minified program
     //   changes: characters of the minified program that may change in a round the program may change
-    //            (clovers and orchids take turns, see schedule.js)
+    //            (orchids, clovers and bees take turns, see schedule.js)
     //   ms: compute per call, one core each
     clover: { chars: 350, changes: 70, ms: 150 },
     orchid: { chars: 700, changes: 490, ms: 50 },

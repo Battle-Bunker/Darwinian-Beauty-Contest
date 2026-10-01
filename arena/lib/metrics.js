@@ -118,7 +118,7 @@ export function roundMetrics(view, round, prev) {
   const orchidIsClover = ids.filter((id) => { const p = round.programs[id]; return p?.clover?.code && p?.orchid?.code && tokens(p.clover.code, lang).join(" ") === tokens(p.orchid.code, lang).join(" "); }).length;
 
   // ---- engine v2 extras: turns, post-feed asks, MEMORY, compute (round.compute is attached by gamemetrics.js) ----
-  const turns = round.turns || cfg.turns || 100;
+  const turns = round.turns;
   const afterSteps = steps.filter((s) => s.after).length;
   const fedWithAfter = feeds.filter((v) => (v.steps || []).some((s) => s.after)).length;
   const compute = round.compute || {};

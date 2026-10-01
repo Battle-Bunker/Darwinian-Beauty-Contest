@@ -45,7 +45,7 @@ test("a bee can keep asking after it feeds; feeding again just moves on", async 
 
 for (const [language, bee1, bee2] of [
   ["python",
-    `seen_answers = {}\nrounds = len(MEMORY)\ndef forage(seen, turns_left):\n    if seen:\n        seen_answers[seen[0][1]] = seen_answers.get(seen[0][1], 0) + 1\n        return "leave"\n    return ["ask", 5]\n`,
+    `keep = {"seen_answers": {}, "rounds": len(MEMORY)}\nscratch = [1, 2, 3]  # not saved: only keep is\ndef forage(seen, turns_left):\n    if seen:\n        answers = keep["seen_answers"]\n        answers[seen[0][1]] = answers.get(seen[0][1], 0) + 1\n        return "leave"\n    return ["ask", 5]\n`,
     `prev = MEMORY[-1]
 try:
     prev["seen_answers"][999] = 1
@@ -60,7 +60,7 @@ def forage(seen, turns_left):
     return ["ask", 1000 * len(MEMORY) + 100 * MEMORY[0]["rounds"] + 10 * (not mutable) + len(prev["seen_answers"])]
 `],
   ["typescript",
-    `const seenAnswers = new Map<number, number>();\nconst rounds = MEMORY.length;\nfunction forage(seen: any[], t: number): any {\n  if (seen.length) { seenAnswers.set(seen[0][1], (seenAnswers.get(seen[0][1]) ?? 0) + 1); return "leave"; }\n  return ["ask", 5];\n}\n`,
+    `const keep = { seenAnswers: new Map<number, number>(), rounds: MEMORY.length };\nconst scratch = [1, 2, 3]; // not saved: only keep is\nfunction forage(seen: any[], t: number): any {\n  if (seen.length) { keep.seenAnswers.set(seen[0][1], (keep.seenAnswers.get(seen[0][1]) ?? 0) + 1); return "leave"; }\n  return ["ask", 5];\n}\n`,
     `const prev = MEMORY[MEMORY.length - 1];
 let mutable = true;
 try { prev.seenAnswers.set(999, 1); } catch (e) { mutable = false; }
@@ -72,7 +72,7 @@ function forage(seen: any[], t: number): any {
 }
 `],
 ]) {
-  test(`${language}: bees keep read-only MEMORY of earlier rounds`, async () => {
+  test(`${language}: a bee's keep is saved; later rounds read it, read-only, as MEMORY`, async () => {
     const config = normalizeConfig({ language, turnsPerFlower: 10 });
     const flowers = language === "python" ? { clover, orchid } : {
       clover: `function flower(c: number): number { return c * 2; }`, orchid: `function flower(c: number): number { return c * 3; }`,
@@ -80,6 +80,7 @@ function forage(seen: any[], t: number): any {
     const r1 = await simulateRound({ config, seed: 1, teams: [{ id: "a", programs: { ...flowers, bee: bee1 } }] });
     const m1 = r1.memories[0];
     assert.ok(m1.snapshot && m1.bytes > 0, JSON.stringify(m1));
+    assert.doesNotMatch(m1.snapshot, /scratch|\[1, ?2, ?3\]/, "only keep is saved");
     // Round 2 reads round 1's memory: 1 round of memory, rounds=0 then, read-only, 2 distinct answers (10 and 15).
     const r2 = await simulateRound({ config, seed: 2, teams: [{ id: "a", programs: { ...flowers, bee: bee2 }, memory: [m1.snapshot] }] });
     assert.deepEqual(r2.problems[0], { clover: null, orchid: null, bee: null });

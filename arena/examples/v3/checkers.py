@@ -29,8 +29,9 @@ def is_prime(m):
 
 
 def chain_primes(n):
-    # The primes p with p % 4 == 1, in order, starting from a point that n picks.
-    p = START + n % (9 * START)
+    # The primes p with p % 4 == 1, in order, from a starting point that n picks. Multiplying by
+    # 1234567 first sends nearby challenges to unrelated starting points.
+    p = START + n * 1234567 % (9 * START)
     p += (1 - p) % 4
     while True:
         if is_prime(p):
@@ -38,9 +39,10 @@ def chain_primes(n):
         p += 4
 
 
-def check_paley(challenge, response):
+def check_paley(challenge, response, enough=None):
     # How many cliques in a row, from the start of the chain, are real: node labels in blocks of
     # CLIQUE_SIZE, block k for the k-th prime of the chain, every pair's difference a square mod p.
+    # Each clique costs 136 pow() calls to check, so pass enough=k to stop counting at k.
     try:
         labels = response["labels"]
         if not all(type(x) is int for x in labels):
@@ -54,6 +56,8 @@ def check_paley(challenge, response):
         if any(pow(a - b, half, p) != 1 for i, a in enumerate(clique) for b in clique[:i]):
             break
         score += 1
+        if score == enough:
+            break
     return score
 
 

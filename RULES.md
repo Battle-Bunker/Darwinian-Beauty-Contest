@@ -38,12 +38,12 @@ A bee that leaves without asking anything still loses 1 turn. If your bee crashe
 returns something odd, that costs 1 turn and ends the visit.
 
 **Bees remember things.** Top-level variables in your bee program last for the whole round, so your
-bee can learn as it goes. At the end of each round the game saves them. In every later round your bee
-can read them in `MEMORY`, a list with one entry per earlier round: `MEMORY[0]` is what your bee had
-at the end of round 1, and `MEMORY[-1]` is the most recent round. Each entry maps variable names to
-values. Only plain data is kept: numbers, strings, `True`/`False`/`None`, lists, tuples, dicts and sets
-(in TypeScript: arrays, objects, `Map` and `Set`). `MEMORY` is read-only, so copy what you want to
-change, e.g. `tally = dict(MEMORY[-1]["tally"]) if MEMORY else {}`. Each round can keep up to 256 KB.
+bee can learn as it goes. At the end of each round the game saves whatever your bee's top-level
+variable **`keep`** holds. In every later round your bee can read those values in `MEMORY`, a list with
+one entry per earlier round: `MEMORY[0]` is what `keep` held at the end of round 1, and `MEMORY[-1]`
+the most recent round. Only plain data is kept: numbers, strings, `True`/`False`/`None`, lists, tuples,
+dicts and sets (in TypeScript: arrays, objects, `Map` and `Set`). `MEMORY` is read-only, so copy what
+you want to change, e.g. `keep = dict(MEMORY[-1]) if MEMORY else {}`. Each round can keep up to 256 KB.
 
 **Flowers remember nothing, but they don't have to repeat themselves.** The whole flower program runs
 fresh for every single question, so nothing survives from one call to the next: a flower can't count
@@ -129,7 +129,7 @@ Every program can read a `GAME` dictionary/object: `turns`, `feed_cost`, `challe
 `response_type`, `max_len`, `max_nodes`, `flowers` (how many flowers are in the garden) and `ms` (your
 program's own time limit per call, in milliseconds). It does
 **not** say which round it is. (A bee can count its `MEMORY`; a flower can't know.) Flowers change
-between rounds only when you change their code, and clovers and orchids take turns to do that (see
+between rounds only when you change their code, and orchids, clovers and bees take turns to do that (see
 "Taking turns to change" below).
 
 Python programs may import `math`, `random`, `hashlib`, `string`, `itertools`, `functools`,
@@ -168,30 +168,36 @@ code costs nothing:
 - **Comments, blank lines and spacing are free.** Python keeps one line per statement and one space
   per level of indentation; TypeScript gets one `;` per statement.
 - **Names are free.** Every name your program defines (variables, functions, parameters, imports) is
-  renamed to a one- or two-letter name before counting, so `best_clique_size` costs the same as `b`.
-  A name's first 20 characters are free; longer names pay for the rest.
+  renamed to a one- or two-letter name, so `best_clique_size` costs the same as `b`. A few names keep
+  their spelling so the program still works: names defined in a class body (they're attributes),
+  parameters you also pass by keyword (`f(size=3)`), names that shadow a builtin (`max = 3`), and
+  `flower`, `forage`, `tasted`, `keep`, `GAME` and `MEMORY`.
 - **TypeScript types are free**, because they're removed before your program runs.
 - **Everything else counts as written:** keywords and operators, every character of every string
   (including docstrings and your bee's `"ask"`, `"feed"` and `"leave"`), every digit of every number,
   names after a dot (`random.randint`), keyword-argument names (`dict(nodes=n)`), and names you use
   but don't define (`len`, `Math`, `GAME`).
 
-The editor shows exactly what gets counted: your program, minified. Strings and numbers count in
-full because otherwise a single long string or number could hide a whole lookup table.
+**The game runs the minified program**, exactly what gets counted, and the editor shows it to you.
+So names can't smuggle data (a function's `__name__` is one letter), and error messages refer to the
+minified program. Don't look your own names up by string (`globals()["tally"]`): they won't be there.
+Strings and numbers count in full because otherwise a single long string or number could hide a whole
+lookup table.
 
 ### Taking turns to change
 
-Before round 1 you write all three programs, anything within the size budgets. After that, **clovers
-and orchids take turns**:
+Before round 1 you write all three programs, anything within the size budgets. After that, **orchids,
+clovers and bees take turns**, one kind before each round:
 
 | before round | may change |
 |---|---|
-| 2, 4, 6, … | orchid and bee |
-| 3, 5, 7, … | clover and bee |
+| 2, 5, 8, … | orchid |
+| 3, 6, 9, … | clover |
+| 4, 7, 10, … | bee |
 
-So orchids get a round to react to what the clovers did, and the clovers can't move at the same
-time. Then the clovers get a round to react to the imitators while the orchids stand still. Bees
-can change before every round.
+So orchids always get a round to imitate both the clovers' answers and the bees' questions while
+neither can react. Then the clovers get a round to react to the imitators, and then the bees get a
+round to react to both.
 
 A change is measured on the minified programs too: the number of characters inserted, deleted or
 replaced to turn last round's minified program into the new one. Renaming a variable, editing

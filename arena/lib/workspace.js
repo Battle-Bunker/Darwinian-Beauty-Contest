@@ -1,4 +1,4 @@
-// Tool-using team agents (engine v2 phase): every team gets a private workspace of RAW files and runs a
+// Tool-using team agents: every team gets a private workspace of RAW files and runs a
 // `claude -p` session with Bash/Read/Write/Edit/Glob/Grep inside it. The runner prepares the files before each
 // round, then reads the code files back, validates and submits them, and audits the session transcript.
 //
@@ -8,7 +8,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { Api, gamePath, login } from "./api.js";
 import { ARENA_DIR, all, one, q } from "./db.js";
-import { COHORT_CARDS, ideaCard } from "./personas.js";
 import { rules } from "./prompts.js";
 
 export const WS_ROOT = process.env.ARENA_WS_ROOT || "/home/user/arena-ws";
@@ -26,7 +25,7 @@ const README = (ext, cohort, examples) => `# Your workspace
 | RULES.md | the game's rules (exactly what every player sees) |
 | interface.txt | function signatures and the game's types |
 | config.json | this game's settings: types, budgets, turns, feed cost, teams |
-| clover.${ext}, orchid.${ext}, bee.${ext} | YOUR CURRENT PROGRAMS. Edit these in place; whatever is in them when you finish is checked and submitted |
+| clover.${ext}, orchid.${ext}, bee.${ext} | YOUR CURRENT PROGRAMS. Edit the ones you may change this round (your brief says which; config.json too) in place: when you finish they are checked and submitted. Edits to a locked one are discarded |
 | history/round-N/ | the programs that played round N of this game |
 | logs/round-N/round.json | round N as your team may see it, without visits: scores, ledgers, your programs' sizes and compute use, MEMORY sizes |
 | logs/round-N/visits.jsonl | every visit in the garden that round, one JSON object per line (your team's private details included) |
@@ -37,7 +36,6 @@ const README = (ext, cohort, examples) => `# Your workspace
 ${cohort ? "| previous-games/game-N/ | earlier games: standings.md, the final code of the top 2 teams (top2/), your own logs/history/memory (own/), and panel.md (panel scores and what the judges said about you) |"
     : "| previous-games/ | earlier games in this arena, revealed: every team's final code and every round's full visits; panel.md has the standings, panel scores and what the judges said about you |"}
 | notebook.md | your private notes; they persist across rounds and games |
-| idea-card.md or ideas.md | (only some teams) ideas other players are exploring |
 ${examples ? `| examples/ | example flower programs and bee-side checkers; every team in this garden has the same files (${examples.join(", ")}) |\n` : ""}
 A visit line: {"bee", "patch", "seq", "start", "end", "asks", "asksBeforeFeed", "action", "nectar", "kind"?, "steps"?: [{"c", "r", "after"?}]}.
 Teams are ids (logs/game.json maps ids to names). "after": true marks asks made after feeding.
@@ -72,6 +70,7 @@ export async function prepareWorkspace({ arena, gameRow, persona, entry, gPath, 
     }
   }
   write(marker, String(gameRow.generation));
+  for (const f of fs.readdirSync(dir)) if (/\.minified\.(py|ts)$/.test(f)) fs.rmSync(path.join(dir, f)); // last round's failures
 
   write(path.join(dir, "RULES.md"), rules());
   const examples = arena.settings.cohort?.examples || null;
@@ -84,19 +83,10 @@ export async function prepareWorkspace({ arena, gameRow, persona, entry, gPath, 
   const it = view.interface;
   write(path.join(dir, "interface.txt"), `challenge: ${it.types.challenge} (${it.types.challengeMeans})\nresponse: ${it.types.response} (${it.types.responseMeans})\n` +
     `rules: ${(it.types.rules || []).join(" ")}\n\nclover and orchid:\n${it.flower}\n\nbee:\n${it.bee}\n`);
-  const turns = config.turns || config.turnsPerFlower * 2 * n;
+  const turns = view.game.turns ?? config.turnsPerFlower * 2 * n;
   write(path.join(dir, "config.json"), json({ ...config, teams: n, flowers: 2 * n, turns_per_round: turns, file_extension: ext,
-    game: gameRow.generation, next_round: roundNo, your_team: entry.team_name, sample_challenges: sampleFor(config) }));
+    game: gameRow.generation, next_round: roundNo, may_change_before_next_round: view.game.changeable, your_team: entry.team_name, sample_challenges: sampleFor(config) }));
   write(path.join(dir, "notebook.md"), (await one("SELECT notebook FROM arena.personas WHERE id = $1", [persona.id])).notebook || "");
-  // Idea cards: the earlier A/B cards (idea-card.md, also in the system prompt), or the cohort experiment's catalogue
-  // slices (ideas.md only: pointed at once in the brief).
-  const card = persona.idea_card && !COHORT_CARDS[persona.idea_card] ? ideaCard(persona.idea_card, config.responseType) : null;
-  if (card) write(path.join(dir, "idea-card.md"), card + "\n");
-  if (COHORT_CARDS[persona.idea_card]) write(path.join(dir, "ideas.md"), COHORT_CARDS[persona.idea_card]);
-
-  // No tools/ scripts and no token in workspaces: interpreters aren't approved in agent sessions (safety), so the
-  // runner validates and submits after the session instead. Remove anything left from older layouts.
-  fs.rmSync(path.join(dir, "tools"), { recursive: true, force: true });
 
   // Current programs: exactly what played last round (the change budget is measured against these).
   const last = view.rounds[view.rounds.length - 1];
@@ -124,7 +114,7 @@ export async function prepareWorkspace({ arena, gameRow, persona, entry, gPath, 
   if (arena.settings.cohort) await writeCohortPrevious(arena, dir, gameRow.generation);
   else if (arena.settings.recap !== "scores") await writePreviousGames(arena, dir, gameRow.generation);
   await writePanelFeedback(arena, dir, gameRow.generation, persona.id);
-  return { dir, ext, view, card };
+  return { dir, ext, view };
 }
 
 /** A round as files that Grep/Read can handle: round.json (everything but visits) and visits as JSON Lines. */
@@ -223,6 +213,16 @@ async function writePanelFeedback(arena, dir, generation, personaId) {
 }
 
 /** Read the code files and notebook back after a session. */
+/** The minified form of a program that failed its checks: error messages refer to it. */
+export function writeMinified(dir, ext, kind, code) {
+  write(path.join(dir, `${kind}.minified.${ext}`), code);
+}
+
+/** Put a program file back to the version that played (a locked file the team edited). */
+export function restoreProgram(dir, ext, kind, code) {
+  write(path.join(dir, `${kind}.${ext}`), code ?? "");
+}
+
 export function collect(dir, ext) {
   const out = {};
   for (const k of KINDS) { const f = path.join(dir, `${k}.${ext}`); out[k] = fs.existsSync(f) ? fs.readFileSync(f, "utf8") : ""; }
@@ -297,7 +297,6 @@ export function audit(transcriptFile, dir, arenaId, slug) {
       const input = c.input || {};
       if (c.name === "Bash") {
         const cmd = ownSpill(String(input.command || ""));
-        const usesTool = /\btools\/(check|try)\.py\b/.test(cmd);
         if (DB.test(cmd)) add("violation", "Bash", `database access: ${cmd}`);
         if (AUTH.test(cmd)) add("violation", "Bash", `auth endpoint: ${cmd}`);
         if (ENVDUMP.test(cmd)) add("violation", "Bash", `environment dump: ${cmd}`);
@@ -306,7 +305,7 @@ export function audit(transcriptFile, dir, arenaId, slug) {
         if (escapesWorkspace(real, dir, shellCwd)) add("violation", "Bash", `parent-directory path leaving the workspace: ${cmd}`);
         shellCwd = cwdAfter(real, dir, shellCwd);
         if (SENSITIVE.test(cmd.replaceAll(dir, "WS"))) add("violation", "Bash", `path outside workspace: ${cmd}`);
-        if (NETWORK.test(cmd) && !usesTool) add("violation", "Bash", `network access outside tools: ${cmd}`);
+        if (NETWORK.test(cmd)) add("violation", "Bash", `network access: ${cmd}`);
         if (/\/tmp\b/.test(cmd)) add("warning", "Bash", `uses /tmp: ${cmd}`);
       } else {
         // Written content (scripts, harnesses, programs): same checks as shell commands, with python's network and

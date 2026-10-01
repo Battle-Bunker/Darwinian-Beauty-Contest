@@ -39,7 +39,8 @@ def tasted(seen, nectar):
 `;
 
 async function play({ n, honest, beeModes, feedCost, turns = 100, rounds = 3, seed = 1 }) {
-  const config = normalizeConfig({ feedCost, turns, budgets: { bee: { nodes: 1000 } } });
+  // `turns` per round, as in the v1 rules this probe was written for.
+  const config = normalizeConfig({ feedCost, turnsPerFlower: Math.max(1, Math.round(turns / (2 * n))) });
   const teams = [...Array(n).keys()].map((i) => {
     const salt = `team${i}-`;
     return { id: i, honest: i < honest, mode: beeModes[i % beeModes.length], programs: {

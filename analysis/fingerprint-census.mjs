@@ -37,7 +37,7 @@ for (const G of games) {
   const progs = await programsOf(G.uuid);
   const rounds = await roundsOf(G.uuid);
   const nTeams = G.participants.length;
-  const turnsOf = (r) => rounds.find((x) => x.round_no === r)?.turns ?? G.config.turns ?? (G.config.turnsPerFlower ?? 100) * 2 * nTeams;
+  const turnsOf = (r) => rounds.find((x) => x.round_no === r).turns;
   const totals = rounds[rounds.length - 1]?.totals || [];
   const bees = new Map();
   const B = (t) => {

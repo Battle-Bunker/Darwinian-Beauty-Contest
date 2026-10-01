@@ -1,13 +1,14 @@
 #!/usr/bin/env node
-// Arena runner: rooms of evolving LLM-agent populations playing Darwinian Beauty Contest via the HTTP API.
+// Arena runner: rooms of LLM-agent teams playing Darwinian Beauty Contest via the HTTP API. Every team turn is a
+// tool-using session in the team's private workspace (lib/team.js); after each game: metrics, interviews, the teen
+// judges, then selection and breeding (unless the arena has fixed membership).
 //
-//   node arena/run.js --arena baseline --generations 6            # one arena (preset = id unless --preset)
-//   node arena/run.js --arenas baseline,strdark,lists,tight --generations 6
-//   node arena/run.js --arena pilot --preset pilot --generations 1
+//   node arena/run.js --arena pilot --generations 1                 # a fresh arena from a preset (preset = id unless --preset)
+//   node arena/run.js --arenas v3-base:2                            # arenas made by fork.js; ":n" = generations
 //
 // Re-running the same command resumes from the database (arena schema): finished stages are skipped.
 // Env: ARENA_API (default http://localhost:4000), ARENA_CONCURRENCY (8), ARENA_BUDGET_USD (global cap, 300),
-//      ARENA_TEAM_EFFORT (medium), DATABASE_URL.
+//      ARENA_SESSION_LIMITS, DATABASE_URL.
 import fs from "node:fs";
 import path from "node:path";
 import { Api, ApiError, gamePath, login } from "./lib/api.js";
@@ -21,7 +22,7 @@ import { breed, decideRetirements, retire, seedBreeders } from "./lib/population
 import { PRESETS } from "./lib/presets.js";
 import { interviewPrompt } from "./lib/prompts.js";
 import { judgeGame, seedJudges } from "./lib/social.js";
-import { interview, playTurn, playTurnTools } from "./lib/team.js";
+import { interview, playTurn } from "./lib/team.js";
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((acc, a, i, arr) => {
   if (a.startsWith("--")) acc.push([a.slice(2), arr[i + 1] && !arr[i + 1].startsWith("--") ? arr[i + 1] : true]);
@@ -50,18 +51,17 @@ async function ensureArena(id, presetName, generations) {
   const owner = `Arena owner ${id}`;
   const tok = await login(owner);
   const room = await Api.createRoom(tok);
-  const settings = { config: preset.config, teams: preset.lineup.length, generations, description: preset.description, recap: preset.recap || "full", unprimed: true, condition: preset.condition || null, mode: preset.mode || "prompt", budgetUsd: args.budget ? Number(args.budget) : null };
+  const settings = { config: preset.config, teams: preset.lineup.length, generations, description: preset.description, recap: preset.recap || "full", condition: preset.condition || null, budgetUsd: args.budget ? Number(args.budget) : null };
   await q("INSERT INTO arena.arenas (id, preset, settings, owner_name, room_short_id, room_url) VALUES ($1,$2,$3,$4,$5,$6)",
     [id, presetName, settings, owner, room.shortId, room.url]);
-  for (const [source, model, card] of preset.lineup) {
-    if (model === "fable") throw new Error("no fable personas (v2 phase rule)");
+  for (const [source, model] of preset.lineup) {
+    if (model === "fable") throw new Error("no fable personas");
     let row;
     if (source.startsWith("from:")) {
-      // A strong persona from an earlier arena: same prompt and team, plus its last notebook (marked as v1 notes).
+      // A persona from an earlier arena: same prompt and team, plus its last notebook (marked as notes from earlier).
       const src = await one("SELECT * FROM arena.personas WHERE id = $1", [source.slice(5)]);
       if (!src) throw new Error(`unknown source persona ${source}`);
-      const nb = src.notebook ? `(Your notes from an earlier tournament, under older rules: 100 turns per round, no MEMORY, no asks after feeding, ` +
-        `different budgets. Some of it may not apply any more.)\n${src.notebook}` : "";
+      const nb = src.notebook ? `(Your notes from an earlier tournament, possibly under older rules. Some of it may not apply any more.)\n${src.notebook}` : "";
       row = { slug: src.slug, name: src.name, teamName: src.team_name, archetype: src.archetype, isKid: src.is_kid, prompt: src.persona_prompt, notebook: nb, source: src.id };
     } else {
       const slug = source.replace(/^founder:/, "");
@@ -71,45 +71,11 @@ async function ensureArena(id, presetName, generations) {
     }
     const pid = `${id}/${row.slug}`;
     await q(`INSERT INTO arena.personas (id, arena_id, slug, name, team_name, model, archetype, is_kid, persona_prompt, generation_born, notebook, idea_card, source)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,1,$10,$11,$12)`, [pid, id, row.slug, row.name, row.teamName, model, row.archetype, row.isKid, row.prompt, row.notebook, card || null, row.source]);
-    await q("INSERT INTO arena.population_events (arena_id, generation, persona_id, event, reason, details) VALUES ($1,1,$2,'born',$3,$4)",
-      [id, pid, row.source === "founder" ? "founder" : `seeded from ${row.source}`, JSON.stringify({ ideaCard: card || null })]);
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,1,$10,NULL,$11)`, [pid, id, row.slug, row.name, row.teamName, model, row.archetype, row.isKid, row.prompt, row.notebook, row.source]);
+    await q("INSERT INTO arena.population_events (arena_id, generation, persona_id, event, reason, details) VALUES ($1,1,$2,'born',$3,'{}')",
+      [id, pid, row.source === "founder" ? "founder" : `seeded from ${row.source}`]);
   }
   return one("SELECT * FROM arena.arenas WHERE id = $1", [id]);
-}
-
-// ---------------------------------------------------------------- recap of the previous game
-
-async function recapFor(arena, generation) {
-  const prev = await one("SELECT * FROM arena.games WHERE arena_id = $1 AND generation = $2", [arena.id, generation - 1]);
-  if (!prev || !prev.game_short_id) return null;
-  const view = await Api.view(null, gamePath(arena.room_short_id, prev.game_short_id), "none");
-  if (!view.game.revealed) return null;
-  const entries = await all("SELECT e.*, p.name FROM arena.entries e JOIN arena.personas p ON p.id = e.persona_id WHERE e.game_id = $1", [prev.id]);
-  const names = Object.fromEntries(view.teams.map((t) => [t.id, t.name]));
-  const last = view.rounds[view.rounds.length - 1];
-  const lang = view.game.config.language === "typescript" ? "ts" : "python";
-  const final = [...view.final].sort((a, b) => b.fitness - a.fitness);
-  const lines = [`Final standings (fitness; panel social score 0-10 and rank):`];
-  final.forEach((s, i) => {
-    const e = entries.find((x) => x.team_id === s.teamId);
-    lines.push(`${i + 1}. ${names[s.teamId]}: fitness ${s.fitness.toFixed(2)} (allure ${s.allure.toFixed(2)}, forage ${s.forage.toFixed(2)}); social ${e?.social?.toFixed(1) ?? "-"} (#${e?.social_rank ?? "-"})`);
-  });
-  if (arena.settings.recap === "scores") return { text: lines.join("\n") + "\n(Other teams' code is not shown in this arena.)", prevGameId: prev.id };
-  lines.push(`\nFinal code of every team:`);
-  for (const s of final) {
-    const p = last.programs[s.teamId];
-    lines.push(`### ${names[s.teamId]}\n` + ["clover", "orchid", "bee"].map((k) => `${k}:\n\`\`\`${lang}\n${(p[k].code || "").trim()}\n\`\`\``).join("\n"));
-  }
-  return { text: lines.join("\n"), prevGameId: prev.id };
-}
-
-async function personalFeedback(prevGameId, personaId) {
-  if (!prevGameId) return "";
-  const evs = await all("SELECT j.name, j.age, e.* FROM arena.evaluations e JOIN arena.judges j ON j.id = e.judge_id WHERE e.game_id = $1 AND e.persona_id = $2", [prevGameId, personaId]);
-  if (!evs.length) return "";
-  return `\nWhat the interview panel said about YOUR team last game:\n` + evs.map((e) =>
-    `- ${e.name} (${e.age}): understanding ${e.understanding}, respect ${e.respect}, novelty ${e.novelty}, team-up ${e.team_up}. "${e.comment}"`).join("\n");
 }
 
 // ---------------------------------------------------------------- one generation
@@ -158,13 +124,9 @@ async function setupGame(arena, generation, log) {
 async function playGame(arena, generation, { ownerTok, gameRow, gPath, entries }, log) {
   await q("UPDATE arena.games SET stage = 'playing' WHERE id = $1 AND stage = 'created'", [gameRow.id]);
   const personas = await all("SELECT * FROM arena.personas WHERE id = ANY($1)", [entries.map((e) => e.persona_id)]);
-  const recap = generation > 1 && arena.settings.mode !== "tools" ? await recapFor(arena, generation) : null;
   let view = await Api.view(ownerTok, gPath);
   const rounds = view.game.config.rounds;
-  if (!gameRow.condition) {
-    const condition = arena.settings.condition || (arena.settings.unprimed ? "unprimed" : "post-primed");
-    await q("UPDATE arena.games SET condition = $2 WHERE id = $1 AND condition IS NULL", [gameRow.id, condition]);
-  }
+  if (!gameRow.condition && arena.settings.condition) await q("UPDATE arena.games SET condition = $2 WHERE id = $1 AND condition IS NULL", [gameRow.id, arena.settings.condition]);
   for (let r = view.game.roundsPlayed + 1; r <= rounds; r++) {
     const t0 = Date.now();
     // After round 1 only participants play (a team that had no valid programs for round 1 sits the game out).
@@ -178,10 +140,8 @@ async function playGame(arena, generation, { ownerTok, gameRow, gPath, entries }
         const v = await Api.view(tok, gPath);
         if (r > 1 || ["clover", "orchid", "bee"].every((k) => v.myTeam.drafts[k])) { log(`  ${p.name}: round ${r} turn already done before restart; skipping`); return { submitted: [], failed: [], cost: 0 }; }
       }
-      const personalRecap = arena.settings.mode !== "tools" && r === 1 && recap ? recap.text + (await personalFeedback(recap.prevGameId, p.id)) : null;
       try {
-        if (arena.settings.mode === "tools") return await playTurnTools({ arena, gameRow, persona: p, entry, gPath, roundNo: r, log });
-        return await playTurn({ arena, gameRow, persona: p, entry, gPath, roundNo: r, recap: personalRecap, log });
+        return await playTurn({ arena, gameRow, persona: p, entry, gPath, roundNo: r, log });
       } catch (e) {
         if (e instanceof BudgetError) throw e;
         log(`  ${p.name}: turn failed: ${e.stack || e.message}`);
@@ -234,7 +194,7 @@ async function analyseGame(arena, generation, { ownerTok, gameRow, gPath, entrie
     await q("UPDATE arena.entries SET fitness = $3, fitness_rank = $4, allure = $5, forage = $6 WHERE game_id = $1 AND persona_id = $2",
       [gameRow.id, e.persona_id, s.fitness, final.indexOf(s) + 1, s.allure, s.forage]);
   }
-  log(`gen ${generation} final: ${final.map((x) => `${entries.find((e) => e.team_id === x.teamId)?.team_name} ${x.fitness.toFixed(2)}`).join(", ")}; collapses: ${gm.collapses.map((f) => f.mode).join(", ") || "none"}; orchid targets ${JSON.stringify(gm.orchidTargets)}`);
+  log(`gen ${generation} final: ${final.map((x) => `${entries.find((e) => e.team_id === x.teamId)?.team_name} ${x.fitness.toFixed(2)}`).join(", ")}; collapses: ${gm.collapses.map((f) => f.mode).join(", ") || "none"}`);
   if (arena.settings.cohort) {
     const teamToPersona = Object.fromEntries(entries.filter((e) => view.participants.includes(e.team_id)).map((e) => [e.team_id, e.persona_id]));
     await classifyGame({ arena, gameRow, view, teamToPersona, log });

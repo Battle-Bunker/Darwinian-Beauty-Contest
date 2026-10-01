@@ -38,7 +38,8 @@ const ROLES = ["cross", "cross", "victim", "victim", "twin", "twin", "honest", "
 const TARGET = { 0: 2, 1: 3 };
 
 async function game(mode, feedCost, seed) {
-  const config = normalizeConfig({ feedCost, turns: 100, budgets: { bee: { nodes: 1000 } } });
+  // 100 turns per round, as in the v1 rules this probe was written for.
+  const config = normalizeConfig({ feedCost, turnsPerFlower: Math.max(1, Math.round(100 / (2 * ROLES.length))) });
   const teams = ROLES.map((role, i) => {
     const salt = `t${i}-`;
     const orchid = role === "cross" ? hashFn(`t${TARGET[i]}-`) : role === "twin" ? hashFn(salt) : hashFn(`o${i}-`);
