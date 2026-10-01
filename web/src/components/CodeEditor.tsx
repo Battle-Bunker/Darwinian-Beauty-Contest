@@ -1,15 +1,16 @@
 // A plain <textarea> over a highlighted <pre>, like quine-court's editor: syntax colours from
 // tree-sitter, plus diff marks (inserted / deleted text) against last round's program.
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { getLangTools, paint, type Language, type Mark } from "../lib/codetools";
+import { getLangTools, paint, type Complexity, type Language, type Mark } from "../lib/codetools";
 
-/** chars: the complexity, the length of `minified` (the program as the game counts it). */
-export interface EditorStats { chars: number; minified: string; syntaxError: boolean; distance: number | null }
+/** size: in the game's complexity unit; minified: the text the game runs. */
+export interface EditorStats { size: number; minified: string; syntaxError: boolean; distance: number | null }
 
 interface Highlight { code: string; syntax: Mark[]; diff: Mark[]; prevHtml: string | null }
 
-export function CodeEditor({ value, onChange, language, previous = null, readOnly = false, onStats, label, showPrevious = false, placeholder }: {
+export function CodeEditor({ value, onChange, language, mode = "chars", previous = null, readOnly = false, onStats, label, showPrevious = false, placeholder }: {
   value: string;
+  mode?: Complexity;
   onChange?: (code: string) => void;
   language: Language;
   previous?: string | null;
@@ -30,24 +31,24 @@ export function CodeEditor({ value, onChange, language, previous = null, readOnl
       try {
         const tools = await getLangTools(language);
         if (cancelled) return;
-        const parsed = tools.parse(value);
+        const parsed = tools.parse(value, mode);
         const syntax = tools.syntax(value);
         let diff: Mark[] = [], prevHtml: string | null = null, distance: number | null = null;
         if (previous !== null) {
-          const d = tools.diff(previous, value);
+          const d = tools.diff(previous, value, mode);
           diff = d.new;
           distance = d.distance;
           prevHtml = paint(previous, tools.syntax(previous), d.old);
         }
         setHl({ code: value, syntax, diff, prevHtml });
-        statsRef.current?.({ chars: parsed.size, minified: parsed.minified, syntaxError: parsed.hasError, distance });
+        statsRef.current?.({ size: parsed.size, minified: parsed.minified, syntaxError: parsed.hasError, distance });
       } catch (e) {
         if (!cancelled) setLoadError(e instanceof Error ? e.message : String(e));
       }
     }, hl.code ? 90 : 0);
     return () => { cancelled = true; clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value, previous, language]);
+  }, [value, previous, language, mode]);
 
   // While a fresh highlight is computing, reuse the last marks so colours don't flicker.
   const html = useMemo(() => paint(value, hl.syntax, hl.diff), [value, hl]);
@@ -146,6 +147,6 @@ export function CodeEditor({ value, onChange, language, previous = null, readOnl
 }
 
 /** Read-only code with syntax colours and (optionally) diff marks against a previous version. */
-export function CodeView({ code, language, previous = null, showPrevious = false, label }: { code: string; language: Language; previous?: string | null; showPrevious?: boolean; label: string }) {
-  return <CodeEditor value={code} language={language} previous={previous} readOnly showPrevious={showPrevious} label={label} />;
+export function CodeView({ code, language, mode, previous = null, showPrevious = false, label }: { code: string; language: Language; mode?: Complexity; previous?: string | null; showPrevious?: boolean; label: string }) {
+  return <CodeEditor value={code} language={language} mode={mode} previous={previous} readOnly showPrevious={showPrevious} label={label} />;
 }

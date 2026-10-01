@@ -4,7 +4,7 @@ import { query, tx } from "./db/pool.js";
 import { env } from "./config.js";
 import { allocatePrefixLen, normalizeCode, shortId, uuidToCode } from "./lib/shortid.js";
 import { DEFAULT_CONFIG, normalizeConfig, turnsFor } from "./lib/gameConfig.js";
-import { changes, size } from "./lib/measure.js";
+import { UNITS, changes, size } from "./lib/measure.js";
 import { changeable, nextChangeRound } from "./lib/schedule.js";
 import { addLedgers, score, zeroLedger } from "./lib/scoring.js";
 import { programInterface } from "./lib/interface.js";
@@ -113,7 +113,7 @@ export async function updateConfig(room, game, user, config) {
     try { cfg = normalizeConfig(config, g.config); } catch (e) { fail(400, e.message); }
     // Pending programs were checked against the old budgets/language; make teams re-submit.
     const changed = ["language", "challengeType", "responseType"].some((k) => cfg[k] !== g.config[k])
-      || KINDS.some((k) => cfg.budgets[k].chars < g.config.budgets[k].chars);
+      || cfg.complexity !== g.config.complexity || KINDS.some((k) => cfg.budgets[k].size < g.config.budgets[k].size);
     if (changed) await c.query("DELETE FROM submissions WHERE game_id = $1", [g.id]);
     await c.query("UPDATE games SET config = $2 WHERE id = $1", [g.id, cfg]);
     await touch(c, g.id);
@@ -168,9 +168,10 @@ async function previousPrograms(gameId, teamId, roundNo, client = { query }) {
 }
 
 /**
- * Measure a program against its size budget and (after round 1) its change budget. chars is the size,
- * the length of the minified program (`minified`); distance is the change since last round, in
- * characters of the minified forms. A flower that may not change this round (see schedule.js) has no
+ * Measure a program against its size budget and (after round 1) its change budget, in the game's
+ * complexity mode (characters of the minified program, or weighted nodes). `minified` is the text the
+ * game runs; distance is the change since last round (renaming is free). A program that may not change
+ * this round (see schedule.js) has no
  * change budget at all.
  */
 export async function checkProgram(game, team, kind, code) {
@@ -179,18 +180,20 @@ export async function checkProgram(game, team, kind, code) {
   if (code.length > 100_000) fail(400, "Program is too long");
   const budget = game.config.budgets[kind];
   const errors = [];
-  const { chars, minified, syntaxError } = await size(game.config.language, code);
+  const mode = game.config.complexity, unit = UNITS[mode];
+  const { size: measured, minified, syntaxError } = await size(game.config.language, code, mode);
   if (syntaxError) errors.push("Syntax error");
-  if (chars > budget.chars) {
-    errors.push(`Too long: ${chars} characters after minifying > budget ${budget.chars} ` +
-      "(comments, spacing and name lengths don't count; strings, numbers and keywords do)");
+  if (measured > budget.size) {
+    errors.push(`Too big: ${measured} ${unit} > budget ${budget.size} ` + (mode === "nodes"
+      ? "(comments, spacing and name lengths don't count; every byte of a string or number does)"
+      : "(comments, spacing and name lengths don't count; strings, numbers and keywords do)"));
   }
   let distance = null, previous = null;
   if (game.rounds_played > 0) {
     previous = (await previousPrograms(game.id, team.id, game.rounds_played))[kind] ?? null;
     if (previous === null) errors.push("Your team isn't playing in this game (no programs in round 1)");
-    else if (chars <= budget.chars * 4) {
-      distance = await changes(game.config.language, previous, code);
+    else if (measured <= budget.size * 4) {
+      distance = await changes(game.config.language, previous, code, mode);
       const next = game.rounds_played + 1;
       if (!changeable(next).includes(kind)) {
         if (distance > 0) {
@@ -198,11 +201,11 @@ export async function checkProgram(game, team, kind, code) {
             `and this round it's the ${changeable(next)[0]}s' turn. Your ${kind} can change again before round ${nextChangeRound(kind, next)}.`);
         }
       } else if (distance > budget.changes) {
-        errors.push(`Too many changes: ${distance} characters changed (minified) > budget ${budget.changes}`);
+        errors.push(`Too many changes: ${distance} ${unit} changed > budget ${budget.changes}`);
       }
     } else errors.push("Too long to compare with last round");
   }
-  return { ok: errors.length === 0, kind, chars, minified, distance, errors, budget };
+  return { ok: errors.length === 0, kind, size: measured, unit, minified, distance, errors, budget };
 }
 
 export async function submitProgram(game, user, kind, code) {
@@ -217,9 +220,9 @@ export async function submitProgram(game, user, kind, code) {
     if (g.rounds_played !== game.rounds_played) fail(409, "A round just ran; check your program again");
     if (g.status === "finished") fail(409, "Game over");
     await c.query(
-      `INSERT INTO submissions (game_id, team_id, kind, code, chars, distance, submitted_by) VALUES ($1, $2, $3, $4, $5, $6, $7)
-       ON CONFLICT (game_id, team_id, kind) DO UPDATE SET code = $4, chars = $5, distance = $6, submitted_by = $7, submitted_at = now()`,
-      [game.id, team.id, kind, code, check.chars, check.distance, user.id]);
+      `INSERT INTO submissions (game_id, team_id, kind, code, size, distance, submitted_by) VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (game_id, team_id, kind) DO UPDATE SET code = $4, size = $5, distance = $6, submitted_by = $7, submitted_at = now()`,
+      [game.id, team.id, kind, code, check.size, check.distance, user.id]);
     await touch(c, game.id);
   });
   return { ...check, submitted: true };
@@ -306,7 +309,7 @@ export async function startRound(room, game, user, opts = {}) {
           : { code: p.code, distance: 0, carriedOver: true };
         // Measured again so stored sizes follow the current complexity rule, even for a program
         // checked or carried over from before a rule change (it still plays: budgets apply when submitting).
-        programs[teamId][kind] = { ...prog, chars: (await size(g.config.language, prog.code)).chars };
+        programs[teamId][kind] = { ...prog, size: (await size(g.config.language, prog.code, g.config.complexity)).size };
       }
     }
     await c.query("UPDATE games SET running_round = $2, participants = $3, status = 'running', last_error = NULL WHERE id = $1", [g.id, roundNo, participants]);
@@ -352,8 +355,8 @@ async function executeRound(gameId, { roundNo, participants, programs, config, s
       for (const kind of KINDS) {
         const p = programs[teamId][kind];
         await c.query(
-          "INSERT INTO round_programs (game_id, round_no, team_id, kind, code, chars, distance, carried_over, problem, compute) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
-          [gameId, roundNo, teamId, kind, p.code, p.chars, p.distance, p.carriedOver, sim.problems[ti][kind], kind === "bee" ? null : sim.compute[ti][kind]]);
+          "INSERT INTO round_programs (game_id, round_no, team_id, kind, code, size, distance, carried_over, problem, compute) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+          [gameId, roundNo, teamId, kind, p.code, p.size, p.distance, p.carriedOver, sim.problems[ti][kind], kind === "bee" ? null : sim.compute[ti][kind]]);
       }
     }
     // Bulk insert visits in chunks.
@@ -439,7 +442,7 @@ export async function viewGame(room, game, user, opts = {}) {
     myTeam: mine ? {
       id: mine.id, name: mine.name, joinCode: mine.join_code,
       drafts: Object.fromEntries(subs.filter((s) => s.team_id === mine.id).map((s) => [s.kind, {
-        code: s.code, chars: s.chars, distance: s.distance, submittedAt: s.submitted_at, submittedBy: s.submitted_by_name,
+        code: s.code, size: s.size, distance: s.distance, submittedAt: s.submitted_at, submittedBy: s.submitted_by_name,
       }])),
       previous: Object.fromEntries(KINDS.filter((k) => latestProg[mine.id]?.[k]).map((k) => [k, latestProg[mine.id][k].code])),
     } : null,
@@ -459,7 +462,7 @@ function roundViewOf(r, visits, { cfg, mine, revealed, participants, progs, mems
       const p = progs.find((x) => x.round_no === r.round_no && x.team_id === teamId && x.kind === kind);
       if (!p) return [kind, null];
       const own = canSeeTeam(teamId);
-      return [kind, { chars: p.chars, distance: p.distance, carriedOver: p.carried_over, ...(own ? { code: p.code, problem: p.problem, compute: p.compute } : {}) }];
+      return [kind, { size: p.size, distance: p.distance, carriedOver: p.carried_over, ...(own ? { code: p.code, problem: p.problem, compute: p.compute } : {}) }];
     }))])),
     // Size of what each bee kept for later rounds (your own team's, or everyone's once revealed).
     memory: Object.fromEntries(mems.filter((m) => m.round_no === r.round_no && canSeeTeam(m.team_id)).map((m) => [m.team_id, { bytes: m.bytes, note: m.note }])),

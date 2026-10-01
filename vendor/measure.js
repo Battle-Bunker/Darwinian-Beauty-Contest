@@ -182,16 +182,12 @@ var DbcMeasure = (() => {
   }
 
   /**
-   * The minified program. chooseNames(uses, reserved) maps every renamable name to its replacement
-   * (uses: name → count, in order of first use; reserved: names a replacement must avoid). Returns the
-   * text, the replacements, and `occurrences`: the original renamed names in the order they appear.
+   * Which identifiers minifying renames: { isRenamable(node, parent, field), uses: name → count (in
+   * order of first use), reserved: names a replacement must avoid }.
    */
-  function minify(root, source, language, chooseNames = byUse) {
+  function analyzeNames(root, source, language) {
     const ts = language === "typescript";
-    const word = ts ? /[A-Za-z0-9_$\u0080-\uffff]/ : /[A-Za-z0-9_\u0080-\uffff]/;
     const text = (n) => source.slice(n.startIndex, n.endIndex);
-
-    // Count how often each bound name is used, then hand out short names, most-used first.
     const { bound, keepSpelling } = ts ? typescriptBindings(root, source) : pythonBindings(root, source);
     const builtins = BUILTINS[ts ? "typescript" : "python"];
     for (const b of [...bound]) if (KEEP.has(b) || keepSpelling.has(b) || builtins.has(b) || /^__.*__$/.test(b)) bound.delete(b);
@@ -212,6 +208,19 @@ var DbcMeasure = (() => {
       for (const [c, f] of kids(n)) count(c, n, f);
     })(root, null, null);
     const reserved = new Set([...RESERVED[ts ? "typescript" : "python"], ...verbatim, ...KEEP]);
+    return { isRenamable, uses, reserved };
+  }
+
+  /**
+   * The minified program. chooseNames(uses, reserved) maps every renamable name to its replacement
+   * (default: most-used first). Returns the text, the replacements, and `occurrences`: the original
+   * renamed names in the order they appear.
+   */
+  function minify(root, source, language, chooseNames = byUse) {
+    const ts = language === "typescript";
+    const word = ts ? /[A-Za-z0-9_$\u0080-\uffff]/ : /[A-Za-z0-9_\u0080-\uffff]/;
+    const text = (n) => source.slice(n.startIndex, n.endIndex);
+    const { isRenamable, uses, reserved } = analyzeNames(root, source, language);
     const short = chooseNames(uses, reserved);
     const occurrences = [];
     const renamed = (name) => { occurrences.push(name); return short.get(name); };
@@ -325,16 +334,196 @@ var DbcMeasure = (() => {
     return { text: out, names: short, occurrences, reserved };
   }
 
-  // ---------------------------------------------------------------- the three measures
-  function size(root, source, language) {
+  // ---------------------------------------------------------------- syntax trees for the node measure
+  // A program as a tree of weighted nodes, read off the same syntax tree the minifier uses, so it is the
+  // minified program's tree: comments, TypeScript types and redundant parentheses aren't nodes. Each node
+  // weighs 1, except
+  //   - a literal (string, number, regex) weighs one per byte of its text; expressions embedded in a
+  //     string (f-string {…}, template ${…}) are nodes of their own
+  //   - a name that minifying can't rename (attribute and keyword names, names it must keep) weighs one
+  //     plus one per byte beyond 20, because it still exists when the program runs
+  // A node's label is what a relabel changes: its type and keywords/operators, a name (renamed names by
+  // their replacement, so renaming is free), or a literal's text.
+  const LITERALS = { python: new Set(["string", "integer", "float"]), typescript: new Set(["string", "template_string", "number", "regex"]) };
+  const NAMES = new Set(["identifier", "property_identifier", "shorthand_property_identifier", "shorthand_property_identifier_pattern", "statement_identifier"]);
+  const PUNCTUATION = new Set(["(", ")", "[", "]", "{", "}", ",", ";", ":", "."]);
+  const FREE_NAME_BYTES = 20;
+  /** UTF-8 bytes of a string. */
+  function utf8(s) {
+    const out = [];
+    for (const ch of s) {
+      const c = ch.codePointAt(0);
+      if (c < 0x80) out.push(c);
+      else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 63));
+      else if (c < 0x10000) out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+      else out.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+    }
+    return out;
+  }
+  const bytes = (s) => utf8(s).length;
+
+  function nodeTree(root, source, language, names) {
+    const ts = language === "typescript";
+    const { isRenamable } = analyzeNames(root, source, language);
+    const literal = LITERALS[ts ? "typescript" : "python"];
+    const text = (n) => source.slice(n.startIndex, n.endIndex);
+
+    // A literal's own text as source segments (everything but its quotes and prefix and the
+    // expressions embedded in it, so format specs and braces count), and the embedded expressions.
+    function literalParts(n) {
+      if (n.type === "string" || n.type === "template_string") {
+        const segs = [], exprs = [];
+        let at = n.startIndex;
+        const cut = (a, b) => { if (a > at) segs.push([at, a]); at = Math.max(at, b); };
+        const visit = (m) => {
+          for (const [c, f] of kids(m)) {
+            if (["string_start", "string_end", "\"", "'", "`"].includes(c.type)) cut(c.startIndex, c.endIndex);
+            else if (((m.type === "interpolation" || m.type === "format_expression") && f === "expression") ||
+                     (m.type === "template_substitution" && named(c))) { cut(c.startIndex, c.endIndex); exprs.push(c); }
+            else if (c.childCount) visit(c);
+          }
+        };
+        visit(n);
+        cut(n.endIndex, n.endIndex);
+        return { segs, exprs };
+      }
+      if (n.type === "regex") return { segs: [[n.startIndex + 1, n.endIndex]], exprs: [] }; // pattern/flags
+      return { segs: [[n.startIndex, n.endIndex]], exprs: [] };
+    }
+
+    function build(n, parent, field) {
+      const t = n.type;
+      if (isComment(n)) return null;
+      if (ts && TS_SKIP.has(t)) return null;
+      if (t === "parenthesized_expression" || (ts && ["as_expression", "satisfies_expression", "non_null_expression", "type_assertion"].includes(t))) {
+        const inner = kids(n).map(([c]) => c).filter((c) => named(c) && !isComment(c) && !TS_SKIP.has(c.type));
+        if (inner.length === 1) return build(inner[0], n, null);
+      }
+      if (literal.has(t)) {
+        const { segs, exprs } = literalParts(n);
+        const lit = segs.map(([a, b]) => source.slice(a, b)).join("");
+        return { label: `lit:${t}:${lit}`, lit, ltype: t, segs, w: Math.max(1, bytes(lit)), span: [n.startIndex, n.endIndex],
+          children: exprs.map((e) => build(e, n, null)).filter(Boolean) };
+      }
+      if (NAMES.has(t) && n.childCount === 0) {
+        const own = text(n);
+        if (t === "identifier" && isRenamable(n, parent, field)) return { label: "id:" + names.get(own), w: 1, own: [[n.startIndex, n.endIndex]], children: [] };
+        return { label: "name:" + own, w: 1 + Math.max(0, bytes(own) - FREE_NAME_BYTES), own: [[n.startIndex, n.endIndex]], children: [] };
+      }
+      const tokens = [], own = [], children = [];
+      for (const [c, f] of kids(n)) {
+        if (isComment(c)) continue;
+        if (named(c)) { const b = build(c, n, f); if (b) children.push(b); continue; }
+        if (ts && TS_TYPE_WORDS.has(c.type)) continue;
+        if (c.childCount) { const b = build(c, n, f); if (b) children.push(...(b.label === "" ? b.children : [b])); continue; }
+        if (c.endIndex > c.startIndex) own.push([c.startIndex, c.endIndex]);
+        if (!PUNCTUATION.has(c.type)) tokens.push(c.type);
+      }
+      if (n.childCount === 0) own.push([n.startIndex, n.endIndex]);
+      const label = t + (tokens.length ? "[" + tokens.join(" ") + "]" : "") + (n.childCount === 0 ? "=" + text(n) : "");
+      return { label, w: 1, own, children };
+    }
+    return build(root, null, null);
+  }
+
+  const weight = (t) => t.w + t.children.reduce((a, c) => a + weight(c), 0);
+
+  /** Relabelling cost: literals by their byte-level edit distance, names and syntax by 1. */
+  function relabel(a, b) {
+    if (a.label === b.label) return 0;
+    if (a.lit !== undefined && b.lit !== undefined) return levenshtein(utf8(a.lit), utf8(b.lit)) + (a.ltype === b.ltype ? 0 : 1);
+    if (a.lit !== undefined || b.lit !== undefined) return a.w + b.w;
+    return Math.max(1, Math.abs(a.w - b.w));
+  }
+
+  /** Zhang–Shasha tree edit distance with weighted inserts and deletes; returns { distance, mapping }. */
+  function treeDiff(rootA, rootB) {
+    const post = (root) => {
+      const nodes = [null], lld = [0], stack = [{ node: root, i: 0, first: -1 }];
+      let returned = -1;
+      while (stack.length) {
+        const top = stack[stack.length - 1];
+        if (returned >= 0) { if (top.first < 0) top.first = returned; returned = -1; }
+        if (top.i < top.node.children.length) { stack.push({ node: top.node.children[top.i++], i: 0, first: -1 }); continue; }
+        stack.pop();
+        nodes.push(top.node);
+        const idx = nodes.length - 1;
+        lld.push(top.first < 0 ? idx : top.first);
+        returned = lld[idx];
+      }
+      const n = nodes.length - 1, seen = new Set(), keyroots = [];
+      for (let i = n; i >= 1; i--) if (!seen.has(lld[i])) { seen.add(lld[i]); keyroots.push(i); }
+      keyroots.sort((a, b) => a - b);
+      return { nodes, lld, keyroots, n };
+    };
+    const A = post(rootA), B = post(rootB), n = A.n, m = B.n;
+    const del = A.nodes.map((x) => x && x.w), ins = B.nodes.map((x) => x && x.w);
+    const relCache = new Map();
+    const rel = (x, y) => {
+      const a = A.nodes[x], b = B.nodes[y];
+      if (a.label === b.label) return 0;
+      if (a.lit === undefined && b.lit === undefined) return relabel(a, b);
+      const k = x * (m + 1) + y;
+      let v = relCache.get(k);
+      if (v === undefined) { v = relabel(a, b); relCache.set(k, v); }
+      return v;
+    };
+    const W = m + 1, FW = m + 2;
+    const TD = new Float64Array((n + 1) * W), FD = new Float64Array((n + 2) * FW);
+    function forest(i, j, store) {
+      const l1 = A.lld[i], l2 = B.lld[j], r0 = l1 - 1, c0 = l2 - 1;
+      FD[0] = 0;
+      for (let x = l1; x <= i; x++) FD[(x - r0) * FW] = FD[(x - 1 - r0) * FW] + del[x];
+      for (let y = l2; y <= j; y++) FD[y - c0] = FD[y - 1 - c0] + ins[y];
+      for (let x = l1; x <= i; x++) {
+        const lx = A.lld[x], rx = (x - r0) * FW, rp = (x - 1 - r0) * FW;
+        for (let y = l2; y <= j; y++) {
+          const ly = B.lld[y], cy = y - c0;
+          const d = FD[rp + cy] + del[x], a = FD[rx + cy - 1] + ins[y];
+          let v;
+          if (lx === l1 && ly === l2) {
+            v = Math.min(d, a, FD[rp + cy - 1] + rel(x, y));
+            if (store) TD[x * W + y] = v;
+          } else v = Math.min(d, a, FD[(lx - 1 - r0) * FW + (ly - 1 - c0)] + TD[x * W + y]);
+          FD[rx + cy] = v;
+        }
+      }
+    }
+    for (const i of A.keyroots) for (const j of B.keyroots) forest(i, j, true);
+    const distance = TD[n * W + m];
+    const mapping = [], pairs = [[n, m]];
+    while (pairs.length) {
+      const [i, j] = pairs.pop();
+      forest(i, j, false);
+      const l1 = A.lld[i], l2 = B.lld[j], r0 = l1 - 1, c0 = l2 - 1;
+      let x = i, y = j;
+      while (x >= l1 || y >= l2) {
+        const cur = FD[(x - r0) * FW + (y - c0)];
+        if (x >= l1 && cur === FD[(x - 1 - r0) * FW + (y - c0)] + del[x]) { mapping.push([A.nodes[x], null]); x--; }
+        else if (y >= l2 && cur === FD[(x - r0) * FW + (y - 1 - c0)] + ins[y]) { mapping.push([null, B.nodes[y]]); y--; }
+        else if (A.lld[x] === l1 && B.lld[y] === l2) { mapping.push([A.nodes[x], B.nodes[y]]); x--; y--; }
+        else { pairs.push([x, y]); x = A.lld[x] - 1; y = B.lld[y] - 1; }
+      }
+    }
+    return { distance, mapping };
+  }
+
+  // ---------------------------------------------------------------- the measures
+  // mode "chars": size in characters of the minified program; change in characters of edit between
+  //               the minified versions
+  // mode "nodes": size in weighted nodes; change in weighted node edits (tree edit distance), with a
+  //               literal's change costing its byte-level edit distance
+  function size(root, source, language, mode = "chars") {
     const m = minify(root, source, language);
-    return { chars: codePoints(m.text), text: m.text };
+    const n = mode === "nodes" ? weight(nodeTree(root, source, language, m.names)) : codePoints(m.text);
+    return { size: n, text: m.text };
   }
 
   const MARK = "\u0001"; // stands for every renamed name when lining two versions up
   const MAX_ALIGN = 1500; // edits beyond which two versions aren't worth lining up name by name
 
-  function changes(oldRoot, oldSource, newRoot, newSource, language) {
+  /** Short names for both versions, with the new version's variables matched to the old version's. */
+  function alignNames(oldRoot, oldSource, newRoot, newSource, language) {
     const before = minify(oldRoot, oldSource, language);
     // Line up the two versions with every renamed name blanked out; names that sit in matching
     // stretches vote for being the same variable.
@@ -343,8 +532,8 @@ var DbcMeasure = (() => {
     const votes = new Map();
     const runs = equalRuns(a.text, b.text, MAX_ALIGN) || [];
     const markIndex = (text) => { const idx = []; for (let i = 0; i < text.length; i++) if (text[i] === MARK) idx.push(i); return idx; };
-    const aMarks = markIndex(a.text), bMarks = markIndex(b.text);
-    const aOcc = new Map(aMarks.map((pos, i) => [pos, a.occurrences[i]])), bOcc = new Map(bMarks.map((pos, i) => [pos, b.occurrences[i]]));
+    const aOcc = new Map(markIndex(a.text).map((pos, i) => [pos, a.occurrences[i]]));
+    const bOcc = new Map(markIndex(b.text).map((pos, i) => [pos, b.occurrences[i]]));
     for (const [i, j, len] of runs) {
       for (let k = 0; k < len; k++) {
         if (a.text[i + k] !== MARK) continue;
@@ -362,10 +551,46 @@ var DbcMeasure = (() => {
       const fresh = byUse(new Map([...uses].filter(([k]) => !matched.has(k))), new Set([...reserved, ...before.names.values()]));
       return new Map([...uses.keys()].map((k) => [k, matched.has(k) ? before.names.get(matched.get(k)) : fresh.get(k)]));
     });
-    return levenshtein([...before.text], [...after.text]);
+    return { before, after };
   }
 
-  function marks(oldSource, newSource) {
+  function changes(oldRoot, oldSource, newRoot, newSource, language, mode = "chars") {
+    const { before, after } = alignNames(oldRoot, oldSource, newRoot, newSource, language);
+    if (mode !== "nodes") return levenshtein([...before.text], [...after.text]);
+    return treeDiff(nodeTree(oldRoot, oldSource, language, before.names), nodeTree(newRoot, newSource, language, after.names)).distance;
+  }
+
+  /**
+   * What changed, as marks on each source: [start, end, "del" | "ins" | "rel"]. In chars mode, a text
+   * diff of the sources; in nodes mode, the tree diff's operations (a changed literal is marked byte by
+   * byte where it differs).
+   */
+  function marks(oldRoot, oldSource, newRoot, newSource, language, mode = "chars") {
+    if (mode !== "nodes") return textMarks(oldSource, newSource);
+    const { before, after } = alignNames(oldRoot, oldSource, newRoot, newSource, language);
+    const { mapping } = treeDiff(nodeTree(oldRoot, oldSource, language, before.names), nodeTree(newRoot, newSource, language, after.names));
+    const out = { old: [], new: [] };
+    const spans = (t) => t.own || (t.span ? [t.span] : []);
+    for (const [x, y] of mapping) {
+      if (x && !y) for (const [a, b] of spans(x)) out.old.push([a, b, "del"]);
+      else if (!x && y) for (const [a, b] of spans(y)) out.new.push([a, b, "ins"]);
+      else if (x.label !== y.label) {
+        if (x.lit !== undefined && y.lit !== undefined) {
+          // Byte-level: mark the characters of each literal's text that differ.
+          const tm = textMarks(x.lit, y.lit), at = (segs, k) => { for (const [a, b] of segs) { if (k < b - a) return a + k; k -= b - a; } return segs.length ? segs[segs.length - 1][1] : 0; };
+          for (const [a, b, c] of tm.old) out.old.push([at(x.segs, a), at(x.segs, b - 1) + 1, c]);
+          for (const [a, b, c] of tm.new) out.new.push([at(y.segs, a), at(y.segs, b - 1) + 1, c]);
+        } else {
+          for (const [a, b] of spans(x)) out.old.push([a, b, "rel"]);
+          for (const [a, b] of spans(y)) out.new.push([a, b, "rel"]);
+        }
+      }
+    }
+    return out;
+  }
+
+  /** Character ranges that differ between two texts. */
+  function textMarks(oldSource, newSource) {
     const runs = equalRuns(oldSource, newSource, MAX_ALIGN);
     const out = { old: [], new: [] };
     if (!runs) {
@@ -449,7 +674,7 @@ var DbcMeasure = (() => {
     return prev[m];
   }
 
-  return { size, changes, marks };
+  return { size, changes, marks, MODES: ["chars", "nodes"] };
 })();
 
 if (typeof module !== "undefined") module.exports = DbcMeasure;

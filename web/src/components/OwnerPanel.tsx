@@ -51,7 +51,7 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
   const dirty = JSON.stringify(draft) !== cfgKey;
 
   const set = <K extends keyof GameConfig>(k: K, v: GameConfig[K]) => setDraft((d) => ({ ...d, [k]: v }));
-  const setBudget = (kind: Kind, k: "chars" | "changes" | "ms", v: number) =>
+  const setBudget = (kind: Kind, k: "size" | "changes" | "ms", v: number) =>
     setDraft((d) => ({ ...d, budgets: { ...d.budgets, [kind]: { ...d.budgets[kind], [k]: v } } }));
 
   const save = async (e: FormEvent) => {
@@ -94,6 +94,16 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
         <label className="field"><span>Max string/list length</span>{num(draft.maxLen, (v) => set("maxLen", v), 1, 1024, "Max string or list length")}</label>
         <label className="field"><span>Max tree/graph nodes</span>{num(draft.maxNodes, (v) => set("maxNodes", v), 1, 4096, "Max tree or graph nodes")}</label>
         <label className="field"><span>Bee memory (KB, 0 = off)</span>{num(draft.beeMemoryKb, (v) => set("beeMemoryKb", v), 0, 4096, "Bee memory in KB")}</label>
+        <label className="field"><span>Program size measured in</span>
+          {/* Switching clears the size and change budgets; saving fills in that measure's defaults. */}
+          <select value={draft.complexity} aria-label="How program size is measured" onChange={(e) => {
+            const complexity = e.target.value as GameConfig["complexity"];
+            setDraft((d) => ({ ...d, complexity, budgets: Object.fromEntries(KINDS.map((k) => [k, { ...d.budgets[k], size: NaN, changes: NaN }])) as GameConfig["budgets"] }));
+          }}>
+            <option value="chars">characters after minifying</option>
+            <option value="nodes">nodes (literals one per byte)</option>
+          </select>
+        </label>
       </div>
       <p className="small muted settings-hint">
         Every bee gets <b>{draft.turnsPerFlower}</b> turns per flower: <b>{(draft.turnsPerFlower * 2 * nTeams).toLocaleString()}</b> turns a round with {nTeams} teams ({2 * nTeams} flowers).
@@ -112,12 +122,12 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
               Defaults: clover 150 / 30 / 150, orchid 300 / 210 / 50, bee 1500 / 300 / 25.
             </span>
           </caption>
-          <thead><tr><th className="left">Program</th><th>Size (characters after minifying)</th><th>Changes per round</th><th>Time (ms per call)</th></tr></thead>
+          <thead><tr><th className="left">Program</th><th>Size ({draft.complexity === "chars" ? "characters after minifying" : "nodes"})</th><th>Changes per round</th><th>Time (ms per call)</th></tr></thead>
           <tbody>
             {KINDS.map((k) => (
               <tr key={k}>
                 <th scope="row" className="left">{k}</th>
-                <td>{num(draft.budgets[k].chars, (v) => setBudget(k, "chars", v), 1, 1000000, `${k} size budget`)}</td>
+                <td>{num(draft.budgets[k].size, (v) => setBudget(k, "size", v), 1, 1000000, `${k} size budget`)}</td>
                 <td>{num(draft.budgets[k].changes, (v) => setBudget(k, "changes", v), 0, 100000, `${k} change budget`)}</td>
                 <td>{num(draft.budgets[k].ms, (v) => setBudget(k, "ms", v), 1, 10000, `${k} time budget`)}</td>
               </tr>
@@ -143,6 +153,7 @@ export function SettingsSummary({ cfg, turnsNow }: { cfg: GameConfig; turnsNow?:
         <span className="chip">{`${cfg.turnsPerFlower} turns per flower${turnsNow ? ` (${turnsNow.toLocaleString()} a round)` : ""}`}</span>
         <span className="chip">feed costs {cfg.feedCost}</span>
         <span className="chip mono">{cfg.challengeType} → {cfg.responseType}</span>
+        <span className="chip">size in {cfg.complexity === "chars" ? "characters" : "nodes"}</span>
         {[cfg.challengeType, cfg.responseType].some((t) => /str|list/i.test(t)) && <span className="chip">max length {cfg.maxLen}</span>}
         {[cfg.challengeType, cfg.responseType].some((t) => /tree|graph/i.test(t)) && <span className="chip">max {cfg.maxNodes} nodes</span>}
         {cfg.beeMemoryKb !== undefined && <span className="chip">{cfg.beeMemoryKb ? `bee memory ${cfg.beeMemoryKb} KB` : "bee memory off"}</span>}
@@ -153,7 +164,7 @@ export function SettingsSummary({ cfg, turnsNow }: { cfg: GameConfig; turnsNow?:
         <table className="data-table budgets compact">
           <thead><tr><th className="left">Budget</th>{KINDS.map((k) => <th key={k}>{k}</th>)}</tr></thead>
           <tbody>
-            <tr><th scope="row" className="left">size (characters)</th>{KINDS.map((k) => <td key={k}>{cfg.budgets[k].chars}</td>)}</tr>
+            <tr><th scope="row" className="left">size ({cfg.complexity === "chars" ? "characters" : "nodes"})</th>{KINDS.map((k) => <td key={k}>{cfg.budgets[k].size}</td>)}</tr>
             <tr><th scope="row" className="left">changes / round</th>{KINDS.map((k) => <td key={k}>{cfg.budgets[k].changes}</td>)}</tr>
             <tr><th scope="row" className="left">time (ms / call)</th>{KINDS.map((k) => <td key={k}>{cfg.budgets[k].ms}</td>)}</tr>
           </tbody>

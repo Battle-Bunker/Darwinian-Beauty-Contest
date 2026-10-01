@@ -145,8 +145,8 @@ programs get **different** budgets on purpose, measured against the orchid:
 
 | Budget | Measures | clover | orchid | bee |
 |---|---|---|---|---|
-| **complexity** | characters, after the game minifies your program (see below) | 350 (half an orchid's) | 700 | 3500 (5× an orchid's) |
-| **change** | characters of the minified program you may change in a round your program can change | 70 | 490 (70% of its size) | 700 |
+| **complexity** | your program's size (see below): characters after minifying, or nodes | 350 chars / 150 nodes (half an orchid's) | 700 / 300 | 3500 / 1500 (5× an orchid's) |
+| **change** | how much your program may change in its turn, in the same unit | 70 / 30 | 490 / 210 (70% of its size) | 700 / 300 |
 | **compute** | milliseconds per call (flowers: the whole program, every question) | 150 (3× an orchid's) | 50 | 25 (half an orchid's) |
 
 Why it's lopsided:
@@ -162,8 +162,16 @@ Why it's lopsided:
 
 ### What counts toward complexity
 
-Your program's size is its length in characters **after the game minifies it**, so writing readable
-code costs nothing:
+The game measures your program **after minifying it**, so writing readable code costs nothing. Each game
+measures size one of two ways (the room owner picks; characters by default):
+
+- **characters**: the length of the minified program
+- **nodes**: its syntax-tree nodes (roughly one per name, number, operation and statement; keywords,
+  operators and punctuation add nothing), except that **every literal counts one node per byte** of its
+  text: `"hello"` is 5, `12345` is 5. Names that keep their spelling (see below) count one node, plus
+  one per byte beyond 20.
+
+Minifying works like this:
 
 - **Comments, blank lines and spacing are free.** Python keeps one line per statement and one space
   per level of indentation; TypeScript gets one `;` per statement.
@@ -173,10 +181,10 @@ code costs nothing:
   parameters you also pass by keyword (`f(size=3)`), names that shadow a builtin (`max = 3`), and
   `flower`, `forage`, `tasted`, `keep`, `GAME` and `MEMORY`.
 - **TypeScript types are free**, because they're removed before your program runs.
-- **Everything else counts as written:** keywords and operators, every character of every string
+- **Everything else stays as written:** keywords and operators, every character of every string
   (including docstrings and your bee's `"ask"`, `"feed"` and `"leave"`), every digit of every number,
   names after a dot (`random.randint`), keyword-argument names (`dict(nodes=n)`), and names you use
-  but don't define (`len`, `Math`, `GAME`).
+  but don't define (`len`, `Math`, `GAME`). In character mode all of these count character by character.
 
 **The game runs the minified program**, exactly what gets counted, and the editor shows it to you.
 So names can't smuggle data (a function's `__name__` is one letter), and error messages refer to the
@@ -196,10 +204,13 @@ take turns**, one kind before each round. A game has 6 rounds:
 Each kind gets a round to react while the others stand still: bees change their questions, then orchids
 imitate what the clovers answer and what the bees ask, then clovers respond to the imitators, and so on.
 
-A change is measured on the minified programs too: the number of characters inserted, deleted or
-replaced to turn last round's minified program into the new one. Renaming a variable, editing
-comments or reformatting changes nothing. Changing `5` to `7` is 1 character, and a new line
-`if x == 3: return 1` costs its own length. In its turn a program may change up to its change budget.
+A change is measured on the minified programs too, in the game's unit. Renaming a variable, editing
+comments or reformatting changes nothing in either mode.
+- **characters**: the characters inserted, deleted or replaced to turn last round's minified program
+  into the new one. Changing `5` to `7` is 1, and a new line `if x == 3: return 1` costs its own length.
+- **nodes**: the node operations (insert, delete, change) that turn last round's syntax tree into the new
+  one. Changing an operator or a name is 1, a new `if x == 3: return 1` is its nodes, and a changed
+  literal costs the bytes that change in it: `5` → `7` is 1, `"hello"` → `"help"` is 2. In its turn a program may change up to its change budget.
 A program that isn't in its turn may still be resubmitted, as long as its minified form stays exactly
 the same (new comments, say). If you don't submit a new version, your previous one plays again.
 Teams need all three programs submitted before round 1 to take part.

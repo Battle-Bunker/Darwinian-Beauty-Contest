@@ -8,6 +8,7 @@ import { KINDS, type Compute, type GameView, type MemorySnapshot, type Round, ty
 import { ActionText, Steps } from "./ProgramEditors";
 import { Alert, Spinner, TeamChip } from "./ui";
 import { CodeView } from "./CodeEditor";
+import { UNITS } from "../lib/codetools";
 import { DropIcon, FooledIcon } from "./Icons";
 import { Value } from "./Value";
 
@@ -184,7 +185,7 @@ export function Logs({ view, round, base }: { view: GameView; round: Round; base
               return (
                 <tr key={k}>
                   <th scope="row" className="left">{k}</th>
-                  <td>{p?.chars ?? "–"}<span className="muted small"> / {view.game.config.budgets[k].chars}</span></td>
+                  <td>{p?.size ?? "–"}<span className="muted small"> / {view.game.config.budgets[k].size}</span></td>
                   <td>{p?.distance ?? "–"}</td>
                   <td className="left">{p?.carriedOver ? "same as last round" : round.no === 1 ? "first version" : "new version"}</td>
                   <td className="left">{p?.compute ? <ComputeUse c={p.compute} /> : <span className="muted small">{k === "bee" ? `${view.game.config.budgets.bee.ms} ms per decision` : "–"}</span>}</td>
@@ -427,10 +428,10 @@ export function CodeBrowser({ view, round }: { view: GameView; round: Round }) {
       {prog?.code !== undefined ? (
         <>
           <p className="small muted">
-            {prog.chars} characters{prog.distance !== null ? ` · ${prog.distance} changes from round ${round.no - 1}` : ""}{prog.carriedOver ? " · same as last round" : ""}
+            {prog.size} {UNITS[view.game.config.complexity]}{prog.distance !== null ? ` · ${prog.distance} changes from round ${round.no - 1}` : ""}{prog.carriedOver ? " · same as last round" : ""}
             {prog.problem ? <> · <span className="bad-text">problem: {prog.problem}</span></> : null}
           </p>
-          <CodeView key={`${teamId}:${kind}:${round.no}`} code={prog.code} language={view.game.config.language} previous={prev} showPrevious={compare} label={`${kind} code`} />
+          <CodeView key={`${teamId}:${kind}:${round.no}`} code={prog.code} language={view.game.config.language} mode={view.game.config.complexity} previous={prev} showPrevious={compare} label={`${kind} code`} />
         </>
       ) : <p className="muted">No code for this program.</p>}
     </div>

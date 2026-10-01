@@ -4,7 +4,7 @@ export type Kind = "clover" | "orchid" | "bee";
 export type FlowerKind = "clover" | "orchid";
 export const KINDS: Kind[] = ["clover", "orchid", "bee"];
 
-export interface Budget { chars: number; changes: number; ms: number }
+export interface Budget { size: number; changes: number; ms: number }
 
 export interface GameConfig {
   language: "python" | "typescript";
@@ -18,6 +18,7 @@ export interface GameConfig {
   beeMemoryKb: number;      // what a bee keeps between rounds for MEMORY
   flowerLogs: boolean;
   publicLogs: boolean;      // everyone sees every visit (challenges, responses, flower) after each round
+  complexity: "chars" | "nodes"; // how program size and change are measured
   revealOnFinish: boolean;
   budgets: Record<Kind, Budget>;
 }
@@ -46,7 +47,7 @@ export interface Team {
   submitted: Record<Kind, boolean>;
 }
 
-export interface Draft { code: string; chars: number; distance: number | null; submittedAt: string; submittedBy: string }
+export interface Draft { code: string; size: number; distance: number | null; submittedAt: string; submittedBy: string }
 
 export interface MyTeam {
   id: string; name: string; joinCode: string;
@@ -69,7 +70,7 @@ export interface TeamScore {
 }
 
 export interface Compute { calls: number; meanMs: number; p90Ms: number; budgetMs: number }
-export interface ProgramInfo { chars: number; distance: number | null; carriedOver: boolean; code?: string; problem?: string | null; compute?: Compute | null }
+export interface ProgramInfo { size: number; distance: number | null; carriedOver: boolean; code?: string; problem?: string | null; compute?: Compute | null }
 export interface MemoryInfo { bytes: number; note: string | null }
 export interface MemorySnapshot { round: number; teamId: string; language: string; snapshot: string | null; bytes: number; note: string | null }
 
@@ -101,8 +102,8 @@ export interface GameView {
   final: TeamScore[] | null;
 }
 
-/** chars: the complexity, the length of `minified` (the program as the game counts it). */
-export interface CheckResult { ok: boolean; kind: Kind; chars: number; minified: string; distance: number | null; errors: string[]; budget: Budget; submitted?: boolean }
+/** size: in the game's complexity unit (`unit`); minified: the text the game runs. */
+export interface CheckResult { ok: boolean; kind: Kind; size: number; unit: string; minified: string; distance: number | null; errors: string[]; budget: Budget; submitted?: boolean }
 
 /** What every team knows before writing code: signatures and type rules (no starter code). */
 export interface ProgramInterface {

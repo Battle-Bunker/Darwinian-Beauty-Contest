@@ -216,7 +216,18 @@ It found no differences.
 For the same reason a bee's memory is one designated variable, `keep`. Saving every top-level variable
 under its source name would let names carry data from round to round.
 
-**Change** is the edit distance between last round's minified program and the new one. Before comparing,
+**Nodes mode** (`complexity: "nodes"`) counts the same minified program's syntax-tree nodes instead:
+- comments, types and redundant parentheses aren't nodes
+- a literal weighs one per byte of its text, so a literal still can't hide a table
+- a name that minifying must keep (attribute and keyword names, class attributes) weighs one, plus one
+  per byte beyond 20, because those names exist when the program runs
+
+Change in nodes mode is a weighted Zhang–Shasha tree edit distance. Inserting or deleting a node costs
+its weight. Relabelling a literal costs the byte-level edit distance between the old and new text.
+Relabelling anything else costs 1. Names are lined up first, exactly as in character mode. The editor's
+diff marks show those node operations, and a changed literal is marked byte by byte.
+
+**Change** in character mode is the edit distance between last round's minified program and the new one. Before comparing,
 the new version's names are lined up with the old version's: both are minified with every name blanked
 out, the two texts are diffed, and names that fall in matching stretches are paired. So a rename, a
 comment or reformatting changes nothing, and a new variable doesn't reshuffle every other name. Budgets

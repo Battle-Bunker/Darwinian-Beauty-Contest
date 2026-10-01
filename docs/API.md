@@ -41,7 +41,7 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 | PATCH | `base/config` | owner, before round 1 | `{ config: {...partial} }` | `{ config, clearedSubmissions }` |
 | POST | `base/teams` | user, before round 1 | `{ name }` | `{ id, name, joinCode }` |
 | POST | `base/teams/join` | user | `{ joinCode }` | `{ id, name }` |
-| POST | `base/check` | team member | `{ kind, code }` | `{ ok, chars, minified, distance, errors[], budget }`. Validates without saving. `chars` is the size: the length of `minified`, the program as the game counts it (comments, spacing, defined names' lengths and TypeScript types are free; see RULES.md). `distance` is the change since last round: characters of edit between the minified versions, with names lined up. A program outside its turn must have distance 0 |
+| POST | `base/check` | team member | `{ kind, code }` | `{ ok, size, unit, minified, distance, errors[], budget }`. Validates without saving. `size` is in the game's unit ("characters" or "nodes"); `minified` is the text the game runs (comments, spacing, defined names' lengths and TypeScript types are free; see RULES.md). `distance` is the change since last round: characters of edit between the minified versions, with names lined up. A program outside its turn must have distance 0 |
 | POST | `base/programs` | team member | `{ kind, code }` | same as check plus `submitted: true`; **422** with `errors` if over budget |
 | POST | `base/try` | team member | `{ kind, code, challenges?, flowers?: {clover, orchid} }` | flower: `{ results: [{c, r, error?}] }`. bee: forages your own patch (the `flowers` you pass, else your submissions, else last round's) with your real `MEMORY`: `{ visits, problems, feeds, nectar, turns, memory }` |
 | POST | `base/rounds` | owner | `{ seed? }` | **202** `{ round }`. Runs in the background; add `?wait=1` to block until done. `seed` (0…2³¹−1) fixes the deck order and bee randomness, e.g. to replay identical games with two cohorts; omitted = random |
@@ -55,11 +55,11 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
   "language": "python",
   "rounds": 5, "turnsPerFlower": 100, "feedCost": 5,
   "challengeType": "int", "responseType": "int", "maxLen": 64, "maxNodes": 512, "beeMemoryKb": 256,
-  "flowerLogs": true, "publicLogs": false, "revealOnFinish": true,
+  "flowerLogs": true, "publicLogs": false, "revealOnFinish": true, "complexity": "chars",
   "budgets": {
-    "clover": { "chars": 350,  "changes": 30,  "ms": 150 },
-    "orchid": { "chars": 700,  "changes": 210, "ms": 50 },
-    "bee":    { "chars": 3500, "changes": 300, "ms": 25 }
+    "clover": { "size": 350,  "changes": 70,  "ms": 150 },
+    "orchid": { "size": 700,  "changes": 490, "ms": 50 },
+    "bee":    { "size": 3500, "changes": 700, "ms": 25 }
   }
 }
 ```
@@ -69,9 +69,11 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
   code, bee logs, flower errors, compute or memory, which wait for `revealOnFinish`).
 - `maxLen` bounds strings and lists. `maxNodes` bounds trees and graphs (graphs: ≤ 4 × maxNodes edges).
 - `beeMemoryKb`: how much of a bee's top-level data is kept each round for `MEMORY`. 0 turns memory off.
-- `budgets.<kind>.chars`: size, in characters of the automatically minified program (vendor/measure.js;
-  RULES.md explains it to players). `changes`: characters of the minified program that may change in a
-  round the program may change. One kind may change before each round, in rotation: bees (rounds
+- `complexity`: how size and change are measured (vendor/measure.js; RULES.md explains both to players).
+  `"chars"` counts characters of the minified program, and `"nodes"` counts weighted syntax-tree nodes
+  (literals one per byte). Switching it switches the size and change budgets to that mode's defaults.
+- `budgets.<kind>.size`: size budget in the game's unit. `changes`: how much may change in a round the
+  program may change, in the same unit. One kind may change before each round, in rotation: bees (rounds
   2, 5, 8, …), orchids (3, 6, 9, …), clovers (4, 7, 10, …). Games have 6 rounds by default.
 - Flowers are stateless (a fresh process or context per call) but get fresh randomness every call and
   the clock, so every ask runs the flower again. Every program can read `GAME.ms`, its own compute
@@ -101,7 +103,7 @@ returns everything that has happened so far, filtered to what this viewer is all
   "teams": [{ "id", "name", "color", "members": [names], "participant",
               "submitted": { "clover": bool, "orchid": bool, "bee": bool } }],
   "myTeam": { "id", "name", "joinCode",
-              "drafts":   { kind: { code, chars, distance, submittedAt, submittedBy } },   // pending for next round
+              "drafts":   { kind: { code, size, distance, submittedAt, submittedBy } },   // pending for next round
               "previous": { kind: code } } | null,                                       // what played last round
   "interface": { "flower", "bee", "types": { "challenge", "response", "challengeMeans", "responseMeans", "rules": [..] } },
                                                   // signatures + type rules only: no starter code, no example values
@@ -109,8 +111,8 @@ returns everything that has happened so far, filtered to what this viewer is all
     "no", "startedAt", "finishedAt", "turns",    // turns each bee had this round
     "feeds":  [[...]],  "nectar": [[...]],        // ledgers: row = bee team, column = patch team (participants order)
     "scores": [teamScore], "totals": [teamScore],  // this round alone / all rounds so far
-    "programs": { teamId: { kind: { chars, distance, carriedOver, code?, problem?, compute? } } },  // code: own team or revealed
-                                                  // chars: complexity under the current rule
+    "programs": { teamId: { kind: { size, distance, carriedOver, code?, problem?, compute? } } },  // code: own team or revealed
+                                                  // size: in the game's unit, under the current rules
                                                   // compute (flowers): { calls, meanMs, p90Ms, budgetMs }
     "memory": { teamId: { bytes, note } },        // what each bee kept for later rounds: own team or revealed
     "visits": [visit]

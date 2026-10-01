@@ -1,6 +1,19 @@
 // Per-game parameters, chosen by the room owner before round 1 and locked afterwards.
 import { parseType, typeToString } from "./types.js";
 
+// Size and change budgets in each complexity mode (vendor/measure.js). The orchid is the reference:
+//   clover: half the orchid's size, 3× its compute: honest flowers can prove they spent effort
+//   orchid: room to build elaborate imitations and to change tack in its turn (70% change budget)
+//   bee:    5× the orchid's size for detector repertoires, half its compute: checks must be cheap
+// Clovers and bees may change 20% of a full-size program in their turn.
+//   chars: characters of the minified program; change in characters of edit between minified versions
+//   nodes: syntax-tree nodes, literals one per byte; change in node edits (literals byte by byte)
+export const SIZE_BUDGETS = Object.freeze({
+  chars: { clover: { size: 350, changes: 70 }, orchid: { size: 700, changes: 490 }, bee: { size: 3500, changes: 700 } },
+  nodes: { clover: { size: 150, changes: 30 }, orchid: { size: 300, changes: 210 }, bee: { size: 1500, changes: 300 } },
+});
+const COMPUTE_MS = { clover: 150, orchid: 50, bee: 25 }; // ms per call, one core each
+
 export const DEFAULT_CONFIG = Object.freeze({
   language: "python",          // "python" | "typescript"
   rounds: 6,                   // number of rounds: one to write, then bee, orchid, clover, bee, orchid turns
@@ -14,19 +27,8 @@ export const DEFAULT_CONFIG = Object.freeze({
   flowerLogs: true,            // after each round, flower owners see who asked their flowers what
   publicLogs: false,           // after each round, everyone sees every visit: challenges, responses, feeds, nectar, which flower
   revealOnFinish: true,        // when the game ends, everyone can see all code and all logs
-  // The orchid is the reference point:
-  //   clover: half the orchid's complexity, 3× its compute: honest flowers can prove they spent effort
-  //   orchid: room to build elaborate imitations and to change tack in its turn (70% change budget)
-  //   bee:    5× the orchid's complexity for detector repertoires, half its compute: checks must be cheap
-  budgets: {
-    //   chars: size, in characters of the minified program
-    //   changes: characters of the minified program that may change in a round the program may change
-    //            (bees, orchids and clovers take turns, see schedule.js)
-    //   ms: compute per call, one core each
-    clover: { chars: 350, changes: 70, ms: 150 },
-    orchid: { chars: 700, changes: 490, ms: 50 },
-    bee: { chars: 3500, changes: 700, ms: 25 },
-  },
+  complexity: "chars",         // how program size and change are measured: "chars" or "nodes"
+  budgets: Object.fromEntries(["clover", "orchid", "bee"].map((k) => [k, { ...SIZE_BUDGETS.chars[k], ms: COMPUTE_MS[k] }])),
 });
 
 const int = (v, lo, hi, dflt) => {
@@ -51,12 +53,15 @@ export function normalizeConfig(input = {}, base = DEFAULT_CONFIG) {
     flowerLogs: bool(c.flowerLogs, base.flowerLogs),
     publicLogs: bool(c.publicLogs, base.publicLogs),
     revealOnFinish: bool(c.revealOnFinish, base.revealOnFinish),
+    complexity: c.complexity === "nodes" || c.complexity === "chars" ? c.complexity : base.complexity,
     budgets: {},
   };
+  // Switching mode switches size and change budgets to that mode's defaults (unless given).
+  const switched = out.complexity !== base.complexity;
   for (const kind of ["clover", "orchid", "bee"]) {
-    const b = (c.budgets && c.budgets[kind]) || {}, d = base.budgets[kind];
+    const b = (c.budgets && c.budgets[kind]) || {}, d = switched ? { ...base.budgets[kind], ...SIZE_BUDGETS[out.complexity][kind] } : base.budgets[kind];
     out.budgets[kind] = {
-      chars: int(b.chars, 1, 1000000, d.chars),
+      size: int(b.size, 1, 1000000, d.size),
       changes: int(b.changes, 0, 1000000, d.changes),
       ms: int(b.ms, 1, 10000, d.ms),
     };

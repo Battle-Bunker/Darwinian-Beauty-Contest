@@ -19,7 +19,7 @@ test("config clamps and keeps defaults", () => {
   assert.equal(c.turnsPerFlower, 1);
   assert.equal("turns" in c, false);
   assert.equal(c.budgets.bee.ms, 200);
-  assert.equal(c.budgets.clover.chars, DEFAULT_CONFIG.budgets.clover.chars);
+  assert.equal(c.budgets.clover.size, DEFAULT_CONFIG.budgets.clover.size);
   assert.equal(c.challengeType, "str");
   assert.throws(() => normalizeConfig({ responseType: "set[int]" }));
 });

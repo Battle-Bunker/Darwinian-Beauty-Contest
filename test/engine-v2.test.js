@@ -11,15 +11,15 @@ test("defaults: turns scale with the garden; budgets are asymmetric around the o
   const c = normalizeConfig({});
   assert.equal(turnsFor(c, 5), 1000);
   const { clover: cl, orchid: or, bee } = DEFAULT_CONFIG.budgets;
-  assert.equal(cl.chars * 2, or.chars);
+  assert.equal(cl.size * 2, or.size);
   assert.equal(cl.ms, 3 * or.ms);
-  assert.equal(bee.chars, 5 * or.chars);
+  assert.equal(bee.size, 5 * or.size);
   assert.equal(bee.ms * 2, or.ms);
   // Changes count characters of the minified program: an orchid may rewrite 70% of a full-size orchid
   // in its turn; clovers and bees 20%.
-  assert.equal(or.changes, Math.round(0.7 * or.chars));
-  assert.equal(cl.changes, Math.round(0.2 * cl.chars));
-  assert.equal(bee.changes, Math.round(0.2 * bee.chars));
+  assert.equal(or.changes, Math.round(0.7 * or.size));
+  assert.equal(cl.changes, Math.round(0.2 * cl.size));
+  assert.equal(bee.changes, Math.round(0.2 * bee.size));
 });
 
 test("a bee can keep asking after it feeds; feeding again just moves on", async () => {

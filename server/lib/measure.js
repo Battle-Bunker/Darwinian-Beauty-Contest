@@ -1,4 +1,5 @@
 // The game's program measures (vendor/measure.js, the same file the editor loads), on the server.
+// mode is the game's `complexity` setting: "chars" or "nodes".
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,15 +33,17 @@ async function withTrees(language, codes, fn) {
   }
 }
 
-/** { chars, minified, syntaxError }: chars is the program's size, the length of `minified`. */
-export function size(language, code) {
+/** { size, minified, syntaxError }: the program's size in the mode's unit, and the text the game runs. */
+export function size(language, code, mode = "chars") {
   return withTrees(language, [code], (tree) => {
-    const s = Measure.size(tree.rootNode, code, language);
-    return { chars: s.chars, minified: s.text, syntaxError: tree.rootNode.hasError };
+    const s = Measure.size(tree.rootNode, code, language, mode);
+    return { size: s.size, minified: s.text, syntaxError: tree.rootNode.hasError };
   });
 }
 
-/** Characters of change between two versions' minified forms (renaming a variable is free). */
-export function changes(language, before, after) {
-  return withTrees(language, [before, after], (a, b) => Measure.changes(a.rootNode, before, b.rootNode, after, language));
+/** How much a program changed between two versions, in the mode's unit (renaming is free). */
+export function changes(language, before, after, mode = "chars") {
+  return withTrees(language, [before, after], (a, b) => Measure.changes(a.rootNode, before, b.rootNode, after, language, mode));
 }
+
+export const UNITS = { chars: "characters", nodes: "nodes" };

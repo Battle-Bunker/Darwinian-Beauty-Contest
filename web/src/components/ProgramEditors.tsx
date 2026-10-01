@@ -4,6 +4,7 @@ import { api, ApiError, errorText } from "../api";
 import { storage } from "../hooks";
 import { KINDS, type CheckResult, type GameView, type Kind, type ProgramInterface, type TryBeeResult, type TryFlowerResult } from "../types";
 import { CodeEditor, type EditorStats } from "./CodeEditor";
+import { UNITS } from "../lib/codetools";
 import { Alert, Meter, Spinner } from "./ui";
 import { BeeGlyph, CheckIcon, DropIcon, FlowerHead, FooledIcon } from "./Icons";
 import { timeAgo } from "../lib/format";
@@ -110,7 +111,8 @@ export function ProgramEditors({ view, base }: { view: GameView; base: string })
   // Bees, orchids and clovers take turns to change: a program out of its turn has no change budget.
   const frozen = g.roundsPlayed > 0 && !g.changeable.includes(kind);
   const allowance = frozen ? 0 : budget.changes;
-  const overSize = !!s && s.chars > budget.chars;
+  const unit = UNITS[cfg.complexity];
+  const overSize = !!s && s.size > budget.size;
   const overChanges = !!s && s.distance !== null && s.distance > allowance;
   const empty = !current.trim();
   const blocked = empty || (!!s && (s.syntaxError || overSize || overChanges));
@@ -178,26 +180,26 @@ export function ProgramEditors({ view, base }: { view: GameView; base: string })
         <div className="editor-main">
         <p className="muted small">{BLURB[kind]}</p>
         <div className="meters">
-          <Meter label="Size (characters after minifying)" value={empty ? 0 : s?.chars ?? null} max={budget.chars} />
+          <Meter label={`Size (${cfg.complexity === "chars" ? "characters after minifying" : "nodes"})`} value={empty ? 0 : s?.size ?? null} max={budget.size} />
           {previous !== null
             ? (frozen
               ? <div className="meter-note muted">Locked this round: bees, orchids and clovers take turns to change.</div>
-              : <Meter label="Changes since last round (characters, minified)" value={s?.distance ?? null} max={allowance} />)
-            : <div className="meter-note muted">Round 1: write anything that fits the size budget. After that, programs take turns to change, one kind per round: bees, then orchids, then clovers, then bees again. In its turn your {kind} may change up to {budget.changes} characters.</div>}
+              : <Meter label={`Changes since last round (${unit})`} value={s?.distance ?? null} max={allowance} />)
+            : <div className="meter-note muted">Round 1: write anything that fits the size budget. After that, programs take turns to change, one kind per round: bees, then orchids, then clovers, then bees again. In its turn your {kind} may change up to {budget.changes} {unit}.</div>}
           <div className="meter-note muted">Time limit: {budget.ms} ms per {kind === "bee" ? "call" : "question"}</div>
         </div>
         {s?.syntaxError && !empty && <Alert kind="warn">Syntax error: this code doesn't parse yet, so it can't be submitted.</Alert>}
-        {overSize && <Alert kind="error">Too big: {s!.chars} characters after minifying, but the budget is {budget.chars}. Make it {s!.chars - budget.chars} characters smaller to submit. Comments, spacing and long names are free; strings, numbers and keywords count.</Alert>}
-        {!empty && s?.minified && <details className="minified"><summary className="muted small">What counts: your program minified ({s.chars} characters)</summary><pre>{s.minified}</pre></details>}
+        {overSize && <Alert kind="error">Too big: {s!.size} {unit}, but the budget is {budget.size}. Make it {s!.size - budget.size} {unit} smaller to submit. {cfg.complexity === "chars" ? "Comments, spacing and long names are free; strings, numbers and keywords count." : "Comments, spacing and name lengths are free; every byte of a string or number counts."}</Alert>}
+        {!empty && s?.minified && <details className="minified"><summary className="muted small">What runs: your program minified ({s.size} {unit})</summary><pre>{s.minified}</pre></details>}
         {frozen && <Alert kind="info">Your {kind} can't change before round {g.roundsPlayed + 1}: bees, orchids and clovers take turns, and this round it's the {g.changeable[0]}s' turn. You can still try ideas out below.</Alert>}
-        {overChanges && !frozen && <Alert kind="error">Too many changes: {s!.distance} characters changed since last round (minified), but the budget is {allowance}. Undo {s!.distance! - allowance} to submit.</Alert>}
+        {overChanges && !frozen && <Alert kind="error">Too many changes: {s!.distance} {unit} changed since last round, but the budget is {allowance}. Undo {s!.distance! - allowance} to submit.</Alert>}
         {incoming[kind] && (
           <Alert kind="info">
             A teammate submitted a new {kind}. <button className="link-btn" onClick={() => revertTo(team.drafts[kind] ? "draft" : "previous")}>Load their version</button>
           </Alert>
         )}
 
-        <CodeEditor key={`code:${kind}`} value={current} onChange={(v) => edit(kind, v)} language={cfg.language} previous={previous}
+        <CodeEditor key={`code:${kind}`} value={current} onChange={(v) => edit(kind, v)} language={cfg.language} mode={cfg.complexity} previous={previous}
           onStats={(st) => setStats((x) => ({ ...x, [kind]: st }))} label={`${kind} program`} showPrevious={showPrev}
           placeholder={`Write your ${kind} here, from scratch.`} />
 
@@ -230,7 +232,7 @@ export function ProgramEditors({ view, base }: { view: GameView; base: string })
         {r?.error && <Alert kind="error">{r.error}</Alert>}
         {r?.check && (
           r.check.ok
-            ? <Alert kind="ok">{r.action === "submit" ? "Submitted! " : "Looks good. "}{r.check.chars} characters{r.check.distance !== null ? `, ${r.check.distance} changed` : ""}.</Alert>
+            ? <Alert kind="ok">{r.action === "submit" ? "Submitted! " : "Looks good. "}{r.check.size} {r.check.unit}{r.check.distance !== null ? `, ${r.check.distance} changed` : ""}.</Alert>
             : <Alert kind="error">{r.action === "submit" && <b>Not submitted: </b>}{r.check.errors.join(" · ")}</Alert>
         )}
 

@@ -143,11 +143,16 @@ console.log("visibility checks passed;", pubLive.rounds[0].visits.length, "visit
 // other teams' code, bee logs or compute.
 const game3 = await api(owner, "POST", `/rooms/${room.shortId}/games`);
 const g3 = `/rooms/${room.shortId}/games/${game3.shortId}`;
-await api(owner, "PATCH", `${g3}/config`, { config: { rounds: 2, turnsPerFlower: 10, publicLogs: true } });
+// This game also measures size in nodes: switching the measure switches to its default budgets.
+const cfg3 = (await api(owner, "PATCH", `${g3}/config`, { config: { rounds: 2, turnsPerFlower: 10, publicLogs: true, complexity: "nodes" } })).config;
+assert.equal(cfg3.complexity, "nodes");
+assert.equal(cfg3.budgets.clover.size, 150);
 for (const [i, p] of players.slice(0, 2).entries()) {
   await api(p.token, "POST", `${g3}/teams`, { name: p.name });
   for (const kind of ["clover", "orchid", "bee"]) await api(p.token, "POST", `${g3}/programs`, { kind, code: variants[i][kind] });
 }
+const nodeCheck = await api(players[0].token, "POST", `${g3}/check`, { kind: "clover", code: variants[0].clover });
+assert.ok(nodeCheck.ok && nodeCheck.unit === "nodes" && nodeCheck.size > 0, JSON.stringify(nodeCheck));
 await api(owner, "POST", `${g3}/rounds?wait=1`);
 const open = await api(null, "GET", g3);
 assert.ok(open.rounds[0].visits.length && open.rounds[0].visits.every((v) => v.kind && v.steps && !("beeLog" in v)), "public logs show every visit");

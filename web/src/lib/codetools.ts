@@ -7,6 +7,8 @@ declare global {
 }
 
 export type Language = "python" | "typescript";
+export type Complexity = "chars" | "nodes";
+export const UNITS: Record<Complexity, string> = { chars: "characters", nodes: "nodes" };
 export type Mark = [number, number, string];
 
 /** size: the program's size, the length of `minified`, the program as the game counts it (see vendor/measure.js). */
@@ -14,8 +16,8 @@ export interface Parsed { size: number; minified: string; hasError: boolean }
 export interface DiffResult { distance: number; old: Mark[]; new: Mark[] }
 
 export interface LangTools {
-  parse(code: string): Parsed;
-  diff(before: string, after: string): DiffResult;
+  parse(code: string, mode: Complexity): Parsed;
+  diff(before: string, after: string, mode: Complexity): DiffResult;
   syntax(code: string): Mark[];
 }
 
@@ -46,18 +48,18 @@ export function getLangTools(lang: Language): Promise<LangTools> {
     parser.setLanguage(await TS.Language.load(`/vendor/grammars/tree-sitter-${lang}.wasm`));
     const M = window.DbcMeasure;
     return {
-      parse(code) {
+      parse(code, mode) {
         const tree = parser.parse(code);
         try {
-          const m = M.size(tree.rootNode, code, lang);
-          return { size: m.chars, minified: m.text, hasError: !!tree.rootNode.hasError };
+          const m = M.size(tree.rootNode, code, lang, mode);
+          return { size: m.size, minified: m.text, hasError: !!tree.rootNode.hasError };
         } finally { tree.delete?.(); }
       },
-      diff(before, after) {
+      diff(before, after, mode) {
         const a = parser.parse(before), b = parser.parse(after);
         try {
-          const marks = M.marks(before, after);
-          return { distance: M.changes(a.rootNode, before, b.rootNode, after, lang), old: marks.old, new: marks.new };
+          const marks = M.marks(a.rootNode, before, b.rootNode, after, lang, mode);
+          return { distance: M.changes(a.rootNode, before, b.rootNode, after, lang, mode), old: marks.old, new: marks.new };
         } finally { a.delete?.(); b.delete?.(); }
       },
       syntax(code) {
