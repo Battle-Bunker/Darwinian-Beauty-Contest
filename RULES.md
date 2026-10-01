@@ -137,7 +137,7 @@ programs get **different** budgets on purpose, measured against the orchid:
 
 | Budget | Measures | clover | orchid | bee |
 |---|---|---|---|---|
-| **complexity** | size of the program in syntax-tree nodes (comments are free) | 150 (half an orchid's) | 300 | 1500 (5× an orchid's) |
+| **complexity** | size of the program in syntax-tree nodes, plus one per character of string text (comments are free) | 150 (half an orchid's) | 300 | 1500 (5× an orchid's) |
 | **change** | syntax-tree edits allowed between rounds | 30 | 210 (70% of its size) | 300 |
 | **compute** | milliseconds per call (flowers: the whole program, every question) | 150 (3× an orchid's) | 50 | 25 (half an orchid's) |
 
@@ -149,6 +149,24 @@ Why it's lopsided:
   cleverness: a faster way to produce the same kind of answer, or a shallower look-alike.
 - **Bees** get lots of code for a whole kit of detectors, but only a little time per decision. So the
   best signals are ones that are **hard to make but easy to check**.
+
+### What counts toward complexity
+
+Your program's size is its syntax-tree node count: roughly one node per name, number, expression and
+statement (keywords, operators and punctuation belong to their node and add nothing). On top of that,
+**every character of string text costs one node**, because otherwise a single string could hide a
+whole lookup table for the price of one node.
+
+- Text counts as written between the quotes: `"abc"` adds 3, and `"\n"` adds 2.
+- Every kind of string counts: raw, bytes and triple-quoted strings, **docstrings**, dictionary keys
+  like `"nodes"`, and your bee's `"ask"`, `"feed"` and `"leave"`.
+- In Python f-strings and TypeScript template literals only the text counts. The expressions inside
+  `{…}` or `${…}` are ordinary nodes. TypeScript regex patterns (`/ab+c/`) count like strings.
+- Names aren't string text. In Python `dict(nodes=n, edges=e)` and in TypeScript `{ nodes: n, edges: e }`
+  spell the keys as names, so they cost no string characters.
+- **Comments are free**, however long. So put explanations in comments, not in docstrings or strings.
+
+The change budget still counts syntax-tree edits, so rewriting a string's text is usually a single edit.
 
 Before round 1 you can write anything within the complexity budget. After that, each round's
 program must be within the change budget of the program that played the round before. If you don't

@@ -41,7 +41,7 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 | PATCH | `base/config` | owner, before round 1 | `{ config: {...partial} }` | `{ config, clearedSubmissions }` |
 | POST | `base/teams` | user, before round 1 | `{ name }` | `{ id, name, joinCode }` |
 | POST | `base/teams/join` | user | `{ joinCode }` | `{ id, name }` |
-| POST | `base/check` | team member | `{ kind, code }` | `{ ok, nodes, distance, errors[], budget }`. Validates without saving |
+| POST | `base/check` | team member | `{ kind, code }` | `{ ok, nodes, strings, distance, errors[], budget }`. Validates without saving. `nodes` is the complexity: syntax-tree nodes plus one per character of string-literal text, of which `strings` are string characters (comments are free) |
 | POST | `base/programs` | team member | `{ kind, code }` | same as check plus `submitted: true`; **422** with `errors` if over budget |
 | POST | `base/try` | team member | `{ kind, code, challenges?, flowers?: {clover, orchid} }` | flower: `{ results: [{c, r, error?}] }`. bee: forages your own patch (the `flowers` you pass, else your submissions, else last round's) with your real `MEMORY`: `{ visits, problems, feeds, nectar, turns, memory }` |
 | POST | `base/rounds` | owner | `{ seed? }` | **202** `{ round }`. Runs in the background; add `?wait=1` to block until done. `seed` (0…2³¹−1) fixes the deck order and bee randomness, e.g. to replay identical games with two cohorts; omitted = random |
@@ -100,6 +100,7 @@ returns everything that has happened so far, filtered to what this viewer is all
     "feeds":  [[...]],  "nectar": [[...]],        // ledgers: row = bee team, column = patch team (participants order)
     "scores": [teamScore], "totals": [teamScore],  // this round alone / all rounds so far
     "programs": { teamId: { kind: { nodes, distance, carriedOver, code?, problem?, compute? } } },  // code: own team or revealed
+                                                  // nodes: complexity under the rule when the round ran
                                                   // compute (flowers): { calls, meanMs, p90Ms, budgetMs }
     "memory": { teamId: { bytes, note } },        // what each bee kept for later rounds: own team or revealed
     "visits": [visit]

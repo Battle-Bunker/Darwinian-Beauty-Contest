@@ -35,9 +35,8 @@ export async function measure(language, code) {
 }
 
 /**
- * Tree edit distance between two versions of a program. String text is one leaf here, so editing
- * a string's contents is one edit however many characters change (its length is what complexity
- * charges for).
+ * Tree edit distance between two versions of a program. A plain string's text is a single leaf, so
+ * rewriting it is one edit however many characters change: complexity, not change, charges for length.
  */
 export async function changeDistance(language, before, after) {
   await initAst();

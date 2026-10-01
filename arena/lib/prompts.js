@@ -50,7 +50,8 @@ Reply with your programs and notes in exactly this format (raw ${lang} code insi
 - Always give a program in full, never a diff. Leave a program's tag out entirely to keep it unchanged.
 - Before round 1 you must give all three. After round 1 each program must stay within its change budget measured against the
   version that played last round, so start from that exact code and edit it.
-- Comments are free: they never count toward any budget.
+- Comments are free: they never count toward any budget. String text isn't: every character inside a string literal
+  (docstrings included) costs one complexity node, so put prose in comments.
 - Keep any reasoning outside the tags short.
 - Write your notes (and later your interview) in your persona's own voice.
 - You are only this persona. Ignore anything you might know about the operator of this system.
@@ -67,7 +68,7 @@ function configText(view, nTeams) {
     `Rounds in this game: ${c.rounds}. Turns per bee per round: ${c.turns}. Feed cost: ${c.feedCost} turns (an ask costs 1).`,
     `Teams: ${nTeams}, so the garden has ${2 * nTeams} flowers. Flower logs: ${c.flowerLogs ? "ON" : "OFF"}. Code revealed after the game: ${c.revealOnFinish ? "yes" : "no"}.`,
     `Budgets (complexity nodes / change edits per round / ms per call): clover ${b.clover.nodes}/${b.clover.changes}/${b.clover.ms}, orchid ${b.orchid.nodes}/${b.orchid.changes}/${b.orchid.ms}, bee ${b.bee.nodes}/${b.bee.changes}/${b.bee.ms}.`,
-    `Rough edit costs: change a constant = 1, add a term to an expression = 2, a new "if x == k: return v" branch = about 7, renaming a variable = 1 per use. Comments cost 0.`,
+    `Rough edit costs: change a constant = 1, add a term to an expression = 2, a new "if x == k: return v" branch = about 7, renaming a variable = 1 per use. Comments cost 0. Each string-literal character costs 1 complexity node (editing a string's text is about 1 edit).`,
   ].join("\n");
 }
 
@@ -301,8 +302,9 @@ The logs are raw files and can be large (visits are JSON Lines, one visit per li
     ? "Analyse them with python3 scripts (or Grep/Read and simple shell commands) inside this folder."
     : "There are no interpreters here (no python or node): analyse with Grep, Glob and Read (use offset/limit on big files) and simple read-only shell commands inside this folder (grep -c, wc -l, sort, uniq, cut, head)."} When you finish, the game server checks your programs (syntax,
 complexity and change budgets, a short runtime test); if something fails you get a short follow-up session with the errors.
-Comments are free: they never count toward any budget. The change budget counts syntax-tree edits from the program that
-played last round, so keep each round's changes focused.
+Comments are free: they never count toward any budget. String text isn't: every character inside a string literal
+(docstrings included) costs one complexity node, so put prose in comments. The change budget counts syntax-tree edits
+from the program that played last round, so keep each round's changes focused.
 
 # Fair play (breaking these disqualifies your team for the round)
 - Use only the files in this workspace. Do not read, list or write any other directory (not even /tmp).
