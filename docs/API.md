@@ -21,6 +21,7 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 | Method | Path | Who | Returns |
 |---|---|---|---|
 | POST | `/rooms` | any user | `{ id, shortId, url, isOwner }`. One click; the creator owns the room |
+| GET | `/my/rooms` | any user | `{ rooms: [{shortId, url, isOwner, ownerName, gameCount, createdAt, lastActivity}] }`: rooms I own or have a team in, most recently active first |
 | GET | `/rooms/:room` | anyone | `{ shortId, url, ownerName, isOwner, games: [{shortId, url, status, roundsPlayed, rounds, teamCount}] }` |
 | GET | `/rooms/:room/events` | anyone | Server-Sent Events whenever any game in the room changes |
 | POST | `/rooms/:room/games` | owner | body `{ config? }` → `{ id, shortId, url }` |

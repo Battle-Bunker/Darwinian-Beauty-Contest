@@ -64,6 +64,22 @@ export async function viewRoom(room, user) {
   };
 }
 
+/** Rooms this user owns or has played in (a team in one of its games), most recently active first. */
+export async function myRooms(user) {
+  const { rows } = await query(
+    `SELECT r.*, u.name AS owner_name, a.game_count, GREATEST(r.created_at, a.last_game_at) AS last_activity
+       FROM rooms r
+       JOIN users u ON u.id = r.owner_id
+       CROSS JOIN LATERAL (SELECT count(*)::int AS game_count, max(g.created_at) AS last_game_at FROM games g WHERE g.room_id = r.id) a
+      WHERE r.owner_id = $1
+         OR EXISTS (SELECT 1 FROM team_members m JOIN games g ON g.id = m.game_id WHERE g.room_id = r.id AND m.user_id = $1)
+      ORDER BY last_activity DESC
+      LIMIT 50`, [user.id]);
+  return {
+    rooms: rows.map((r) => ({ ...roomSummary(r, user), ownerName: r.owner_name, gameCount: r.game_count, lastActivity: r.last_activity })),
+  };
+}
+
 // ---------- games ----------
 
 export async function createGame(room, user, config) {

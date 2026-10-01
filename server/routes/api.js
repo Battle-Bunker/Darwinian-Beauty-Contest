@@ -15,6 +15,7 @@ export function apiRouter() {
 
   // Rooms: creation is one click; the creator owns the room.
   r.post("/rooms", requireUser, wrap(async (req, res) => res.status(201).json(await G.createRoom(req.user))));
+  r.get("/my/rooms", requireUser, wrap(async (req, res) => res.json(await G.myRooms(req.user))));
   r.param("room", wrap(async (req, _res, next, id) => { req.room = await G.findRoom(id); next(); }));
   r.param("game", wrap(async (req, _res, next, id) => { req.game = await G.findGame(req.room, id); next(); }));
   r.get("/rooms/:room", wrap(async (req, res) => res.json(await G.viewRoom(req.room, req.user))));
