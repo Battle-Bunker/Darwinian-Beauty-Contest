@@ -57,9 +57,9 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
   "challengeType": "int", "responseType": "int", "maxLen": 64, "maxNodes": 512, "beeMemoryKb": 256,
   "flowerLogs": true, "publicLogs": false, "revealOnFinish": true, "complexity": "chars",
   "budgets": {
-    "clover": { "size": 350,  "changes": 70,  "ms": 150 },
-    "orchid": { "size": 700,  "changes": 490, "ms": 50 },
-    "bee":    { "size": 3500, "changes": 700, "ms": 25 }
+    "clover": { "size": 2400,  "changes": 480,  "ms": 150 },
+    "orchid": { "size": 4800,  "changes": 3360, "ms": 50 },
+    "bee":    { "size": 24000, "changes": 4800, "ms": 25 }
   }
 }
 ```

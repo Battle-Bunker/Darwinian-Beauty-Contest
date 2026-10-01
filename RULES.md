@@ -145,8 +145,8 @@ programs get **different** budgets on purpose, measured against the orchid:
 
 | Budget | Measures | clover | orchid | bee |
 |---|---|---|---|---|
-| **complexity** | your program's size (see below): characters after minifying, or nodes | 350 chars / 150 nodes (half an orchid's) | 700 / 300 | 3500 / 1500 (5× an orchid's) |
-| **change** | how much your program may change in its turn, in the same unit | 70 / 30 | 490 / 210 (70% of its size) | 700 / 300 |
+| **complexity** | your program's size (see below): characters after minifying, or nodes | 2,400 chars / 1,100 nodes (half an orchid's) | 4,800 / 2,200 | 24,000 / 11,000 (5× an orchid's) |
+| **change** | how much your program may change in its turn, in the same unit | 480 / 220 | 3,360 / 1,540 (70% of its size) | 4,800 / 2,200 |
 | **compute** | milliseconds per call (flowers: the whole program, every question) | 150 (3× an orchid's) | 50 | 25 (half an orchid's) |
 
 Why it's lopsided:

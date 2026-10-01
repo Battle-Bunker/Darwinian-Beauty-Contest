@@ -51,7 +51,7 @@ for (const [i, p] of players.entries()) {
   }
 }
 // Budget enforcement: an over-complex program is rejected.
-const big = await api(players[0].token, "POST", `${g}/check`, { kind: "clover", code: "def flower(c):\n" + "    c = c + 1\n".repeat(80) + "    return c\n" });
+const big = await api(players[0].token, "POST", `${g}/check`, { kind: "clover", code: "def flower(c):\n" + "    c = c + 1\n".repeat(400) + "    return c\n" });
 assert.equal(big.ok, false);
 console.log("complexity budget rejects:", big.errors[0]);
 // Try tools.
@@ -87,7 +87,7 @@ for (let round = 1; round <= 4; round++) {
   if (round === 4) {
     // Then the clovers', within their change budget.
     assert.deepEqual((await api(players[1].token, "GET", g)).game.changeable, ["clover"]);
-    const rewrite = await api(players[1].token, "POST", `${g}/programs`, { kind: "clover", code: "def flower(challenge):\n    x = challenge\n" + "    x = (x * 31 + 7) % 9973\n".repeat(10) + "    return x\n" });
+    const rewrite = await api(players[1].token, "POST", `${g}/programs`, { kind: "clover", code: "def flower(challenge):\n    x = challenge\n" + "    x = (x * 31 + 7) % 9973\n".repeat(40) + "    return x\n" });
     assert.equal(rewrite.ok, false);
     console.log("change budget rejects:", rewrite.errors[0]);
     const tweak = await api(players[1].token, "POST", `${g}/programs`, { kind: "clover", code: variants[1].clover.replace("% 1000", "% 997") });
@@ -146,7 +146,7 @@ const g3 = `/rooms/${room.shortId}/games/${game3.shortId}`;
 // This game also measures size in nodes: switching the measure switches to its default budgets.
 const cfg3 = (await api(owner, "PATCH", `${g3}/config`, { config: { rounds: 2, turnsPerFlower: 10, publicLogs: true, complexity: "nodes" } })).config;
 assert.equal(cfg3.complexity, "nodes");
-assert.equal(cfg3.budgets.clover.size, 150);
+assert.equal(cfg3.budgets.clover.size, 1100);
 for (const [i, p] of players.slice(0, 2).entries()) {
   await api(p.token, "POST", `${g3}/teams`, { name: p.name });
   for (const kind of ["clover", "orchid", "bee"]) await api(p.token, "POST", `${g3}/programs`, { kind, code: variants[i][kind] });

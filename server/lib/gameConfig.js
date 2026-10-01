@@ -8,9 +8,11 @@ import { parseType, typeToString } from "./types.js";
 // Clovers and bees may change 20% of a full-size program in their turn.
 //   chars: characters of the minified program; change in characters of edit between minified versions
 //   nodes: syntax-tree nodes, literals one per byte; change in node edits (literals byte by byte)
+// The clover's size is just enough for the longer of the two example clovers (arena/examples/v3: the
+// Paley clique chain is 2,252 characters minified, 1,024 nodes; the graceful labelling 850 and 427).
 export const SIZE_BUDGETS = Object.freeze({
-  chars: { clover: { size: 350, changes: 70 }, orchid: { size: 700, changes: 490 }, bee: { size: 3500, changes: 700 } },
-  nodes: { clover: { size: 150, changes: 30 }, orchid: { size: 300, changes: 210 }, bee: { size: 1500, changes: 300 } },
+  chars: { clover: { size: 2400, changes: 480 }, orchid: { size: 4800, changes: 3360 }, bee: { size: 24000, changes: 4800 } },
+  nodes: { clover: { size: 1100, changes: 220 }, orchid: { size: 2200, changes: 1540 }, bee: { size: 11000, changes: 2200 } },
 });
 const COMPUTE_MS = { clover: 150, orchid: 50, bee: 25 }; // ms per call, one core each
 

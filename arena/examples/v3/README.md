@@ -57,12 +57,25 @@ and the best orchid 6.8. Then 10 or more cliques came from the clover 94% of the
 - **Checking.** `check_graceful(n, answer)` rebuilds the graph and counts the differences. It returns
   `None` if the answer is not that graph with proper labels. It takes under 1 ms.
 
-CALIBRATION_GRACEFUL
+**Calibration** (300 random challenges per row; score = different differences, at most 1021):
+
+| Flower (time per answer) | Average | 9 in 10 answers had at least | Answers with at least 905 |
+|---|---|---|---|
+| Example clover (150 ms) | 918.4 | 909 | 98% |
+| Example clover on a 1.5× slower machine (100 ms) | 905.0 | 894 | 51% |
+| Example clover's code used as an orchid (50 ms) | 879.8 | 867 | 0% |
+| Best orchid we could write (50 ms) | 892.0 | 882 | 4% |
+
+With a busy loop sharing the CPU (about 1.5× slower for both flowers), the clover averaged 904 and the
+best orchid 875. Then 891 or more came from the clover 93% of the time and from that orchid 5% of the
+time. Here the score grows more slowly with time than in the Paley chain, so a slower machine moves it
+more.
 
 ## How these numbers were measured
 
-The examples ran on the game's real runner on a 4-core machine, with 300 random challenges per row. Other
-programs were running at the same time. "Best orchid" is the strongest 50 ms orchid we could write for
-each puzzle: the same search with every speed-up we found, using 80% of its budget. "Clover code as an
-orchid" is the example clover's own code run with an orchid's 50 ms. "Clover, 1.5× slower machine" is the
-clover with its budget cut to 100 ms. A timeout gives no answer at all, and none happened in these runs.
+The examples ran on the game's real runner on a 4-core machine, with 300 random challenges per row, while
+other programs were running too. The "best orchid" is the strongest 50 ms orchid we could write for each
+puzzle: the same search with every speed-up we found, using 80% of its budget. "A 1.5× slower machine" is
+the clover with its budget cut to 100 ms. It scored the same as the clover with a busy loop sharing its
+CPU. None of the clovers' 3,600 answers in these runs timed out. Run as a 50 ms orchid, the same code
+timed out a few times in 1,000 calls when the machine was busy.
