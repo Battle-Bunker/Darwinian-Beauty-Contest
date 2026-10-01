@@ -1,5 +1,5 @@
 // My team's three programs: edit, check, submit and try them.
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { api, ApiError, errorText } from "../api";
 import { storage } from "../hooks";
 import { KINDS, type CheckResult, type GameView, type Kind, type ProgramInterface, type TryBeeResult, type TryFlowerResult } from "../types";
@@ -254,7 +254,8 @@ function InterfaceBox({ iface, kind, language }: { iface: ProgramInterface; kind
       </dl>
       {t.rules.length > 0 && <ul className="iface-rules">{t.rules.map((r, i) => <li key={i}>{r}</li>)}</ul>}
       <p className="small muted">
-        Programs can also read <code>GAME</code> ({language === "python" ? 'GAME["turns"]' : "GAME.turns"}, feed_cost, challenge_type, response_type, max_len, flowers).
+        Programs can also read <code>GAME</code> ({language === "python" ? 'GAME["turns"]' : "GAME.turns"}, feed_cost, challenge_type, response_type, max_len, max_nodes, flowers).
+        {kind === "bee" && <> Your bee also gets <code>MEMORY</code>: what it kept at the end of each earlier round.</>}
         A response of the wrong type, a crash or a timeout reaches the bee as <code>{none}</code>.
       </p>
     </details>
@@ -336,8 +337,13 @@ function TryPanel({ kind, code, base, challengeType, flowers }: {
       {kind === "bee" && bee && (
         <div className="try-bee">
           <p>
-            <b>{bee.visits.length}</b> visits · fed <b>{bee.feeds}</b> times · <DropIcon size={14} /> nectar <b>{bee.nectar}</b> · <FooledIcon size={14} /> fooled <b>{bee.feeds - bee.nectar}</b>
+            <b>{bee.visits.length}</b> visits{bee.turns ? <> in <b>{bee.turns.toLocaleString()}</b> turns</> : null} · fed <b>{bee.feeds}</b> times · <DropIcon size={14} /> nectar <b>{bee.nectar}</b> · <FooledIcon size={14} /> fooled <b>{bee.feeds - bee.nectar}</b>
           </p>
+          {bee.memory && (
+            <p className="small muted">
+              It would keep {bee.memory.bytes ? `${(bee.memory.bytes / 1024).toFixed(1)} KB` : "nothing"} for <code>MEMORY</code> in later rounds.{bee.memory.note ? ` ${bee.memory.note}` : ""}
+            </p>
+          )}
           {(["bee", "clover", "orchid"] as Kind[]).map((k) => bee.problems?.[k] ? <Alert key={k} kind="error"><b>{k}:</b> {bee.problems[k]}</Alert> : null)}
           <div className="table-scroll tall">
             <table className="data-table log-table">
@@ -361,7 +367,7 @@ function TryPanel({ kind, code, base, challengeType, flowers }: {
   );
 }
 
-export function Steps({ steps }: { steps?: { c: unknown; r: unknown; challengeError?: string; flowerError?: string }[] }) {
+export function Steps({ steps }: { steps?: { c: unknown; r: unknown; after?: boolean; challengeError?: string; flowerError?: string }[] }) {
   if (!steps) return <span className="muted">hidden</span>;
   if (!steps.length) return <span className="muted">no questions</span>;
   // Structured values (lists, trees, graphs) get one question per line, each expandable.
@@ -369,10 +375,13 @@ export function Steps({ steps }: { steps?: { c: unknown; r: unknown; challengeEr
   return (
     <span className={`steps ${structured ? "steps-col" : ""}`}>
       {steps.map((st, i) => (
-        <span key={i} className={`step ${st.challengeError || st.flowerError ? "step-err" : ""}`} title={st.challengeError || st.flowerError || undefined}>
+        <Fragment key={i}>
+        {st.after && !steps[i - 1]?.after && <span className="step-fed" title="The bee fed here, then kept asking: studying a flower whose truth it now knows">fed, then studied:</span>}
+        <span className={`step ${st.after ? "step-after" : ""} ${st.challengeError || st.flowerError ? "step-err" : ""}`} title={st.challengeError || st.flowerError || undefined}>
           <Value v={st.c} role="challenge" max={24} /><span className="arrow">→</span><Value v={st.r} role="response" max={24} />
           {(st.challengeError || st.flowerError) && <span className="step-why">{st.challengeError ? "bad challenge" : "flower crashed"}</span>}
         </span>
+        </Fragment>
       ))}
     </span>
   );

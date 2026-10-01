@@ -2,7 +2,7 @@
 //   "name-form": ask for a name and POST {name} to auth.loginUrl (the dev provider)
 //   "redirect":  send the browser to auth.loginUrl (e.g. Replit Auth)
 import { createContext, useCallback, useContext, useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { api, errorText, onUnauthorized } from "./api";
+import { api, ApiError, errorText, onUnauthorized } from "./api";
 import type { MeResponse, User } from "./types";
 import { BeeGlyph, FlowerHead } from "./components/Icons";
 
@@ -56,6 +56,9 @@ function Login({ me, onDone }: { me: MeResponse; onDone: () => void }) {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Some servers (e.g. arenas) also want a login secret; the form asks for it only when the server does.
+  const [needSecret, setNeedSecret] = useState(false);
+  const [secret, setSecret] = useState("");
   const redirect = me.auth.kind === "redirect";
 
   const submit = async (e: FormEvent) => {
@@ -69,9 +72,10 @@ function Login({ me, onDone }: { me: MeResponse; onDone: () => void }) {
     setBusy(true);
     setError(null);
     try {
-      await api("POST", me.auth.loginUrl, { name: name.trim() });
+      await api("POST", me.auth.loginUrl, { name: name.trim(), ...(needSecret ? { secret } : {}) });
       onDone();
     } catch (err) {
+      if (err instanceof ApiError && err.status === 403 && /secret/i.test(err.message)) setNeedSecret(true);
       setError(errorText(err));
       setBusy(false);
     }
@@ -95,6 +99,12 @@ function Login({ me, onDone }: { me: MeResponse; onDone: () => void }) {
               <span>What's your name?</span>
               <input autoFocus value={name} onChange={(e) => setName(e.target.value)} maxLength={40} placeholder="e.g. Ada" autoComplete="nickname" />
             </label>
+            {needSecret && (
+              <label className="field">
+                <span>Login secret</span>
+                <input type="password" value={secret} onChange={(e) => setSecret(e.target.value)} autoComplete="current-password" />
+              </label>
+            )}
             <button className="btn btn-big" type="submit" disabled={busy || !name.trim()}>{busy ? "Opening the gate…" : "Enter the garden"}</button>
           </>
         )}

@@ -1,10 +1,11 @@
 // One page for a game, live or years later: it always loads the current view (every round so far)
-// and refetches whenever the game's version moves (SSE).
+// and refetches whenever the game's version moves (SSE). Rounds can have thousands of visits, so the
+// page loads the latest round's visits with the view and fetches other rounds when they're selected.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errorText, gameBase } from "../api";
 import { Link } from "../router";
 import { useDocumentTitle, useEventStream } from "../hooks";
-import type { GameView } from "../types";
+import type { GameView, Round } from "../types";
 import { Alert, CopyButton, Section, StatusBadge } from "../components/ui";
 import { Garden, type GardenStart } from "../components/Garden";
 import { RunRound, SettingsForm, SettingsSummary } from "../components/OwnerPanel";
@@ -27,7 +28,19 @@ export function GamePage({ room, game }: { room: string; game: string }) {
   const [toast, setToast] = useState<number | null>(null);
   const latestSeen = useRef<number | null>(null);
 
+  // Rounds with their visits, by number. What a viewer may see changes when they join a team or the
+  // game is revealed, so the cache is scoped to that.
+  const roundCache = useRef(new Map<number, Round>());
+  const cacheScope = useRef("");
+  const fetching = useRef(new Set<number>());
+  const [, setCacheVer] = useState(0);
+  const [roundError, setRoundError] = useState<string | null>(null);
+  const firstLoad = useRef(true);
+
   const accept = useCallback((v: GameView) => {
+    const scope = `${v.game.revealed}:${v.me?.teamId ?? ""}`;
+    if (scope !== cacheScope.current) { roundCache.current.clear(); cacheScope.current = scope; }
+    for (const r of v.rounds) if (r.visits) roundCache.current.set(r.no, r);
     const latest = v.rounds.length ? v.rounds[v.rounds.length - 1].no : 0;
     if (latestSeen.current === null) {
       latestSeen.current = latest;
@@ -53,7 +66,9 @@ export function GamePage({ room, game }: { room: string; game: string }) {
     try {
       do {
         queued.current = false;
-        accept(await api<GameView>("GET", base));
+        const visits = firstLoad.current ? "last" : "none";
+        firstLoad.current = false;
+        accept(await api<GameView>("GET", `${base}?visits=${visits}`));
         setError(null);
       } while (queued.current);
     } catch (e) {
@@ -63,6 +78,24 @@ export function GamePage({ room, game }: { room: string; game: string }) {
     }
   }, [base, accept]);
   useEffect(() => { load(); }, [load]);
+
+  const ensureRound = useCallback(async (no: number) => {
+    if (roundCache.current.has(no) || fetching.current.has(no)) return;
+    fetching.current.add(no);
+    try {
+      const scope = cacheScope.current;
+      const r = await api<Round>("GET", `${base}/rounds/${no}`);
+      if (scope === cacheScope.current) roundCache.current.set(no, r);
+      setRoundError(null);
+      setCacheVer((x) => x + 1);
+    } catch (e) {
+      setRoundError(errorText(e));
+    } finally {
+      fetching.current.delete(no);
+    }
+  }, [base]);
+  const wanted = selected ?? (view?.rounds.length ? view.rounds[view.rounds.length - 1].no : null);
+  useEffect(() => { if (view && wanted !== null && !roundCache.current.has(wanted)) ensureRound(wanted); }, [view, wanted, ensureRound]);
 
   const version = view?.game.version;
   const versionRef = useRef<number | undefined>(undefined);
@@ -91,6 +124,7 @@ export function GamePage({ room, game }: { room: string; game: string }) {
   const cfg = g.config;
   const lobby = g.status === "lobby";
   const round = view.rounds.find((r) => r.no === selected) ?? view.rounds[view.rounds.length - 1] ?? null;
+  const full = round ? roundCache.current.get(round.no) ?? null : null; // the same round, with its visits
   const roundNos = view.rounds.map((r) => r.no);
   const link = `${location.origin}${g.url}`;
   const canEdit = !!view.myTeam && g.status !== "finished";
@@ -98,7 +132,9 @@ export function GamePage({ room, game }: { room: string; game: string }) {
 
   const garden = (
     <Section id="garden" title={round ? `The garden: round ${round.no}` : "The garden"} className="garden-card">
-      <Garden key={`${round?.no ?? 0}:${nonce}`} view={view} round={round} start={gardenStart} rounds={roundNos} onSelectRound={selectRound} />
+      <Garden key={`${round?.no ?? 0}:${nonce}:${full ? 1 : 0}`} view={view} round={full} start={gardenStart} rounds={roundNos}
+        onSelectRound={selectRound} loading={round && !full ? round.no : false} />
+      {roundError && <Alert kind="error">Couldn't load that round: {roundError}</Alert>}
     </Section>
   );
   const teams = (
@@ -118,7 +154,7 @@ export function GamePage({ room, game }: { room: string; game: string }) {
   ) : null;
   const logs = round && hasLogs ? (
     <Section id="logs" title={`${g.revealed ? "Logs" : "Your team's private logs"}: round ${round.no}`}>
-      <Logs key={round.no} view={view} round={round} />
+      <Logs key={round.no} view={view} round={full ?? round} base={base} />
     </Section>
   ) : null;
   const code = round && hasLogs ? (

@@ -89,8 +89,9 @@ export function Garden({ view, round, start, rounds, onSelectRound, loading = fa
   const replay = () => { tRef.current = 0; setT(0); setPlaying(true); };
   const skipToEnd = () => { setPlaying(false); tRef.current = endT; setT(endT); };
   const changeSpeed = (s: number) => { setSpeed(s); storage.set("dbc:speed2", String(s)); };
-  // Feed results stay on screen at least ~0.7 s of real time, however fast the clock runs.
-  const fxMin = 0.7 * rate * speed;
+  // Feed results stay on screen for about half a second of real time however fast the clock runs,
+  // but never so long that a busy patch piles them up.
+  const fxMin = Math.min(0.5 * rate * speed, 24);
 
   const n = model.n || order.length;
   const homes = useMemo(() => Object.fromEntries(order.map((id, i) => [id, layout.pos[id] ? slot(layout.pos[id], i, order.length) : { x: 0, y: 0 }])), [order, layout]);
@@ -116,7 +117,7 @@ export function Garden({ view, round, start, rounds, onSelectRound, loading = fa
       {rounds.length > 0 && (
         <div className="garden-rounds" role="group" aria-label="Choose a round">
           {rounds.map((no) => (
-            <button key={no} className={`pill ${round?.no === no ? "active" : ""}`} aria-pressed={round?.no === no} onClick={() => onSelectRound(no)}>
+            <button key={no} className={`pill ${(round?.no ?? loading) === no ? "active" : ""}`} aria-pressed={(round?.no ?? loading) === no} onClick={() => onSelectRound(no)}>
               Round {no}
             </button>
           ))}
@@ -142,7 +143,9 @@ export function Garden({ view, round, start, rounds, onSelectRound, loading = fa
           })}
           {model.effects.map((e, i) => {
             const span = Math.max(e.span, fxMin);
-            return t >= e.t0 && t < e.t0 + span ? <FeedFx key={i} at={e.at} u={(t - e.t0) / span} nectar={e.nectar} /> : null;
+            // Fan out results that land on the same spot close together.
+            const at = { x: e.at.x + ((i % 3) - 1) * 9, y: e.at.y - (i % 2) * 6 };
+            return t >= e.t0 && t < e.t0 + span ? <FeedFx key={i} at={at} u={(t - e.t0) / span} nectar={e.nectar} /> : null;
           })}
           {frames.map((f) => (
             <Bee key={f.teamId} f={f} team={teamsById[f.teamId]} mine={f.teamId === myTeamId} showName={names} />
