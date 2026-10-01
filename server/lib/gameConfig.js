@@ -1,6 +1,10 @@
 // Per-game parameters, chosen by the room owner before round 1 and locked afterwards.
 import { parseType, typeToString } from "./types.js";
 
+// Minified characters per syntax-tree node, the median across every program played before complexity
+// was measured in characters. Change budgets count syntax-tree edits, so this converts between them.
+export const CHARS_PER_EDIT = 7 / 3;
+
 export const DEFAULT_CONFIG = Object.freeze({
   language: "python",          // "python" | "typescript"
   rounds: 5,                   // number of rounds in the game
@@ -14,16 +18,16 @@ export const DEFAULT_CONFIG = Object.freeze({
   beeMemoryKb: 256,            // max size of what a bee keeps from one round to the next
   flowerLogs: true,            // after each round, flower owners see who asked their flowers what
   revealOnFinish: true,        // when the game ends, everyone can see all code and all logs
-  pureFlowers: false,          // old rules: flowers are pure functions (fixed random seed, no clock)
   // The orchid is the reference point:
   //   clover: half the orchid's complexity, 3× its compute: honest flowers can prove they spent effort
   //   orchid: room to build elaborate imitations and to change tack between rounds (70% change budget)
   //   bee:    5× the orchid's complexity for detector repertoires, half its compute: checks must be cheap
   budgets: {
-    //        complexity (AST nodes)  change (AST edits per round)  compute (ms per call, one core each)
-    clover: { nodes: 150, changes: 30, ms: 150 },
-    orchid: { nodes: 300, changes: 210, ms: 50 },
-    bee: { nodes: 1500, changes: 300, ms: 25 },
+    //        complexity (characters after automatic minifying)  change (syntax-tree edits per round)
+    //        compute (ms per call, one core each)
+    clover: { chars: 350, changes: 30, ms: 150 },
+    orchid: { chars: 700, changes: 210, ms: 50 },
+    bee: { chars: 3500, changes: 300, ms: 25 },
   },
 });
 
@@ -50,13 +54,12 @@ export function normalizeConfig(input = {}, base = DEFAULT_CONFIG) {
     beeMemoryKb: int(c.beeMemoryKb, 0, 4096, base.beeMemoryKb ?? DEFAULT_CONFIG.beeMemoryKb),
     flowerLogs: bool(c.flowerLogs, base.flowerLogs),
     revealOnFinish: bool(c.revealOnFinish, base.revealOnFinish),
-    pureFlowers: bool(c.pureFlowers, base.pureFlowers ?? false),
     budgets: {},
   };
   for (const kind of ["clover", "orchid", "bee"]) {
     const b = (c.budgets && c.budgets[kind]) || {}, d = base.budgets[kind];
     out.budgets[kind] = {
-      nodes: int(b.nodes, 1, 100000, d.nodes),
+      chars: int(b.chars, 1, 1000000, d.chars),
       changes: int(b.changes, 0, 100000, d.changes),
       ms: int(b.ms, 1, 10000, d.ms),
     };

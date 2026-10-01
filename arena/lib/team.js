@@ -65,7 +65,7 @@ async function validate(tok, g, kind, code, config) {
     const bad = (t.results || []).filter((r) => r.error);
     if (bad.length) errors.push(`runtime test: ${bad.slice(0, 3).map((r) => `flower(${JSON.stringify(r.c).slice(0, 40)}) -> ${r.error}`).join("; ")}`);
   }
-  return { kind, code, errors, nodes: check.nodes, distance: check.distance };
+  return { kind, code, errors, chars: check.chars, distance: check.distance };
 }
 
 async function beeRuntime(tok, g, code, flowers) {
@@ -121,14 +121,14 @@ export async function playTurn(ctx) {
     for (const kind of ["clover", "orchid"]) {
       if (!parsed[kind]) continue;
       const v = await validate(tok, gPath, kind, parsed[kind], config);
-      checks.push({ kind, nodes: v.nodes, distance: v.distance, errors: v.errors });
+      checks.push({ kind, chars: v.chars, distance: v.distance, errors: v.errors });
       if (v.errors.length) failures.push(v);
       else { const s = await Api.submit(tok, gPath, kind, parsed[kind]); if (s.submitted) { submitted.add(kind); need.delete(kind); good[kind] = parsed[kind]; } else failures.push({ ...v, errors: s.errors || ["not accepted"] }); }
     }
     if (parsed.bee) {
       const v = await validate(tok, gPath, "bee", parsed.bee, config);
       if (!v.errors.length) v.errors.push(...(await beeRuntime(tok, gPath, parsed.bee, Object.keys(good).length ? good : undefined)));
-      checks.push({ kind: "bee", nodes: v.nodes, distance: v.distance, errors: v.errors });
+      checks.push({ kind: "bee", chars: v.chars, distance: v.distance, errors: v.errors });
       if (v.errors.length) failures.push(v);
       else { const s = await Api.submit(tok, gPath, "bee", parsed.bee); if (s.submitted) { submitted.add("bee"); need.delete("bee"); } else failures.push({ ...v, errors: s.errors || ["not accepted"] }); }
     }
@@ -174,8 +174,19 @@ export async function interview({ arena, gameRow, persona, entry, gPath, buildPr
 // ---------------------------------------------------------------- tool-using team turn (engine v2 phase)
 import path from "node:path";
 import { runSession } from "./llm.js";
-import { roundBrief, toolSystem } from "./prompts.js";
+import { NOTICES, examplesNotice, roundBrief, toolSystem } from "./prompts.js";
 import { TRANSCRIPTS, audit, collect, prepareWorkspace, recordViolations } from "./workspace.js";
+
+/** Round-1 notices: named ones for a given game (settings.cohort.notices), and the examples treatment's in every game. */
+function roundNotices(arena, generation, roundNo) {
+  const c = arena.settings.cohort;
+  if (!c || roundNo !== 1) return [];
+  const out = [];
+  const named = c.notices?.[generation];
+  if (named) out.push(NOTICES[named] || named);
+  if (c.examples) out.push(examplesNotice(c.examples.files));
+  return out;
+}
 
 export const SESSION_LIMITS = {
   // max agent turns and USD per session, by model (tuned after the pilot)
@@ -208,7 +219,8 @@ export async function playTurnTools(ctx) {
     try {
       s = await runSession({
         model: persona.model, cwd: dir, appendSystem: system, maxTurns, python, maxBudgetUsd: attempt ? lim.usd / 3 : lim.usd, transcriptFile: transcript,
-        prompt: roundBrief({ view, entry, generation: gameRow.generation, roundNo, maxTurns, ext, fix, cohort: !!arena.settings.cohort,
+        prompt: roundBrief({ view, entry, generation: gameRow.generation, roundNo, maxTurns, ext, fix, cohort: arena.settings.cohort?.experiment || !!arena.settings.cohort,
+          notices: roundNotices(arena, gameRow.generation, roundNo),
           hasIdeas: !!arena.settings.cohort && roundNo === 1 && gameRow.generation === 1 && /^G\d$/.test(persona.idea_card || "") }),
         ctx: { purpose: attempt ? "team-fix" : "team-session", arenaId: arena.id, gameId: gameRow.id, personaId: persona.id },
       });
@@ -238,7 +250,7 @@ export async function playTurnTools(ctx) {
       if (!code.trim()) { if (roundNo === 1) failures.push({ kind, code, errors: [`${kind}.${ext} is empty`] }); continue; }
       const v = await validate(tok, gPath, kind, code, config);
       if (kind === "bee" && !v.errors.length) v.errors.push(...(await beeRuntime(tok, gPath, code, Object.keys(good).length ? good : undefined)));
-      checks.push({ kind, nodes: v.nodes, distance: v.distance, errors: v.errors });
+      checks.push({ kind, chars: v.chars, distance: v.distance, errors: v.errors });
       if (v.errors.length) { failures.push(v); continue; }
       const r = await Api.submit(tok, gPath, kind, code);
       if (r.submitted) { submitted.add(kind); if (kind !== "bee") good[kind] = code; }

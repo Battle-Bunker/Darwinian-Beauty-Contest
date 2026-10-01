@@ -178,14 +178,37 @@ every visit and treats the answer as the flower's face. It tastes each face once
 faces paid. A clover with a secret hash key then has a face nobody can forge, and it costs nothing to
 produce. Recognition came from repetition, not from any signal of effort.
 
-In v3 (`pureFlowers: false`, the default), flowers are still stateless: the whole program runs fresh for
-every call, so nothing carries over between questions. But each call gets fresh randomness and the
-clock (`time`, `Date.now()`) and can read its own budget as `GAME.ms`. A clover can run an anytime
-search, such as a local search for a big clique or an untangling with few crossings, and answer with
-the best result it found within 150 ms. An orchid has 50 ms to fake one. Bees then judge how good an
-answer is, not whether they have seen it before. The engine no longer caches answers, so every ask runs
-the flower again and its compute stats count every call.
+In v3 flowers are still stateless: the whole program runs fresh for every call, so nothing carries over
+between questions. But each call gets fresh randomness and the clock (`time`, `Date.now()`) and can read
+its own budget as `GAME.ms`. A clover can run an anytime search, such as a local search for a big
+clique, and answer with the best result it found within 150 ms. An orchid has 50 ms to fake one. Bees
+then judge how good an answer is, not whether they have seen it before. The engine never caches answers,
+so every ask runs the flower again and compute stats count every call.
 
-What v3 does not prevent: a team can still choose to write a deterministic clover, since nothing forces a
-flower to use randomness. Such a clover can still be fingerprinted by repeating a question. Whether the
-effort signal outcompetes that is what the v3 games test.
+What v3 does not prevent: nothing forces a flower to use randomness. A team can still write a
+deterministic clover, and bees can still fingerprint it by repeating a question. Whether the effort
+signal outcompetes that is what the v3 games test.
+
+## Complexity is the length of the minified program
+
+The complexity budget used to count syntax-tree nodes. That had two problems:
+- **A literal was one node however long it was,** so one string or number could hide a lookup table.
+- **Every name and every structure cost the same,** so a team saving space had reason to write
+  cramped code.
+
+Now the game minifies each program before measuring it (vendor/complexity.js, the same file in the
+server and the editor):
+- It drops comments, blank lines and spacing.
+- It renames every name the program defines to the shortest free name, most-used first.
+- It strips TypeScript types.
+
+The budget is the length of what's left. Writing readable code costs nothing, so nobody gains by
+minifying by hand. Strings and numbers count character by character, which closes the lookup-table
+loophole.
+
+One leak stays bounded rather than closed. Renaming makes long names free, and a program can read its own
+names back (`globals()`, `__name__`). So a name's characters beyond the first 20 are charged.
+
+Change budgets still count syntax-tree edits between rounds. They're calibrated through `CHARS_PER_EDIT`
+(7/3, the median minified characters per node across all earlier programs). For example, an orchid's 210
+edits are about 70% of a full-size orchid.

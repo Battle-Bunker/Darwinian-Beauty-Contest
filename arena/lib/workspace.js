@@ -19,7 +19,7 @@ const extOf = (config) => (config.language === "typescript" ? "ts" : "py");
 const write = (file, data) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, data); };
 const json = (x) => JSON.stringify(x, null, 1);
 
-const README = (ext, cohort) => `# Your workspace
+const README = (ext, cohort, examples) => `# Your workspace
 
 | file | what |
 |---|---|
@@ -38,7 +38,7 @@ ${cohort ? "| previous-games/game-N/ | earlier games: standings.md, the final co
     : "| previous-games/ | earlier games in this arena, revealed: every team's final code and every round's full visits; panel.md has the standings, panel scores and what the judges said about you |"}
 | notebook.md | your private notes; they persist across rounds and games |
 | idea-card.md or ideas.md | (only some teams) ideas other players are exploring |
-
+${examples ? `| examples/ | example flower programs and bee-side checkers; every team in this garden has the same files (${examples.join(", ")}) |\n` : ""}
 A visit line: {"bee", "patch", "seq", "start", "end", "asks", "asksBeforeFeed", "action", "nectar", "kind"?, "steps"?: [{"c", "r", "after"?}]}.
 Teams are ids (logs/game.json maps ids to names). "after": true marks asks made after feeding.
 Analyse with python3 if your session has it (see your instructions), or with Grep, Glob, Read (offset/limit on big files)
@@ -74,7 +74,13 @@ export async function prepareWorkspace({ arena, gameRow, persona, entry, gPath, 
   write(marker, String(gameRow.generation));
 
   write(path.join(dir, "RULES.md"), rules());
-  write(path.join(dir, "README.md"), README(ext, !!arena.settings.cohort));
+  const examples = arena.settings.cohort?.examples || null;
+  write(path.join(dir, "README.md"), README(ext, !!arena.settings.cohort, examples?.files));
+  // Cohort experiment, examples treatment: the same example files in every team's examples/, restored every round.
+  if (examples) {
+    fs.rmSync(path.join(dir, "examples"), { recursive: true, force: true });
+    fs.cpSync(path.resolve(ARENA_DIR, "..", examples.source), path.join(dir, "examples"), { recursive: true });
+  }
   const it = view.interface;
   write(path.join(dir, "interface.txt"), `challenge: ${it.types.challenge} (${it.types.challengeMeans})\nresponse: ${it.types.response} (${it.types.responseMeans})\n` +
     `rules: ${(it.types.rules || []).join(" ")}\n\nclover and orchid:\n${it.flower}\n\nbee:\n${it.bee}\n`);

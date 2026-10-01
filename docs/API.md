@@ -41,7 +41,7 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 | PATCH | `base/config` | owner, before round 1 | `{ config: {...partial} }` | `{ config, clearedSubmissions }` |
 | POST | `base/teams` | user, before round 1 | `{ name }` | `{ id, name, joinCode }` |
 | POST | `base/teams/join` | user | `{ joinCode }` | `{ id, name }` |
-| POST | `base/check` | team member | `{ kind, code }` | `{ ok, nodes, strings, distance, errors[], budget }`. Validates without saving. `nodes` is the complexity: syntax-tree nodes plus one per character of string-literal text, of which `strings` are string characters (comments are free) |
+| POST | `base/check` | team member | `{ kind, code }` | `{ ok, chars, minified, distance, errors[], budget }`. Validates without saving. `chars` is the complexity: the length of `minified`, the program as the game counts it (comments, spacing, defined names' lengths and TypeScript types are free; see RULES.md) |
 | POST | `base/programs` | team member | `{ kind, code }` | same as check plus `submitted: true`; **422** with `errors` if over budget |
 | POST | `base/try` | team member | `{ kind, code, challenges?, flowers?: {clover, orchid} }` | flower: `{ results: [{c, r, error?}] }`. bee: forages your own patch (the `flowers` you pass, else your submissions, else last round's) with your real `MEMORY`: `{ visits, problems, feeds, nectar, turns, memory }` |
 | POST | `base/rounds` | owner | `{ seed? }` | **202** `{ round }`. Runs in the background; add `?wait=1` to block until done. `seed` (0…2³¹−1) fixes the deck order and bee randomness, e.g. to replay identical games with two cohorts; omitted = random |
@@ -55,11 +55,11 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
   "language": "python",
   "rounds": 5, "turnsPerFlower": 100, "turns": null, "feedCost": 5,
   "challengeType": "int", "responseType": "int", "maxLen": 64, "maxNodes": 512, "beeMemoryKb": 256,
-  "flowerLogs": true, "revealOnFinish": true, "pureFlowers": false,
+  "flowerLogs": true, "revealOnFinish": true,
   "budgets": {
-    "clover": { "nodes": 150, "changes": 30,  "ms": 150 },
-    "orchid": { "nodes": 300, "changes": 210, "ms": 50 },
-    "bee":    { "nodes": 1500, "changes": 300, "ms": 25 }
+    "clover": { "chars": 350,  "changes": 30,  "ms": 150 },
+    "orchid": { "chars": 700,  "changes": 210, "ms": 50 },
+    "bee":    { "chars": 3500, "changes": 300, "ms": 25 }
   }
 }
 ```
@@ -68,10 +68,11 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
   `turns` overrides this with a fixed number when set.
 - `maxLen` bounds strings and lists. `maxNodes` bounds trees and graphs (graphs: ≤ 4 × maxNodes edges).
 - `beeMemoryKb`: how much of a bee's top-level data is kept each round for `MEMORY`. 0 turns memory off.
-- `pureFlowers` (default false): the old rules. Flowers get a fixed random seed and no clock, and the engine
-  computes one answer per flower per distinct challenge per round. When false, flowers are still stateless
-  (fresh process or context per call) but get fresh randomness every call and the clock, every ask runs
-  the flower again, and programs can read `GAME.ms`, their own compute budget per call.
+- `budgets.<kind>.chars`: complexity, in characters of the automatically minified program
+  (vendor/complexity.js; RULES.md explains it to players). `changes`: syntax-tree edits allowed per round.
+- Flowers are stateless (a fresh process or context per call) but get fresh randomness every call and
+  the clock, so every ask runs the flower again. Every program can read `GAME.ms`, its own compute
+  budget per call.
 - `ms` is wall-clock time per call. The engine runs at most one program per CPU core, so this is
   effectively CPU time.
 
@@ -95,7 +96,7 @@ returns everything that has happened so far, filtered to what this viewer is all
   "teams": [{ "id", "name", "color", "members": [names], "participant",
               "submitted": { "clover": bool, "orchid": bool, "bee": bool } }],
   "myTeam": { "id", "name", "joinCode",
-              "drafts":   { kind: { code, nodes, distance, submittedAt, submittedBy } },   // pending for next round
+              "drafts":   { kind: { code, chars, distance, submittedAt, submittedBy } },   // pending for next round
               "previous": { kind: code } } | null,                                       // what played last round
   "interface": { "flower", "bee", "types": { "challenge", "response", "challengeMeans", "responseMeans", "rules": [..] } },
                                                   // signatures + type rules only: no starter code, no example values
@@ -103,8 +104,8 @@ returns everything that has happened so far, filtered to what this viewer is all
     "no", "startedAt", "finishedAt", "turns",    // turns each bee had this round
     "feeds":  [[...]],  "nectar": [[...]],        // ledgers: row = bee team, column = patch team (participants order)
     "scores": [teamScore], "totals": [teamScore],  // this round alone / all rounds so far
-    "programs": { teamId: { kind: { nodes, distance, carriedOver, code?, problem?, compute? } } },  // code: own team or revealed
-                                                  // nodes: complexity under the rule when the round ran
+    "programs": { teamId: { kind: { chars, distance, carriedOver, code?, problem?, compute? } } },  // code: own team or revealed
+                                                  // chars: complexity under the current rule
                                                   // compute (flowers): { calls, meanMs, p90Ms, budgetMs }
     "memory": { teamId: { bytes, note } },        // what each bee kept for later rounds: own team or revealed
     "visits": [visit]

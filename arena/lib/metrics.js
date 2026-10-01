@@ -142,7 +142,7 @@ export function roundMetrics(view, round, prev) {
       cloverDistance: round.programs[id]?.clover?.distance ?? null,
       orchidDistance: round.programs[id]?.orchid?.distance ?? null,
       beeDistance: round.programs[id]?.bee?.distance ?? null,
-      beeNodes: round.programs[id]?.bee?.nodes ?? null,
+      beeChars: round.programs[id]?.bee?.chars ?? null,
     }];
   }));
 

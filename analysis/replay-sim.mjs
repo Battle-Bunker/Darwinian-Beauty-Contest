@@ -19,7 +19,7 @@ import { playGame, summarise, H40, PY_H40, mean, f2, f3 } from "./sim-lib.mjs";
 
 const N = 6, ROUNDS = 5, VICTIM = 0, THIEF = 1;
 const SEEDS = Number(process.argv[2] || 3);
-const config = { language: "python", challengeType: "int", responseType: "int", turnsPerFlower: 100, feedCost: 5, rounds: ROUNDS };
+const config = { language: "python", challengeType: "int", responseType: "int", turnsPerFlower: 100, feedCost: 5, rounds: ROUNDS }; // every flower here is deterministic (no random, no time), so it behaves as a v2 pure flower
 const kC = (i) => `clover-${i}`, kO = (i) => `orchid-${i}`;
 
 const hashFlower = (k) => `import hashlib

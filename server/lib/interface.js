@@ -57,11 +57,8 @@ function typeRules(cT, rT, { maxLen, maxNodes }) {
 }
 
 // How a flower runs, as comment lines under its signature.
-function flowerNotes(config, ts) {
+function flowerNotes(ts) {
   const c = ts ? "//" : "#";
-  if (config.pureFlowers) {
-    return `${c} Runs fresh for every question and ${ts ? "Math.random()" : "random"} starts from the same seed every time,\n${c} so the same challenge always gets the same response. No clock.`;
-  }
   return `${c} Runs fresh for every question: nothing is kept between calls. ${ts ? "Math.random()" : "random"} is freshly seeded on every call\n` +
     `${c} and the clock is available (${ts ? "Date.now()" : "import time"}). ${ts ? "GAME.ms" : 'GAME["ms"]'} is your compute budget per call in milliseconds;\n` +
     `${c} the clock starts when your program starts, so stop with a margin to spare.`;
@@ -84,13 +81,13 @@ export function programInterface(config) {
     ].filter(Boolean).join("\n");
     return {
       types,
-      flower: `${aliases ? aliases + "\n" : ""}function flower(challenge: ${C}): ${R}\n${flowerNotes(config, true)}`,
+      flower: `${aliases ? aliases + "\n" : ""}function flower(challenge: ${C}): ${R}\n${flowerNotes(true)}`,
       bee: `${aliases ? aliases + "\n" : ""}function forage(seen: [${C}, ${R} | null][], turnsLeft: number, visit: { fed: boolean; nectar: boolean | null }): ["ask", ${C}] | "feed" | "leave"\nfunction tasted(seen: [${C}, ${R} | null][], nectar: boolean): void   // optional\n// MEMORY: read-only array of earlier rounds' top-level variables (MEMORY[0] = end of round 1)`,
     };
   }
   return {
     types,
-    flower: `def flower(challenge):    # challenge: ${c}  ->  return a ${r}\n${flowerNotes(config, false)}`,
+    flower: `def flower(challenge):    # challenge: ${c}  ->  return a ${r}\n${flowerNotes(false)}`,
     bee: `def forage(seen, turns_left, visit):   # seen: [[challenge, response], ...] at this flower (response None if it failed)\n    # visit = {"fed": bool, "nectar": bool or None}; return ["ask", challenge], "feed" (once per visit) or "leave"\ndef tasted(seen, nectar):        # optional: called after you feed; nectar is True or False\n# MEMORY: read-only list of earlier rounds' top-level variables (MEMORY[0] = end of round 1)`,
   };
 }

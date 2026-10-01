@@ -21,7 +21,7 @@ export async function fullView(gameId) {
       no: r.round_no, turns: r.turns, feeds: r.feeds, nectar: r.nectar, scores: r.scores, totals: r.totals,
       programs: Object.fromEntries(participants.map((t) => [t, Object.fromEntries(KINDS.map((k) => {
         const p = progs.find((x) => x.round_no === r.round_no && x.team_id === t && x.kind === k);
-        return [k, p ? { code: p.code, nodes: p.nodes, distance: p.distance, carriedOver: p.carried_over, problem: p.problem, compute: p.compute } : null];
+        return [k, p ? { code: p.code, chars: p.chars, distance: p.distance, carriedOver: p.carried_over, problem: p.problem, compute: p.compute } : null];
       }))])),
       memory: Object.fromEntries(mems.filter((m) => m.round_no === r.round_no).map((m) => [m.team_id, { bytes: m.bytes, note: m.note }])),
       visits: visits.filter((v) => v.round_no === r.round_no).map((v) => ({

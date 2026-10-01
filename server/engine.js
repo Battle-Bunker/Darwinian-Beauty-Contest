@@ -7,8 +7,8 @@
 // may ask challenges (1 turn each), feed once (feedCost turns; nectar only at clovers), keep asking
 // after feeding, and leave (free). After a feed, anything other than an ask ends the visit. Bees run
 // independently and in parallel. Flowers are stateless: nothing survives from one call to the next.
-// Unless the game has pure flowers they may use fresh randomness and the clock, so the same challenge
-// can get a different answer every time. At the end of the round each bee's top-level data is
+// They may use fresh randomness and the clock, so the same challenge can get a different answer every
+// time, and every ask runs the flower again. At the end of the round each bee's top-level data is
 // snapshotted; later rounds see those snapshots, read-only, as MEMORY.
 import os from "node:os";
 import { ProgramProcess } from "./runners/proc.js";
@@ -41,10 +41,9 @@ export function gameInfo(config, nTeams) {
 // Responses can be big trees and graphs; this caps the JSON text of any single value.
 const MAX_CHARS = 262144;
 
-/** Setup for a flower process. Pure flowers keep the old rules: fixed random seed, no clock. */
+/** Setup for a flower process. */
 const flowerSetup = (config, kind, code, game) => ({
   code, ms: config.budgets[kind].ms, game: { ...game, ms: config.budgets[kind].ms }, maxChars: MAX_CHARS,
-  pure: !!config.pureFlowers, clock: !config.pureFlowers,
 });
 const MAX_LOG = 4000;
 
@@ -102,7 +101,6 @@ export async function simulateRound({ config, teams, seed }) {
   const TURNS = game.turns;
   const memoryBytes = (config.beeMemoryKb ?? 0) * 1024;
   const flowers = teams.flatMap((t, ti) => ["clover", "orchid"].map((kind) => ({ team: ti, kind, code: t.programs[kind] })));
-  const pure = !!config.pureFlowers;
   const killers = [];
   const problems = teams.map(() => ({ clover: null, orchid: null, bee: null }));
   const memories = teams.map(() => ({ snapshot: null, bytes: 0, note: null }));
@@ -110,7 +108,6 @@ export async function simulateRound({ config, teams, seed }) {
   try {
     for (const f of flowers) {
       f.pool = new FlowerPool(config.language, flowerSetup(config, f.kind, f.code, game));
-      f.cache = pure ? new Map() : null; // pure functions: one answer per challenge per round
       f.times = [];        // milliseconds per answered call: do clovers spend their compute as a signal?
       f.firstError = null;
       killers.push(f.pool);
@@ -118,7 +115,7 @@ export async function simulateRound({ config, teams, seed }) {
     const bees = teams.map((t, ti) => {
       const proc = new ProgramProcess(config.language, "bee", {
         code: t.programs.bee, ms: config.budgets.bee.ms, seed: (seed + 7919 * (ti + 1)) >>> 0, game: { ...game, ms: config.budgets.bee.ms },
-        maxChars: MAX_CHARS, memory: t.memory || [], clock: !pure,
+        maxChars: MAX_CHARS, memory: t.memory || [],
       });
       killers.push(proc);
       return proc;
@@ -127,7 +124,7 @@ export async function simulateRound({ config, teams, seed }) {
     flowers.forEach((f, i) => { if (!loads[i].ok) problems[f.team][f.kind] = loads[i].e; });
     bees.forEach((_, ti) => { const r = loads[flowers.length + ti]; if (!r.ok) problems[ti].bee = r.e; });
 
-    function answer(flower, c) {
+    function ask(flower, c) {
       const t0 = performance.now();
       return flower.pool.call({ c }).then((res) => {
         flower.times.push(performance.now() - t0);
@@ -135,12 +132,6 @@ export async function simulateRound({ config, teams, seed }) {
         if (bad) { flower.firstError ??= bad; return { r: null, flowerError: bad }; }
         return { r: res.v };
       });
-    }
-    function ask(flower, c) {
-      if (!flower.cache) return answer(flower, c);
-      const key = JSON.stringify(c);
-      if (!flower.cache.has(key)) flower.cache.set(key, answer(flower, c));
-      return flower.cache.get(key);
     }
 
     const runBee = async (ti) => {
@@ -238,8 +229,7 @@ export async function simulateRound({ config, teams, seed }) {
     }));
     // Flower runtime errors (first one per flower) are reported privately to the owner.
     for (const f of flowers) if (!problems[f.team][f.kind] && f.firstError) problems[f.team][f.kind] = f.firstError;
-    // Compute used per flower (wall ms per call, or per distinct question when flowers are pure,
-    // including ~1-3 ms of process overhead).
+    // Compute used per flower (wall ms per call, including ~1-3 ms of process overhead).
     const compute = teams.map(() => ({ clover: null, orchid: null }));
     for (const f of flowers) {
       if (!f.times.length) continue;

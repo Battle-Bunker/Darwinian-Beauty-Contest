@@ -263,5 +263,49 @@ for (const fams of [["v2-arena", "v2-cohort"], ["v1-int-primed", "v1-int-unprime
     console.log(tws.padEnd(8), bc.padEnd(9), String(a.patches.size).padStart(12), String(a.cv).padStart(13), f2(a.cf / a.cv).padStart(10), f2(a.of / a.ov).padStart(10), f2((a.cf + a.of) / (a.cv + a.ov)).padStart(15));
   }
 }
+
+// ---------------------------------------------------------------- follow-ups
+// (1) effective fingerprint-and-taste: a probe bee (fixed or rotating) that follows its face verdicts (≥ 0.85) and
+//     separates rival clovers from orchids (gap ≥ 0.5). First appearances in start order.
+console.log("\n# Effective fingerprint-and-taste bees (probe class fixed/rotating, verdict-following ≥ 0.85, rival gap ≥ 0.5), in start order\n");
+const eff = (r) => (r.cls === "fixed" || r.cls === "rotating") && r.followWithin >= 0.85 && gap(r) >= 0.5;
+for (const G of games) {
+  const es = rows.filter((r) => r.agid === G.agid && eff(r));
+  if (es.length) console.log(`${G.arena.padEnd(12)} g${G.gen} ${G.url.padEnd(17)} ${es.map((r) => `${(r.persona || "?").split(" ")[0]} (${r.model}, ${r.cls}, gap ${f2(gap(r))})`).join("; ")}`);
+}
+for (const fam of FAM) {
+  const rs = rows.filter((r) => r.family === fam);
+  console.log(`  ${fam.padEnd(17)} effective ${rs.filter(eff).length}/${rs.length} bee-games; probe class (fixed or rotating) ${rs.filter((r) => r.cls === "fixed" || r.cls === "rotating").length}/${rs.length}`);
+}
+// (2) fitness vs probe bee (fixed or rotating) with model dummies and game fixed effects; and vs the rival gap
+console.log("\n# Fitness / forage share vs probe bee (fixed or per-round probe) and vs rival gap, OLS with model dummies + game fixed effects\n");
+for (const [label, fams] of [["v1 (all)", FAM.slice(0, 5)], ["v2 arenas + cohorts", ["v2-arena", "v2-cohort"]]]) {
+  const rs = rows.filter((r) => fams.includes(r.family) && r.fitness != null && r.model && gap(r) != null);
+  const models = [...new Set(rs.map((r) => r.model))].sort(), gids = [...new Set(rs.map((r) => r.agid))];
+  for (const outcome of ["fitness", "forageN"]) for (const [pname, pf] of [["probe", (r) => (r.cls === "fixed" || r.cls === "rotating" ? 1 : 0)], ["gap", (r) => gap(r)]]) {
+    const X = rs.map((r) => [pf(r), ...models.slice(1).map((m) => (r.model === m ? 1 : 0)), ...gids.map((g) => (r.agid === g ? 1 : 0))]);
+    const fit = ols(X, rs.map((r) => r[outcome]));
+    const within = pname === "probe" ? models.map((m) => { const a = rs.filter((r) => r.model === m && pf(r)), b = rs.filter((r) => r.model === m && !pf(r)); return `${m} ${f2(mean(a.map((r) => r[outcome])))} (${a.length}) vs ${f2(mean(b.map((r) => r[outcome])))} (${b.length})`; }).join("; ") : "";
+    console.log(`${label.padEnd(20)} ${outcome.padEnd(8)} ${pname.padEnd(5)} n=${rs.length}  coef ${fit ? `${fit.beta[0] >= 0 ? "+" : ""}${fit.beta[0].toFixed(2)} ± ${fit.se[0].toFixed(2)}` : "n/a"}${within ? `   raw by model, probe vs other: ${within}` : ""}`);
+  }
+}
+// (3) twin patches at team-game level: allure, forage and fitness against honest patches, within model
+console.log("\n# Twin patches, team-game level: share of rounds the orchid was a twin (≥ 90% own-clover answers to rival asks)\n");
+for (const [label, fams] of [["v1", FAM.slice(0, 5)], ["v2", ["v2-arena", "v2-cohort"]]]) {
+  const rs = rows.filter((r) => fams.includes(r.family) && r.model);
+  const tw = (r) => { const ps = patchRounds.filter((p) => p.agid === r.agid && p.team === r.team && p.twinShare != null); return ps.length ? ps.filter((p) => p.twinShare >= 0.9).length / ps.length : null; };
+  const groups = { "twin ≥ half the rounds": rs.filter((r) => tw(r) >= 0.5), "twin some rounds": rs.filter((r) => tw(r) > 0 && tw(r) < 0.5), "never twin": rs.filter((r) => tw(r) === 0) };
+  console.log(label);
+  for (const [g, xs] of Object.entries(groups)) {
+    const byModel = [...new Set(xs.map((r) => r.model))].sort().map((m) => { const ys = xs.filter((r) => r.model === m); return `${m} ${f2(mean(ys.map((r) => r.fitness)))} (${ys.length})`; }).join(", ");
+    console.log(`  ${g.padEnd(24)} n=${String(xs.length).padStart(3)}  allure×N ${f2(mean(xs.map((r) => r.allureN)))}  forage×N ${f2(mean(xs.map((r) => r.forageN)))}  fitness ${f2(mean(xs.map((r) => r.fitness)))}   fitness by model: ${byModel}`);
+  }
+  const gx = rs.filter((r) => tw(r) != null);
+  const models = [...new Set(gx.map((r) => r.model))].sort(), gids = [...new Set(gx.map((r) => r.agid))];
+  for (const outcome of ["allureN", "forageN", "fitness"]) {
+    const fit = ols(gx.map((r) => [tw(r), ...models.slice(1).map((m) => (r.model === m ? 1 : 0)), ...gids.map((g) => (r.agid === g ? 1 : 0))]), gx.map((r) => r[outcome]));
+    console.log(`  OLS ${outcome.padEnd(8)} on twin share (model dummies + game FE): ${fit ? `${fit.beta[0] >= 0 ? "+" : ""}${fit.beta[0].toFixed(2)} ± ${fit.se[0].toFixed(2)}` : "n/a"} (n=${gx.length})`);
+  }
+}
 console.log(`\nwrote ${OUT}`);
 await pool.end();

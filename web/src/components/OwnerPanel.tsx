@@ -52,7 +52,7 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
   const dirty = JSON.stringify(draft) !== cfgKey;
 
   const set = <K extends keyof GameConfig>(k: K, v: GameConfig[K]) => setDraft((d) => ({ ...d, [k]: v }));
-  const setBudget = (kind: Kind, k: "nodes" | "changes" | "ms", v: number) =>
+  const setBudget = (kind: Kind, k: "chars" | "changes" | "ms", v: number) =>
     setDraft((d) => ({ ...d, budgets: { ...d.budgets, [kind]: { ...d.budgets[kind], [k]: v } } }));
 
   const save = async (e: FormEvent) => {
@@ -108,7 +108,6 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
       <div className="settings-checks">
         <label className="check"><input type="checkbox" checked={draft.flowerLogs} onChange={(e) => set("flowerLogs", e.target.checked)} /> Flower logs: teams see what bees asked their flowers</label>
         <label className="check"><input type="checkbox" checked={draft.revealOnFinish} onChange={(e) => set("revealOnFinish", e.target.checked)} /> Reveal all code and logs when the game ends</label>
-        <label className="check"><input type="checkbox" checked={!!draft.pureFlowers} onChange={(e) => set("pureFlowers", e.target.checked)} /> Old rules: flowers are pure functions (fixed random seed, no clock)</label>
       </div>
       <div className="table-scroll">
         <table className="data-table budgets">
@@ -119,12 +118,12 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
               Defaults: clover 150 / 30 / 150, orchid 300 / 210 / 50, bee 1500 / 300 / 25.
             </span>
           </caption>
-          <thead><tr><th className="left">Program</th><th>Size (nodes)</th><th>Changes per round</th><th>Time (ms per call)</th></tr></thead>
+          <thead><tr><th className="left">Program</th><th>Size (characters after minifying)</th><th>Changes per round</th><th>Time (ms per call)</th></tr></thead>
           <tbody>
             {KINDS.map((k) => (
               <tr key={k}>
                 <th scope="row" className="left">{k}</th>
-                <td>{num(draft.budgets[k].nodes, (v) => setBudget(k, "nodes", v), 1, 100000, `${k} size budget`)}</td>
+                <td>{num(draft.budgets[k].chars, (v) => setBudget(k, "chars", v), 1, 1000000, `${k} size budget`)}</td>
                 <td>{num(draft.budgets[k].changes, (v) => setBudget(k, "changes", v), 0, 100000, `${k} change budget`)}</td>
                 <td>{num(draft.budgets[k].ms, (v) => setBudget(k, "ms", v), 1, 10000, `${k} time budget`)}</td>
               </tr>
@@ -155,13 +154,12 @@ export function SettingsSummary({ cfg, turnsNow }: { cfg: GameConfig; turnsNow?:
         {cfg.beeMemoryKb !== undefined && <span className="chip">{cfg.beeMemoryKb ? `bee memory ${cfg.beeMemoryKb} KB` : "bee memory off"}</span>}
         <span className="chip">{cfg.flowerLogs ? "flower logs on" : "flower logs off"}</span>
         <span className="chip">{cfg.revealOnFinish ? "code revealed at the end" : "code stays secret"}</span>
-        {cfg.pureFlowers && <span className="chip">pure flowers (old rules)</span>}
       </div>
       <div className="table-scroll">
         <table className="data-table budgets compact">
           <thead><tr><th className="left">Budget</th>{KINDS.map((k) => <th key={k}>{k}</th>)}</tr></thead>
           <tbody>
-            <tr><th scope="row" className="left">size (nodes)</th>{KINDS.map((k) => <td key={k}>{cfg.budgets[k].nodes}</td>)}</tr>
+            <tr><th scope="row" className="left">size (characters)</th>{KINDS.map((k) => <td key={k}>{cfg.budgets[k].chars}</td>)}</tr>
             <tr><th scope="row" className="left">changes / round</th>{KINDS.map((k) => <td key={k}>{cfg.budgets[k].changes}</td>)}</tr>
             <tr><th scope="row" className="left">time (ms / call)</th>{KINDS.map((k) => <td key={k}>{cfg.budgets[k].ms}</td>)}</tr>
           </tbody>

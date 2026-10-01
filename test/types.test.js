@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { checkValue, parseType, typeToString } from "../server/lib/types.js";
-import { normalizeConfig } from "../server/lib/gameConfig.js";
+import { DEFAULT_CONFIG, normalizeConfig } from "../server/lib/gameConfig.js";
 
 test("types parse and check", () => {
   const t = parseType("list[ list[int] ]");
@@ -18,7 +18,7 @@ test("config clamps and keeps defaults", () => {
   const c = normalizeConfig({ turns: -5, budgets: { bee: { ms: "200" } }, challengeType: "str" });
   assert.equal(c.turns, 1);
   assert.equal(c.budgets.bee.ms, 200);
-  assert.equal(c.budgets.clover.nodes, 150);
+  assert.equal(c.budgets.clover.chars, DEFAULT_CONFIG.budgets.clover.chars);
   assert.equal(c.challengeType, "str");
   assert.throws(() => normalizeConfig({ responseType: "set[int]" }));
 });

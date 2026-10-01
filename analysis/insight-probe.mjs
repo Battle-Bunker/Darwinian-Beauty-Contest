@@ -76,7 +76,7 @@ for (const g of games) {
   const progs = (await db.query("SELECT team_id, kind, code FROM round_programs WHERE game_id = $1 AND round_no = $2", [g.id, g.rounds_played])).rows;
   const llm = g.participants.map((id) => ({ id, programs: Object.fromEntries(progs.filter((p) => p.team_id === id).map((p) => [p.kind, p.code])) }));
   const ins = { clover: flower("c-9f3a", rt), orchid: flower("o-71be", rt), bee: bee("c-9f3a", "o-71be", ct, rt) };
-  const sizes = await Promise.all(["clover", "orchid", "bee"].map(async (k) => `${k} ${(await measure("python", ins[k])).nodes}/${g.config.budgets[k].nodes}`));
+  const sizes = await Promise.all(["clover", "orchid", "bee"].map(async (k) => `${k} ${(await measure("python", ins[k])).chars}/${g.config.budgets[k].chars}`));
   const play = async (teams) => {
     const fits = teams.map(() => 0), all = teams.map(() => 0), forg = teams.map(() => 0);
     for (const seed of SEEDS) {

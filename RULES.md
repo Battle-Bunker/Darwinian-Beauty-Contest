@@ -54,9 +54,6 @@ result it found. The same challenge can get a different answer every time. `GAME
 `GAME.ms`) is your program's own budget per call in milliseconds. The clock starts when your program
 starts, so stop with a margin to spare: a flower that runs out of time gives no answer at all.
 
-(A game can switch on the old rules, `pureFlowers`: then `random` starts from the same seed every time,
-there is no clock, and the same challenge always gets the same response.)
-
 **Nobody knows who's who.** Programs never learn which team a flower or bee belongs to.
 
 ## What the challenge and response look like
@@ -129,16 +126,16 @@ In TypeScript, `tree[T]` is `{ value: T; children: Tree<T>[] }` and a graph is
 `{ nodes: number; edges: [number, number][] }`.
 
 Every program can read a `GAME` dictionary/object: `turns`, `feed_cost`, `challenge_type`,
-`response_type`, `max_len`, `max_nodes` and `flowers` (how many flowers are in the garden). It does
+`response_type`, `max_len`, `max_nodes`, `flowers` (how many flowers are in the garden) and `ms` (your
+program's own time limit per call, in milliseconds). It does
 **not** say which round it is. (A bee can count its `MEMORY`; a flower can't know.) Flowers change
 between rounds only when you change their code.
 
 Python programs may import `math`, `random`, `hashlib`, `string`, `itertools`, `functools`,
 `collections`, `re`, `json`, `bisect`, `heapq`, `statistics`, `fractions`, `decimal`, `operator`,
 `typing`, `dataclasses`, `enum`, `zlib`, `struct`, `binascii`, `base64`, `copy`, `numbers`, `array`,
-and `time`. TypeScript programs get the standard JavaScript built-ins, including `Date`. (With the old
-`pureFlowers` rules there is no clock: no `time`, no `Date`.) A bee's `random` is seeded once per
-round, so it varies from round to round.
+and `time`. TypeScript programs get the standard JavaScript built-ins, including `Date`. A bee's
+`random` is seeded once per round, so it varies from round to round.
 
 ## Budgets
 
@@ -147,7 +144,7 @@ programs get **different** budgets on purpose, measured against the orchid:
 
 | Budget | Measures | clover | orchid | bee |
 |---|---|---|---|---|
-| **complexity** | size of the program in syntax-tree nodes, plus one per character of string text (comments are free) | 150 (half an orchid's) | 300 | 1500 (5× an orchid's) |
+| **complexity** | characters, after the game minifies your program (see below) | 350 (half an orchid's) | 700 | 3500 (5× an orchid's) |
 | **change** | syntax-tree edits allowed between rounds | 30 | 210 (70% of its size) | 300 |
 | **compute** | milliseconds per call (flowers: the whole program, every question) | 150 (3× an orchid's) | 50 | 25 (half an orchid's) |
 
@@ -164,21 +161,25 @@ Why it's lopsided:
 
 ### What counts toward complexity
 
-Your program's size is its syntax-tree node count: roughly one node per name, number, expression and
-statement (keywords, operators and punctuation belong to their node and add nothing). On top of that,
-**every character of string text costs one node**, because otherwise a single string could hide a
-whole lookup table for the price of one node.
+Your program's size is its length in characters **after the game minifies it**, so writing readable
+code costs nothing:
 
-- Text counts as written between the quotes: `"abc"` adds 3, and `"\n"` adds 2.
-- Every kind of string counts: raw, bytes and triple-quoted strings, **docstrings**, dictionary keys
-  like `"nodes"`, and your bee's `"ask"`, `"feed"` and `"leave"`.
-- In Python f-strings and TypeScript template literals only the text counts. The expressions inside
-  `{…}` or `${…}` are ordinary nodes. TypeScript regex patterns (`/ab+c/`) count like strings.
-- Names aren't string text. In Python `dict(nodes=n, edges=e)` and in TypeScript `{ nodes: n, edges: e }`
-  spell the keys as names, so they cost no string characters.
-- **Comments are free**, however long. So put explanations in comments, not in docstrings or strings.
+- **Comments, blank lines and spacing are free.** Python keeps one line per statement and one space
+  per level of indentation; TypeScript gets one `;` per statement.
+- **Names are free.** Every name your program defines (variables, functions, parameters, imports) is
+  renamed to a one- or two-letter name before counting, so `best_clique_size` costs the same as `b`.
+  A name's first 20 characters are free; longer names pay for the rest.
+- **TypeScript types are free**, because they're removed before your program runs.
+- **Everything else counts as written:** keywords and operators, every character of every string
+  (including docstrings and your bee's `"ask"`, `"feed"` and `"leave"`), every digit of every number,
+  names after a dot (`random.randint`), keyword-argument names (`dict(nodes=n)`), and names you use
+  but don't define (`len`, `Math`, `GAME`).
 
-The change budget still counts syntax-tree edits, so rewriting a string's text is usually a single edit.
+The editor shows exactly what gets counted: your program, minified. Strings and numbers count in
+full because otherwise a single long string or number could hide a whole lookup table.
+
+The change budget counts syntax-tree edits between rounds: changing a number or a name is one edit,
+and a new `if x == k: return v` line is about seven.
 
 Before round 1 you can write anything within the complexity budget. After that, each round's
 program must be within the change budget of the program that played the round before. If you don't

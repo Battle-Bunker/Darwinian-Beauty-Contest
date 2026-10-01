@@ -112,7 +112,7 @@ export async function updateConfig(room, game, user, config) {
     try { cfg = normalizeConfig(config, g.config); } catch (e) { fail(400, e.message); }
     // Pending programs were checked against the old budgets/language; make teams re-submit.
     const changed = ["language", "challengeType", "responseType"].some((k) => cfg[k] !== g.config[k])
-      || KINDS.some((k) => cfg.budgets[k].nodes < g.config.budgets[k].nodes);
+      || KINDS.some((k) => cfg.budgets[k].chars < g.config.budgets[k].chars);
     if (changed) await c.query("DELETE FROM submissions WHERE game_id = $1", [g.id]);
     await c.query("UPDATE games SET config = $2 WHERE id = $1", [g.id, cfg]);
     await touch(c, g.id);
@@ -168,7 +168,7 @@ async function previousPrograms(gameId, teamId, roundNo, client = { query }) {
 
 /**
  * Measure a program against its complexity budget and (after round 1) its change budget.
- * nodes is the complexity: syntax-tree nodes plus string-text characters (`strings` of them).
+ * chars is the complexity: the length of the automatically minified program, which is `minified`.
  */
 export async function checkProgram(game, team, kind, code) {
   if (!KINDS.includes(kind)) fail(400, "kind must be clover, orchid or bee");
@@ -176,22 +176,22 @@ export async function checkProgram(game, team, kind, code) {
   if (code.length > 100_000) fail(400, "Program is too long");
   const budget = game.config.budgets[kind];
   const errors = [];
-  const { nodes, strings, syntaxError } = await measure(game.config.language, code);
+  const { chars, minified, syntaxError } = await measure(game.config.language, code);
   if (syntaxError) errors.push("Syntax error");
-  if (nodes > budget.nodes) {
-    errors.push(`Too complex: ${nodes} nodes > budget ${budget.nodes}` +
-      (strings ? ` (${strings} of them are string characters: string text costs one node per character, comments are free)` : ""));
+  if (chars > budget.chars) {
+    errors.push(`Too long: ${chars} characters after minifying > budget ${budget.chars} ` +
+      "(comments, spacing and name lengths don't count; strings, numbers and keywords do)");
   }
   let distance = null, previous = null;
   if (game.rounds_played > 0) {
     previous = (await previousPrograms(game.id, team.id, game.rounds_played))[kind] ?? null;
     if (previous === null) errors.push("Your team isn't playing in this game (no programs in round 1)");
-    else if (nodes <= budget.nodes * 4) {
+    else if (chars <= budget.chars * 4) {
       distance = await changeDistance(game.config.language, previous, code);
       if (distance > budget.changes) errors.push(`Too many changes: ${distance} edits > budget ${budget.changes}`);
     } else errors.push("Too complex to compare with last round");
   }
-  return { ok: errors.length === 0, kind, nodes, strings, distance, errors, budget };
+  return { ok: errors.length === 0, kind, chars, minified, distance, errors, budget };
 }
 
 export async function submitProgram(game, user, kind, code) {
@@ -206,9 +206,9 @@ export async function submitProgram(game, user, kind, code) {
     if (g.rounds_played !== game.rounds_played) fail(409, "A round just ran; check your program again");
     if (g.status === "finished") fail(409, "Game over");
     await c.query(
-      `INSERT INTO submissions (game_id, team_id, kind, code, nodes, distance, submitted_by) VALUES ($1, $2, $3, $4, $5, $6, $7)
-       ON CONFLICT (game_id, team_id, kind) DO UPDATE SET code = $4, nodes = $5, distance = $6, submitted_by = $7, submitted_at = now()`,
-      [game.id, team.id, kind, code, check.nodes, check.distance, user.id]);
+      `INSERT INTO submissions (game_id, team_id, kind, code, chars, distance, submitted_by) VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (game_id, team_id, kind) DO UPDATE SET code = $4, chars = $5, distance = $6, submitted_by = $7, submitted_at = now()`,
+      [game.id, team.id, kind, code, check.chars, check.distance, user.id]);
     await touch(c, game.id);
   });
   return { ...check, submitted: true };
@@ -295,7 +295,7 @@ export async function startRound(room, game, user, opts = {}) {
           : { code: p.code, distance: 0, carriedOver: true };
         // Measured again so stored sizes follow the current complexity rule, even for a program
         // checked or carried over from before a rule change (it still plays: budgets apply when submitting).
-        programs[teamId][kind] = { ...prog, nodes: (await measure(g.config.language, prog.code)).nodes };
+        programs[teamId][kind] = { ...prog, chars: (await measure(g.config.language, prog.code)).chars };
       }
     }
     await c.query("UPDATE games SET running_round = $2, participants = $3, status = 'running', last_error = NULL WHERE id = $1", [g.id, roundNo, participants]);
@@ -341,8 +341,8 @@ async function executeRound(gameId, { roundNo, participants, programs, config, s
       for (const kind of KINDS) {
         const p = programs[teamId][kind];
         await c.query(
-          "INSERT INTO round_programs (game_id, round_no, team_id, kind, code, nodes, distance, carried_over, problem, compute) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
-          [gameId, roundNo, teamId, kind, p.code, p.nodes, p.distance, p.carriedOver, sim.problems[ti][kind], kind === "bee" ? null : sim.compute[ti][kind]]);
+          "INSERT INTO round_programs (game_id, round_no, team_id, kind, code, chars, distance, carried_over, problem, compute) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+          [gameId, roundNo, teamId, kind, p.code, p.chars, p.distance, p.carriedOver, sim.problems[ti][kind], kind === "bee" ? null : sim.compute[ti][kind]]);
       }
     }
     // Bulk insert visits in chunks.
@@ -426,7 +426,7 @@ export async function viewGame(room, game, user, opts = {}) {
     myTeam: mine ? {
       id: mine.id, name: mine.name, joinCode: mine.join_code,
       drafts: Object.fromEntries(subs.filter((s) => s.team_id === mine.id).map((s) => [s.kind, {
-        code: s.code, nodes: s.nodes, distance: s.distance, submittedAt: s.submitted_at, submittedBy: s.submitted_by_name,
+        code: s.code, chars: s.chars, distance: s.distance, submittedAt: s.submitted_at, submittedBy: s.submitted_by_name,
       }])),
       previous: Object.fromEntries(KINDS.filter((k) => latestProg[mine.id]?.[k]).map((k) => [k, latestProg[mine.id][k].code])),
     } : null,
@@ -446,7 +446,7 @@ function roundViewOf(r, visits, { cfg, mine, revealed, participants, progs, mems
       const p = progs.find((x) => x.round_no === r.round_no && x.team_id === teamId && x.kind === kind);
       if (!p) return [kind, null];
       const own = canSeeTeam(teamId);
-      return [kind, { nodes: p.nodes, distance: p.distance, carriedOver: p.carried_over, ...(own ? { code: p.code, problem: p.problem, compute: p.compute } : {}) }];
+      return [kind, { chars: p.chars, distance: p.distance, carriedOver: p.carried_over, ...(own ? { code: p.code, problem: p.problem, compute: p.compute } : {}) }];
     }))])),
     // Size of what each bee kept for later rounds (your own team's, or everyone's once revealed).
     memory: Object.fromEntries(mems.filter((m) => m.round_no === r.round_no && canSeeTeam(m.team_id)).map((m) => [m.team_id, { bytes: m.bytes, note: m.note }])),

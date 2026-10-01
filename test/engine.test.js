@@ -33,21 +33,8 @@ for (const language of ["python", "typescript"]) {
   });
 }
 
-test("pure flowers (old rules): no state survives between calls, randomness is fixed", async () => {
-  const config = normalizeConfig({ turns: 40, pureFlowers: true });
-  const counter = `import math\nn = 0\ndef flower(c):\n    global n\n    n += 1\n    math.k = getattr(math, "k", 0) + 1\n    return n * 1000 + math.k\n`;
-  const rnd = `import random\ndef flower(c):\n    return random.randint(0, 10**9)\n`;
-  // A bee that asks every flower three different questions, then leaves.
-  const bee = `def forage(seen, t):\n    return ["ask", len(seen)] if len(seen) < 3 else "leave"\n`;
-  const r = await simulateRound({ config, seed: 5, teams: [{ id: "a", programs: { clover: counter, orchid: rnd, bee } }] });
-  for (const v of r.visits) {
-    if (v.kind === "clover") assert.deepEqual(v.steps.map((s) => s.r), [1001, 1001, 1001]);
-    else assert.equal(new Set(v.steps.map((s) => s.r)).size, 1);
-  }
-});
-
 for (const language of ["python", "typescript"]) {
-  test(`${language}: flowers are stateless but not pure: fresh randomness, a clock, their own budget`, async () => {
+  test(`${language}: flowers are stateless: fresh randomness, a clock, their own budget, and no answer cache`, async () => {
     const config = normalizeConfig({ language, turns: 60 });
     const py = {
       counter: `import math\nn = 0\ndef flower(c):\n    global n\n    n += 1\n    math.k = getattr(math, "k", 0) + 1\n    return n * 1000 + math.k\n`,
@@ -76,11 +63,3 @@ for (const language of ["python", "typescript"]) {
     assert.ok(r.compute[0].orchid.meanMs >= 25, `mean ${r.compute[0].orchid.meanMs} ms`);
   });
 }
-
-test("pure flowers can't read the clock", async () => {
-  const config = normalizeConfig({ turns: 20, pureFlowers: true });
-  const clock = `import time\ndef flower(c):\n    return int(time.time())\n`;
-  const bee = `def forage(seen, t):\n    return ["ask", 1] if not seen else "leave"\n`;
-  const r = await simulateRound({ config, seed: 1, teams: [{ id: "a", programs: { clover: clock, orchid: clock, bee } }] });
-  assert.match(r.problems[0].clover, /not allowed/);
-});

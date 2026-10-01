@@ -49,12 +49,12 @@ function python(cT, rT, r) {
   const [a, b, c, d, salt] = [2 * r(1, 48) + 1, r(1, 999), 2 * r(1, 48) + 1, r(1, 999), r(1000, 9999)];
   const clover = intInt
     ? `# Clover: a rewarding flower. Bees that feed here get nectar.
-# flower(challenge) is a pure function: same challenge in, same response out.
+# flower(challenge) runs fresh for every question: it keeps nothing between calls.
 def flower(challenge):
     return (challenge * ${a} + ${b}) % 1000
 `
     : `# Clover: a rewarding flower. Bees that feed here get nectar.
-# flower(challenge) is a pure function: same challenge in, same response out.
+# flower(challenge) runs fresh for every question: it keeps nothing between calls.
 import hashlib, json
 
 def flower(challenge):
@@ -113,13 +113,13 @@ function hex(s: string): string {
 `;
   const clover = intInt
     ? `// Clover: a rewarding flower. Bees that feed here get nectar.
-// flower(challenge) is a pure function: same challenge in, same response out.
+// flower(challenge) runs fresh for every question: it keeps nothing between calls.
 function flower(challenge: number): number {
   return (((challenge * ${a} + ${b}) % 1000) + 1000) % 1000;
 }
 `
     : `// Clover: a rewarding flower. Bees that feed here get nectar.
-// flower(challenge) is a pure function: same challenge in, same response out.
+// flower(challenge) runs fresh for every question: it keeps nothing between calls.
 ${hash}
 function flower(challenge: ${C}): ${R} {
   const h = hex("clover${salt}" + JSON.stringify(challenge));

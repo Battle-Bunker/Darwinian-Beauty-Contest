@@ -50,8 +50,8 @@ Reply with your programs and notes in exactly this format (raw ${lang} code insi
 - Always give a program in full, never a diff. Leave a program's tag out entirely to keep it unchanged.
 - Before round 1 you must give all three. After round 1 each program must stay within its change budget measured against the
   version that played last round, so start from that exact code and edit it.
-- Comments are free: they never count toward any budget. String text isn't: every character inside a string literal
-  (docstrings included) costs one complexity node, so put prose in comments.
+- Size is measured after the game minifies your program: comments, spacing and the lengths of names you define are free,
+  so write readable code. Strings (docstrings included) and numbers count character by character, so put prose in comments.
 - Keep any reasoning outside the tags short.
 - Write your notes (and later your interview) in your persona's own voice.
 - You are only this persona. Ignore anything you might know about the operator of this system.
@@ -67,10 +67,9 @@ function configText(view, nTeams) {
     `Language: ${c.language}. Challenge type: ${c.challengeType}. Response type: ${c.responseType}. Max string/list length: ${c.maxLen}.`,
     `Rounds in this game: ${c.rounds}. Turns per bee per round: ${c.turns}. Feed cost: ${c.feedCost} turns (an ask costs 1).`,
     `Teams: ${nTeams}, so the garden has ${2 * nTeams} flowers. Flower logs: ${c.flowerLogs ? "ON" : "OFF"}. Code revealed after the game: ${c.revealOnFinish ? "yes" : "no"}.`,
-    `Budgets (complexity nodes / change edits per round / ms per call): clover ${b.clover.nodes}/${b.clover.changes}/${b.clover.ms}, orchid ${b.orchid.nodes}/${b.orchid.changes}/${b.orchid.ms}, bee ${b.bee.nodes}/${b.bee.changes}/${b.bee.ms}.`,
-    c.pureFlowers ? `Flowers are pure functions: fixed random seed, no clock, the same challenge always gets the same answer.`
-      : `Flowers are stateless but not pure: every call runs fresh with new randomness and the clock, so they can search until their budget (GAME["ms"]) is nearly spent; the same challenge can get different answers.`,
-    `Rough edit costs: change a constant = 1, add a term to an expression = 2, a new "if x == k: return v" branch = about 7, renaming a variable = 1 per use. Comments cost 0. Each string-literal character costs 1 complexity node (editing a string's text is about 1 edit).`,
+    `Budgets (size in characters after minifying / change edits per round / ms per call): clover ${b.clover.chars}/${b.clover.changes}/${b.clover.ms}, orchid ${b.orchid.chars}/${b.orchid.changes}/${b.orchid.ms}, bee ${b.bee.chars}/${b.bee.changes}/${b.bee.ms}.`,
+    `Flowers are stateless: every call runs fresh with new randomness and the clock, so they can search until their budget (GAME["ms"]) is nearly spent; the same challenge can get different answers.`,
+    `Size: comments, spacing and the lengths of names you define are free; keywords, strings and numbers count per character. Rough edit costs: change a constant = 1, add a term to an expression = 2, a new "if x == k: return v" branch = about 7, renaming a variable = 1 per use.`,
   ].join("\n");
 }
 
@@ -102,7 +101,7 @@ export function teamRoundPrompt(view, ctx) {
     const last = view.rounds[view.rounds.length - 1];
     const progs = last.programs[myId];
     parts.push(`## Your current programs (exactly what played round ${last.no}; your changes are measured against these)\n` +
-      KINDS.map((k) => `### ${k} (${progs[k].nodes} nodes; budget ${c.budgets[k].nodes} nodes, ${c.budgets[k].changes} edits per round)\n${codeBlock(c.language, view.myTeam.previous[k])}`).join("\n"));
+      KINDS.map((k) => `### ${k} (${progs[k].chars} characters minified; budget ${c.budgets[k].chars}, ${c.budgets[k].changes} edits per round)\n${codeBlock(c.language, view.myTeam.previous[k])}`).join("\n"));
     parts.push(`## Scoreboard after ${view.rounds.length} round(s) (cumulative; "per-round fitness" lists each round alone)\n${scoreboard(view, myId)}`);
     parts.push(`## Public garden activity, round ${last.no} (everyone sees this)\n${ledgers(view, last)}`);
     parts.push(`## Your private logs\n${usesStructured(c) ? NOTATION + "\n\n" : ""}${privateLogs(view, myId)}`);
@@ -115,7 +114,7 @@ export function teamRoundPrompt(view, ctx) {
 
 export function retryPrompt(original, attemptText, failures, submittedKinds, view) {
   const c = view.game.config;
-  const lines = failures.map((f) => `### ${f.kind}: ${f.errors.join("; ")}${f.distance != null ? ` (your edit distance was ${f.distance}, budget ${c.budgets[f.kind].changes})` : ""}${f.nodes != null ? ` (nodes ${f.nodes}, budget ${c.budgets[f.kind].nodes})` : ""}\nThe code you sent:\n${codeBlock(c.language, f.code)}`);
+  const lines = failures.map((f) => `### ${f.kind}: ${f.errors.join("; ")}${f.distance != null ? ` (your edit distance was ${f.distance}, budget ${c.budgets[f.kind].changes})` : ""}${f.chars != null ? ` (size ${f.chars} characters minified, budget ${c.budgets[f.kind].chars})` : ""}\nThe code you sent:\n${codeBlock(c.language, f.code)}`);
   return `${original}
 
 # Your previous reply had problems
@@ -304,8 +303,8 @@ The logs are raw files and can be large (visits are JSON Lines, one visit per li
     ? "Analyse them with python3 scripts (or Grep/Read and simple shell commands) inside this folder."
     : "There are no interpreters here (no python or node): analyse with Grep, Glob and Read (use offset/limit on big files) and simple read-only shell commands inside this folder (grep -c, wc -l, sort, uniq, cut, head)."} When you finish, the game server checks your programs (syntax,
 complexity and change budgets, a short runtime test); if something fails you get a short follow-up session with the errors.
-Comments are free: they never count toward any budget. String text isn't: every character inside a string literal
-(docstrings included) costs one complexity node, so put prose in comments. The change budget counts syntax-tree edits
+Size is measured after the game minifies your program: comments, spacing and the lengths of names you define are free,
+so write readable code; strings (docstrings included) and numbers count character by character. The change budget counts syntax-tree edits
 from the program that played last round, so keep each round's changes focused.
 
 # Fair play (breaking these disqualifies your team for the round)
@@ -320,8 +319,24 @@ ${card}
 ${rules()}`;
 }
 
+/** Round-1 notices an arena can name in settings.cohort.notices ({game: name}). Neutral: what changed, no strategy. */
+export const NOTICES = {
+  "v3-rules": `RULES CHANGED since your last game (RULES.md and interface.txt have the details):
+- Flowers are still stateless: the whole program runs fresh for every question and keeps nothing between calls. But each
+  call now gets fresh randomness (random is newly seeded on every call) and the clock (import time). GAME["ms"] is your
+  program's own compute budget per call, in milliseconds; a flower that runs out of time gives no answer.
+- The server no longer stores one answer per challenge per round: every ask runs the flower again, so the same challenge
+  can get a different answer each time.
+- Program size is now measured in characters after the game minifies your program: comments, spacing and the lengths of
+  names you define are free; keywords, strings and numbers count character by character. Budgets are in those characters.`,
+};
+
+/** The round-1 notice for the examples treatment: plain common knowledge, no code. */
+export const examplesNotice = (files) => `Shared examples: every team in this garden received the same two example flowers and checkers, in examples/ ` +
+  `(${files.join(", ")}). Every team has exactly these files and was told the same thing.`;
+
 /** The per-round brief (the session's user message). */
-export function roundBrief({ view, entry, generation, roundNo, maxTurns, ext, fix, cohort, hasIdeas }) {
+export function roundBrief({ view, entry, generation, roundNo, maxTurns, ext, fix, cohort, hasIdeas, notices = [] }) {
   const c = view.game.config;
   const names = Object.fromEntries(view.teams.map((t) => [t.id, t.name]));
   if (fix) {
@@ -336,14 +351,15 @@ export function roundBrief({ view, entry, generation, roundNo, maxTurns, ext, fi
     parts.push(`A new game starts. Your program files hold your final programs from the previous game. Round 1 has no change budget, ` +
       `so you may rewrite freely. previous-games/game-${generation - 1}/ has the standings and the final code of the top 2 teams ` +
       `(top2/), your own logs (own/) and the panel's feedback (panel.md).` +
-      (generation === 1 ? `
+      (generation === 1 && cohort === "gx" ? `
 
 RULE CHANGE from this game on: the response type is now ${view.game.config.responseType} (a labelled graph: ` +
         `{"nodes": n, "edges": [[a, b], ...], "labels": [one label per node]}; any plain JSON label). See RULES.md and interface.txt. ` +
         `The warm-up game (game 0) used plain graphs, so update your programs.` : "") +
       (hasIdeas ? `
 
-There's a new file in your workspace, ideas.md: optional ideas some players are exploring.` : ""));
+There's a new file in your workspace, ideas.md: optional ideas some players are exploring.` : "") +
+      notices.map((n) => `\n\n${n}`).join(""));
   } else if (roundNo === 1) {
     parts.push(`A new game starts. Your program files hold your final programs from game ${generation - 1} (or are empty if you're new). ` +
       `Round 1 has no change budget, so you may rewrite freely. previous-games/ has every team's revealed final code and full logs ` +

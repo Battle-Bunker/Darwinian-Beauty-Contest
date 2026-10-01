@@ -24,10 +24,10 @@ export const PRESETS = {
     lineup: [["ava", "fable"], ["ada", "opus"], ["gremlin", "sonnet"], ["zoe", "sonnet"], ["tess", "haiku"], ["sam", "haiku"]],
   },
   tight: {
-    description: "TypeScript, tight budgets (flowers 60 nodes/10 edits, bee 150/20), 8 teams, 5 rounds",
+    description: "TypeScript, tight budgets (flowers 140 characters/10 edits, bee 350/20), 8 teams, 5 rounds",
     config: {
       language: "typescript", challengeType: "int", responseType: "int", rounds: 5,
-      budgets: { clover: { nodes: 60, changes: 10 }, orchid: { nodes: 60, changes: 10 }, bee: { nodes: 150, changes: 20 } },
+      budgets: { clover: { chars: 140, changes: 10 }, orchid: { chars: 140, changes: 10 }, bee: { chars: 350, changes: 20 } },
     },
     lineup: [["rosie", "fable"], ["koan", "opus"], ["kenji", "opus"], ["bayes", "sonnet"], ["luna", "sonnet"], ["gremlin", "haiku"], ["echo", "haiku"], ["zoe", "haiku"]],
   },
@@ -49,18 +49,18 @@ export const PRESETS = {
     lineup: [["nash", "fable"], ["kenji", "opus"], ["bayes", "sonnet"], ["milo", "sonnet"], ["grace", "haiku"], ["jayden", "haiku"]],
   },
   trees: {
-    description: "python, int→tree[int], no starter code, 6 teams, 5 rounds; flowers 250 nodes/40 edits/50 ms, bee 600/80/100",
+    description: "python, int→tree[int], no starter code, 6 teams, 5 rounds; flowers 580 characters/40 edits/50 ms, bee 1400/80/100",
     config: {
       language: "python", challengeType: "int", responseType: "tree[int]", rounds: 5,
-      budgets: { clover: { nodes: 250, changes: 40, ms: 50 }, orchid: { nodes: 250, changes: 40, ms: 50 }, bee: { nodes: 600, changes: 80, ms: 100 } },
+      budgets: { clover: { chars: 580, changes: 40, ms: 50 }, orchid: { chars: 580, changes: 40, ms: 50 }, bee: { chars: 1400, changes: 80, ms: 100 } },
     },
     lineup: [["koan", "fable"], ["ava", "opus"], ["rosalind", "sonnet"], ["sam", "sonnet"], ["ada", "haiku"], ["luna", "haiku"]],
   },
   graphs: {
-    description: "python, int→graph, no starter code, 6 teams, 5 rounds; flowers 250 nodes/40 edits/50 ms, bee 600/80/100",
+    description: "python, int→graph, no starter code, 6 teams, 5 rounds; flowers 580 characters/40 edits/50 ms, bee 1400/80/100",
     config: {
       language: "python", challengeType: "int", responseType: "graph", rounds: 5,
-      budgets: { clover: { nodes: 250, changes: 40, ms: 50 }, orchid: { nodes: 250, changes: 40, ms: 50 }, bee: { nodes: 600, changes: 80, ms: 100 } },
+      budgets: { clover: { chars: 580, changes: 40, ms: 50 }, orchid: { chars: 580, changes: 40, ms: 50 }, bee: { chars: 1400, changes: 80, ms: 100 } },
     },
     lineup: [["theo", "fable"], ["mallory", "opus"], ["priya", "sonnet"], ["tess", "sonnet"], ["jayden", "haiku"], ["echo", "haiku"]],
   },

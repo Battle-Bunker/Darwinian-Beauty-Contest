@@ -9,8 +9,8 @@ declare global {
 export type Language = "python" | "typescript";
 export type Mark = [number, number, string];
 
-/** size: the complexity (syntax-tree nodes + string-text characters), of which `strings` are string text. */
-export interface Parsed { size: number; strings: number; hasError: boolean }
+/** size: the complexity, the length of `minified`, the program as the game counts it (see vendor/complexity.js). */
+export interface Parsed { size: number; minified: string; hasError: boolean }
 export interface DiffResult { distance: number; old: Mark[]; new: Mark[] }
 
 export interface LangTools {
@@ -48,9 +48,11 @@ export function getLangTools(lang: Language): Promise<LangTools> {
     const differ = window.AstDiffTS.createTreeSitterDiff(parser);
     return {
       parse(code) {
-        const p = differ.parse(code);
-        const c = window.DbcComplexity.complexity(p);
-        return { size: c.nodes, strings: c.strings, hasError: !!p.hasError };
+        const tree = parser.parse(code);
+        try {
+          const m = window.DbcComplexity.minify(tree.rootNode, code, lang);
+          return { size: m.chars, minified: m.text, hasError: !!tree.rootNode.hasError };
+        } finally { tree.delete?.(); }
       },
       diff(before, after) {
         const d = differ.diff(before, after);

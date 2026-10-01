@@ -20,6 +20,8 @@ to study the ecosystem the game creates and hunt for **complexity-collapse** sce
 | `lib/workspace.js` | tools mode: builds each team's private workspace (raw files, no tools, no tokens), collects its programs, and audits session transcripts for fair play (`arena.violations`) |
 | `lib/dbview.js` | a fully revealed game view built from the game's tables (for metrics and judges when `revealOnFinish` is false) |
 | `lib/cohort.js` | cohort-experiment measures for `analyze.js`: answer-shape census, borrowing from the top-2 demo, Python use and idea-file reads from session transcripts |
+| `lib/v3.js` | engine-v3 measures for `analyze.js`: per round discrimination on rival patches, fingerprinting, stolen-face and twin orchids, non-deterministic flowers, compute against budget, example markers |
+| `server.sh` | (re)starts the arena's game server on port 4000 with the dev secret and `CPU_SLOTS=3`, only when no round is simulating |
 | `lib/adoption.js` | cohort experiment: which catalogue ideas each team's code implements, per round (keywords + a haiku classifier; `arena.adoption`) |
 | `lib/logs.js` | compact scoreboard / ledgers / private bee and flower logs (last 2 rounds detailed, older rounds summarised, identical visits grouped) |
 | `lib/prompts.js` | system and user prompts for team agents, judges and breeders |
@@ -40,6 +42,8 @@ Needs the game's Postgres (`postgres://dbc:dbc@localhost:5432/dbc` by default), 
 # 1. your own API server (any port; the arena talks to it over HTTP). With DEV_LOGIN_SECRET set, dev login needs the
 #    secret, so a tool-using agent can't log in as another team. The runner reads it from ARENA_DEV_SECRET or from
 #    arena/runs/.dev-secret (mode 600, gitignored); it is never written to a workspace or a prompt.
+#    arena/server.sh does all of this (port 4000, CPU_SLOTS=3 so one core stays free) and refuses to restart while a
+#    round is simulating. By hand:
 umask 077; [ -f arena/runs/.dev-secret ] || openssl rand -hex 24 > arena/runs/.dev-secret
 DEV_LOGIN_SECRET=$(cat arena/runs/.dev-secret) PORT=4000 MAX_CONCURRENT_ROUNDS=8 nohup node server/index.js > arena/runs/server4000.log 2>&1 &
 
@@ -189,6 +193,11 @@ claude -p --model <m> --tools Bash,Read,Write,Edit,Glob,Grep --permission-mode a
 - **Idea cards**: `personas.idea_card` A or B (v2 arenas) adds a short card of game-specific ideas to the workspace, so
   `analyze.js` can compare hinted and unhinted teams.
 
+**One round simulates at a time.** Since engine v3, flowers' compute use is a real signal: a clover can search until
+its `GAME["ms"]` budget is nearly spent. So the arenas in one runner process queue their round simulations
+(`simulateSerially` in `run.js`), and the server's `CPU_SLOTS` serve one game at a time. Agent sessions still run in
+parallel; only the simulation waits. A log line says when an arena waited more than 5 s for another's round.
+
 ## Cohort experiments (`fork.js`)
 
 A controlled experiment forks one played game's population into identical arenas, then plays the same games in each:
@@ -221,6 +230,32 @@ ARENA_CONCURRENCY=8 ARENA_BUDGET_USD=<cap> nohup node arena/run.js --arenas gx-c
   - a manipulation check: who opened `ideas.md`, and Python use, from the transcripts
   - the answer-shape metagame
   - code borrowed from the top-2 demo
+  - for engine-v3 arenas (`lib/v3.js`), per round:
+    - nectar per turn, pooled precision, and the rival clover vs orchid fed rates
+    - fingerprinting (repeated challenges), stolen-face and twin orchids
+    - flowers seen answering one challenge two ways, and clovers using random, time or `GAME["ms"]`
+    - compute against budget, and Paley/Legendre markers
+    - treatment − controls by round against the control-vs-control2 noise floor, then fitness spread and model gap per
+      game
+
+  Per-bee detail: `node analysis/fingerprint-bees.mjs <arena …>`.
+- **Engine v3 forks**: `--experiment v3` (or any name other than `gx`) marks the arena as engine v3, and
+  `--notice v3-rules` shows a neutral "rules changed" note (`NOTICES` in `lib/prompts.js`) in round 1 of game 1. A
+  single cohort (`--cohorts v3-base`) is a plain continuation with role `base`:
+
+  ```
+  node arena/fork.js --from gx-control --game 3 --cohorts v3-base --experiment v3 --notice v3-rules --generations 2 --seed-base 20261020
+  node arena/fork.js --from v3-base --game 2 --cohorts v3-treat,v3-control,v3-control2 --treat v3-treat \
+    --treatment examples --examples arena/examples/v3 --experiment v3x --generations 3 --seed-base 20261030
+  ```
+
+  If the source arena ended with the forked game, the fork takes that game's logs, history and memory straight from
+  the source workspaces. Each team's own helper scripts (`*.py` it wrote besides its three programs) come along.
+- **Examples treatment** (`--treatment examples`): the WHOLE treatment cohort gets the example files.
+  - `examples/` in every workspace is restored from the source directory every round.
+  - Every game's round-1 brief says plainly that every team in the garden received the same example flowers and
+    checkers, and names the files.
+  - Controls get nothing extra.
 - **After the experiment**: set `revealOnFinish` to true in those games' `config`, so they replay fully in the web UI.
   For example: `UPDATE games SET config = jsonb_set(config, '{revealOnFinish}', 'true') WHERE id = ANY(<the cohort
   games' uuids>) AND status = 'finished'`. Then `node arena/backfill.js --arena <cohort>` can recompute their metrics

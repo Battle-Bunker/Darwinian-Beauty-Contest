@@ -10,7 +10,7 @@ import { timeAgo } from "../lib/format";
 import { isStructured, Value } from "./Value";
 
 const BLURB: Record<Kind, string> = {
-  clover: "Your honest flower. Bees that feed here get nectar. flower(challenge) must always give the same response to the same challenge.",
+  clover: "Your honest flower. Bees that feed here get nectar. flower(challenge) runs fresh for every question: it keeps nothing between questions, but it can use randomness and the clock to search for a good answer within its time limit.",
   orchid: "Your trickster. Bees that feed here get nothing, but your patch still earns the visit. It can try to pass for any clover that bees trust: yours or another team's.",
   bee: "Your bee visits one flower at a time: ask questions, then feed or leave. Top-level variables last the whole round.",
 };
@@ -107,10 +107,10 @@ export function ProgramEditors({ view, base }: { view: GameView; base: string })
   const current = code[kind];
   const participant = g.roundsPlayed === 0 || !!view.participants?.includes(team.id);
   const locked = !!g.runningRound || g.status === "finished" || !participant;
-  const overNodes = !!s && s.nodes > budget.nodes;
+  const overSize = !!s && s.chars > budget.chars;
   const overChanges = !!s && s.distance !== null && s.distance > budget.changes;
   const empty = !current.trim();
-  const blocked = empty || (!!s && (s.syntaxError || overNodes || overChanges));
+  const blocked = empty || (!!s && (s.syntaxError || overSize || overChanges));
 
   const check = async () => {
     setBusy("check");
@@ -174,14 +174,15 @@ export function ProgramEditors({ view, base }: { view: GameView; base: string })
         <div className="editor-main">
         <p className="muted small">{BLURB[kind]}</p>
         <div className="meters">
-          <Meter label={!empty && s?.strings ? `Size (nodes, ${s.strings} of them string text)` : "Size (nodes)"} value={empty ? 0 : s?.nodes ?? null} max={budget.nodes} />
+          <Meter label="Size (characters after minifying)" value={empty ? 0 : s?.chars ?? null} max={budget.chars} />
           {previous !== null
             ? <Meter label="Changes since last round" value={s?.distance ?? null} max={budget.changes} />
-            : <div className="meter-note muted">Round 1: write anything that fits the size budget. After that, each round you may change up to {budget.changes} nodes.</div>}
+            : <div className="meter-note muted">Round 1: write anything that fits the size budget. After that, each round you may make up to {budget.changes} edits.</div>}
           <div className="meter-note muted">Time limit: {budget.ms} ms per {kind === "bee" ? "call" : "question"}</div>
         </div>
         {s?.syntaxError && !empty && <Alert kind="warn">Syntax error: this code doesn't parse yet, so it can't be submitted.</Alert>}
-        {overNodes && <Alert kind="error">Too big: {s!.nodes} nodes{s!.strings ? ` (${s!.strings} of them string characters)` : ""}, but the budget is {budget.nodes}. Make it {s!.nodes - budget.nodes} nodes smaller to submit. Comments are free, but string text costs one node per character.</Alert>}
+        {overSize && <Alert kind="error">Too big: {s!.chars} characters after minifying, but the budget is {budget.chars}. Make it {s!.chars - budget.chars} characters smaller to submit. Comments, spacing and long names are free; strings, numbers and keywords count.</Alert>}
+        {!empty && s?.minified && <details className="minified"><summary className="muted small">What counts: your program minified ({s.chars} characters)</summary><pre>{s.minified}</pre></details>}
         {overChanges && <Alert kind="error">Too many changes: {s!.distance} edits since last round, but the budget is {budget.changes}. Undo {s!.distance! - budget.changes} to submit.</Alert>}
         {incoming[kind] && (
           <Alert kind="info">
@@ -222,7 +223,7 @@ export function ProgramEditors({ view, base }: { view: GameView; base: string })
         {r?.error && <Alert kind="error">{r.error}</Alert>}
         {r?.check && (
           r.check.ok
-            ? <Alert kind="ok">{r.action === "submit" ? "Submitted! " : "Looks good. "}{r.check.nodes} nodes{r.check.distance !== null ? `, ${r.check.distance} changes` : ""}.</Alert>
+            ? <Alert kind="ok">{r.action === "submit" ? "Submitted! " : "Looks good. "}{r.check.chars} characters{r.check.distance !== null ? `, ${r.check.distance} changes` : ""}.</Alert>
             : <Alert kind="error">{r.action === "submit" && <b>Not submitted: </b>}{r.check.errors.join(" · ")}</Alert>
         )}
 
@@ -254,7 +255,7 @@ function InterfaceBox({ iface, kind, language }: { iface: ProgramInterface; kind
       </dl>
       {t.rules.length > 0 && <ul className="iface-rules">{t.rules.map((r, i) => <li key={i}>{r}</li>)}</ul>}
       <p className="small muted">
-        Programs can also read <code>GAME</code> ({language === "python" ? 'GAME["turns"]' : "GAME.turns"}, feed_cost, challenge_type, response_type, max_len, max_nodes, flowers).
+        Programs can also read <code>GAME</code> ({language === "python" ? 'GAME["turns"]' : "GAME.turns"}, feed_cost, challenge_type, response_type, max_len, max_nodes, flowers, and ms: this program's time limit per call).
         {kind === "bee" && <> Your bee also gets <code>MEMORY</code>: what it kept at the end of each earlier round.</>}
         A response of the wrong type, a crash or a timeout reaches the bee as <code>{none}</code>.
       </p>

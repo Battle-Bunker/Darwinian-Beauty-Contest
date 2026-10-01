@@ -5,7 +5,8 @@
 //     (recursively): element count and source characters, i.e. data tables written out in the code
 //   - per program: the largest of each, the share of the code's characters inside literals, and whether long
 //     literals are decoded at run time (base64 / zlib / bytes.fromhex / int(…, 16) / json.loads)
-// The complexity budget counts syntax-tree nodes, so a literal's length is free; this measures how much that was used.
+// When these games were played the complexity budget counted syntax-tree nodes, so a literal's length was free; this
+// measures how much that was used. (round_programs now stores complexity as minified characters, `chars`.)
 //
 //   node analysis/literal-census.mjs
 // Writes arena/runs/literal-census.json.
@@ -27,7 +28,7 @@ for (const lang of ["python", "typescript"]) {
 }
 
 const rows = await all(`
-  SELECT rp.code, rp.kind, rp.round_no, rp.nodes, g.config->>'language' AS lang, t.name AS team,
+  SELECT rp.code, rp.kind, rp.round_no, rp.chars AS complexity, g.config->>'language' AS lang, t.name AS team,
          ag.arena_id AS arena, ag.generation AS gen, ag.game_url AS url
     FROM round_programs rp JOIN games g ON g.id = rp.game_id JOIN teams t ON t.id = rp.team_id
     LEFT JOIN arena.games ag ON ag.game_url = (SELECT '/room/' || substr(rr.code, 1, rr.prefix_len) || '/game/' || substr(g.code, 1, g.prefix_len) FROM rooms rr WHERE rr.id = g.room_id)
@@ -100,7 +101,7 @@ for (const r of rows) {
   const a = analyse(r.code, r.lang === "typescript" ? "typescript" : "python");
   const codeNoComments = r.code.replace(/^\s*#.*$/gm, "").replace(/^\s*\/\/.*$/gm, "");
   seen.set(r.code, {
-    kind: r.kind, lang: r.lang, arena: r.arena ?? "(non-arena)", gen: r.gen, url: r.url, team: r.team, round: r.round_no, nodes: r.nodes, chars: r.code.length, uses: 1,
+    kind: r.kind, lang: r.lang, arena: r.arena ?? "(non-arena)", gen: r.gen, url: r.url, team: r.team, round: r.round_no, complexity: r.complexity, chars: r.code.length, uses: 1,
     maxStr: Math.max(0, ...a.strs), nStr: a.strs.length, strs: a.strs, maxInt: Math.max(0, ...a.ints), nInt: a.ints.length, ints: a.ints,
     maxTable: a.tables.reduce((m, t) => (t.elems > m.elems ? t : m), { elems: 0, chars: 0, text: "" }),
     tableChars: a.tables.reduce((s, t) => s + t.chars, 0), maxTableChars: Math.max(0, ...a.tables.map((t) => t.chars)), litShare: a.litChars / Math.max(1, codeNoComments.length),
@@ -140,7 +141,7 @@ for (const [label, set] of [["arena games", arenaProgs], ["all games", progs]]) 
   }
   console.log();
 }
-const show = (p) => `${p.arena}${p.gen ? ` g${p.gen}` : ""} ${p.url ?? ""} r${p.round} ${p.team} ${p.kind} (${p.nodes} nodes, ${p.chars} chars)`;
+const show = (p) => `${p.arena}${p.gen ? ` g${p.gen}` : ""} ${p.url ?? ""} r${p.round} ${p.team} ${p.kind} (${p.chars} source chars)`;
 console.log("## Largest cases (distinct programs)\n");
 console.log("Longest string literals:");
 for (const p of [...progs].sort((a, b) => b.maxStr - a.maxStr).slice(0, 10)) console.log(`  ${String(p.maxStr).padStart(5)} chars  ${show(p)}`);

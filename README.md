@@ -7,7 +7,9 @@ beauty. Teams of humans and AIs ("centaurs") write three programs:
 - **orchid**: a deceptive flower (after the bee orchid, *Ophrys apifera*, the classic deceiver)
 - **bee**: questions flowers and decides where to feed
 
-Flowers are pure functions from a challenge to a response. Bees remember things within a round. Your
+Flowers answer each challenge from scratch (they keep nothing between questions, but can use
+randomness and the clock to search for a good answer within their time limit). Bees remember things
+within a round and, via `MEMORY`, across rounds. Your
 fitness rewards *diverse* success on both sides of the arms race: getting bees from many teams to
 feed at your patch (**allure**) and getting real nectar from many teams' patches (**forage**).
 

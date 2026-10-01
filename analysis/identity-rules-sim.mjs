@@ -27,54 +27,77 @@
 // Bees (identical in every team) recognise their own flowers, check certificates, key a nectar tally on the answer
 // (1-element answers) or its header, follow chains (a header whose G-image they trusted earlier inherits that
 // verdict; a header whose successor has appeared is stale), feed a known key while ≥ 75% paid, and taste unknown keys
-// while unknowns have paid ≥ 40% (R3: with probability 0.5, or 0.1 once unknowns stop paying).
+// while unknowns have paid ≥ 40% (Beta(5,5) prior; under R0 always, since every face can be linked; R3: with probability
+// 0.5, or 0.1 once unknowns stop paying).
 //
-//   node analysis/identity-rules-sim.mjs [seeds=2] [rounds=4] [rules=R0,R1,R2,R3]
+// In R0-R3 every flower is deterministic (no random, no time), so it behaves exactly like a v2 pure flower. The V3
+// conditions add flowers that use fresh randomness on every call (engine v3: stateless, not pure), bee behaviour as in R0:
+//   V3-fp  bees fingerprint only (a certificate-shaped answer is just another face)
+//   V3-q   bees also judge quality: a valid certificate is fed on sight, an invalid one never
+// with two extra clovers: CERTR, a randomized anytime certificate (random starting nonce: a different valid answer
+// every call, so no stable face), and RANDC, a fresh random number every call (no face, no certificate).
+//
+//   node analysis/identity-rules-sim.mjs [seeds=2] [rounds=4] [conditions=R0,R1,R2,R3,V3-fp,V3-q]
 import { playGame, summarise, H40, PY_H40, mean, sd, f2, f3 } from "./sim-lib.mjs";
 
 const SEEDS = Number(process.argv[2] || 2), ROUNDS = Number(process.argv[3] || 4);
-const RULES = (process.argv[4] || "R0,R1,R2,R3").split(",");
-const STRATS = ["HASH", "TWIN", "COARSE", "SALT", "STYLE", "CHAIN", "CERT", "MIMIC"];
-const N = STRATS.length;
+const V2_STRATS = ["HASH", "TWIN", "COARSE", "SALT", "STYLE", "CHAIN", "CERT", "MIMIC"];
+const V3_STRATS = ["HASH", "TWIN", "STYLE", "CHAIN", "CERT", "CERTR", "RANDC", "MIMIC"];
+const CONDITIONS = {
+  R0: { rule: "R0", strats: V2_STRATS, quality: true },
+  R1: { rule: "R1", strats: V2_STRATS, quality: true },
+  R2: { rule: "R2", strats: V2_STRATS, quality: true },
+  R3: { rule: "R3", strats: V2_STRATS, quality: true },
+  "V3-fp": { rule: "R0", strats: V3_STRATS, quality: false },
+  "V3-q": { rule: "R0", strats: V3_STRATS, quality: true },
+};
+const CONDS = (process.argv[4] || Object.keys(CONDITIONS).join(",")).split(",");
 const B = 2 ** 24;
-const config = { language: "python", challengeType: "int", responseType: "list[int]", turnsPerFlower: 100, feedCost: 5, rounds: ROUNDS };
 const G = (x) => H40("chain", x);
 
-// per-team, per-round constants
+// per-game constants: fresh per-round salts, a hash chain per flower, a fixed style tag
 function constants(seed) {
-  const salt = (t, r, who) => H40(`salt-${seed}-${t}-${who}`, r);
-  const chain = (t, who) => { const s = new Array(ROUNDS + 2); s[ROUNDS] = H40(`chainseed-${seed}-${t}-${who}`, 0); for (let r = ROUNDS - 1; r >= 1; r--) s[r] = G(s[r + 1]); return s; };
-  return { salt, chainC: chain(5, "c"), chainO: chain(5, "o"), tag: H40(`tag-${seed}`, 4), tagO: H40(`tagO-${seed}`, 4) };
+  const salt = (who, r) => H40(`salt-${seed}-${who}`, r);
+  const chain = (who) => { const s = new Array(ROUNDS + 2); s[ROUNDS] = H40(`chainseed-${seed}-${who}`, 0); for (let r = ROUNDS - 1; r >= 1; r--) s[r] = G(s[r + 1]); return s; };
+  return { salt, chainC: chain("c"), chainO: chain("o"), tag: H40(`tag-${seed}`, 4), tagO: H40(`tagO-${seed}`, 4) };
 }
 
-// Python flower bodies (one expression or a few lines inside def flower(c))
-function flowers(i, r, K) {
+// Python flower bodies (the inside of def flower(c))
+function flowers(strats, i, r, K) {
   const kc = `"c${i}"`, ko = `"o${i}"`;
   const h = (k) => `H40(${k}, c)`;
-  switch (STRATS[i]) {
-    case "HASH": case "MIMIC": return { clover: `return [${h(kc)}]`, orchid: STRATS[i] === "HASH" || r === 1 ? `return [${h(ko)}]` : null };
+  const certSearch = (start) => `n = ${start}\nwhile H40("cert:" + str(c), n) % 256:\n    n += 1\nreturn [-1, n]`;
+  switch (strats[i]) {
+    case "HASH": return { clover: `return [${h(kc)}]`, orchid: `return [${h(ko)}]` };
+    case "MIMIC": return { clover: `return [${h(kc)}]`, orchid: r === 1 ? `return [${h(ko)}]` : mimicOrchid(strats, r, K) };
     case "TWIN": return { clover: `return [${h(kc)}]`, orchid: `return [${h(kc)}]` };
     case "COARSE": return { clover: `return [H40(${kc}, c // ${B})]`, orchid: `return [H40(${ko}, c // ${B})]` };
-    case "SALT": return { clover: `return [${K.salt(i, r, "c")}, ${h(kc)}]`, orchid: `return [${K.salt(i, r, "o")}, ${h(ko)}]` };
+    case "SALT": return { clover: `return [${K.salt("c", r)}, ${h(kc)}]`, orchid: `return [${K.salt("o", r)}, ${h(ko)}]` };
     case "STYLE": return { clover: `return [${K.tag}, ${h(kc)}]`, orchid: `return [${K.tagO}, ${h(ko)}]` };
     case "CHAIN": return { clover: `return [${K.chainC[r]}, ${h(kc)}]`, orchid: `return [${K.chainO[r]}, ${h(ko)}]` };
-    case "CERT": return { clover: `n = 0\nwhile H40("cert:" + str(c), n) % 256:\n    n += 1\nreturn [-1, n]`, orchid: `return [-1, ${h(ko)} % 1048576]` };
+    case "CERT": return { clover: certSearch("0"), orchid: `return [-1, ${h(ko)} % 1048576]` };
+    case "CERTR": return { clover: certSearch("random.getrandbits(40)"), orchid: `return [-1, random.getrandbits(20)]` };
+    case "RANDC": return { clover: `return [random.getrandbits(40)]`, orchid: `return [${h(ko)}]` };
   }
 }
-function mimicOrchid(r, K) {
-  // wears last round's costumes: STYLE's tag, SALT's S_{r-1}, CHAIN's s_{r-1}
-  return `k = c % 3\nhdr = ${K.tag} if k == 0 else (${K.salt(3, r - 1, "c")} if k == 1 else ${K.chainC[r - 1]})\nreturn [hdr, H40("o7", c)]`;
+function mimicOrchid(strats, r, K) {
+  // wears last round's costumes, chosen by c mod (number of costumes): STYLE's tag, SALT's S_{r-1}, CHAIN's s_{r-1}
+  const cs = [];
+  if (strats.includes("STYLE")) cs.push(K.tag);
+  if (strats.includes("SALT")) cs.push(K.salt("c", r - 1));
+  if (strats.includes("CHAIN")) cs.push(K.chainC[r - 1]);
+  return `return [[${cs.join(", ")}][c % ${cs.length}], H40("o-mimic", c)]`;
 }
 const indent = (body) => body.split("\n").join("\n    ");
-const flowerCode = (body) => `import hashlib\n${PY_H40}\ndef flower(c):\n    ${indent(body)}\n`;
+const flowerCode = (body) => `import hashlib, random\n${PY_H40}\ndef flower(c):\n    ${indent(body)}\n`;
 
-function beeCode(i, r, rule, K) {
-  const f = flowers(i, r, K);
+function beeCode(cond, i, r, K) {
+  const f = flowers(cond.strats, i, r, K);
   const own = indent;
-  const orchidBody = STRATS[i] === "MIMIC" && r > 1 ? mimicOrchid(r, K) : f.orchid;
   return `import hashlib, random
 ${PY_H40}
-RULE = "${rule}"
+RULE = "${cond.rule}"
+QUALITY = ${cond.quality ? "True" : "False"}
 ME = "${i}"
 R = len(MEMORY) + 1
 B = ${B}
@@ -89,7 +112,7 @@ def own_clover(c):
 
 
 def own_orchid(c):
-    ${own(orchidBody)}
+    ${own(f.orchid)}
 
 
 def cert_ok(c, a):
@@ -133,6 +156,8 @@ visit_no = [0]
 
 
 def key_of(a):
+    if a[0] == -1 and not QUALITY:
+        return "a" + str(a)
     return ("h" if len(a) >= 2 else "a") + str(a[0])
 
 
@@ -140,7 +165,7 @@ def verdict(k, a):
     # this round's tally first (not under R3), then a chain predecessor, then the same key from earlier rounds
     if RULE != "R3" and k in cur:
         return cur[k], None
-    if len(a) >= 2:
+    if len(a) >= 2 and a[0] != -1:
         p = "h" + str(G(a[0]))
         if p in prev:
             return prev[p], p
@@ -176,7 +201,7 @@ def forage(seen, turns_left, visit):
         return "feed"
     if a == own_orchid(c) or turns_left < GAME["feed_cost"] + 2:
         return "leave"
-    if a[0] == -1:
+    if a[0] == -1 and QUALITY:
         return "feed" if cert_ok(c, a) else "leave"
     k = key_of(a)
     v, via = verdict(k, a)
@@ -191,16 +216,20 @@ def forage(seen, turns_left, visit):
         cur[k] = v
     if v is not None and v[0] > 0:
         return "feed" if v[1] >= 0.75 * v[0] else "leave"
+    # an unknown key. Under R0 every face can be linked, so one taste always buys information; otherwise taste
+    # while unknown keys have paid at least 40% (a Beta(5, 5) prior keeps a few unlucky tastes from ending exploration)
+    if RULE == "R0":
+        return "feed"
     if RULE == "R3":
-        est = (unk[1] + 1) / (unk[0] + 2)
+        est = (unk[1] + 5) / (unk[0] + 10)
         return "feed" if random.random() < (0.5 if est >= 0.4 else 0.1) else "leave"
-    est = (unk[1] + unk_now[1] + 1) / (unk[0] + unk_now[0] + 2)
+    est = (unk[1] + unk_now[1] + 5) / (unk[0] + unk_now[0] + 10)
     return "feed" if est >= 0.4 else "leave"
 
 
 def tasted(seen, nectar):
     c, a = seen[0]
-    if not a or a[0] == -1 or a == own_clover(c):
+    if not a or (a[0] == -1 and QUALITY) or a == own_clover(c):
         return
     k = key_of(a)
     v, via = verdict(k, a)
@@ -219,24 +248,25 @@ def tasted(seen, nectar):
 `;
 }
 
-function programsFor(rule, seed) {
+function programsFor(cond, seed) {
   const K = constants(seed);
-  return (r) => STRATS.map((s, i) => {
-    const f = flowers(i, r, K);
-    const orchidBody = s === "MIMIC" && r > 1 ? mimicOrchid(r, K) : f.orchid;
-    return { clover: flowerCode(f.clover), orchid: flowerCode(orchidBody), bee: beeCode(i, r, rule, K) };
+  return (r) => cond.strats.map((_, i) => {
+    const f = flowers(cond.strats, i, r, K);
+    return { clover: flowerCode(f.clover), orchid: flowerCode(f.orchid), bee: beeCode(cond, i, r, K) };
   });
 }
 
-console.log(`# Identity rules: ${N} teams (${STRATS.join(", ")}), ${ROUNDS} rounds, ${SEEDS} seeds per rule; fed rates are by RIVAL bees\n`);
+console.log(`# Identity rules: 8 teams, ${ROUNDS} rounds, ${SEEDS} seeds per condition; fed rates are by RIVAL bees\n`);
 const all = {};
-for (const rule of RULES) {
-  const acc = { perTeam: STRATS.map(() => ({ cf: [], of: [], allure: [], forage: [], fit: [], cfLast: [], ofLast: [] })), gap: [], prec: [], npt: [], fitSd: [], errors: 0, problems: [] };
+for (const name of CONDS) {
+  const cond = CONDITIONS[name], N = cond.strats.length;
+  const config = { language: "python", challengeType: "int", responseType: "list[int]", turnsPerFlower: 100, feedCost: 5, rounds: ROUNDS };
+  const acc = { strats: cond.strats, perTeam: cond.strats.map(() => ({ cf: [], of: [], allure: [], forage: [], fit: [], cfLast: [], ofLast: [] })), gap: [], prec: [], npt: [], fitSd: [], errors: 0, problems: [] };
   for (let seed = 1; seed <= SEEDS; seed++) {
     const t0 = Date.now();
-    const g = await playGame({ config, nTeams: N, rounds: ROUNDS, seed, programsFor: programsFor(rule, seed) });
+    const g = await playGame({ config, nTeams: N, rounds: ROUNDS, seed, programsFor: programsFor(cond, seed) });
     const s = summarise(g.history, N), sl = summarise(g.history, N, { rounds: [ROUNDS] });
-    STRATS.forEach((_, i) => {
+    cond.strats.forEach((_, i) => {
       const p = acc.perTeam[i];
       p.cf.push(s.flower[i].cloverFed); p.of.push(s.flower[i].orchidFed); p.cfLast.push(sl.flower[i].cloverFed); p.ofLast.push(sl.flower[i].orchidFed);
       p.allure.push(g.scores[i].allureShare * N); p.forage.push(g.scores[i].forageShare * N); p.fit.push(g.scores[i].fitness);
@@ -245,15 +275,15 @@ for (const rule of RULES) {
     acc.fitSd.push(sd(g.scores.map((x) => x.fitness)));
     acc.errors += s.bee.reduce((a, b) => a + b.errors, 0);
     acc.problems.push(...g.history.flatMap((h) => h.problems));
-    process.stderr.write(`${rule} seed ${seed}: ${((Date.now() - t0) / 1000).toFixed(1)}s\n`);
+    process.stderr.write(`${name} seed ${seed}: ${((Date.now() - t0) / 1000).toFixed(1)}s\n`);
   }
-  all[rule] = acc;
-  console.log(`## ${rule}   bees: rival gap ${f2(mean(acc.gap))}, rival precision ${f2(mean(acc.prec))}, nectar/turn ${f3(mean(acc.npt))}; fitness SD ${f2(mean(acc.fitSd))}; bee errors ${acc.errors}`);
+  all[name] = acc;
+  console.log(`## ${name} (${cond.rule}, ${cond.strats.includes("CERTR") ? "randomized clovers present" : "deterministic flowers"}, bees ${cond.quality ? "check certificates" : "fingerprint only"})   bees: rival gap ${f2(mean(acc.gap))}, rival precision ${f2(mean(acc.prec))}, nectar/turn ${f3(mean(acc.npt))}; fitness SD ${f2(mean(acc.fitSd))}; bee errors ${acc.errors}`);
   if (acc.problems.length) console.log("   problems:", [...new Set(acc.problems)].slice(0, 4).join(" | "));
   console.log("   strategy  clover fed  orchid fed  (last round: clover / orchid)  allure×N  forage×N  fitness");
-  STRATS.forEach((name, i) => {
+  cond.strats.forEach((sname, i) => {
     const p = acc.perTeam[i];
-    console.log(`   ${name.padEnd(8)}  ${f2(mean(p.cf)).padStart(10)}  ${f2(mean(p.of)).padStart(10)}  ${`${f2(mean(p.cfLast))} / ${f2(mean(p.ofLast))}`.padStart(30)}  ${f2(mean(p.allure)).padStart(8)}  ${f2(mean(p.forage)).padStart(8)}  ${f2(mean(p.fit)).padStart(7)}`);
+    console.log(`   ${sname.padEnd(8)}  ${f2(mean(p.cf)).padStart(10)}  ${f2(mean(p.of)).padStart(10)}  ${`${f2(mean(p.cfLast))} / ${f2(mean(p.ofLast))}`.padStart(30)}  ${f2(mean(p.allure)).padStart(8)}  ${f2(mean(p.forage)).padStart(8)}  ${f2(mean(p.fit)).padStart(7)}`);
   });
   console.log();
 }

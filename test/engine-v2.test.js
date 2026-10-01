@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { simulateRound } from "../server/engine.js";
-import { DEFAULT_CONFIG, normalizeConfig, turnsFor } from "../server/lib/gameConfig.js";
+import { CHARS_PER_EDIT, DEFAULT_CONFIG, normalizeConfig, turnsFor } from "../server/lib/gameConfig.js";
 
 const clover = `def flower(c):\n    return c * 2\n`;
 const orchid = `def flower(c):\n    return c * 3\n`;
@@ -12,11 +12,12 @@ test("defaults: turns scale with the garden; budgets are asymmetric around the o
   assert.equal(turnsFor(c, 5), 1000);
   assert.equal(turnsFor(normalizeConfig({ turns: 80 }), 5), 80);
   const { clover: cl, orchid: or, bee } = DEFAULT_CONFIG.budgets;
-  assert.equal(cl.nodes * 2, or.nodes);
+  assert.equal(cl.chars * 2, or.chars);
   assert.equal(cl.ms, 3 * or.ms);
-  assert.equal(bee.nodes, 5 * or.nodes);
+  assert.equal(bee.chars, 5 * or.chars);
   assert.equal(bee.ms * 2, or.ms);
-  assert.equal(or.changes, Math.round(0.7 * or.nodes));
+  // Changes are syntax-tree edits: an orchid may rewrite about 70% of a full-size orchid each round.
+  assert.equal(or.changes, Math.round(0.7 * or.chars / CHARS_PER_EDIT));
 });
 
 test("a bee can keep asking after it feeds; feeding again just moves on", async () => {

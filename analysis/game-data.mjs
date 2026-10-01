@@ -53,10 +53,10 @@ export async function visitsOf(uuid, round = null) {
   round ? [uuid, round] : [uuid]);
 }
 
-/** Map "round|team|kind" -> { code, nodes, distance, carried } */
+/** Map "round|team|kind" -> { code, chars (complexity as now stored), distance, carried } */
 export async function programsOf(uuid) {
-  const rows = await all("SELECT round_no, team_id, kind, code, nodes, distance, carried_over FROM round_programs WHERE game_id = $1", [uuid]);
-  return new Map(rows.map((r) => [`${r.round_no}|${r.team_id}|${r.kind}`, { code: r.code, nodes: r.nodes, distance: r.distance, carried: r.carried_over }]));
+  const rows = await all("SELECT round_no, team_id, kind, code, chars, distance, carried_over FROM round_programs WHERE game_id = $1", [uuid]);
+  return new Map(rows.map((r) => [`${r.round_no}|${r.team_id}|${r.kind}`, { code: r.code, chars: r.chars, distance: r.distance, carried: r.carried_over }]));
 }
 
 /** [{ round_no, scores: [{teamId, fitness, allure, ...}], turns }] */

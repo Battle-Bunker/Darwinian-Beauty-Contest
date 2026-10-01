@@ -196,7 +196,7 @@ async function playGame(arena, generation, { ownerTok, gameRow, gPath, entries }
     await waitIfPaused(); // games don't advance while paused
     // Cohort experiment: one fixed seed per (game, round), identical in every cohort (same deck order, bee randomness).
     const seed = arena.settings.cohort ? (arena.settings.cohort.seedBase + 1009 * generation + 31 * r) % 2 ** 31 : undefined;
-    await Api.runRound(ownerTok, gPath, seed);
+    await simulateSerially(() => Api.runRound(ownerTok, gPath, seed), arena.id, log);
     view = await Api.view(ownerTok, gPath);
     const rd = view.rounds[r - 1];
     const names = Object.fromEntries(view.teams.map((t) => [t.id, t.name]));
@@ -206,6 +206,21 @@ async function playGame(arena, generation, { ownerTok, gameRow, gPath, entries }
       [...rd.totals].sort((a, b) => b.fitness - a.fitness).map((x) => `${names[x.teamId]} ${x.fitness.toFixed(2)}`).join(", "));
   }
   await q("UPDATE arena.games SET stage = 'played', finished_at = now() WHERE id = $1", [gameRow.id]);
+}
+
+// CPU fairness: flowers' compute budgets are real signals, so arenas running in this process simulate one round at
+// a time (the server's CPU_SLOTS then serve one game). Agents keep working in parallel; only the simulation queues.
+let simQueue = Promise.resolve();
+async function simulateSerially(run, arenaId, log) {
+  const prev = simQueue;
+  let release;
+  simQueue = new Promise((r) => (release = r));
+  const t0 = Date.now();
+  try {
+    await prev;
+    if (Date.now() - t0 > 5000) log(`  waited ${Math.round((Date.now() - t0) / 1000)}s for another arena's round to finish simulating`);
+    return await run();
+  } finally { release(); }
 }
 
 async function analyseGame(arena, generation, { ownerTok, gameRow, gPath, entries }, log) {
