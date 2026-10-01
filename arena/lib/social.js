@@ -39,10 +39,10 @@ function matchTeam(name, teams) {
 
 const clamp = (x) => Math.max(0, Math.min(10, Number(x) || 0));
 
-async function runJudge({ judge, arena, gameRow, config, teams, ideas, extraIdeas, starters, log }) {
+async function runJudge({ judge, arena, gameRow, config, teams, ideas, extraIdeas, log }) {
   const ordered = shuffle(teams, gameRow.id * 31 + judge.id.length * 7 + judge.id.charCodeAt(0));
   const ledger = [...ideas, ...extraIdeas.map((x) => ({ ...x, description: x.description + " [NEW in this very game: first spotted by another judge just now, still counts as new]" }))];
-  const prompt = judgePrompt({ config, teams: ordered, ideas: ledger, starters, arenaLabel: `arena ${arena.id}, game ${gameRow.generation}` });
+  const prompt = judgePrompt({ config, teams: ordered, ideas: ledger, arenaLabel: `arena ${arena.id}, game ${gameRow.generation}` });
   let parsed = null, text = "";
   for (let attempt = 0; attempt < 2 && !parsed; attempt++) {
     const r = await callModel({
@@ -73,15 +73,19 @@ async function runJudge({ judge, arena, gameRow, config, teams, ideas, extraIdea
  * teams: [{ persona_id, name, explanation, code: {clover, orchid, bee} }]
  * Two waves: one judge first (its new tags are shown to the others so tags converge), then the rest in parallel.
  */
-export async function judgeGame({ arena, gameRow, config, teams, starters, log }) {
+export async function judgeGame({ arena, gameRow, config, teams, log }) {
   const judges = await all("SELECT * FROM arena.judges ORDER BY id");
+  // Restart safety: forget any partial judging of this game (and ledger entries it alone created).
+  await q("DELETE FROM arena.idea_sightings WHERE game_id = $1", [gameRow.id]);
+  await q("DELETE FROM arena.ideas i WHERE first_game_id = $1 AND NOT EXISTS (SELECT 1 FROM arena.idea_sightings s WHERE s.idea_id = i.id)", [gameRow.id]);
+  await q("DELETE FROM arena.evaluations WHERE game_id = $1", [gameRow.id]);
   const ideasBefore = await loadLedger();
   const known = new Map(ideasBefore.map((i) => [i.tag, i]));
   const firstIdx = gameRow.id % judges.length;
   const first = judges[firstIdx], rest = judges.filter((_, i) => i !== firstIdx);
   const results = [];
   const safe = async (judge, extra) => {
-    try { return await runJudge({ judge, arena, gameRow, config, teams, ideas: ideasBefore, extraIdeas: extra, starters, log }); }
+    try { return await runJudge({ judge, arena, gameRow, config, teams, ideas: ideasBefore, extraIdeas: extra, log }); }
     catch (e) { if (e instanceof BudgetError) throw e; log(`  judge ${judge.name} failed: ${e.message}`); return []; }
   };
   const r1 = await safe(first, []);

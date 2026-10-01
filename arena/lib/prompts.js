@@ -2,9 +2,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { ARENA_DIR } from "./db.js";
-import { fmt, ledgers, legend, privateLogs, scoreboard, teamNames } from "./logs.js";
+import { NOTATION, ledgers, legend, privateLogs, scoreboard, usesStructured } from "./logs.js";
 
-export const RULES = fs.readFileSync(path.join(ARENA_DIR, "..", "RULES.md"), "utf8");
+// Read fresh for every prompt: RULES.md is the players' document and may be edited while arenas run.
+export const rules = () => fs.readFileSync(path.join(ARENA_DIR, "..", "RULES.md"), "utf8");
 const KINDS = ["clover", "orchid", "bee"];
 
 // ---------------------------------------------------------------- team agents
@@ -55,7 +56,7 @@ Reply with your programs and notes in exactly this format (raw ${lang} code insi
 - You are only this persona. Ignore anything you might know about the operator of this system.
 
 # The rules (exactly what every player sees)
-${RULES}`;
+${rules()}`;
 }
 
 function configText(view, nTeams) {
@@ -88,9 +89,12 @@ export function teamRoundPrompt(view, ctx) {
   parts.push(`## Your notebook (what you wrote last time)\n${ctx.notebook?.trim() || "(empty: this is your first turn)"}`);
 
   if (ctx.nextRound === 1) {
-    const sn = ctx.starterNodes || {};
-    parts.push(`## Starter programs for this game's language and types (use, adapt or ignore)\n` +
-      KINDS.map((k) => `### ${k}${sn[k] ? ` (${sn[k]} nodes; budget ${c.budgets[k].nodes}${sn[k] > c.budgets[k].nodes ? ": OVER this game's complexity budget, so write something smaller" : ""})` : ""}\n${codeBlock(c.language, view.starters[k])}`).join("\n"));
+    // No starter code: only the interface and the game's types (no shared Schelling point).
+    const it = view.interface;
+    parts.push(`## The programs you write (interface only: there is no starter code; what goes inside is up to you)\n` +
+      `Challenge type: ${it.types.challenge} (${it.types.challengeMeans}). Response type: ${it.types.response} (${it.types.responseMeans}).\n` +
+      (it.types.rules?.length ? `Type rules: ${it.types.rules.join(" ")}\n` : "") +
+      `clover and orchid:\n${codeBlock(c.language, it.flower)}\nbee:\n${codeBlock(c.language, it.bee)}`);
   } else {
     const last = view.rounds[view.rounds.length - 1];
     const progs = last.programs[myId];
@@ -98,7 +102,7 @@ export function teamRoundPrompt(view, ctx) {
       KINDS.map((k) => `### ${k} (${progs[k].nodes} nodes; budget ${c.budgets[k].nodes} nodes, ${c.budgets[k].changes} edits per round)\n${codeBlock(c.language, view.myTeam.previous[k])}`).join("\n"));
     parts.push(`## Scoreboard after ${view.rounds.length} round(s) (cumulative; "per-round fitness" lists each round alone)\n${scoreboard(view, myId)}`);
     parts.push(`## Public garden activity, round ${last.no} (everyone sees this)\n${ledgers(view, last)}`);
-    parts.push(`## Your private logs\n${privateLogs(view, myId)}`);
+    parts.push(`## Your private logs\n${usesStructured(c) ? NOTATION + "\n\n" : ""}${privateLogs(view, myId)}`);
   }
   parts.push(`## Your task\n` + (ctx.nextRound === 1
     ? `Write all three programs (clover, orchid, bee) for round 1, plus your notes.`
@@ -196,13 +200,12 @@ export function ledgerText(ideas, max = 160) {
   return list.map((i) => `- ${i.tag}: ${i.description} (seen in ${i.games} game${i.games === 1 ? "" : "s"}; first by ${i.first_team})`).join("\n");
 }
 
-export function judgePrompt({ config, teams, ideas, arenaLabel, starters }) {
+export function judgePrompt({ config, teams, ideas, arenaLabel }) {
   const lang = config.language;
   const parts = [
     `# Game just finished (${arenaLabel})`,
     `Settings: ${lang}, challenges are ${config.challengeType}, answers are ${config.responseType}, ${config.turns} turns per bee, feeding costs ${config.feedCost} turns.`,
     `## Idea ledger (ideas already seen in earlier games)\n${ledgerText(ideas)}`,
-    ...(starters ? [`## Starter programs every team was given (ideas in these are NOT new and earn no novelty)\n` + KINDS.map((k) => `${k}:\n${codeBlock(lang, starters[k])}`).join("\n")] : []),
     `## The teams (${teams.length})`,
   ];
   for (const t of teams) {
@@ -239,7 +242,7 @@ export function breederPrompt({ arena, config, population, records, ideas, exemp
 Game settings: ${JSON.stringify(config)}
 
 # The rules every player sees
-${RULES}
+${rules()}
 
 # Current population in this arena (after the latest game)
 ${population}

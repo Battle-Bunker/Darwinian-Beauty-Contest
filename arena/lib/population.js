@@ -24,13 +24,17 @@ const pct = (rank, n) => (n > 1 && rank ? 1 - (rank - 1) / (n - 1) : 0.5);
 /** Per-persona history in this arena: last games (newest first) with ranks and percentiles. */
 async function history(arenaId) {
   const rows = await all(`
-    SELECT e.persona_id, g.generation, e.fitness, e.fitness_rank, e.social, e.social_rank,
+    SELECT e.persona_id, g.generation, e.fitness, e.fitness_rank, e.social, e.social_rank, e.sat_out,
            (SELECT count(*)::int FROM arena.entries e2 WHERE e2.game_id = e.game_id) AS n
       FROM arena.entries e JOIN arena.games g ON g.id = e.game_id
-     WHERE g.arena_id = $1 AND e.fitness IS NOT NULL
+     WHERE g.arena_id = $1 AND (e.fitness IS NOT NULL OR e.sat_out)
      ORDER BY g.generation DESC`, [arenaId]);
   const h = {};
-  for (const r of rows) (h[r.persona_id] ||= []).push({ ...r, fitPct: pct(r.fitness_rank, r.n), socPct: r.social_rank ? pct(r.social_rank, r.n) : null });
+  // Sitting a game out (no valid programs) counts as last place on both axes.
+  for (const r of rows) {
+    if (r.sat_out) Object.assign(r, { fitness_rank: r.n, social_rank: r.n });
+    (h[r.persona_id] ||= []).push({ ...r, fitPct: pct(r.fitness_rank, r.n), socPct: r.social_rank ? pct(r.social_rank, r.n) : null });
+  }
   return h;
 }
 
@@ -117,7 +121,7 @@ async function populationText(arena) {
     const g = h[p.id] || [];
     const tags = await all(`SELECT DISTINCT i.tag FROM arena.idea_sightings s JOIN arena.ideas i ON i.id = s.idea_id WHERE s.persona_id = $1 LIMIT 8`, [p.id]);
     lines.push(`- ${p.name} / team "${p.team_name}" (${p.archetype}; model ${p.model}; ${p.breeder_id ? "bred by " + p.breeder_id : "founder"}; ${g.length} games). ` +
-      (g.length ? `Fitness by game (newest first): ${g.map((x) => `${x.fitness?.toFixed(2)} (#${x.fitness_rank}/${x.n})`).join(", ")}. Social: ${g.map((x) => `${x.social?.toFixed(1) ?? "-"} (#${x.social_rank ?? "-"})`).join(", ")}.` : "") +
+      (g.length ? `Fitness by game (newest first): ${g.map((x) => x.sat_out ? "sat out (no valid programs)" : `${x.fitness?.toFixed(2)} (#${x.fitness_rank}/${x.n})`).join(", ")}. Social: ${g.map((x) => x.sat_out ? "-" : `${x.social?.toFixed(1) ?? "-"} (#${x.social_rank ?? "-"})`).join(", ")}.` : "") +
       (tags.length ? ` Ideas judges saw: ${tags.map((t) => t.tag).join(", ")}.` : ""));
   }
   return lines.join("\n");

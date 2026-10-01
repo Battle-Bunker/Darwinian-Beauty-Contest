@@ -192,3 +192,9 @@ CREATE TABLE IF NOT EXISTS arena.llm_calls (
   error         text
 );
 CREATE INDEX IF NOT EXISTS llm_calls_arena ON arena.llm_calls(arena_id);
+
+-- Added after the no-starter-code change (idempotent).
+ALTER TABLE arena.entries ADD COLUMN IF NOT EXISTS sat_out boolean NOT NULL DEFAULT false;  -- no valid programs for round 1
+-- primed: round-1 prompts showed the old shared starter code; post-primed: no starters, but the arena's
+-- history (recaps, notebooks) began primed; unprimed: arena never saw starter code.
+ALTER TABLE arena.games ADD COLUMN IF NOT EXISTS condition text;

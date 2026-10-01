@@ -42,4 +42,26 @@ export const PRESETS = {
     recap: "scores",
     lineup: [["nash", "fable"], ["kenji", "opus"], ["bayes", "sonnet"], ["milo", "sonnet"], ["grace", "haiku"], ["jayden", "haiku"]],
   },
+  // ---- added with the no-starter-code change: these arenas never saw starter programs ----
+  unprimed: {
+    description: "Baseline twin with NO starter code (interface and types only): python, int→int, defaults, 6 teams, 5 rounds",
+    config: { language: "python", challengeType: "int", responseType: "int", rounds: 5 },
+    lineup: [["nash", "fable"], ["kenji", "opus"], ["bayes", "sonnet"], ["milo", "sonnet"], ["grace", "haiku"], ["jayden", "haiku"]],
+  },
+  trees: {
+    description: "python, int→tree[int], no starter code, 6 teams, 5 rounds; flowers 250 nodes/40 edits/50 ms, bee 600/80/100",
+    config: {
+      language: "python", challengeType: "int", responseType: "tree[int]", rounds: 5,
+      budgets: { clover: { nodes: 250, changes: 40, ms: 50 }, orchid: { nodes: 250, changes: 40, ms: 50 }, bee: { nodes: 600, changes: 80, ms: 100 } },
+    },
+    lineup: [["koan", "fable"], ["ava", "opus"], ["rosalind", "sonnet"], ["sam", "sonnet"], ["ada", "haiku"], ["luna", "haiku"]],
+  },
+  graphs: {
+    description: "python, int→graph, no starter code, 6 teams, 5 rounds; flowers 250 nodes/40 edits/50 ms, bee 600/80/100",
+    config: {
+      language: "python", challengeType: "int", responseType: "graph", rounds: 5,
+      budgets: { clover: { nodes: 250, changes: 40, ms: 50 }, orchid: { nodes: 250, changes: 40, ms: 50 }, bee: { nodes: 600, changes: 80, ms: 100 } },
+    },
+    lineup: [["theo", "fable"], ["mallory", "opus"], ["priya", "sonnet"], ["tess", "sonnet"], ["jayden", "haiku"], ["echo", "haiku"]],
+  },
 };

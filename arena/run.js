@@ -13,7 +13,7 @@ import path from "node:path";
 import { Api, ApiError, gamePath, login } from "./lib/api.js";
 import { ARENA_DIR, all, migrate, one, pool, q } from "./lib/db.js";
 import { BudgetError, llmStats, setArenaCap, spend } from "./lib/llm.js";
-import { gameCollapses, gameMetrics, roundMetrics } from "./lib/metrics.js";
+import { storeMetrics } from "./lib/gamemetrics.js";
 import { FOUNDERS } from "./lib/personas.js";
 import { breed, decideRetirements, retire, seedBreeders } from "./lib/population.js";
 import { PRESETS } from "./lib/presets.js";
@@ -48,7 +48,7 @@ async function ensureArena(id, presetName, generations) {
   const owner = `Arena owner ${id}`;
   const tok = await login(owner);
   const room = await Api.createRoom(tok);
-  const settings = { config: preset.config, teams: preset.lineup.length, generations, description: preset.description, recap: preset.recap || "full", budgetUsd: args.budget ? Number(args.budget) : null };
+  const settings = { config: preset.config, teams: preset.lineup.length, generations, description: preset.description, recap: preset.recap || "full", unprimed: true, budgetUsd: args.budget ? Number(args.budget) : null };
   await q("INSERT INTO arena.arenas (id, preset, settings, owner_name, room_short_id, room_url) VALUES ($1,$2,$3,$4,$5,$6)",
     [id, presetName, settings, owner, room.shortId, room.url]);
   for (const [slug, model] of preset.lineup) {
@@ -142,10 +142,23 @@ async function playGame(arena, generation, { ownerTok, gameRow, gPath, entries }
   const recap = generation > 1 ? await recapFor(arena, generation) : null;
   let view = await Api.view(ownerTok, gPath);
   const rounds = view.game.config.rounds;
+  if (!gameRow.condition) {
+    const condition = arena.settings.unprimed ? "unprimed" : "post-primed";
+    await q("UPDATE arena.games SET condition = $2 WHERE id = $1 AND condition IS NULL", [gameRow.id, condition]);
+  }
   for (let r = view.game.roundsPlayed + 1; r <= rounds; r++) {
     const t0 = Date.now();
-    const results = await Promise.all(personas.map(async (p) => {
+    // After round 1 only participants play (a team that had no valid programs for round 1 sits the game out).
+    const players = r === 1 ? personas : personas.filter((p) => view.participants?.includes(entries.find((e) => e.persona_id === p.id)?.team_id));
+    const results = await Promise.all(players.map(async (p) => {
       const entry = entries.find((e) => e.persona_id === p.id);
+      // Resume safety: don't pay twice for a turn whose reply was already processed before a restart.
+      const done = await one("SELECT 1 FROM arena.agent_turns WHERE game_id = $1 AND persona_id = $2 AND round_no = $3 AND error IS NULL LIMIT 1", [gameRow.id, p.id, r]);
+      if (done) {
+        const tok = await login(entry.login_name);
+        const v = await Api.view(tok, gPath);
+        if (r > 1 || ["clover", "orchid", "bee"].every((k) => v.myTeam.drafts[k])) { log(`  ${p.name}: round ${r} turn already done before restart; skipping`); return { submitted: [], failed: [], cost: 0 }; }
+      }
       const personalRecap = r === 1 && recap ? recap.text + (await personalFeedback(recap.prevGameId, p.id)) : null;
       try {
         return await playTurn({ arena, gameRow, persona: p, entry, gPath, roundNo: r, recap: personalRecap, log });
@@ -153,10 +166,8 @@ async function playGame(arena, generation, { ownerTok, gameRow, gPath, entries }
         if (e instanceof BudgetError) throw e;
         log(`  ${p.name}: turn failed: ${e.stack || e.message}`);
         if (r === 1) {
-          // Make sure the team still plays: starters for anything missing.
-          const tok = await login(entry.login_name);
-          const v = await Api.view(tok, gPath);
-          for (const k of ["clover", "orchid", "bee"]) if (!v.myTeam.drafts[k]) await Api.submit(tok, gPath, k, v.starters[k]);
+          log(`  ${p.name}: SITS OUT this game (turn failed before round 1)`);
+          await q("UPDATE arena.entries SET sat_out = true WHERE game_id = $1 AND persona_id = $2", [gameRow.id, p.id]);
         }
         return { submitted: [], failed: ["all"], cost: 0 };
       }
@@ -177,16 +188,7 @@ async function playGame(arena, generation, { ownerTok, gameRow, gPath, entries }
 async function analyseGame(arena, generation, { ownerTok, gameRow, gPath, entries }, log) {
   const view = await Api.view(ownerTok, gPath);
   if (!view.game.revealed) throw new Error("game not revealed; metrics need revealOnFinish");
-  const rms = [];
-  view.rounds.forEach((r, i) => rms.push(roundMetrics(view, r, i ? view.rounds[i - 1] : null)));
-  for (const m of rms) await q("INSERT INTO arena.round_metrics (game_id, round_no, metrics) VALUES ($1,$2,$3) ON CONFLICT (game_id, round_no) DO UPDATE SET metrics = $3", [gameRow.id, m.round, m]);
-  const gm = gameMetrics(view, rms);
-  const col = gameCollapses(gm, rms);
-  gm.collapses = col.game;
-  await q("UPDATE arena.games SET metrics = $2 WHERE id = $1", [gameRow.id, gm]);
-  await q("DELETE FROM arena.collapse_events WHERE game_id = $1", [gameRow.id]);
-  for (const f of col.perRound.flat()) await q("INSERT INTO arena.collapse_events (arena_id, game_id, generation, round_no, mode, severity, evidence) VALUES ($1,$2,$3,$4,$5,$6,$7)", [arena.id, gameRow.id, generation, f.round, f.mode, f.severity, f.evidence]);
-  for (const f of col.game) await q("INSERT INTO arena.collapse_events (arena_id, game_id, generation, round_no, mode, severity, evidence) VALUES ($1,$2,$3,NULL,$4,$5,$6)", [arena.id, gameRow.id, generation, "game:" + f.mode, f.severity, f.evidence]);
+  const { gm } = await storeMetrics(arena, gameRow, view);
   const final = [...view.final].sort((a, b) => b.fitness - a.fitness);
   for (const e of entries) {
     const s = view.final.find((x) => x.teamId === e.team_id);
@@ -194,13 +196,13 @@ async function analyseGame(arena, generation, { ownerTok, gameRow, gPath, entrie
     await q("UPDATE arena.entries SET fitness = $3, fitness_rank = $4, allure = $5, forage = $6 WHERE game_id = $1 AND persona_id = $2",
       [gameRow.id, e.persona_id, s.fitness, final.indexOf(s) + 1, s.allure, s.forage]);
   }
-  log(`gen ${generation} final: ${final.map((x) => `${entries.find((e) => e.team_id === x.teamId)?.team_name} ${x.fitness.toFixed(2)}`).join(", ")}; collapses: ${col.game.map((f) => f.mode).join(", ") || "none"}`);
+  log(`gen ${generation} final: ${final.map((x) => `${entries.find((e) => e.team_id === x.teamId)?.team_name} ${x.fitness.toFixed(2)}`).join(", ")}; collapses: ${gm.collapses.map((f) => f.mode).join(", ") || "none"}; orchid targets ${JSON.stringify(gm.orchidTargets)}`);
   return view;
 }
 
 async function socialEvaluation(arena, generation, ctx, log) {
   const { gameRow, gPath } = ctx;
-  const entries = await all("SELECT * FROM arena.entries WHERE game_id = $1", [gameRow.id]);
+  const entries = await all("SELECT * FROM arena.entries WHERE game_id = $1 AND NOT sat_out", [gameRow.id]);
   const personas = await all("SELECT * FROM arena.personas WHERE id = ANY($1)", [entries.map((e) => e.persona_id)]);
   if (!atLeast(gameRow.stage, "interviewed")) {
     await Promise.all(entries.filter((e) => !e.explanation).map(async (e) => {
@@ -221,12 +223,12 @@ async function socialEvaluation(arena, generation, ctx, log) {
   if (!atLeast(gameRow.stage, "judged")) {
     const view = await Api.view(null, gPath);
     const last = view.rounds[view.rounds.length - 1];
-    const fresh = await all("SELECT * FROM arena.entries WHERE game_id = $1", [gameRow.id]);
+    const fresh = await all("SELECT * FROM arena.entries WHERE game_id = $1 AND NOT sat_out", [gameRow.id]);
     const teams = fresh.map((e) => ({
       persona_id: e.persona_id, name: e.team_name, explanation: e.explanation,
       code: Object.fromEntries(["clover", "orchid", "bee"].map((k) => [k, last.programs[e.team_id]?.[k]?.code || ""])),
     }));
-    const res = await judgeGame({ arena, gameRow, config: view.game.config, teams, starters: view.starters, log });
+    const res = await judgeGame({ arena, gameRow, config: view.game.config, teams, log });
     await q("UPDATE arena.games SET stage = 'judged' WHERE id = $1", [gameRow.id]);
     gameRow.stage = "judged";
     const rows = await all("SELECT team_name, social, social_rank, social_parts FROM arena.entries WHERE game_id = $1 ORDER BY social_rank NULLS LAST", [gameRow.id]);
@@ -294,10 +296,11 @@ async function main() {
   await migrate();
   await seedJudges();
   await seedBreeders();
+  // --arenas a,b:4,c  (optional per-arena generation count after a colon; default --generations)
   const generations = Number(args.generations || 1);
-  const list = args.arenas ? String(args.arenas).split(",") : [String(args.arena || "pilot")];
+  const list = (args.arenas ? String(args.arenas).split(",") : [String(args.arena || "pilot")]).map((x) => x.split(":"));
   const presetOf = (id) => (args.preset && list.length === 1 ? String(args.preset) : id.replace(/-\d+$/, ""));
-  await Promise.all(list.map((id) => runArena(id, presetOf(id), generations)));
+  await Promise.all(list.map(([id, g]) => runArena(id, presetOf(id), Number(g || generations))));
   await pool.end();
 }
 

@@ -43,13 +43,23 @@ export const Api = {
   createTeam: (tok, g, name) => api(tok, "POST", `${g}/teams`, { name }),
   check: (tok, g, kind, code) => api(tok, "POST", `${g}/check`, { kind, code }),
   submit: (tok, g, kind, code) => api(tok, "POST", `${g}/programs`, { kind, code }),
-  try: (tok, g, kind, code, challenges) => api(tok, "POST", `${g}/try`, { kind, code, challenges }),
+  try: (tok, g, kind, code, challenges, flowers) => api(tok, "POST", `${g}/try`, { kind, code, challenges, flowers }),
   view: (tok, g) => api(tok, "GET", g),
   version: (g) => api(null, "GET", `${g}/version`),
   /** Start the next round and poll until it has been stored (avoids long-held HTTP requests). */
   async runRound(tok, g) {
     const before = await api(null, "GET", `${g}/version`);
-    const { round } = await api(tok, "POST", `${g}/rounds`, undefined, { retries: 0 });
+    let round;
+    for (let attempt = 0; round === undefined; attempt++) {
+      try { ({ round } = await api(tok, "POST", `${g}/rounds`, undefined, { retries: 0 })); }
+      catch (e) {
+        // A network blip (e.g. the server restarting): did the round start anyway?
+        if (e.status !== 0 || attempt >= 5) throw e;
+        await sleep(3000);
+        const v = await api(null, "GET", `${g}/version`);
+        if (v.runningRound || v.roundsPlayed > before.roundsPlayed) round = before.roundsPlayed + 1;
+      }
+    }
     for (;;) {
       await sleep(1500);
       const v = await api(null, "GET", `${g}/version`);

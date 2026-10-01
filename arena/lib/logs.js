@@ -1,9 +1,23 @@
 // Turns the viewer-filtered game view (GET base as a team member) into compact text for a team agent:
 // scoreboard, public ledgers, and private bee/flower logs (last rounds in detail, older rounds summarised).
 
-export const fmt = (v) => {
-  const s = JSON.stringify(v);
-  return s === undefined ? "null" : s.length > 80 ? s.slice(0, 77) + "..." : s;
+// Compact notation for structured values (explained to agents in NOTATION):
+//   tree  {"value":5,"children":[{"value":3,"children":[]},{"value":1,"children":[]}]}  ->  5(3 1)
+//   graph {"nodes":4,"edges":[[0,1],[1,2]]}                                              ->  G4[0-1 1-2]
+const isTree = (v) => v && typeof v === "object" && !Array.isArray(v) && "value" in v && Array.isArray(v.children);
+const isGraph = (v) => v && typeof v === "object" && !Array.isArray(v) && Number.isInteger(v.nodes) && Array.isArray(v.edges);
+function compact(v) {
+  if (isTree(v)) return compact(v.value) + (v.children.length ? `(${v.children.map(compact).join(" ")})` : "");
+  if (isGraph(v)) return `G${v.nodes}[${v.edges.map((e) => `${e[0]}-${e[1]}`).join(" ")}]`;
+  if (Array.isArray(v)) return `[${v.map(compact).join(",")}]`;
+  return JSON.stringify(v) ?? "null";
+}
+export const NOTATION = `Logs show trees as value(child child ...), e.g. 5(3 1(2)) is a root 5 with children 3 and 1, and 1 has a child 2; ` +
+  `graphs as G<nodes>[a-b c-d ...], e.g. G4[0-1 1-2] has nodes 0..3 and edges 0-1 and 1-2 (a-b is one-way in a digraph).`;
+export const usesStructured = (config) => /tree|graph/.test(config.challengeType + config.responseType);
+export const fmt = (v, max = 80) => {
+  const s = compact(v);
+  return s.length > max ? s.slice(0, max - 3) + "..." : s;
 };
 const num = (x, d = 2) => (x == null ? "-" : Number(x).toFixed(d));
 
@@ -45,7 +59,7 @@ export function legend(view, myId) {
 
 function stepsText(steps, maxSteps = 8) {
   if (!steps) return "";
-  const shown = steps.slice(0, maxSteps).map((s) => `${fmt(s.c)}→${s.r === null || s.r === undefined ? "None" : fmt(s.r)}${s.challengeError ? "(bad challenge)" : ""}${s.flowerError ? "(flower error)" : ""}`);
+  const shown = steps.slice(0, maxSteps).map((s) => `${fmt(s.c)}→${s.r === null || s.r === undefined ? "None" : fmt(s.r, 200)}${s.challengeError ? "(bad challenge)" : ""}${s.flowerError ? "(flower error)" : ""}`);
   if (steps.length > maxSteps) shown.push(`…+${steps.length - maxSteps} more asks`);
   return shown.join(", ");
 }
