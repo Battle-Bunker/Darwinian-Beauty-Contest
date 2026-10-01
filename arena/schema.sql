@@ -228,3 +228,4 @@ CREATE TABLE IF NOT EXISTS arena.adoption (
   detail      text,
   PRIMARY KEY (game_id, round_no, persona_id, method)
 );
+ALTER TABLE arena.games ADD COLUMN IF NOT EXISTS python boolean;   -- team sessions could run python3 in this game

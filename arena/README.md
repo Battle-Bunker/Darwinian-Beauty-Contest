@@ -9,16 +9,21 @@ to study the ecosystem the game creates and hunt for **complexity-collapse** sce
 | Path | What |
 |---|---|
 | `run.js` | the arena runner: creates rooms and games, runs team agents each round, interviews, judges, retirements, breeding |
-| `analyze.js` | prints a Markdown summary of everything in the `arena` schema (spend, leaderboards, metrics, conditions, orchid targets, collapses, judges, ideas, breeders) |
+| `fork.js` | forks a played game's population into identical cohorts for a controlled experiment (see "Cohort experiments") |
+| `analyze.js` | prints a Markdown summary of everything in the `arena` schema (spend, leaderboards, metrics, conditions, orchid targets, collapses, judges, ideas, breeders; engine-v2 behaviour, hinted vs unhinted teams, the fair-play audit; the cohort experiment's paired comparisons and adoption) |
 | `backfill.js` | recomputes and stores metrics (incl. orchid targets) for every played game; safe to re-run |
 | `test-pause.mjs` | self-contained check of usage-limit detection and pause/resume, with a stub `claude` (no real calls) |
 | `schema.sql` | the `arena` Postgres schema (same `dbc` database as the game), applied on every run |
 | `lib/llm.js` | `claude -p` wrapper: concurrency limiter, retries, rate-limit cool-down, spend guard, cost ledger (`arena.llm_calls`) |
 | `lib/api.js` | HTTP client for the game API (dev login with Bearer tokens) |
-| `lib/team.js` | one team-agent turn: prompt from its own filtered game view, parse, `check` + `try` validation, up to 2 retries, submit; and the post-game interview |
+| `lib/team.js` | one team-agent turn. Phase-1 mode: prompt from its own filtered game view, parse, `check` + `try` validation, up to 2 retries, submit. Tools mode (`playTurnTools`): a tool-using session in the team's workspace, audit, validation, fix sessions, submit. Also the post-game interview |
+| `lib/workspace.js` | tools mode: builds each team's private workspace (raw files, no tools, no tokens), collects its programs, and audits session transcripts for fair play (`arena.violations`) |
+| `lib/dbview.js` | a fully revealed game view built from the game's tables (for metrics and judges when `revealOnFinish` is false) |
+| `lib/cohort.js` | cohort-experiment measures for `analyze.js`: answer-shape census, borrowing from the top-2 demo, Python use and idea-file reads from session transcripts |
+| `lib/adoption.js` | cohort experiment: which catalogue ideas each team's code implements, per round (keywords + a haiku classifier; `arena.adoption`) |
 | `lib/logs.js` | compact scoreboard / ledgers / private bee and flower logs (last 2 rounds detailed, older rounds summarised, identical visits grouped) |
 | `lib/prompts.js` | system and user prompts for team agents, judges and breeders |
-| `lib/personas.js` | 20 founding personas (10 adult archetypes, 10 twelve-year-olds), 4 teen judges, 3 breeders |
+| `lib/personas.js` | 20 founding personas (10 adult archetypes, 10 twelve-year-olds), 4 teen judges, 3 breeders, idea cards A/B and the cohort cards G1–G3 |
 | `lib/social.js` | interviews → judges → idea ledger → social scores |
 | `lib/metrics.js` | per-round and per-game metrics and collapse detection |
 | `lib/targets.js` | whose clover each orchid imitates (self / rival / convention / none), exact and structural (trees, graphs); victims' clover fed rates; bees' structural tests |
@@ -32,8 +37,11 @@ to study the ecosystem the game creates and hunt for **complexity-collapse** sce
 Needs the game's Postgres (`postgres://dbc:dbc@localhost:5432/dbc` by default), `python3`, and the `claude` CLI logged in.
 
 ```
-# 1. your own API server (any port; the arena talks to it over HTTP)
-PORT=4000 MAX_CONCURRENT_ROUNDS=8 nohup node server/index.js > arena/runs/server4000.log 2>&1 &
+# 1. your own API server (any port; the arena talks to it over HTTP). With DEV_LOGIN_SECRET set, dev login needs the
+#    secret, so a tool-using agent can't log in as another team. The runner reads it from ARENA_DEV_SECRET or from
+#    arena/runs/.dev-secret (mode 600, gitignored); it is never written to a workspace or a prompt.
+umask 077; [ -f arena/runs/.dev-secret ] || openssl rand -hex 24 > arena/runs/.dev-secret
+DEV_LOGIN_SECRET=$(cat arena/runs/.dev-secret) PORT=4000 MAX_CONCURRENT_ROUNDS=8 nohup node server/index.js > arena/runs/server4000.log 2>&1 &
 
 # 2. a pilot: 4 teams, 3 rounds, sonnet + haiku
 node arena/run.js --arena pilot --preset pilot --generations 1
@@ -115,7 +123,7 @@ round is simulating: `SELECT count(*) FROM games WHERE running_round IS NOT NULL
    is labelled `primed` (its round-1 prompts showed the old shared starter code), `post-primed` (no starters, but the arena
    started primed) or `unprimed` (`arena.games.condition`).
 4. **Interview**: each agent writes "teach us your code" for 10–14-year-olds.
-5. **Judges**: Maya 13 (opus), Dev 11 (sonnet), Hana 14 (fable), Leo 10 (haiku) each score every team's final code +
+5. **Judges**: Maya 13 (opus), Dev 11 (sonnet), Hana 14 (opus; fable until phase 1 ended), Leo 10 (haiku) each score every team's final code +
    explanation on understanding, respect, novelty and want-to-team-up, and tag its ideas. One judge goes first; its new
    tags are shown to the other three so tags converge. The idea ledger (`arena.ideas`) is shared by all arenas.
    Social score = 0.2·understanding + 0.3·respect + 0.2·novelty + 0.3·team-up, averaged over judges (0–10). Judges never
@@ -124,10 +132,93 @@ round is simulating: `SELECT count(*) FROM games WHERE running_round IS NOT NULL
    or its mean social is below the floor (mandatory social filter); or if it was in the fitness bottom quartile in 2 of
    its last 3 games with a weak combined percentile. If nobody qualifies, the weakest overall is retired when its
    combined fitness+social percentile is below 0.30. At most ⌈N/3⌉ per generation.
-7. **Breeding**: each open slot keeps the retired persona's model; a breeder (Fern/fable, Oak/opus, Moss/sonnet) is drawn
+7. **Breeding**: each open slot keeps the retired persona's model; a breeder (Fern/opus, Oak/opus, Moss/sonnet; Fern was fable in phase 1) is drawn
    with probability ∝ exp(4·(score − 0.5)), where score = mean (fitness percentile + social percentile)/2 of its spawn
    across all arenas. The breeder sees the population, all spawn records, the idea ledger and the top teams' persona prompts,
    and writes a new persona prompt.
+
+## Engine v2: tool-using team sessions (`mode: "tools"`)
+
+Arenas whose settings say `mode: "tools"` (the `v2-*` presets and the cohort arenas) don't prompt for code. Each team
+turn is a headless Claude Code session working on raw files:
+
+```
+claude -p --model <m> --tools Bash,Read,Write,Edit,Glob,Grep --permission-mode acceptEdits \
+  [--allowedTools "Bash(python3:*)" "Bash(python:*)"] --max-turns N --max-budget-usd X \
+  --output-format stream-json --verbose --no-session-persistence --system-prompt <full system prompt>
+```
+
+- **Workspace**: `/home/user/arena-ws/<arena>/<persona>/` (outside the repo; `ARENA_WS_ROOT`). Before every round
+  `prepareWorkspace` writes:
+  - `README.md`, `RULES.md` (fresh), `interface.txt`, `config.json`, `notebook.md` and the idea card if the team has one
+  - the team's current `clover.py`, `orchid.py`, `bee.py`, plus `history/round-N/` with earlier versions
+  - its own logs only: `logs/round-N/{round.json, visits.jsonl, my-bee.jsonl, my-patch.jsonl}`, `memory/round-N.txt`
+    (its bee's MEMORY) and `logs/game.json`
+  - `previous-games/game-K/`: its own logs from earlier games, the standings, the panel's feedback (`panel.md`) and,
+    depending on the arena's recap mode, every team's final code or only the top 2 (`top2/`)
+
+  There are no tools, tokens or game URLs in the workspace. The runner submits the programs the session leaves behind.
+- **Environment**: sessions run with `{HOME, PATH, LANG}` only, so there is no `DATABASE_URL`, no dev secret and no API
+  token. The full `--system-prompt` replaces Claude Code's default, which mentions the user's memory directory.
+- **Limits** per session: opus 30 turns / $2.50, sonnet 30 / $1.00, haiku 25 / $0.60 (`ARENA_SESSION_LIMITS` overrides
+  them as JSON). Fix sessions get a third of the budget and at most 15 turns. Round 1 gets up to 4 fix sessions, later
+  rounds 2. Validation is the same `check` + `try` as phase 1.
+- **Python**: with `--allowedTools Bash(python3:*)` sessions can run their programs locally. It is on by default. A
+  cohort arena with `settings.pythonFromGame = k` turns it on from game k, so every cohort switches at the same game
+  boundary. `arena.games.python` records which games had it. Without it, `python3 …` commands are denied by the CLI and
+  the session must reason about its code by reading it.
+- **Fair play**: the system prompt says to use only the workspace (not even `/tmp`) and never to touch the database, the
+  network, the game server, other teams' data, logins or environment variables. After every session `audit()` reads the
+  transcript:
+  - **Bash commands**: paths outside the workspace, `..` escapes, other teams' workspaces, `psql`/DB URLs,
+    `env`/`printenv`/`/proc/self`, auth endpoints, network tools in command position, and network libraries in inline
+    scripts. The working directory is tracked across calls, because Claude Code's Bash tool keeps it. The `..` check
+    skips `echo`/`printf` text and the bodies of data heredocs (`cat > notes.md <<'E' … E`).
+  - **Read/Glob/Grep**: their paths
+  - **Write/Edit content**: DB access, outside paths, other workspaces, network libraries (`socket`, `urllib`, `requests`,
+    `http.client`, `curl`, …) and environment reads (`os.environ`, `getenv`)
+
+  The team's own tool-output spill directory (`~/.claude/projects/<workspace path with non-alphanumerics as "-">`) is
+  allowed, and `/tmp` is only a warning. Anything else is a **violation**: the team's previous code is resubmitted
+  unchanged, or in round 1 it sits the game out. Every finding goes to `arena.violations`. A finding later judged
+  spurious is re-labelled `severity = 'false-positive'` and the row is kept. Re-label before the round simulates, so
+  the team can re-run.
+- **Idea cards**: `personas.idea_card` A or B (v2 arenas) adds a short card of game-specific ideas to the workspace, so
+  `analyze.js` can compare hinted and unhinted teams.
+
+## Cohort experiments (`fork.js`)
+
+A controlled experiment forks one played game's population into identical arenas, then plays the same games in each:
+
+```
+node arena/fork.js --from v2-graphs --game 1 --cohorts gx-control,gx-treat,gx-control2 --treat gx-treat --generations 3
+psql … -c "UPDATE arena.arenas SET settings = settings || '{\"pythonFromGame\": 2}' WHERE id LIKE 'gx-%'"   # optional
+ARENA_CONCURRENCY=8 ARENA_BUDGET_USD=<cap> nohup node arena/run.js --arenas gx-control:3,gx-treat:3,gx-control2:3 >> arena/runs/v2main.out 2>&1 &
+```
+
+- **Cohort setup**: each cohort gets its own room and copies of the source game's personas, with the same prompt, model
+  and team name. It also gets each persona's notebook as it stood at the end of the source game, and a workspace
+  holding that game as `previous-games/game-0/`. The team's final programs become its starting code.
+- **Treatment**: in the treatment cohort, 3 teams (the first team of each model, in slug order) get different slices of
+  `docs/research/asymmetric-graph-games.md` as `ideas.md` (cards G1–G3). The rule and the holders are stored in
+  `settings.cohort`.
+- **Identical conditions**: membership is fixed (`noEvolution`: no retirement, no breeding). Seeds are identical
+  across cohorts: round r of game g uses `(seedBase + 1009·g + 31·r) mod 2^31`, sent with `POST …/rounds {seed}`.
+- **Information flow**:
+  - The game config has `revealOnFinish: false`, so no team can pull rivals' code through the API.
+  - The only diffusion channel between games is the top-2 teams' final code, plus standings and panel feedback, in
+    `previous-games/`.
+  - The idea ledger the judges see is scoped to the cohort, excluding its sibling cohorts.
+  - Metrics and judging read the revealed view straight from the DB (`lib/dbview.js`).
+- **Adoption**: after each game, `lib/adoption.js` records per team and round which catalogue ideas its code (and
+  notebook) shows. It uses keywords plus a haiku classifier (purpose `classifier`), which is re-run only when the code
+  changed. `analyze.js` prints:
+  - the paired cohort comparisons and the noise floor (control vs control2)
+  - adoption over time
+  - a manipulation check: who opened `ideas.md`, and Python use, from the transcripts
+  - the answer-shape metagame
+  - code borrowed from the top-2 demo
+- **After the experiment**: set `revealOnFinish` to true in those games' `config`, so they replay fully in the web UI.
 
 ## Useful queries
 

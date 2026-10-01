@@ -4,6 +4,10 @@
 import { all, pool } from "./lib/db.js";
 import { breederScores } from "./lib/population.js";
 import { spearman } from "./lib/metrics.js";
+import fs from "node:fs";
+import { demoBorrowing, gameRef, shapeCensus, transcriptStats } from "./lib/cohort.js";
+import { TRANSCRIPTS } from "./lib/workspace.js";
+globalThis.__fs = fs;
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((acc, a, i, arr) => { if (a.startsWith("--")) acc.push([a.slice(2), arr[i + 1]]); return acc; }, []));
 const WEB = process.env.ARENA_WEB || "http://localhost:4000";
@@ -255,6 +259,43 @@ if (cohortArenas.length) {
   }
   p("Adoption of catalogue ideas (teams whose code implements the idea per the haiku classifier; * = card holder or its twin; kw = teams whose code or notes mention it):");
   table(["cohort game.round", ...ideaIds], arow);
+  // Manipulation check and Python use, from the session transcripts.
+  const trow = [];
+  for (const a of cohortArenas) {
+    const ts = transcriptStats(TRANSCRIPTS, a.id);
+    for (const g of Object.keys(ts).map(Number).sort()) {
+      const o = ts[g], py = cgames.find((x) => x.arena_id === a.id && x.generation === g)?.python;
+      trow.push([`${a.id} g${g}`, py == null ? "-" : py ? "yes" : "no", o.sessions, o.pyRan, o.pySessions.size, o.pyDenied, [...o.cardReaders].map((s) => s + (holders[s] && a.settings.cohort.role === "treatment" ? "*" : "")).join(" ") || "-"]);
+    }
+  }
+  p("Sessions, Python and idea files (from transcripts; * = card holder):");
+  table(["cohort game", "python enabled", "sessions", "python cmds ran", "sessions running python", "python cmds denied", "teams that opened ideas.md / idea-card.md"], trow);
+  // Metagame: modal clover and orchid shapes in each game's last round (from the answers bees saw), per team.
+  const shapeRows = [];
+  const srcRef = await gameRef(cohortArenas[0].settings.cohort.forkOf.split("/")[0], Number(cohortArenas[0].settings.cohort.forkOf.split("-").pop()));
+  if (srcRef) { const cs = await shapeCensus(srcRef, srcRef.rounds, "clover"), os = await shapeCensus(srcRef, srcRef.rounds, "orchid");
+    shapeRows.push([`fork source g${srcRef.row.generation}.r${srcRef.rounds}`, ...slugs.map((s) => `${cs[s] ?? "-"} / ${os[s] ?? "-"}`)]); }
+  for (const g of gens) for (const a of cohortArenas) {
+    const G = await gameRef(a.id, g);
+    if (!G || !G.rounds) continue;
+    const cs = await shapeCensus(G, G.rounds, "clover"), os = await shapeCensus(G, G.rounds, "orchid");
+    shapeRows.push([`${a.id} g${g}.r${G.rounds}`, ...slugs.map((s) => `${cs[s] ?? "-"} / ${os[s] ?? "-"}`)]);
+  }
+  p("Metagame: modal clover / orchid answer shape in each game's last round (shares when below 90%; /degree, /index, /factors = label patterns):");
+  table(["game", ...slugs.map((s) => s + (holders[s] ? ` (${holders[s]} in treatment)` : ""))], shapeRows);
+  // Diffusion through the top-2 code demo.
+  const drow = [];
+  for (const a of cohortArenas) for (const g of gens) {
+    const G = await gameRef(a.id, g);
+    const P = g === 1 ? srcRef : await gameRef(a.id, g - 1);
+    if (!G || !P || !G.rounds) continue;
+    const d = await demoBorrowing(G, P);
+    const b = d.rows.filter((r) => r.borrowed);
+    drow.push([`${a.id} g${g}`, d.demo.join(", "), d.rows.length, f2(mean(d.rows.map((r) => r.before))), f2(mean(d.rows.map((r) => r.r1))), f2(mean(d.rows.map((r) => r.last))),
+      b.map((r) => `${r.slug}.${r.kind} ← ${r.from} (${f2(r.before)} → ${f2(Math.max(r.r1, r.last))})`).join("; ") || "-"]);
+  }
+  p("Diffusion through the top-2 code demo (token-shingle similarity of each non-demo program to the closest demo program of the same kind: before = own final code in the previous game; borrowed = up by > 0.25 to > 0.35):");
+  table(["cohort game", "demo (top 2 of previous game)", "programs", "mean sim before", "round 1", "last round", "borrowed"], drow);
 }
 
 // ---------- leaderboards (separately)

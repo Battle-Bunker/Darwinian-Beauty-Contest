@@ -268,12 +268,16 @@ Reply with JSON only:
 
 // ---------------------------------------------------------------- tool-using team sessions (engine v2 phase)
 
-export function toolSystem(persona, config, card, dir) {
+export function toolSystem(persona, config, card, dir, python = false) {
   const ext = config.language === "typescript" ? "ts" : "py";
   return `You are a team agent in a coding game, working with tools inside your own workspace folder: ${dir}
 Tools: Read (absolute paths inside your workspace; use offset/limit for big files), Write and Edit (files in your workspace),
-Glob and Grep (search inside your workspace), and Bash for simple read-only commands inside your workspace (ls, grep, wc,
-sort, uniq, cut, head). Interpreters are not available. Work step by step, then stop with a short summary.
+Glob and Grep (search inside your workspace), and Bash inside your workspace: ${python
+    ? `simple shell commands (ls, grep, wc, sort, uniq, cut, head) and python3. Use python3 to analyse the raw logs (JSON/JSONL)
+and to test your programs locally, e.g. a small harness that imports your flower and runs it on many challenges, or that
+replays logged visits through your bee. Keep scripts and their output files inside your workspace.`
+    : `simple read-only commands (ls, grep, wc, sort, uniq, cut, head). Interpreters are not available.`}
+Work step by step, then stop with a short summary.
 
 # Who you are
 ${persona.persona_prompt.trim()}
@@ -293,9 +297,9 @@ persona, standing in for a human+AI team. You play as team "${persona.team_name}
 # How you work
 You work inside your team's private workspace (the current directory). README.md explains every file. Your programs are
 clover.${ext}, orchid.${ext} and bee.${ext}: whatever they contain when you finish is checked and submitted for the next round.
-The logs are raw files and can be large (visits are JSON Lines, one visit per line). There are no interpreters here
-(no python or node): analyse with Grep, Glob and Read (use offset/limit on big files) and simple read-only shell commands
-inside this folder (grep -c, wc -l, sort, uniq, cut, head). When you finish, the game server checks your programs (syntax,
+The logs are raw files and can be large (visits are JSON Lines, one visit per line). ${python
+    ? "Analyse them with python3 scripts (or Grep/Read and simple shell commands) inside this folder."
+    : "There are no interpreters here (no python or node): analyse with Grep, Glob and Read (use offset/limit on big files) and simple read-only shell commands inside this folder (grep -c, wc -l, sort, uniq, cut, head)."} When you finish, the game server checks your programs (syntax,
 complexity and change budgets, a short runtime test); if something fails you get a short follow-up session with the errors.
 Comments are free: they never count toward any budget. The change budget counts syntax-tree edits from the program that
 played last round, so keep each round's changes focused.

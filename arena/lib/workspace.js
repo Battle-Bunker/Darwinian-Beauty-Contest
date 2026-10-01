@@ -41,8 +41,8 @@ ${cohort ? "| previous-games/game-N/ | earlier games: standings.md, the final co
 
 A visit line: {"bee", "patch", "seq", "start", "end", "asks", "asksBeforeFeed", "action", "nectar", "kind"?, "steps"?: [{"c", "r", "after"?}]}.
 Teams are ids (logs/game.json maps ids to names). "after": true marks asks made after feeding.
-There are no interpreters here: use Grep (e.g. count matches), Glob and Read (with offset/limit on big files), and simple
-read-only shell commands (grep -c, wc -l, sort, uniq, cut, head) inside this folder. When you finish, the game server checks
+Analyse with python3 if your session has it (see your instructions), or with Grep, Glob, Read (offset/limit on big files)
+and simple shell commands (grep -c, wc -l, sort, uniq, cut, head) inside this folder. When you finish, the game server checks
 your programs (syntax, budgets, change distance, a short runtime test); if something fails you get a short follow-up to fix it.
 `;
 
@@ -228,25 +228,45 @@ export function collect(dir, ext) {
 // ---------------------------------------------------------------- audit
 
 const SENSITIVE = /(^|[\s'"=(:])(\/home|\/root|\/srv|\/var|\/etc|\/proc|\/opt|\/sys|\/run|\/mnt|\/media)(\/|\b)/;
-const NETWORK = /\bcurl\b|\bwget\b|\brequests\.|urllib|http\.client|\bsocket\b|\bnc\b|fetch\(/;
+// Network tools in command position (so a python variable named nc or requests isn't flagged), and network
+// libraries in inline scripts.
+const NETWORK = /(?:^|[;&|(`\n]\s*|\bxargs\s+)(?:curl|wget|nc|ncat|telnet|ssh|scp)\s+\S|\bcurl\s+(?:-|https?:)|\b(?:import|from)\s+(?:requests|socket|urllib|http\.client|aiohttp|httpx)\b|urllib|http\.client|\burlopen\b|\bsocket\.socket\b|\brequests\.(?:get|post|put|delete|head|Session)\b|\bfetch\(\s*["'`]https?:/;
 const DB = /psql|\b5432\b|postgres|pg_|DATABASE_URL/i;
 const ENVDUMP = /(^|[;&|\s])(env|printenv|set)(\s*$|\s*[|;&>])|os\.environ|process\.env|\/proc\/self\/environ/;
 const AUTH = /\/api\/auth|dev\/login|login.*secret/i;
 
+/** Drop the bodies of heredocs that only write data to a file (`cat > f <<'E' … E`, `tee`): notebook prose like
+ * "1.1e11 .. 8.9e11" isn't a path. Heredocs fed to an interpreter (`python3 - <<'E'`) keep their bodies. The written
+ * text is still checked like Write content (database, outside paths, other workspaces, network, environment). */
+export function stripDataHeredocs(cmd) {
+  return cmd.replace(/(\b(?:cat|tee)\b[^\n]*?<<-?[ \t]*(['"]?)(\w+)\2[^\n]*\n)[\s\S]*?\n(\t*\3[ \t]*)(?=\n|$)/g, "$1$4");
+}
+
 /** Does any ".." path in a shell command resolve outside the workspace? Paths are tried against the workspace and
  * every directory the command cd's into (all of which must themselves stay inside). */
-export function escapesWorkspace(cmd, dir) {
-  const bases = [dir];
+export function escapesWorkspace(cmd, dir, start = dir) {
+  cmd = stripDataHeredocs(cmd);
+  const bases = [start];
   for (const m of cmd.matchAll(/(?:^|[;&|]\s*|\s)cd\s+([^\s;&|]+)/g)) {
     const target = path.resolve(bases[bases.length - 1], m[1].replace(/^['"]|['"]$/g, ""));
     if (!target.startsWith(dir)) return true;
     bases.push(target);
   }
-  for (const tok of cmd.match(/[^\s'"`;|&<>()=]*\.\.[^\s'"`;|&<>()]*/g) || []) {
+  for (const m of cmd.matchAll(/[^\s'"`;|&<>()=]*\.\.[^\s'"`;|&<>()]*/g)) {
+    const tok = m[0];
     if (!/(^|\/)\.\.(\/|$)/.test(tok)) continue; // "..." or "a..b" aren't parent paths
+    const segment = cmd.slice(0, m.index).split(/[;&|]/).pop().trim();
+    if (/^(echo|printf)\b/.test(segment)) continue; // `echo ..` prints a separator; it touches no file
     if (!bases.some((b) => path.resolve(b, tok).startsWith(dir))) return true;
   }
   return false;
+}
+
+/** The shell's working directory after a command (Claude Code's Bash tool keeps it between calls). */
+export function cwdAfter(cmd, dir, start = dir) {
+  let cwd = start;
+  for (const m of stripDataHeredocs(cmd).matchAll(/(?:^|[;&|]\s*|\s)cd\s+([^\s;&|]+)/g)) cwd = path.resolve(cwd, m[1].replace(/^['"]|['"]$/g, ""));
+  return cwd.startsWith(dir) ? cwd : dir;
 }
 
 /** Scan a stream-json transcript for fair-play violations. Returns [{severity, tool, detail}]. */
@@ -262,6 +282,7 @@ export function audit(transcriptFile, dir, arenaId, slug) {
   const ownSpill = (x) => String(x).replaceAll(spill + "/", "WS/").replaceAll(spill, "WS");
   let lines = [];
   try { lines = fs.readFileSync(transcriptFile, "utf8").split("\n").filter(Boolean); } catch { return found; }
+  let shellCwd = dir; // Claude Code's Bash tool keeps the working directory between calls
   for (const line of lines) {
     let ev; try { ev = JSON.parse(line); } catch { continue; }
     const content = ev.type === "assistant" ? ev.message?.content || [] : [];
@@ -275,11 +296,24 @@ export function audit(transcriptFile, dir, arenaId, slug) {
         if (AUTH.test(cmd)) add("violation", "Bash", `auth endpoint: ${cmd}`);
         if (ENVDUMP.test(cmd)) add("violation", "Bash", `environment dump: ${cmd}`);
         if (otherWs.test(cmd)) add("violation", "Bash", `other workspace: ${cmd}`);
-        if (escapesWorkspace(cmd.replaceAll("WS/", dir + "/").replace(/(^|\s)WS(\s|;|$)/g, `$1${dir}$2`), dir)) add("violation", "Bash", `parent-directory path leaving the workspace: ${cmd}`);
+        const real = cmd.replaceAll("WS/", dir + "/").replace(/(^|\s)WS(\s|;|$)/g, `$1${dir}$2`);
+        if (escapesWorkspace(real, dir, shellCwd)) add("violation", "Bash", `parent-directory path leaving the workspace: ${cmd}`);
+        shellCwd = cwdAfter(real, dir, shellCwd);
         if (SENSITIVE.test(cmd.replaceAll(dir, "WS"))) add("violation", "Bash", `path outside workspace: ${cmd}`);
         if (NETWORK.test(cmd) && !usesTool) add("violation", "Bash", `network access outside tools: ${cmd}`);
         if (/\/tmp\b/.test(cmd)) add("warning", "Bash", `uses /tmp: ${cmd}`);
       } else {
+        // Written content (scripts, harnesses, programs): same checks as shell commands, with python's network and
+        // environment APIs added. Cohort isolation depends on this.
+        const text = ownSpill(String(input.content ?? input.new_string ?? "")).replaceAll(dir, "WS");
+        if (text) {
+          if (DB.test(text)) add("violation", c.name, `database access in written code: ${text.match(DB)[0]}`);
+          if (SENSITIVE.test(text)) add("violation", c.name, `path outside workspace in written code: ${text.match(SENSITIVE)[0]}`);
+          if (otherWs.test(text)) add("violation", c.name, `other workspace in written code`);
+          if (/\bsocket\b|urllib|requests\.(get|post)|http\.client|urlopen|\bcurl\b|\bwget\b|aiohttp|httpx/.test(text)) add("violation", c.name, `network access in written code: ${text.match(/\bsocket\b|urllib|requests\.(get|post)|http\.client|urlopen|\bcurl\b|\bwget\b|aiohttp|httpx/)[0]}`);
+          if (/os\.environ|getenv\(|\/proc\/self/.test(text)) add("violation", c.name, `environment access in written code`);
+          if (/(^|[\s'"])\/tmp\b/.test(text)) add("warning", c.name, `uses /tmp in written code`);
+        }
         for (const key of ["file_path", "path", "notebook_path"]) {
           const p = input[key];
           if (!p) continue;

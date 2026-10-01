@@ -209,12 +209,13 @@ export function extractTag(text, tag) {
 // saved for auditing. Same limiter, cost ledger and usage-limit pause as callModel.
 const SESSION_PATH = ["/opt/node22/bin", "/usr/local/bin", "/usr/bin", "/bin"].join(":");
 
-function runSessionCli({ model, cwd, appendSystem, prompt, maxTurns, maxBudgetUsd, transcriptFile, timeoutMs }) {
+function runSessionCli({ model, cwd, appendSystem, prompt, maxTurns, maxBudgetUsd, transcriptFile, timeoutMs, python = true }) {
   return new Promise((resolve) => {
     const args = ["-p", "--model", model, "--tools", "Bash,Read,Write,Edit,Glob,Grep", "--permission-mode", "acceptEdits",
       // The user explicitly approved a Python interpreter for team agents (this container is isolated and
       // disposable), so they can analyse raw logs and test programs with scripts, not just grep/sort.
-      "--allowedTools", "Bash(python3:*)", "Bash(python:*)",
+      // `python: false` keeps a game interpreter-free (cohort experiment: switched on for every cohort at the same game).
+      ...(python ? ["--allowedTools", "Bash(python3:*)", "Bash(python:*)"] : []),
       "--max-turns", String(maxTurns), "--output-format", "stream-json", "--verbose", "--no-session-persistence",
       // A full system prompt (not appended): Claude Code's default one advertises an auto-memory directory under
       // ~/.claude/projects/ (outside the workspace, next to the other teams'), plus env and cwd details.
@@ -250,7 +251,7 @@ function runSessionCli({ model, cwd, appendSystem, prompt, maxTurns, maxBudgetUs
  * Run one tool-using session. Returns { text, cost, turns, subtype, isError, ms }.
  * Usage-limit failures pause the runner and the session is re-run unchanged after resume (not an attempt).
  */
-export async function runSession({ model, cwd, appendSystem, prompt, maxTurns = 30, maxBudgetUsd = null, transcriptFile, timeoutMs = 40 * 60_000, ctx = {} }) {
+export async function runSession({ model, cwd, appendSystem, prompt, maxTurns = 30, maxBudgetUsd = null, transcriptFile, timeoutMs = 40 * 60_000, python = true, ctx = {} }) {
   if (!MODELS.includes(model)) throw new Error("unknown model " + model);
   for (let hold = 0; ; hold++) {
     await waitIfPaused();
@@ -260,7 +261,7 @@ export async function runSession({ model, cwd, appendSystem, prompt, maxTurns = 
     const t0 = Date.now();
     let r;
     try {
-      r = await runSessionCli({ model, cwd, appendSystem, prompt, maxTurns, maxBudgetUsd, transcriptFile: hold ? transcriptFile.replace(/\.jsonl$/, `.hold${hold}.jsonl`) : transcriptFile, timeoutMs });
+      r = await runSessionCli({ model, cwd, appendSystem, prompt, maxTurns, maxBudgetUsd, python, transcriptFile: hold ? transcriptFile.replace(/\.jsonl$/, `.hold${hold}.jsonl`) : transcriptFile, timeoutMs });
     } finally {
       release();
     }

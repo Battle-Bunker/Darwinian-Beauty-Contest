@@ -227,6 +227,17 @@ async function analyseGame(arena, generation, { ownerTok, gameRow, gPath, entrie
   return view;
 }
 
+/** Cohort games: (re)run the adoption classifier when a restart cut it short (it runs after the metrics are stored). */
+async function classifyIfIncomplete(arena, { gameRow, entries }, log) {
+  const have = (await one("SELECT count(*)::int AS n FROM arena.adoption WHERE game_id = $1 AND method = 'llm'", [gameRow.id])).n;
+  const played = entries.filter((e) => !e.sat_out).length * (gameRow.config?.rounds || 5);
+  if (have >= played) return;
+  const view = await fullView((await Api.view(null, gamePath(arena.room_short_id, gameRow.game_short_id), "none")).game.id);
+  const teamToPersona = Object.fromEntries(entries.filter((e) => view.participants.includes(e.team_id)).map((e) => [e.team_id, e.persona_id]));
+  log(`  adoption classification incomplete (${have}/${played}); re-running`);
+  await classifyGame({ arena, gameRow, view, teamToPersona, log });
+}
+
 async function socialEvaluation(arena, generation, ctx, log) {
   const { gameRow, gPath } = ctx;
   const entries = await all("SELECT * FROM arena.entries WHERE game_id = $1 AND NOT sat_out", [gameRow.id]);
@@ -304,6 +315,7 @@ async function runArena(id, presetName, generations) {
       if (!atLeast(ctx.gameRow.stage, "played")) await playGame(arena, gen, ctx, log);
       ctx.gameRow = await one("SELECT * FROM arena.games WHERE id = $1", [ctx.gameRow.id]);
       if (!ctx.gameRow.metrics) await analyseGame(arena, gen, ctx, log);
+      else if (arena.settings.cohort) await classifyIfIncomplete(arena, ctx, log); // a restart during classification
       await socialEvaluation(arena, gen, ctx, log);
       await evolve(arena, gen, gen === generations, ctx.gameRow, log);
       const s = await spend(id);

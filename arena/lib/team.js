@@ -188,9 +188,12 @@ export async function playTurnTools(ctx) {
   const { arena, gameRow, persona, entry, gPath, roundNo, log } = ctx;
   const tok = await login(entry.login_name);
   const { dir, ext, view, card } = await prepareWorkspace({ arena, gameRow, persona, entry, gPath, roundNo });
+  await q("UPDATE arena.games SET python = $2 WHERE id = $1 AND python IS DISTINCT FROM $2", [gameRow.id, arena.settings.pythonFromGame ? gameRow.generation >= arena.settings.pythonFromGame : true]);
   const config = view.game.config;
   const lim = SESSION_LIMITS[persona.model];
-  const system = toolSystem(persona, config, card, dir);
+  // Python in sessions: on, except for cohort games before settings.pythonFromGame (same boundary in every cohort).
+  const python = arena.settings.pythonFromGame ? gameRow.generation >= arena.settings.pythonFromGame : true;
+  const system = toolSystem(persona, config, card, dir, python);
   const prev = roundNo > 1 ? view.myTeam?.previous || {} : {};
   let cost = 0, failures = [], disqualified = false;
   const submitted = new Set();
@@ -204,7 +207,7 @@ export async function playTurnTools(ctx) {
     let s;
     try {
       s = await runSession({
-        model: persona.model, cwd: dir, appendSystem: system, maxTurns, maxBudgetUsd: attempt ? lim.usd / 3 : lim.usd, transcriptFile: transcript,
+        model: persona.model, cwd: dir, appendSystem: system, maxTurns, python, maxBudgetUsd: attempt ? lim.usd / 3 : lim.usd, transcriptFile: transcript,
         prompt: roundBrief({ view, entry, generation: gameRow.generation, roundNo, maxTurns, ext, fix, cohort: !!arena.settings.cohort,
           hasIdeas: !!arena.settings.cohort && roundNo === 1 && gameRow.generation === 1 && /^G\d$/.test(persona.idea_card || "") }),
         ctx: { purpose: attempt ? "team-fix" : "team-session", arenaId: arena.id, gameId: gameRow.id, personaId: persona.id },

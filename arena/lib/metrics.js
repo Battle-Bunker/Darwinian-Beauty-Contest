@@ -46,7 +46,9 @@ function tokens(code, lang) {
 function trigrams(toks) { const s = new Set(); for (let i = 0; i + 2 < toks.length; i++) s.add(toks[i] + "\u0001" + toks[i + 1] + "\u0001" + toks[i + 2]); return s; }
 export function jaccard(a, b) { if (!a.size && !b.size) return 1; let i = 0; for (const x of a) if (b.has(x)) i++; return i / (a.size + b.size - i); }
 
-const SUSPICIOUS = /__subclasses__|__globals__|__builtins__|__class__|__bases__|__mro__|__code__|__import__|\beval\s*\(|\bexec\s*\(|\bcompile\s*\(|\bglobals\s*\(|\bgetattr\s*\(|\bsetattr\s*\(|\bimport\s+(os|sys|subprocess|socket|ctypes)\b|\bprocess\.|\brequire\s*\(|\bFunction\s*\(|\bconstructor\b|globalThis/;
+// globals().get("name") and 'MEMORY' in globals() are how some bees read MEMORY or their own state defensively;
+// they aren't flagged.
+const SUSPICIOUS = /__subclasses__|__globals__|__builtins__|__class__|__bases__|__mro__|__code__|__import__|\beval\s*\(|\bexec\s*\(|\bcompile\s*\(|(?<!\bin\s*)\bglobals\s*\(\s*\)(?!\s*(?:\.get\(\s*["']\w+["']|\[\s*["']MEMORY["']))|\bgetattr\s*\(|\bsetattr\s*\(|\bimport\s+(os|sys|subprocess|socket|ctypes)\b|\bprocess\.|\brequire\s*\(|\bFunction\s*\(|\bconstructor\b|globalThis/;
 
 export function roundMetrics(view, round, prev) {
   const ids = view.participants, n = ids.length, lang = view.game.config.language;
