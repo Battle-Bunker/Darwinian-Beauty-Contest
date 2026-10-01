@@ -57,7 +57,7 @@ async function validate(tok, g, kind, code, config) {
     const bad = (t.results || []).filter((r) => r.error);
     if (bad.length) errors.push(`runtime test: ${bad.slice(0, 3).map((r) => `flower(${JSON.stringify(r.c).slice(0, 40)}) -> ${r.error}`).join("; ")}`);
   }
-  return { kind, code, errors, chars: check.chars, distance: check.distance, minified: check.minified };
+  return { kind, code, errors, size: check.size, unit: check.unit, distance: check.distance, minified: check.minified };
 }
 
 async function beeRuntime(tok, g, code, flowers) {
@@ -147,7 +147,7 @@ export async function playTurn(ctx) {
       if (!code.trim()) { if (roundNo === 1) failures.push({ kind, code, errors: [`${kind}.${ext} is empty`] }); continue; }
       const v = await validate(tok, gPath, kind, code, config);
       if (kind === "bee" && !v.errors.length) v.errors.push(...(await beeRuntime(tok, gPath, code, Object.keys(good).length ? good : undefined)));
-      checks.push({ kind, chars: v.chars, distance: v.distance, errors: v.errors });
+      checks.push({ kind, size: v.size, unit: v.unit, distance: v.distance, errors: v.errors });
       if (v.errors.length) { failures.push(v); if (v.minified) writeMinified(dir, ext, kind, v.minified); continue; }
       const r = await Api.submit(tok, gPath, kind, code);
       if (r.submitted) { submitted.add(kind); if (kind !== "bee") good[kind] = code; }

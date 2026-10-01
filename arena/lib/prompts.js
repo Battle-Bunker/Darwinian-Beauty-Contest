@@ -12,6 +12,19 @@ const codeBlock = (lang, code) => "```" + (lang === "typescript" ? "ts" : "pytho
 
 // ---------------------------------------------------------------- team agents
 
+/** The game's size unit, and how size and change are measured, in the players' words (config.complexity). */
+export const unitOf = (config) => (config.complexity === "nodes" ? "nodes" : "characters");
+export const sizeText = (config) => config.complexity === "nodes"
+  ? `Size is measured in nodes of your program's syntax tree after the game minifies it: comments, spacing and the lengths of names ` +
+    `you define are free, and every literal (a string or a number) counts one node per byte.`
+  : `Size is measured in characters after the game minifies your program: comments, spacing and the lengths of names you define ` +
+    `are free; strings, numbers and keywords count character by character.`;
+const changeMeasureText = (config) => config.complexity === "nodes"
+  ? `A change is measured on the minified programs too, as a tree edit: inserting or deleting a node costs its weight, and a changed ` +
+    `literal costs its byte-level edit (renames, comments and spacing are free).`
+  : `A change is measured on the minified programs too: the characters inserted, deleted or replaced between last round's minified ` +
+    `program and the new one (renames, comments and spacing are free).`;
+
 /** What every team agent is told about its situation, in one paragraph (for the breeders). */
 export const FRAME_SUMMARY = `Every team agent is told: it is one team in a tournament of games (where the arena has selection, teams that keep doing
 badly are removed and replaced); after every game it is interviewed by a panel of 10-14-year-old players who score understanding,
@@ -61,11 +74,9 @@ clover.${ext}, orchid.${ext} and bee.${ext}. When you finish, the ones you may c
 checked and submitted; the others play unchanged. The logs are raw files and can be large (visits are JSON Lines, one visit per
 line). The game server checks your programs (syntax, size and change budgets, a short runtime test); if something fails you get
 a short follow-up session with the errors.
-Size is measured after the game minifies your program: comments, spacing and the lengths of names you define are free, so write
-readable code; strings (docstrings included) and numbers count character by character. A change is measured the same way: the
-characters inserted, deleted or replaced between last round's minified program and the new one (renames, comments and spacing
-are free). Your programs run in minified form, so error messages refer to the minified program (a failing program's minified
-version is saved next to it as <kind>.minified.${ext}).
+${sizeText(config)} So write readable code, and keep prose in comments (docstrings are strings).
+${changeMeasureText(config)} Your programs run in minified form, so error messages refer to the minified program (a failing
+program's minified version is saved next to it as <kind>.minified.${ext}).
 
 # Fair play (breaking these disqualifies your team for the round)
 - Use only the files in this workspace. Do not read, list or write any other directory (not even /tmp).
@@ -128,11 +139,9 @@ export const NOTICES = {
   program's own compute budget per call, in milliseconds; a flower that runs out of time gives no answer.
 - The server no longer stores one answer per challenge per round: every ask runs the flower again, so the same challenge
   can get a different answer each time.
-- Program size is now measured in characters after the game minifies your program: comments, spacing and the lengths of
-  names you define are free; keywords, strings and numbers count character by character. Budgets are in those characters
-  (the numbers are in config.json).
+- ${sizeText(config)} Budgets are in those ${unitOf(config)} (the numbers are in config.json).
 - Games have ${config.rounds} rounds. After round 1 the three programs take turns to change, one per round: ${turnsText(config.rounds)}.
-  A change is measured in characters of the minified programs.
+  ${changeMeasureText(config)}
 - Programs run in minified form, so names don't exist at runtime. A bee keeps only its top-level variable keep from one
   round to the next: MEMORY[k] is the value keep had at the end of round k+1 (read-only). Bees that read named variables
   from MEMORY must change; round 1 of this game allows full rewrites.`,
@@ -153,12 +162,12 @@ export const examplesNotice = (files) => `Shared examples: every team in this ga
 const listKinds = (ks) => ks.length > 1 ? `${ks.slice(0, -1).join(", ")} and ${ks[ks.length - 1]}` : ks[0];
 
 /** Which program may change before this round, as neutral rule text. `nextTurns`: {kind: next round it may change}. */
-export function changeText(roundNo, changeable, budgets, nextTurns = {}) {
+export function changeText(roundNo, changeable, budgets, nextTurns = {}, unit = "characters") {
   if (roundNo === 1) return `Before round 1 you write all three programs (no change budget, only the size budgets).`;
   const locked = KINDS.filter((k) => !changeable.includes(k));
   const next = locked.filter((k) => nextTurns[k]).map((k) => `your ${k}'s next turn is before round ${nextTurns[k]}`);
   return `Before round ${roundNo} it is your ${listKinds(changeable)}'s turn to change (change budget: ` +
-    changeable.map((k) => `${budgets[k].changes} characters`).join(", ") + `). Your ${listKinds(locked)} ${locked.length > 1 ? "are" : "is"} locked ` +
+    changeable.map((k) => `${budgets[k].changes} ${unit}`).join(", ") + `). Your ${listKinds(locked)} ${locked.length > 1 ? "are" : "is"} locked ` +
     `and play${locked.length > 1 ? "" : "s"} round ${roundNo} unchanged${next.length ? `; ${next.join(", ")}` : ""}. ` +
     `(After round 1 the three programs take turns to change, one per round.)`;
 }
@@ -194,7 +203,7 @@ export function roundBrief({ view, entry, generation, roundNo, maxTurns, ext, fi
       `logs/game.json (scores and ledgers), memory/round-${last.no}.txt (what your bee kept). Your program files are exactly what played ` +
       `round ${last.no}.\n\nScoreboard after round ${last.no}:\n${sb}`);
   }
-  parts.push(changeText(roundNo, changeable, c.budgets, nextTurns));
+  parts.push(changeText(roundNo, changeable, c.budgets, nextTurns, unitOf(c)));
   if (restored.length) parts.push(`Last round you edited ${files(restored)} while ${restored.length > 1 ? "they were" : "it was"} locked: ` +
     `those edits were not submitted, and the file${restored.length > 1 ? "s were" : " was"} restored to the version that played.`);
   if (roundNo === 1) parts.push(logsText(c));

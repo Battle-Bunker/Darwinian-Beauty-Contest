@@ -85,7 +85,8 @@ export async function prepareWorkspace({ arena, gameRow, persona, entry, gPath, 
     `rules: ${(it.types.rules || []).join(" ")}\n\nclover and orchid:\n${it.flower}\n\nbee:\n${it.bee}\n`);
   const turns = view.game.turns ?? config.turnsPerFlower * 2 * n;
   write(path.join(dir, "config.json"), json({ ...config, teams: n, flowers: 2 * n, turns_per_round: turns, file_extension: ext,
-    game: gameRow.generation, next_round: roundNo, may_change_before_next_round: view.game.changeable, all_visits_public: !!config.publicLogs, your_team: entry.team_name, sample_challenges: sampleFor(config) }));
+    game: gameRow.generation, next_round: roundNo, may_change_before_next_round: view.game.changeable, all_visits_public: !!config.publicLogs,
+    size_unit: config.complexity === "nodes" ? "nodes" : "characters", your_team: entry.team_name, sample_challenges: sampleFor(config) }));
   write(path.join(dir, "notebook.md"), (await one("SELECT notebook FROM arena.personas WHERE id = $1", [persona.id])).notebook || "");
 
   // Current programs: exactly what played last round (the change budget is measured against these).

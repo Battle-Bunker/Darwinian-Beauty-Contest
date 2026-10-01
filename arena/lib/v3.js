@@ -9,7 +9,7 @@
 //     shape, size and edge count as a rival clover's answer to that challenge, without being an exact copy)
 //   - non-determinism: flowers seen giving different answers to the same challenge within a round; code using
 //     random, the clock or GAME["ms"]
-//   - turn dynamics: the kind whose turn it was, how many teams changed it and by how many characters; clover and
+//   - turn dynamics: the kind whose turn it was, how many teams changed it and by how much (in the game's size unit); clover and
 //     orchid answer-style turnover (modal answer shape differs from the previous round)
 //   - compute use against budget (round_programs.compute: every call counts under v3)
 //   - markers of the example ideas in code (Paley clique chain, graceful labelling)
@@ -109,7 +109,7 @@ export async function v3RoundStats(G) {
       const ks = Object.keys(style).filter((k) => k.startsWith(kind + "|") && lastStyle[k]);
       turnover[kind] = ks.length ? ks.filter((k) => style[k] !== lastStyle[k]).length / ks.length : null;
     }
-    // The turn: which kind could change, how many teams changed it, by how many characters.
+    // The turn: which kind could change, how many teams changed it, by how much (in the game's size unit).
     const turnKinds = r.round_no === 1 ? KINDS : changeable(r.round_no);
     const pr = progs.filter((p) => p.round_no === r.round_no);
     const changedProgs = r.round_no > 1 ? pr.filter((p) => turnKinds.includes(p.kind) && !p.carried_over && (p.distance ?? 0) > 0) : [];

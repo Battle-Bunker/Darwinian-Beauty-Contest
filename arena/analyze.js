@@ -351,7 +351,7 @@ for (const [experiment, cohortArenas] of Object.entries(cohortGroups)) {
       "non-det. clovers · orchids", "clovers using random/time/ms", "clover compute", "orchid compute", "Paley c/o/b", "graceful c/o/b"], vrow);
     p("Dynamism per round:");
     p("- turn: the kind that could change before the round");
-    p("- teams / chars: teams that changed it, and their mean change in the game's size unit");
+    p("- teams changed / mean change: teams that changed it, and their mean change in the game's size unit");
     p("- style turnover: share of clovers / orchids whose modal answer shape differs from the round before");
     p("- rank τ: per-round ranks vs the round before (lower = more churn)");
     p();

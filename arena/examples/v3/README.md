@@ -55,5 +55,3 @@ programs were running at the same time. "Best orchid" is the strongest 50 ms orc
 each puzzle: the same search with every speed-up we found, using 80% of its budget. "Clover code as an
 orchid" is the example clover's own code run with an orchid's 50 ms. "Clover, 1.5× slower machine" is the
 clover with its budget cut to 100 ms. A timeout gives no answer at all, and none happened in these runs.
-Bigger answers took longer to check. The harness is `analysis/calibrate-examples.mjs` in the game's
-repository.
