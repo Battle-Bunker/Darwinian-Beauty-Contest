@@ -209,3 +209,88 @@ export function ideaCard(card, responseType) {
   signals.`;
   return null;
 }
+
+// ---------------------------------------------------------------- cohort experiment cards (int→graph[any])
+// Three different slices of docs/research/asymmetric-graph-games.md, scattered across 3 of the 6 treatment teams.
+const CARD_HEAD = `# Ideas some players are exploring (optional: use, adapt or ignore them)
+
+Some players think puzzles like these could make flower answers that are hard to fake: the flower does an expensive
+search for challenge n, and a bee does a cheap check of how good the answer is.
+`;
+export const COHORT_CARDS = {
+  G1: CARD_HEAD + `
+## The skeleton
+| Part | Role |
+|---|---|
+| Challenge n | Drawn unpredictably from a huge range. |
+| Instance | Mathematics expands n into a large instance. |
+| Certificate | The graph the solver submits. |
+| Verifier | Checks validity and computes the score with short nested loops. |
+
+## Recipe A: a quasi-random object indexed by n, plus a classic hard optimisation
+Take a deterministic but random-looking mathematical object that changes with n, and pose a well-known hard task on it
+(clique, crossing minimisation, Hamiltonian cycle).
+
+## Paley clique hunt (strong wall)
+- Instance: p = the first prime ≥ n with p ≡ 1 (mod 4). Two numbers in 0…p−1 are friends if their difference is a
+  perfect square mod p.
+- Task: find the largest group of mutual friends. Certificate: the group (a clique).
+- Verify and score: score = group size; for each pair, one modular power checks that the difference is a square.
+- Why it's hard: Paley graphs look random but aren't; their clique numbers are an open problem. The graph has p vertices
+  but is never written down: only the clique's vertices are touched.
+- CS ideas: greedy search, backtracking, branch and bound, modular arithmetic, symmetry.
+
+## Scoring: "how far can you get"
+Score = the size of the largest valid object (or the longest valid prefix): find a clique of size s, place m marks,
+colour 1…L. The score rises one step at a time, each step gets steeply harder near the limit, and checking stays a short
+nested loop.
+`,
+  G2: CARD_HEAD + `
+## Recipe B: a famous extremal problem, plus constraints written by n
+Start from an extremal combinatorics problem where near-optimal objects are notoriously hard to find, and let n impose
+constraints (banned distances, the equation to avoid, the shape to label). Without the constraints, solutions are fixed
+public objects anyone can look up; with them, a solution prepared in advance almost certainly breaks one of n's rules.
+
+## Golomb ruler with forbidden distances (strong wall)
+- Instance: write n in binary; if bit d is 1, distance d is banned.
+- Task: place as many marks as possible on a stick of length L so that all pairwise distances are different and none is
+  banned. Certificate: the mark positions (as a graph: the complete graph on the marks, all edge lengths distinct).
+- Verify and score: score = number of marks; the verifier checks every pair.
+- Why it's hard: each new optimal Golomb ruler took volunteers years to find.
+- CS ideas: bitmasks, sets for distinctness, backtracking with pruning.
+
+## Schur colouring with n's equation (strong wall)
+- Instance: n picks the coefficients of an equation such as a·x + b·y = z.
+- Task: colour 1, 2, 3, … with k colours so that no solution of the equation is all one colour; get as far as possible.
+  Certificate: the colouring.
+- Verify and score: score = how far the colouring reaches; the verifier checks every pair.
+- Why it's hard: for plain x + y = z with 5 colours, the limit of 160 took a huge computer proof. (A few equation
+  families have known 2-colour formulas: use 4+ colours or avoid them.)
+- CS ideas: greedy colouring, backtracking, constraint propagation.
+`,
+  G3: CARD_HEAD + `
+## Prime necklace (hardness unknown)
+- Instance: the numbers n+1 … n+N.
+- Task: arrange them in a circle so that as many neighbouring pairs as possible add up to a prime. Certificate: the cycle.
+- Verify and score: score = number of prime-sum neighbours (N primality tests).
+- Notes: only odd + even sums can be prime (parity); good cycle-search methods exist, so it may turn out easy.
+
+## Gracefully label the tree that *is* n (hardness uncertain)
+- Instance: write n in base N; its N−2 digits are a Prüfer code, which corresponds to exactly one tree on N vertices.
+- Task: label the vertices 0…N−1 so that the edge differences |a−b| are all different. Certificate: the labelled tree.
+- Verify and score: score = number of distinct edge differences (N−1 is perfect).
+- CS ideas: Prüfer decoding, tree traversal, backtracking, local search.
+
+## Cleverness vs work
+- Craft problems: good algorithms keep paying off, so the score measures skill and effort together.
+- Wall problems: cleverness pays up to a known barrier; past it nobody knows a shortcut, so high scores mainly measure
+  effort. The best puzzles have a cleverness zone followed by a brute-force wall.
+
+## Pitfalls
+- Problems solvable in polynomial time (spanning trees, shortest paths, matching) have no work gradient: the optimum is
+  cheap. Still useful as building blocks.
+- Problems with no input have fixed answers that can be reused: let n write the constraints.
+- Flattening near the top: when strong heuristics get close to optimal quickly, the score measures craft, not effort.
+- Nearby n give similar instances (Prüfer codes, bitmasks don't scramble anything): harmless only while n is unpredictable.
+`,
+};
