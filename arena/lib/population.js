@@ -27,7 +27,7 @@ async function history(arenaId) {
     SELECT e.persona_id, g.generation, e.fitness, e.fitness_rank, e.social, e.social_rank, e.sat_out,
            (SELECT count(*)::int FROM arena.entries e2 WHERE e2.game_id = e.game_id) AS n
       FROM arena.entries e JOIN arena.games g ON g.id = e.game_id
-     WHERE g.arena_id = $1 AND (e.fitness IS NOT NULL OR e.sat_out)
+     WHERE g.arena_id = $1 AND (e.fitness IS NOT NULL OR e.sat_out) AND g.contaminated IS NULL
      ORDER BY g.generation DESC`, [arenaId]);
   const h = {};
   // Sitting a game out (no valid programs) counts as last place on both axes.
@@ -92,12 +92,13 @@ export async function breederScores() {
   const rows = await all(`
     SELECT p.breeder_id, p.id AS persona_id, p.status, e.fitness_rank, e.social_rank,
            (SELECT count(*)::int FROM arena.entries e2 WHERE e2.game_id = e.game_id) AS n
-      FROM arena.personas p JOIN arena.entries e ON e.persona_id = p.id
-     WHERE p.breeder_id IS NOT NULL AND e.fitness IS NOT NULL AND e.social IS NOT NULL`);
+      FROM arena.personas p JOIN arena.entries e ON e.persona_id = p.id JOIN arena.games g ON g.id = e.game_id
+     WHERE p.breeder_id IS NOT NULL AND e.fitness IS NOT NULL AND e.social IS NOT NULL AND g.contaminated IS NULL`);
   const out = {};
   for (const b of BREEDERS) {
     const rs = rows.filter((r) => r.breeder_id === b.id);
-    const spawns = await one("SELECT count(*)::int AS n, count(*) FILTER (WHERE status = 'retired')::int AS retired FROM arena.personas WHERE breeder_id = $1", [b.id]);
+    // "displaced" = swapped back out after an outage-caused retirement was reversed: not the spawn's fault.
+    const spawns = await one("SELECT count(*)::int AS n, count(*) FILTER (WHERE status = 'retired' AND retire_reason NOT LIKE 'displaced%')::int AS retired FROM arena.personas WHERE breeder_id = $1", [b.id]);
     const fit = rs.map((r) => pct(r.fitness_rank, r.n)), soc = rs.map((r) => pct(r.social_rank, r.n));
     const m = (a) => (a.length ? a.reduce((s, x) => s + x, 0) / a.length : null);
     out[b.id] = { ...b, games: rs.length, spawns: spawns.n, retired: spawns.retired, fitPct: m(fit), socPct: m(soc), score: rs.length ? (m(fit) + m(soc)) / 2 : null };
@@ -155,8 +156,16 @@ const slugify = (s) => String(s).toLowerCase().normalize("NFKD").replace(/[^a-z0
 /** Breed one persona into an open slot. Returns the new persona row. */
 export async function breed(arena, generation, slot, log) {
   const scores = await breederScores();
-  const bid = pickBreeder(scores);
-  const b = BREEDERS.find((x) => x.id === bid);
+  const first = pickBreeder(scores);
+  // If the drawn breeder fails (e.g. invalid JSON twice), the others get a turn rather than crashing the arena.
+  for (const bid of [first, ...BREEDERS.map((b) => b.id).filter((id) => id !== first)]) {
+    try { return await breedWith(BREEDERS.find((x) => x.id === bid), scores, arena, generation, slot, log); }
+    catch (e) { if (e instanceof BudgetError) throw e; log(`  ${e.message}; trying another breeder`); }
+  }
+  throw new Error("no breeder produced a valid persona");
+}
+
+async function breedWith(b, scores, arena, generation, slot, log) {
   const prompt = breederPrompt({
     arena, config: arena.settings.config, population: await populationText(arena), records: await recordsText(),
     ideas: await loadLedger(), exemplars: await exemplarsText(arena), slot,

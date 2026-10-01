@@ -12,7 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { Api, ApiError, gamePath, login } from "./lib/api.js";
 import { ARENA_DIR, all, migrate, one, pool, q } from "./lib/db.js";
-import { BudgetError, llmStats, setArenaCap, spend } from "./lib/llm.js";
+import { BudgetError, PAUSE_FILE, SessionLimitError, isPaused, llmStats, setArenaCap, spend, waitIfPaused } from "./lib/llm.js";
 import { storeMetrics } from "./lib/gamemetrics.js";
 import { FOUNDERS } from "./lib/personas.js";
 import { breed, decideRetirements, retire, seedBreeders } from "./lib/population.js";
@@ -108,6 +108,7 @@ async function setupGame(arena, generation, log) {
                                    AND NOT EXISTS (SELECT 1 FROM arena.personas r WHERE r.replaced = p.id) ORDER BY retired_after DESC`, [arena.id]);
       for (const r of retired.slice(0, missing)) await breed(arena, generation - 1, { model: r.model, replacing: r.name, replacingId: r.id, reason: r.retire_reason }, log);
     }
+    await waitIfPaused();
     const g = await Api.createGame(ownerTok, arena.room_short_id, arena.settings.config);
     await q("INSERT INTO arena.games (arena_id, generation, game_short_id, game_url, config) VALUES ($1,$2,$3,$4,$5)",
       [arena.id, generation, g.shortId, g.url, arena.settings.config]);
@@ -173,6 +174,7 @@ async function playGame(arena, generation, { ownerTok, gameRow, gPath, entries }
       }
     }));
     const tAgents = Date.now() - t0;
+    await waitIfPaused(); // games don't advance while paused
     await Api.runRound(ownerTok, gPath);
     view = await Api.view(ownerTok, gPath);
     const rd = view.rounds[r - 1];
@@ -260,10 +262,8 @@ async function evolve(arena, generation, isLast, gameRow, log) {
 async function runArena(id, presetName, generations) {
   const log = logger(id);
   let arena = await ensureArena(id, presetName, generations);
-  if (arena.settings.generations !== generations) {
-    arena.settings.generations = generations;
-    await q("UPDATE arena.arenas SET settings = $2, status = 'running' WHERE id = $1", [id, arena.settings]);
-  }
+  arena.settings.generations = generations;
+  await q("UPDATE arena.arenas SET settings = $2, status = 'running' WHERE id = $1", [id, arena.settings]);
   setArenaCap(id, arena.settings.budgetUsd);
   log(`arena ${id} (${arena.preset}): room ${arena.room_url}, ${generations} generations`);
   try {
@@ -282,7 +282,10 @@ async function runArena(id, presetName, generations) {
     await q("UPDATE arena.arenas SET status = 'done' WHERE id = $1", [id]);
     log(`arena ${id} finished`);
   } catch (e) {
-    if (e instanceof BudgetError) {
+    if (e instanceof SessionLimitError) {
+      await q("UPDATE arena.arenas SET status = 'stopped-limit' WHERE id = $1", [id]);
+      log(`STOPPED (account session limit): ${e.message}`);
+    } else if (e instanceof BudgetError) {
       await q("UPDATE arena.arenas SET status = 'stopped-budget' WHERE id = $1", [id]);
       log(`STOPPED: ${e.message}`);
     } else {
@@ -293,6 +296,7 @@ async function runArena(id, presetName, generations) {
 }
 
 async function main() {
+  if (isPaused()) console.log(`[arena] starting PAUSED (${PAUSE_FILE} exists): games resume from the database once it is deleted`);
   await migrate();
   await seedJudges();
   await seedBreeders();

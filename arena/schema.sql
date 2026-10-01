@@ -198,3 +198,5 @@ ALTER TABLE arena.entries ADD COLUMN IF NOT EXISTS sat_out boolean NOT NULL DEFA
 -- primed: round-1 prompts showed the old shared starter code; post-primed: no starters, but the arena's
 -- history (recaps, notebooks) began primed; unprimed: arena never saw starter code.
 ALTER TABLE arena.games ADD COLUMN IF NOT EXISTS condition text;
+-- Games hit by an outage (e.g. the account session limit): excluded from metrics, leaderboards and selection.
+ALTER TABLE arena.games ADD COLUMN IF NOT EXISTS contaminated text;

@@ -77,12 +77,39 @@ function runCli({ model, system, prompt, effort, timeoutMs }) {
   });
 }
 
-function classify(r) {
+// ---------- usage limits: pause, then resume by hand ----------
+// Account-level limits ("You've hit your session limit · resets 3:10am (UTC)") are shared with other sessions,
+// so the runner PAUSES: it writes arena/runs/PAUSED, starts no new calls, and holds every call that comes back
+// limit-failed (not an attempt, not a failure, nothing recorded as a result) until a person deletes the file.
+// Creating the file by hand pauses the runner too. In-flight calls finish normally.
+export const PAUSE_FILE = process.env.ARENA_PAUSE_FILE || path.join(ARENA_DIR, "runs", "PAUSED");
+export const USAGE_LIMIT = /session limit|usage limit|limit\s*·\s*resets|hit your .{0,20}limit|resets \d{1,2}(:\d\d)?\s*(am|pm)|\b429\b|rate.?limit/i;
+export function classify(r) {
   const j = r.json;
-  const text = `${j?.result ?? ""} ${r.err ?? ""} ${j?.api_error_status ?? ""}`.toLowerCase();
-  const rate = /rate.?limit|429|overloaded|529|too many requests|usage limit/.test(text);
-  return { rate, msg: (j?.result || r.err || `exit ${r.code}`).toString().slice(0, 500) };
+  const text = `${j?.result ?? ""} ${r.err ?? ""} ${j?.api_error_status ?? ""}`;
+  const limit = USAGE_LIMIT.test(text);
+  const overloaded = !limit && /overloaded|\b529\b|too many requests/i.test(text);
+  return { limit, overloaded, msg: (j?.result || r.err || `exit ${r.code}`).toString().slice(0, 500) };
 }
+
+export const isPaused = () => fs.existsSync(PAUSE_FILE);
+/** Enter the paused state (idempotent): write the pause file and log one line. */
+export function pause(msg) {
+  if (isPaused()) return;
+  try { fs.writeFileSync(PAUSE_FILE, `${new Date().toISOString()}\n${msg}\n`); } catch {}
+  console.log(`[arena] PAUSED: usage limit hit (${String(msg).replace(/\s+/g, " ").slice(0, 200)}). Resume: rm ${path.relative(process.cwd(), PAUSE_FILE) || PAUSE_FILE}`);
+}
+let waitingLogged = false;
+/** Block while the pause file exists (polled every 30 s). Used before every call and before every round. */
+export async function waitIfPaused(pollMs = 30_000) {
+  if (!isPaused()) return;
+  if (!waitingLogged) { waitingLogged = true; console.log(`[arena] paused: waiting for ${PAUSE_FILE} to be deleted`); }
+  while (isPaused()) await sleep(pollMs);
+  if (waitingLogged) { waitingLogged = false; console.log(`[arena] RESUMED (pause file removed)`); }
+}
+
+// Kept for older imports; the runner no longer halts on usage limits, it pauses.
+export class SessionLimitError extends BudgetError {}
 
 /**
  * Call a model. Returns { text, cost, usage, ms, model }.
@@ -90,11 +117,13 @@ function classify(r) {
  */
 export async function callModel({ model, system, prompt, effort = null, timeoutMs = 12 * 60_000, retries = 3, ctx = {} }) {
   if (!MODELS.includes(model)) throw new Error("unknown model " + model);
-  let lastErr = null;
+  let lastErr = null, waits = 0;
   for (let attempt = 0; attempt <= retries; attempt++) {
+    await waitIfPaused();
     await checkBudget(ctx.arenaId);
     while (Date.now() < coolUntil) await sleep(coolUntil - Date.now() + Math.random() * 2000);
     await acquire();
+    if (isPaused()) { release(); attempt--; continue; } // paused while queued: hold it
     const t0 = Date.now();
     let r;
     try {
@@ -108,18 +137,22 @@ export async function callModel({ model, system, prompt, effort = null, timeoutM
     const usage = j?.usage || {};
     const resolved = j?.modelUsage ? Object.keys(j.modelUsage).join(",") : null;
     const ok = !!j && !j.is_error && typeof j.result === "string" && j.result.trim().length > 0;
-    const { rate, msg } = ok ? { rate: false, msg: null } : classify(r);
+    const { limit, overloaded, msg } = ok ? { limit: false, overloaded: false, msg: null } : classify(r);
+    // Cost ledger only (not evaluation data). Limit-held calls are marked so they're easy to tell apart.
     await q(
       `INSERT INTO arena.llm_calls (model, resolved, purpose, arena_id, game_id, persona_id, cost_usd, input_tokens, output_tokens, cache_read, cache_write, duration_ms, ok, error)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
       [model, resolved, ctx.purpose || "other", ctx.arenaId || null, ctx.gameId || null, ctx.personaId || null, cost,
         usage.input_tokens ?? null, usage.output_tokens ?? null, usage.cache_read_input_tokens ?? null, usage.cache_creation_input_tokens ?? null,
-        ms, ok, msg]).catch((e) => console.error("ledger insert failed", e.message));
+        ms, ok, limit ? `[held: usage limit] ${msg}` : msg]).catch((e) => console.error("ledger insert failed", e.message));
     if (ok) return { text: j.result, cost, usage, ms, model: resolved };
+    if (limit) { pause(msg); attempt--; continue; } // not an attempt: re-issued unchanged after resume
     lastErr = msg;
-    const backoff = rate ? 60_000 * (attempt + 1) : 5_000 * 3 ** attempt;
-    if (rate) coolUntil = Math.max(coolUntil, Date.now() + backoff);
-    console.error(`[llm] ${model} ${ctx.purpose} ${ctx.personaId || ""} failed (attempt ${attempt + 1}${rate ? ", rate-limited" : ""}): ${msg?.slice(0, 200)}`);
+    // Overloads get a cool-down that doesn't use up attempts (up to ~1 hour); other errors back off 5s, 15s, 45s.
+    if (overloaded && waits < 12) { waits++; attempt--; }
+    const backoff = overloaded ? Math.min(5 * 60_000, 60_000 * waits) : 5_000 * 3 ** Math.max(0, attempt);
+    if (overloaded) coolUntil = Math.max(coolUntil, Date.now() + backoff);
+    console.error(`[llm] ${model} ${ctx.purpose} ${ctx.personaId || ""} failed (${overloaded ? `overloaded, cool-down ${waits}` : `attempt ${attempt + 1}`}): ${msg?.slice(0, 200)}`);
     await sleep(backoff);
   }
   throw new Error(`model call failed after ${retries + 1} attempts: ${lastErr}`);
