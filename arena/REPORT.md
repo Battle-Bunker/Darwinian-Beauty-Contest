@@ -11,6 +11,7 @@ the `arena` schema. Links are paths on any server that shares the `dbc` database
 The key findings below are from phase 1 (engine v1, summarised logs). Phase 2 is in two later sections:
 - §14 covers engine v2: tool-using teams with raw files and Python, and no Fable models.
 - §15 covers the int→graph[any] cohort experiment with the asymmetric-graph-games catalogue.
+- §16 corrects §15: most bee discrimination comes from fingerprinting, not certificate checks.
 
 ## Key findings
 
@@ -778,13 +779,14 @@ where Python arrived, so the two can't be separated. What got copied decided eac
 
 | cohort | game 1: Mallory's clover (same persona, prompt and seeds) | then | game 3 ecology |
 |---|---|---|---|
-| **gx-control** | "show your homework": a star of the challenge's prime factors (hard to make, easy to check) | Luna copies it. Mallory turns it into a "factor necklace", then **a knight's tour by Warnsdorff's rule** checked with Pythagoras (`(Δrow)² + (Δcol)² == 5`). Kenji builds the prime necklace. Bees verify certificates: Kenji checks necklaces, Luna multiplies factors and tests primality, Mallory checks knight moves | **certificates.** Precision 0.73 → 0.84 → **0.87** and nectar per turn 0.063 → 0.104 → **0.121**, the highest of any cohort game. Fitness σ 0.73 → 0.27 → **0.11**. **Rosa (sonnet) won**, the only non-opus win among 14 v2 games |
-| **gx-treat** | "the painted necklace": a ring with secret SHA-256 paint | Theo and Grace copy Kenji's ring with hashed secret shortcuts, and Rosa copies Mallory's painted ring | **hash-keyed secret rings**: unforgeable but uncheckable, so trust rests on fingerprints in MEMORY. Precision 0.71 → 0.73 → 0.74. Orchids imitating their own clover rose from 1 to 9 of 30 team-rounds. 2 stasis rounds |
+| **gx-control** | "show your homework": a star of the challenge's prime factors (hard to make, easy to check) | Luna copies it. Mallory turns it into a "factor necklace", then **a knight's tour by Warnsdorff's rule** checked with Pythagoras (`(Δrow)² + (Δcol)² == 5`). Kenji builds the prime necklace. Some bees check certificates: Kenji checks necklaces, Luna multiplies factors and tests primality, Mallory checks knight moves. But the sharpest bees fingerprint instead (§16) | **certificates on show, fingerprints doing the work.** Precision 0.73 → 0.84 → **0.87** and nectar per turn 0.063 → 0.104 → **0.121**, the highest of any cohort game. Fitness σ 0.73 → 0.27 → **0.11**. **Rosa (sonnet) won**, the only non-opus win among 14 v2 games |
+| **gx-treat** | "the painted necklace": a ring with secret SHA-256 paint | Theo and Grace copy Kenji's ring with hashed secret shortcuts, and Rosa copies Mallory's painted ring | **hash-keyed secret rings**: no rival can check or forge them, but they are easy to recognise. A bee asks the same number every visit and remembers which answers paid (§16). Precision 0.71 → 0.73 → 0.74. Orchids imitating their own clover rose from 1 to 9 of 30 team-rounds. 2 stasis rounds |
 | **gx-control2** | "the friendship party": guests with numbers, edges where the numbers share a factor, gcd edge labels | Grace copies it. Theo joins nodes whose labels sum to a prime | **mixed, then locked.** Orchids imitating their own clover rose from 4 to **15 of 30** team-rounds: the v1 secret-handshake equilibrium is back. Precision fell 0.72 → 0.70 → 0.67. 3 stasis rounds (ranks frozen, little change) |
 
-Certificates did perform:
-- **For the ecosystem, more than for their authors.** Bees that verify certificates cut wasted feeds, so everyone ate
-  more and the leaders' edge vanished. Mallory and Kenji scored 1.06 and 1.05 in control game 3, against 1.22–1.33
+Certificates did perform, but less than this table first suggested. §16 shows that the precision here came mostly from
+fingerprinting bees, not from certificate checks:
+- **For the ecosystem, more than for their authors.** Wasted feeds fell, so everyone ate more and the leaders' edge
+  vanished. Mallory and Kenji scored 1.06 and 1.05 in control game 3, against 1.22–1.33
   elsewhere.
 - **Almost no clover spends compute.** The cohort's mean clover compute rose only from 2% to 4% of the budget, even
   there.
@@ -848,6 +850,56 @@ Certificates did perform:
 | adoption classifier (haiku, 199 calls) | $6.07 |
 | phase 2 total (v2 arenas, pilots, cohorts) | **$135.62**, ledger $384.29 against the $448.67 cap |
 
+## 16. Correction: how bees actually tell clovers from orchids (fingerprint and taste)
+
+§15 called gx-control a certificate ecology and said hash-keyed rings "can't be checked". Both overstate. Re-reading the
+visits (`node analysis/fingerprint-bees.mjs`):
+
+**Bees mostly don't judge answers. They recognise flowers.**
+- Most bees ask the same handful of challenges every visit, all game. Rosa's game-3 bee asked **one** number 1,845
+  times.
+- A flower is a pure function, so its answer to that number is a stable **face**.
+- The bee tastes each new face once: "feed once to test. Paid: keep feeding. Didn't pay: leave." MEMORY keeps the
+  verdict across rounds.
+
+This is reputation by identity. It needs no costly signal: any deterministic answer works, hashed or not, and the
+probe costs 1 test feed per orchid face, 5 turns out of ~1,000.
+
+**It beats checking rules.** Game 3, rival patches only:
+
+| cohort | bees with fixed probes (≥ 99% repeated asks) | rival clover fed | rival orchid fed | bees with fresh challenges | rival clover fed | rival orchid fed |
+|---|---|---|---|---|---|---|
+| gx-control | Rosa, Kenji, Mallory, Grace | 0.86–0.99 | 0.02–0.12 | Luna, Theo | 0.92, 0.66 | 0.45, 0.44 |
+| gx-treat | Kenji, Mallory, Rosa (Grace faced twins) | 0.89–0.99 | 0.05–0.09 | Luna, Theo | 0.59, 0.65 | 0.57, 0.62 |
+
+**Luna's certificate check never fired on a rival in game 3.** Her bee verifies factor stars: the labels multiply to
+the challenge and are all prime. No rival flower ever answered with a valid star, so her rival feeds came from coarse
+shape tallies, another form of reputation.
+
+**Nobody stole a face.** In game 3 of every cohort, 0% of orchid visits answered exactly as a rival clover did.
+- Orchids did read rivals' probes from their flower logs: 11 orchid programs hard-code a rival bee's 6–9-digit probe.
+- They used them defensively. In gx-treat, Kenji's and Mallory's orchids are **twins**: exact copies of their own clover, which a
+  pure-function bee cannot tell apart. Both learned that Rosa's bee tastes a twin face once and, if the orchid served
+  it, blacklists their clover too. So for Rosa's probe alone, the twin shows a different face.
+- Twins are fingerprinting's natural counter. In gx-control2, 60% of the rival orchids Grace's bee visited were
+  twins, and it fed rival orchids at 0.40.
+
+**The replay attack is open.** Stealing a face takes three steps:
+1. Read a rival bee's probe from your own flower logs.
+2. Have your bee ask that probe at every flower and record which answers paid.
+3. Hard-code the paying answer in your orchid.
+
+The orchid would then spend the victim clover's reputation, which is the user's cross-mimicry hypothesis applied to
+faces. Rotating the probe each round defeats it, because an orchid is fixed for the round. Rosa did rotate in
+gx-treat; she didn't need to in gx-control.
+
+**Storage loophole.** The complexity budget counts AST nodes, and a literal costs the same however long it is:
+- a 50,000-character string: 15 nodes for the whole program, the same as a 2-character one
+- a 5,000-digit integer: 1 node
+
+Programs may be 100,000 characters, so a flower can carry a ~100 KB lookup table for a handful of nodes. Nobody used
+it, but it makes a large replay table nearly free.
+
 ## Most interesting games
 
 1. [/room/T/game/W](/room/T/game/W) baseline gen 2: primed lock-in, starter clovers with secret handshakes, one team
@@ -862,7 +914,8 @@ Certificates did perform:
    target one weak team's clover
 7. [/room/W/game/M](/room/W/game/M) strdark gen 2: flowers answering rivals' secret knocks, learned from revealed code
 8. [/room/8/game/V4](/room/8/game/V4) graphs gen 4: structure-testing bees and rare graph forgeries
-9. [/room/2/game/4](/room/2/game/4) gx-control game 3: certificate ecology (factor necklace, knight's tour, prime
-   necklace) with bees that verify; precision 0.87, and Rosa (sonnet) wins
+9. [/room/2/game/4](/room/2/game/4) gx-control game 3: certificates everywhere (factor necklace, knight's tour, prime
+   necklace), yet the winner is Rosa (sonnet), whose bee checks none of them. It asks one secret number all game and
+   remembers which answers paid (§16)
 10. [/room/K0/game/T](/room/K0/game/T) gx-control2 game 3: the same start relapses into secret handshakes; 15 of 30
     orchids copy their own clover
