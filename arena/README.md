@@ -181,8 +181,11 @@ claude -p --model <m> --tools Bash,Read,Write,Edit,Glob,Grep --permission-mode a
   The team's own tool-output spill directory (`~/.claude/projects/<workspace path with non-alphanumerics as "-">`) is
   allowed, and `/tmp` is only a warning. Anything else is a **violation**: the team's previous code is resubmitted
   unchanged, or in round 1 it sits the game out. Every finding goes to `arena.violations`. A finding later judged
-  spurious is re-labelled `severity = 'false-positive'` and the row is kept. Re-label before the round simulates, so
-  the team can re-run.
+  spurious is re-labelled `severity = 'false-positive'` and the row is kept.
+
+  To give a team its turn back, fix the detector and restart the runner before that round simulates. A disqualified
+  turn leaves no `agent_turns` row, so the restarted runner plays it again. Once the round has simulated, the
+  disqualification stands.
 - **Idea cards**: `personas.idea_card` A or B (v2 arenas) adds a short card of game-specific ideas to the workspace, so
   `analyze.js` can compare hinted and unhinted teams.
 
@@ -212,13 +215,16 @@ ARENA_CONCURRENCY=8 ARENA_BUDGET_USD=<cap> nohup node arena/run.js --arenas gx-c
   - Metrics and judging read the revealed view straight from the DB (`lib/dbview.js`).
 - **Adoption**: after each game, `lib/adoption.js` records per team and round which catalogue ideas its code (and
   notebook) shows. It uses keywords plus a haiku classifier (purpose `classifier`), which is re-run only when the code
-  changed. `analyze.js` prints:
+  changed. A restart during classification re-runs it on resume. `analyze.js` prints:
   - the paired cohort comparisons and the noise floor (control vs control2)
   - adoption over time
   - a manipulation check: who opened `ideas.md`, and Python use, from the transcripts
   - the answer-shape metagame
   - code borrowed from the top-2 demo
 - **After the experiment**: set `revealOnFinish` to true in those games' `config`, so they replay fully in the web UI.
+  For example: `UPDATE games SET config = jsonb_set(config, '{revealOnFinish}', 'true') WHERE id = ANY(<the cohort
+  games' uuids>) AND status = 'finished'`. Then `node arena/backfill.js --arena <cohort>` can recompute their metrics
+  from the API.
 
 ## Useful queries
 
