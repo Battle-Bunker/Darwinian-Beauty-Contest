@@ -1,12 +1,14 @@
-// The garden: one patch (two identical flowers) per team and one bee per team, replaying a round's
-// visits on a shared turn clock. Public viewers never learn which flower in a patch a bee visited;
-// the patch owner (visit.kind present) and everyone after a reveal see the exact flower.
+// The garden: one patch per team (two flowers of different varieties: a daisy and a star) and one bee
+// per team, replaying a round's visits on a shared turn clock. Which variety is the clover, and which
+// side it's on, come from a stable hash of (game, team), so the picture carries no information.
+// Public viewers never learn which flower in a patch a bee visited; the patch owner (visit.kind
+// present) and everyone after a reveal see the exact flower and the clover/orchid labels.
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { GameView, Round, Team } from "../types";
 import { useElementWidth, storage } from "../hooks";
 import {
-  beeFrame, buildModel, layoutGarden, slot, tallies, FLOWER_DX, FLOWER_Y, TOP_PAD,
-  type BeeFrame, type Layout, type Model, type Pt,
+  beeFrame, buildModel, layoutGarden, patchLook, slot, tallies, FLOWER_DX, FLOWER_Y, TOP_PAD,
+  type BeeFrame, type Layout, type Model, type PatchLook, type Pt,
 } from "./gardenModel";
 import { DropIcon, FooledIcon, PauseIcon, PlayIcon, ReplayIcon } from "./Icons";
 import { TeamChip } from "./ui";
@@ -34,7 +36,8 @@ export function Garden({ view, round, start, rounds, onSelectRound }: {
 
   const [boxRef, width] = useElementWidth<HTMLDivElement>();
   const layout = useMemo(() => layoutGarden(order, width), [order, width]);
-  const model = useMemo(() => buildModel(round?.visits ?? [], round ? order : [], layout.pos), [round, order, layout]);
+  const looks = useMemo(() => Object.fromEntries(view.teams.map((t) => [t.id, patchLook(view.game.id, t.id)])), [view.teams, view.game.id]);
+  const model = useMemo(() => buildModel(round?.visits ?? [], round ? order : [], layout.pos, looks), [round, order, layout, looks]);
 
   // Playback clock, in turns.
   const [t, setT] = useState(() => (round && start === "end" ? endT : 0));
@@ -80,7 +83,7 @@ export function Garden({ view, round, start, rounds, onSelectRound }: {
   const n = model.n || order.length;
   const homes = useMemo(() => Object.fromEntries(order.map((id, i) => [id, layout.pos[id] ? slot(layout.pos[id], i, order.length) : { x: 0, y: 0 }])), [order, layout]);
   const frames: (BeeFrame & { teamId: string; index: number })[] = round
-    ? model.tracks.map((tr) => ({ ...beeFrame(tr, t, layout.pos, n, homes[tr.teamId]), teamId: tr.teamId, index: tr.index }))
+    ? model.tracks.map((tr) => ({ ...beeFrame(tr, t, layout.pos, n, homes[tr.teamId], looks), teamId: tr.teamId, index: tr.index }))
     : order.map((id, i) => ({ ...homes[id], flip: false, mode: "home" as const, pulse: 0, tilt: 0, teamId: id, index: i }));
   // Busy bees on top.
   frames.sort((a, b) => Number(a.mode !== "done" && a.mode !== "home") - Number(b.mode !== "done" && b.mode !== "home"));
@@ -116,7 +119,7 @@ export function Garden({ view, round, start, rounds, onSelectRound }: {
             const team = teamsById[id];
             if (!team || !layout.pos[id]) return null;
             const showKinds = view.game.revealed || id === myTeamId;
-            return <Patch key={id} team={team} p={layout.pos[id]} mine={id === myTeamId} showKinds={showKinds} dim={!round && !view.participants && !ready(team)} maxChars={Math.round(18 / fontScale)} />;
+            return <Patch key={id} team={team} look={looks[id]} p={layout.pos[id]} mine={id === myTeamId} showKinds={showKinds} dim={!round && !view.participants && !ready(team)} maxChars={Math.round(18 / fontScale)} />;
           })}
           {order.map((id) => {
             const p = layout.pos[id], pt = tally.patches[id];
@@ -210,39 +213,68 @@ const GardenBackdrop = memo(function GardenBackdrop({ layout }: { layout: Layout
   );
 });
 
-function FlowerShape({ x, color }: { x: number; color: string }) {
+type Variety = "daisy" | "star";
+
+const STAR_PETAL = "M0 -3 C 7 -8, 7 -17, 0 -22 C -7 -17, -7 -8, 0 -3 Z";
+
+/** One flower. The two varieties differ in petal shape, petal count and centre, both in the team's colour. */
+function FlowerShape({ x, color, variety }: { x: number; color: string; variety: Variety }) {
   return (
     <g transform={`translate(${x} 0)`}>
       <g className="flower">
-      <path d={`M0 20 C -3 6, 3 -12, 0 ${FLOWER_Y}`} className="stem" />
-      <ellipse cx="-7" cy="2" rx="8" ry="3.5" transform="rotate(-30 -7 2)" className="leaf" />
-      <ellipse cx="7" cy="-8" rx="8" ry="3.5" transform="rotate(30 7 -8)" className="leaf" />
-      <g transform={`translate(0 ${FLOWER_Y})`}>
-        {[0, 60, 120, 180, 240, 300].map((a) => (
-          <ellipse key={a} cx="0" cy="-11" rx="7.5" ry="11.5" transform={`rotate(${a})`} fill={color} className="petal" />
-        ))}
-        <circle r="7.5" className="flower-eye" />
-        <circle r="2" cx="-2" cy="-2" className="flower-eye-dot" />
-        <circle r="1.6" cx="2.5" cy="1.5" className="flower-eye-dot" />
-      </g>
+        <path d={`M0 20 C -3 6, 3 -12, 0 ${FLOWER_Y}`} className="stem" />
+        <ellipse cx="-7" cy="2" rx="8" ry="3.5" transform="rotate(-30 -7 2)" className="leaf" />
+        <ellipse cx="7" cy="-8" rx="8" ry="3.5" transform="rotate(30 7 -8)" className="leaf" />
+        <g transform={`translate(0 ${FLOWER_Y})`}>
+          {variety === "daisy" ? (
+            <>
+              {Array.from({ length: 12 }, (_, i) => i * 30).map((a) => (
+                <ellipse key={a} cx="0" cy="-11" rx="3.8" ry="10.5" transform={`rotate(${a})`} fill={color} className="petal" />
+              ))}
+              <circle r="7" className="flower-eye" />
+              <circle r="1.5" cx="-2.2" cy="-2" className="flower-eye-dot" />
+              <circle r="1.3" cx="2.4" cy="-1" className="flower-eye-dot" />
+              <circle r="1.3" cx="-0.5" cy="2.6" className="flower-eye-dot" />
+            </>
+          ) : (
+            <>
+              {[0, 72, 144, 216, 288].map((a) => (
+                <g key={a} transform={`rotate(${a + 36})`}>
+                  <path d={STAR_PETAL} fill={color} className="petal" />
+                  <path d="M0 -5 L0 -17" className="petal-vein" />
+                </g>
+              ))}
+              <circle r="5" className="star-eye" />
+              {[0, 72, 144, 216, 288].map((a) => (
+                <circle key={a} r="1.4" cx={6.6 * Math.sin((a * Math.PI) / 180)} cy={-6.6 * Math.cos((a * Math.PI) / 180)} className="star-stamen" />
+              ))}
+            </>
+          )}
+        </g>
       </g>
     </g>
   );
 }
 
-const Patch = memo(function Patch({ team, p, mine, showKinds, dim, maxChars }: { team: Team; p: Pt; mine: boolean; showKinds: boolean; dim: boolean; maxChars: number }) {
+const Patch = memo(function Patch({ team, look, p, mine, showKinds, dim, maxChars }: {
+  team: Team; look: PatchLook; p: Pt; mine: boolean; showKinds: boolean; dim: boolean; maxChars: number;
+}) {
   const name = team.name.length > maxChars ? team.name.slice(0, maxChars - 1) + "…" : team.name;
+  const left: Variety = look.daisyLeft ? "daisy" : "star";
+  const right: Variety = look.daisyLeft ? "star" : "daisy";
+  const cloverX = look.cloverLeft ? -FLOWER_DX : FLOWER_DX;
+  const cloverVariety = look.cloverLeft ? left : right;
   return (
     <g transform={`translate(${p.x} ${p.y})`} className={`patch ${dim ? "dim" : ""}`}>
-      <title>{`${team.name}'s patch: two flowers, a clover and an orchid. Which is which is secret.`}</title>
+      <title>{`${team.name}'s patch: one clover and one orchid.${showKinds ? ` The ${cloverVariety} is the clover.` : ""}`}</title>
       {mine && <ellipse cy={-12} rx={112} ry={84} className="patch-mine" />}
       <ellipse cy={24} rx={70} ry={15} className="soil" />
-      <FlowerShape x={-FLOWER_DX} color={team.color} />
-      <FlowerShape x={FLOWER_DX} color={team.color} />
+      <FlowerShape x={-FLOWER_DX} color={team.color} variety={left} />
+      <FlowerShape x={FLOWER_DX} color={team.color} variety={right} />
       {showKinds && (
         <>
-          <text x={-FLOWER_DX} y={30} className="kind-tag">clover</text>
-          <text x={FLOWER_DX} y={30} className="kind-tag">orchid</text>
+          <text x={cloverX} y={30} className="kind-tag">clover</text>
+          <text x={-cloverX} y={30} className="kind-tag">orchid</text>
         </>
       )}
       <text y={68} className="patch-label"><tspan fill={team.color} className="patch-label-dot">●</tspan> {name}</text>

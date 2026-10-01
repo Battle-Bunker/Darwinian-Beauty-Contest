@@ -44,7 +44,7 @@ export const TrophyIcon = ({ size, ...r }: P) => (
   <svg {...base(size, r)}><path d="M6 3h12v2h3v3a4 4 0 0 1-4 4h-.4A5 5 0 0 1 13 15.9V18h3v3H8v-3h3v-2.1A5 5 0 0 1 7.4 12H7a4 4 0 0 1-4-4V5h3zm0 4H5v1a2 2 0 0 0 1 1.7zm12 0v2.7A2 2 0 0 0 19 8V7z" fill="currentColor" /></svg>
 );
 
-/** The flower drawn in patches (also the logo). Both flowers in a patch use this exact drawing. */
+/** A small flower icon (logo, tabs, cards). The garden draws its own two varieties. */
 export function FlowerHead({ color, size = 22 }: { color: string; size?: number }) {
   return (
     <svg width={size} height={size} viewBox="-12 -12 24 24" aria-hidden>

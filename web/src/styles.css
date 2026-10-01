@@ -578,6 +578,9 @@ input[type="range"] { accent-color: var(--honey); }
 .petal { stroke: rgba(0, 0, 0, .3); stroke-width: 1; }
 .flower-eye { fill: #ffd166; stroke: #a86b00; stroke-width: 1.2; }
 .flower-eye-dot { fill: #a86b00; }
+.petal-vein { stroke: rgba(255, 255, 255, .55); stroke-width: 1.2; stroke-linecap: round; fill: none; }
+.star-eye { fill: #5a2a1a; stroke: #2b1208; stroke-width: 1; }
+.star-stamen { fill: #ffe08a; stroke: #8a5a00; stroke-width: .6; }
 .flower { animation: sway 6s ease-in-out infinite; transform-box: fill-box; transform-origin: 50% 100%; }
 @keyframes sway { 0%, 100% { transform: rotate(-2deg); } 50% { transform: rotate(2deg); } }
 .kind-tag { font: 800 11px var(--font-body); fill: #fff; text-anchor: middle; }

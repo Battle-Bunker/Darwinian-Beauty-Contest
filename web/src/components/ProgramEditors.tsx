@@ -10,7 +10,7 @@ import { showValue, timeAgo } from "../lib/format";
 
 const BLURB: Record<Kind, string> = {
   clover: "Your honest flower. Bees that feed here get nectar. flower(challenge) must always give the same response to the same challenge.",
-  orchid: "Your trickster. Bees that feed here get nothing, but your patch still earns the visit. Can it look like a clover?",
+  orchid: "Your trickster. Bees that feed here get nothing, but your patch still earns the visit. It can try to pass for any clover that bees trust: yours or another team's.",
   bee: "Your bee visits one flower at a time: ask questions, then feed or leave. Top-level variables last the whole round.",
 };
 

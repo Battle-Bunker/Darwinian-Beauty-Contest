@@ -59,12 +59,33 @@ export function slot(p: Pt, b: number, n: number): Pt {
   return { x: p.x + 94 * Math.cos(a), y: p.y + FLOWER_Y - 6 + 58 * Math.sin(a) };
 }
 
+/**
+ * How a team's patch is drawn, stable per (game, team) so every viewer sees the same picture. Two
+ * independent bits: which side the clover is on, and which variety (daisy or star) is on the left.
+ * Neither says anything about which flower is the clover unless you may know (owner, or revealed).
+ */
+export interface PatchLook { cloverLeft: boolean; daisyLeft: boolean }
+
+export function patchLook(gameId: string, teamId: string): PatchLook {
+  let h = 2166136261;
+  const key = `${gameId}:${teamId}`;
+  for (let i = 0; i < key.length; i++) h = Math.imul(h ^ key.charCodeAt(i), 16777619);
+  h = Math.imul(h ^ (h >>> 15), 2246822507);
+  h ^= h >>> 13;
+  return { cloverLeft: (h & 1) === 1, daisyLeft: (h & 2) === 2 };
+}
+
+/** x offset of a flower of this kind within its patch (0 = between the two, for viewers who can't know). */
+export function kindX(kind: string | undefined, look: PatchLook | undefined): number {
+  if (!look || (kind !== "clover" && kind !== "orchid")) return 0;
+  return (kind === "clover") === look.cloverLeft ? -FLOWER_DX : FLOWER_DX;
+}
+
 /** Where a feeding bee sits: on the flower if the viewer may know which one, else between the two. */
-export function landing(p: Pt, kind: string | undefined, b: number, n: number): Pt {
+export function landing(p: Pt, kind: string | undefined, b: number, n: number, look?: PatchLook): Pt {
   const s = slot({ x: 0, y: 0 }, b, n);
   const nudge = { x: s.x * 0.2, y: (s.y - FLOWER_Y + 6) * 0.15 };
-  const fx = kind === "clover" ? -FLOWER_DX : kind === "orchid" ? FLOWER_DX : 0;
-  return { x: p.x + fx + nudge.x, y: p.y + FLOWER_Y - 4 + nudge.y };
+  return { x: p.x + kindX(kind, look) + nudge.x, y: p.y + FLOWER_Y - 4 + nudge.y };
 }
 
 export interface Track {
@@ -104,7 +125,7 @@ export interface Model {
   n: number;
 }
 
-export function buildModel(visits: Visit[], beeOrder: string[], pos: Record<string, Pt>): Model {
+export function buildModel(visits: Visit[], beeOrder: string[], pos: Record<string, Pt>, looks: Record<string, PatchLook>): Model {
   const n = beeOrder.length;
   const tracks: Track[] = beeOrder.map((teamId, index) => ({
     teamId, index, visits: visits.filter((v) => v.bee === teamId).sort((a, b) => a.seq - b.seq),
@@ -114,7 +135,7 @@ export function buildModel(visits: Visit[], beeOrder: string[], pos: Record<stri
     for (const v of tr.visits) {
       if (v.action !== "feed" || !pos[v.patch]) continue;
       const t0 = feedResultAt(v);
-      effects.push({ t0, t1: t0 + Math.max(1.6, (v.end - askEnd(v)) * 0.55 + 0.6), at: landing(pos[v.patch], v.kind, tr.index, n), nectar: !!v.nectar, bee: v.bee, patch: v.patch });
+      effects.push({ t0, t1: t0 + Math.max(1.6, (v.end - askEnd(v)) * 0.55 + 0.6), at: landing(pos[v.patch], v.kind, tr.index, n, looks[v.patch]), nectar: !!v.nectar, bee: v.bee, patch: v.patch });
     }
   }
   effects.sort((a, b) => a.t0 - b.t0);
@@ -129,7 +150,7 @@ function bezier(a: Pt, b: Pt, u: number): Pt {
 }
 
 /** The bee's position and pose at time t (turns). */
-export function beeFrame(tr: Track, t: number, pos: Record<string, Pt>, n: number, home: Pt): BeeFrame {
+export function beeFrame(tr: Track, t: number, pos: Record<string, Pt>, n: number, home: Pt, looks: Record<string, PatchLook>): BeeFrame {
   const vs = tr.visits;
   const at = (teamId: string) => (pos[teamId] ? slot(pos[teamId], tr.index, n) : home);
   const faceTo = (p: Pt, patch: Pt | undefined) => (patch ? p.x > patch.x : false);
@@ -167,7 +188,7 @@ export function beeFrame(tr: Track, t: number, pos: Record<string, Pt>, n: numbe
     return { x: target.x, y: target.y + bob, flip: faceTo(target, patch), mode: "ask", pulse: Math.sin(Math.PI * Math.min(1, Math.max(0, frac))), tilt: 0, visit: v };
   }
   if (v.action === "feed") {
-    const land = landing(patch, v.kind, tr.index, n);
+    const land = landing(patch, v.kind, tr.index, n, looks[v.patch]);
     const q = (t - ae) / Math.max(0.01, v.end - ae);
     const p = q < 0.25 ? lerp(target, land, ease(q / 0.25)) : q > 0.85 ? lerp(land, target, ease((q - 0.85) / 0.15)) : land;
     return { x: p.x, y: p.y + (q > 0.25 && q < 0.85 ? Math.sin(t * 14) * 0.8 : 0), flip: faceTo(target, patch), mode: "feed", pulse: 0, tilt: 0, visit: v };
