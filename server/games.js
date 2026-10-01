@@ -6,7 +6,7 @@ import { allocatePrefixLen, normalizeCode, shortId, uuidToCode } from "./lib/sho
 import { DEFAULT_CONFIG, normalizeConfig } from "./lib/gameConfig.js";
 import { changeDistance, measure } from "./lib/ast.js";
 import { addLedgers, score, zeroLedger } from "./lib/scoring.js";
-import { starters } from "./lib/starters.js";
+import { programInterface } from "./lib/interface.js";
 import { KINDS, simulateRound, tryFlower } from "./engine.js";
 import { exampleValue, parseType } from "./lib/types.js";
 
@@ -209,7 +209,7 @@ export async function submitProgram(game, user, kind, code) {
 }
 
 /** Try a program without submitting it. Flowers: answer challenges. Bee: forage your own patch. */
-export async function tryProgram(game, user, kind, code, challenges) {
+export async function tryProgram(game, user, kind, code, challenges, flowers = {}) {
   const team = await myTeam(game.id, user.id);
   if (!team) fail(403, "Join a team first");
   if (!KINDS.includes(kind) || typeof code !== "string") fail(400, "kind and code required");
@@ -218,13 +218,17 @@ export async function tryProgram(game, user, kind, code, challenges) {
     const list = Array.isArray(challenges) && challenges.length ? challenges : [exampleValue(parseType(cfg.challengeType))];
     return tryFlower({ config: cfg, code, kind, challenges: list });
   }
-  // The bee forages a garden of just your own two flowers (latest submitted, else last round's, else starters).
+  // The bee forages a garden of just your own two flowers: the ones passed in, else your latest
+  // submissions, else last round's.
   const subs = (await query("SELECT kind, code FROM submissions WHERE game_id = $1 AND team_id = $2", [game.id, team.id])).rows;
   const prev = game.rounds_played ? await previousPrograms(game.id, team.id, game.rounds_played) : {};
-  const st = starters(cfg, team.id);
-  const pick = (k) => subs.find((s) => s.kind === k)?.code ?? prev[k] ?? st[k];
-  const result = await simulateRound({ config: cfg, teams: [{ id: team.id, programs: { clover: pick("clover"), orchid: pick("orchid"), bee: code } }], seed: 1 });
-  return { visits: result.visits, problems: result.problems[0], feeds: result.feeds[0][0], nectar: result.nectar[0][0] };
+  const pick = (k) => (typeof flowers?.[k] === "string" ? flowers[k] : null) ?? subs.find((s) => s.kind === k)?.code ?? prev[k];
+  const clover = pick("clover"), orchid = pick("orchid");
+  if (!clover || !orchid) fail(409, "Your bee needs flowers to visit: submit a clover and an orchid first (or pass them as flowers.clover / flowers.orchid)");
+  const result = await simulateRound({ config: cfg, teams: [{ id: team.id, programs: { clover, orchid, bee: code } }], seed: 1 });
+  // Same shape as the game view: team ids, plus which of your flowers it was.
+  const visits = result.visits.map((v) => ({ ...v, bee: team.id, patch: team.id, asks: v.steps.length }));
+  return { visits, problems: result.problems[0], feeds: result.feeds[0][0], nectar: result.nectar[0][0] };
 }
 
 // ---------- rounds ----------
@@ -382,7 +386,7 @@ export async function viewGame(room, game, user) {
       }])),
       previous: Object.fromEntries(KINDS.filter((k) => latestProg[mine.id]?.[k]).map((k) => [k, latestProg[mine.id][k].code])),
     } : null,
-    starters: starters(cfg, mine?.id ?? ""),
+    interface: programInterface(cfg),
     rounds: rounds.map((r) => ({
       no: r.round_no, startedAt: r.started_at, finishedAt: r.finished_at,
       feeds: r.feeds, nectar: r.nectar, scores: r.scores, totals: r.totals,

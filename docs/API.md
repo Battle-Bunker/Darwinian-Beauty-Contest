@@ -41,7 +41,7 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 | POST | `base/teams/join` | user | `{ joinCode }` | `{ id, name }` |
 | POST | `base/check` | team member | `{ kind, code }` | `{ ok, nodes, distance, errors[], budget }`. Validates without saving |
 | POST | `base/programs` | team member | `{ kind, code }` | same as check plus `submitted: true`; **422** with `errors` if over budget |
-| POST | `base/try` | team member | `{ kind, code, challenges? }` | flower: `{ results: [{c, r, error?}] }`. bee: forages your own patch: `{ visits, problems, feeds, nectar }` |
+| POST | `base/try` | team member | `{ kind, code, challenges?, flowers?: {clover, orchid} }` | flower: `{ results: [{c, r, error?}] }`. bee: forages your own patch (the `flowers` you pass, else your submissions, else last round's): `{ visits, problems, feeds, nectar }` |
 | POST | `base/rounds` | owner | | **202** `{ round }`. Runs in the background; add `?wait=1` to block until done |
 
 `kind` is `clover`, `orchid` or `bee`.
@@ -62,7 +62,8 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 }
 ```
 
-Types: `int`, `float`, `bool`, `str`, `list[T]`. Languages: `python`, `typescript`.
+Types: `int`, `float`, `bool`, `str`, `list[T]`, `tree[T]` (`{"value", "children"}`), `graph` and `digraph`
+(`{"nodes": n, "edges": [[a, b], ...]}` on nodes `0..n-1`). Languages: `python`, `typescript`.
 
 ### The game view
 
@@ -81,7 +82,8 @@ returns everything that has happened so far, filtered to what this viewer is all
   "myTeam": { "id", "name", "joinCode",
               "drafts":   { kind: { code, nodes, distance, submittedAt, submittedBy } },   // pending for next round
               "previous": { kind: code } } | null,                                       // what played last round
-  "starters": { "clover", "orchid", "bee" },       // starter code for this game's language and types
+  "interface": { "flower", "bee", "types": { "challenge", "response", "challengeMeans", "responseMeans", "rules": [..] } },
+                                                  // signatures + type rules only: no starter code, no example values
   "rounds": [{
     "no", "startedAt", "finishedAt",
     "feeds":  [[...]],  "nectar": [[...]],        // ledgers: row = bee team, column = patch team (participants order)

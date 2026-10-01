@@ -39,7 +39,7 @@ export function apiRouter() {
     const out = await G.submitProgram(req.game, req.user, req.body?.kind, req.body?.code);
     res.status(out.ok ? 200 : 422).json(out);
   }));
-  r.post(`${base}/try`, requireUser, wrap(async (req, res) => res.json(await G.tryProgram(req.game, req.user, req.body?.kind, req.body?.code, req.body?.challenges))));
+  r.post(`${base}/try`, requireUser, wrap(async (req, res) => res.json(await G.tryProgram(req.game, req.user, req.body?.kind, req.body?.code, req.body?.challenges, req.body?.flowers))));
   r.post(`${base}/rounds`, requireUser, wrap(async (req, res) => {
     const { round, done } = await G.startRound(req.room, req.game, req.user);
     if (req.query.wait) {

@@ -40,45 +40,62 @@ from the same seed. That means a flower can't count visitors or change its mind.
 
 ## What the challenge and response look like
 
-Each game sets a **challenge type** and a **response type**: `int`, `float`, `bool`, `str`, or lists
-like `list[int]`. The default is `int → int`. Strings and lists can be at most 64 long (the owner can
-change this). A response of the wrong type, a crash or a timeout reaches the bee as `None`/`null`.
+Each game sets a **challenge type** (what bees ask with) and a **response type** (what flowers
+answer with). Those types are all anyone knows at the start. **There is no starter code.** Every team
+invents its own flowers and bee from scratch. Round by round, the logs let you work out the rules
+other teams' flowers follow.
+
+| Type | Looks like |
+|---|---|
+| `int` | `42` (whole numbers within ±9007199254740991) |
+| `float` | `0.5` |
+| `bool` | `true` / `false` (`True` / `False` in Python) |
+| `str` | `"hello"` |
+| `list[T]` | `[1, 2, 3]` for `list[int]` |
+| `tree[T]` | `{"value": 1, "children": [{"value": 2, "children": []}]}`: every node has a value and a list of children |
+| `graph` | `{"nodes": 4, "edges": [[0, 1], [1, 2], [2, 3]]}`: nodes are numbered `0` to `nodes - 1`; edges join two nodes, either way round |
+| `digraph` | same shape as `graph`, but `[a, b]` is a one-way edge from `a` to `b` |
+
+The node numbers give a graph landmarks to measure from, such as how many steps it is from node `0`
+to node `1`, or to the last node, or how many neighbours node `0` has.
+
+Strings and lists can be at most 64 long, and trees and graphs at most 64 nodes (graphs at most 256
+edges, with no self-loops or repeated edges). The owner can change the 64. A response of the wrong
+type or shape, a crash or a timeout reaches the bee as `None`/`null`.
 
 ## The programs
+
+Each program is one function (two for the bee). Here are their shapes; what goes inside is up to you.
 
 ### Python
 
 ```python
-# clover.py and orchid.py: same shape, different behaviour
+# clover and orchid
 def flower(challenge):
-    return (challenge * 3 + 1) % 1000
+    ...  # return a value of the game's response type
 
-# bee.py
-memory = {}                    # top-level variables last for the whole round
-
+# bee
 def forage(seen, turns_left):
-    # seen = [[challenge, response], ...] for the flower in front of you (empty when it arrives)
-    if not seen:
-        return ["ask", 42]     # ask a challenge: 1 turn
-    if seen[0][1] == 127:
-        return "feed"          # feed: 5 turns, nectar only at a clover
-    return "leave"             # leave: free
+    # seen = [[challenge, response], ...] at the flower in front of you (empty when it arrives)
+    ...  # return ["ask", challenge] (1 turn), "feed" (GAME["feed_cost"] turns) or "leave" (free)
 
-def tasted(seen, nectar):      # optional: called right after you feed
-    memory[str(seen[0][1])] = nectar
+def tasted(seen, nectar):   # optional: called right after you feed; nectar is True or False
+    ...
 ```
+
+Top-level variables in the bee program last for the whole round. Use them to remember things.
 
 ### TypeScript
 
 ```ts
-function flower(challenge: number): number { return (challenge * 3 + 1) % 1000; }
+function flower(challenge: Challenge): Response
 
-function forage(seen: [number, number | null][], turnsLeft: number): ["ask", number] | "feed" | "leave" {
-  if (seen.length === 0) return ["ask", 42];
-  return seen[0][1] === 127 ? "feed" : "leave";
-}
-function tasted(seen: [number, number | null][], nectar: boolean): void {}
+function forage(seen: [Challenge, Response | null][], turnsLeft: number): ["ask", Challenge] | "feed" | "leave"
+function tasted(seen: [Challenge, Response | null][], nectar: boolean): void   // optional
 ```
+
+In TypeScript, `tree[T]` is `{ value: T; children: Tree<T>[] }` and a graph is
+`{ nodes: number; edges: [number, number][] }`.
 
 Every program can read a `GAME` dictionary/object: `turns`, `feed_cost`, `challenge_type`,
 `response_type`, `max_len`, and `flowers` (how many flowers are in the garden). It does **not** say

@@ -1,18 +1,27 @@
 // Challenge/response value types. A type is one of:
-//   int | float | bool | str | list[T]
-// Values travel as JSON. Limits keep every value small and JSON-safe.
+//   int | float | bool | str | list[T] | tree[T] | graph | digraph
+// Values travel as JSON. Limits keep every value small and JSON-safe; `maxLen` bounds the length of
+// strings and lists, the number of nodes in a tree or graph, and (×4) the number of graph edges.
+//
+//   tree[T]  {"value": T, "children": [tree[T], ...]}        a rooted tree with a value at every node
+//   graph    {"nodes": n, "edges": [[a, b], ...]}           undirected simple graph on nodes 0..n-1
+//   digraph  {"nodes": n, "edges": [[from, to], ...]}       directed simple graph on nodes 0..n-1
+// Node indices give patterns something to anchor on: degree of node 0, distance from 0 to 1 or to n-1...
 
 const MAX_INT = Number.MAX_SAFE_INTEGER;
 
 export function parseType(s) {
-  const t = String(s || "").replace(/\s+/g, "");
-  if (["int", "float", "bool", "str"].includes(t)) return { kind: t };
-  const m = t.match(/^list\[(.+)\]$/);
-  if (m) return { kind: "list", of: parseType(m[1]) };
-  throw new Error(`Unknown type "${s}" (use int, float, bool, str or list[T])`);
+  const t = String(s || "").replace(/\s+/g, "").toLowerCase();
+  if (["int", "float", "bool", "str", "graph", "digraph"].includes(t)) return { kind: t };
+  const m = t.match(/^(list|tree)\[(.+)\]$/);
+  if (m) return { kind: m[1], of: parseType(m[2]) };
+  throw new Error(`Unknown type "${s}" (use int, float, bool, str, list[T], tree[T], graph or digraph)`);
 }
 
-export const typeToString = (t) => (t.kind === "list" ? `list[${typeToString(t.of)}]` : t.kind);
+export const typeToString = (t) => (t.of ? `${t.kind}[${typeToString(t.of)}]` : t.kind);
+
+const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+const keysAre = (v, keys) => Object.keys(v).length === keys.length && keys.every((k) => k in v);
 
 /** Returns null when `v` fits type `t`, else a short reason. */
 export function checkValue(t, v, maxLen, path = "value") {
@@ -37,11 +46,56 @@ export function checkValue(t, v, maxLen, path = "value") {
         if (e) return e;
       }
       return null;
+    case "tree": {
+      let count = 0;
+      const walk = (node, p, depth) => {
+        if (!isObj(node) || !keysAre(node, ["value", "children"])) return `${p} must be {"value": ..., "children": [...]}`;
+        if (++count > maxLen) return `${path} has more than ${maxLen} nodes`;
+        if (depth > maxLen) return `${path} is deeper than ${maxLen}`;
+        const e = checkValue(t.of, node.value, maxLen, `${p}.value`);
+        if (e) return e;
+        if (!Array.isArray(node.children)) return `${p}.children must be a list`;
+        for (let i = 0; i < node.children.length; i++) {
+          const ce = walk(node.children[i], `${p}.children[${i}]`, depth + 1);
+          if (ce) return ce;
+        }
+        return null;
+      };
+      return walk(v, path, 1);
+    }
+    case "graph":
+    case "digraph": {
+      if (!isObj(v) || !keysAre(v, ["nodes", "edges"])) return `${path} must be {"nodes": n, "edges": [[a, b], ...]}`;
+      const n = v.nodes;
+      if (!Number.isInteger(n) || n < 0 || n > maxLen) return `${path}.nodes must be an int from 0 to ${maxLen}`;
+      if (!Array.isArray(v.edges)) return `${path}.edges must be a list`;
+      if (v.edges.length > 4 * maxLen) return `${path} has more than ${4 * maxLen} edges`;
+      const seen = new Set();
+      for (let i = 0; i < v.edges.length; i++) {
+        const e = v.edges[i];
+        if (!Array.isArray(e) || e.length !== 2 || !e.every((x) => Number.isInteger(x) && x >= 0 && x < n)) {
+          return `${path}.edges[${i}] must be [a, b] with nodes from 0 to ${n - 1}`;
+        }
+        if (e[0] === e[1]) return `${path}.edges[${i}] is a self-loop`;
+        const key = t.kind === "graph" ? [Math.min(...e), Math.max(...e)].join() : e.join();
+        if (seen.has(key)) return `${path}.edges[${i}] repeats an edge`;
+        seen.add(key);
+      }
+      return null;
+    }
   }
   return `${path}: unknown type`;
 }
 
-/** A simple valid example value, used by starter programs and docs. */
+/** A small valid value of the type: used as a default "try it" challenge and in docs. */
 export function exampleValue(t) {
-  return { int: 42, float: 0.5, bool: true, str: "hello" }[t.kind] ?? [exampleValue(t.of)];
+  switch (t.kind) {
+    case "int": return 7;
+    case "float": return 0.5;
+    case "bool": return true;
+    case "str": return "hello";
+    case "list": return [exampleValue(t.of)];
+    case "tree": return { value: exampleValue(t.of), children: [{ value: exampleValue(t.of), children: [] }] };
+    case "graph": case "digraph": return { nodes: 3, edges: [[0, 1], [1, 2]] };
+  }
 }

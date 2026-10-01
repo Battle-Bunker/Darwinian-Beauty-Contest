@@ -1,7 +1,7 @@
-// Starter programs for a game's language and challenge/response types.
-// Every team gets its own constants (seeded by team id), so starters don't seed one shared convention,
-// and the orchid starter doesn't presume whose clover it should resemble.
-import { parseType } from "./types.js";
+// Sample programs for tests (any language, int/float/bool/str/list types). Never shown to players:
+// the game gives teams no starting code, only the interface.
+// `seed` varies the constants.
+import { parseType } from "../../server/lib/types.js";
 
 function rng(seed) {
   let h = 2166136261;

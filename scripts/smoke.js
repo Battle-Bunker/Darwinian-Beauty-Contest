@@ -35,14 +35,14 @@ const mate = await login("Mate " + stamp);
 await api(mate, "POST", `${g}/teams/join`, { joinCode: players[0].team.joinCode });
 
 const view0 = await api(players[0].token, "GET", g);
-const st = view0.starters;
-const view1 = await api(players[1].token, "GET", g);
-assert.notEqual(view1.starters.clover, st.clover, "each team gets its own starter constants");
+assert.ok(!("starters" in view0), "no starter code: teams start from the interface only");
+assert.match(view0.interface.flower, /def flower\(challenge\)/);
 const clover = (a, b) => `def flower(challenge):\n    return (challenge * ${a} + ${b}) % 1000\n`;
+const bee = (q) => `tally = {}\ndef forage(seen, turns_left):\n    if not seen:\n        return ["ask", ${q}]\n    fed, got = tally.get(seen[0][1], [0, 0])\n    return "feed" if fed < 2 or got * 2 >= fed else "leave"\ndef tasted(seen, nectar):\n    fed, got = tally.get(seen[0][1], [0, 0])\n    tally[seen[0][1]] = [fed + 1, got + nectar]\n`;
 const variants = [
-  { clover: clover(3, 1), orchid: clover(5, 2), bee: st.bee },          // orchid imitates Bo's clover
-  { clover: clover(5, 2), orchid: clover(9, 4), bee: view1.starters.bee },
-  { clover: clover(7, 3), orchid: clover(7, 3), bee: st.bee },          // orchid is a twin of its own clover
+  { clover: clover(3, 1), orchid: clover(5, 2), bee: bee(42) },  // orchid imitates Bo's clover
+  { clover: clover(5, 2), orchid: clover(9, 4), bee: bee(500) },
+  { clover: clover(7, 3), orchid: clover(7, 3), bee: bee(7) },   // orchid is a twin of its own clover
 ];
 for (const [i, p] of players.entries()) {
   for (const kind of ["clover", "orchid", "bee"]) {
@@ -57,7 +57,7 @@ console.log("complexity budget rejects:", big.errors[0]);
 // Try tools.
 const tf = await api(players[0].token, "POST", `${g}/try`, { kind: "orchid", code: variants[0].orchid, challenges: [1, 2, 500] });
 console.log("try orchid:", JSON.stringify(tf.results));
-const tb = await api(players[0].token, "POST", `${g}/try`, { kind: "bee", code: st.bee });
+const tb = await api(players[0].token, "POST", `${g}/try`, { kind: "bee", code: variants[0].bee });
 console.log("try bee:", tb.visits.length, "visits, nectar", tb.nectar);
 // Only the owner can run rounds.
 await assert.rejects(api(players[1].token, "POST", `${g}/rounds?wait=1`), /403/);
@@ -97,7 +97,7 @@ const g2 = `/rooms/${room.shortId}/games/${game2.shortId}`;
 const p2 = [];
 for (const p of players.slice(0, 2)) {
   await api(p.token, "POST", `${g2}/teams`, { name: p.name });
-  for (const kind of ["clover", "orchid", "bee"]) await api(p.token, "POST", `${g2}/programs`, { kind, code: st[kind] });
+  for (const kind of ["clover", "orchid", "bee"]) await api(p.token, "POST", `${g2}/programs`, { kind, code: variants[p2.length][kind] });
   p2.push(p);
 }
 await api(owner, "POST", `${g2}/rounds?wait=1`);

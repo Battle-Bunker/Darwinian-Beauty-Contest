@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { simulateRound } from "../server/engine.js";
-import { starters } from "../server/lib/starters.js";
+import { starters } from "./fixtures/programs.js";
 import { normalizeConfig } from "../server/lib/gameConfig.js";
 
 for (const language of ["python", "typescript"]) {

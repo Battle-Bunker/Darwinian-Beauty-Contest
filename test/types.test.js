@@ -22,3 +22,29 @@ test("config clamps and keeps defaults", () => {
   assert.equal(c.challengeType, "str");
   assert.throws(() => normalizeConfig({ responseType: "set[int]" }));
 });
+
+test("tree[T] values", () => {
+  const t = parseType("Tree[Int]");
+  assert.equal(typeToString(t), "tree[int]");
+  const leaf = (v) => ({ value: v, children: [] });
+  assert.equal(checkValue(t, { value: 1, children: [leaf(2), { value: 3, children: [leaf(4)] }] }, 8), null);
+  assert.match(checkValue(t, { value: 1 }, 8), /children/);
+  assert.match(checkValue(t, { value: 1.5, children: [] }, 8), /int/);
+  assert.match(checkValue(t, { value: 1, children: [], extra: 1 }, 8), /value/);
+  let deep = leaf(0);
+  for (let i = 0; i < 9; i++) deep = { value: i, children: [deep] };
+  assert.match(checkValue(t, deep, 8), /more than 8 nodes/);
+  assert.equal(checkValue(parseType("list[tree[str]]"), [leaf("a")], 8), null);
+});
+
+test("graph and digraph values", () => {
+  const g = parseType("graph"), d = parseType("digraph");
+  assert.equal(checkValue(g, { nodes: 4, edges: [[0, 1], [1, 2], [2, 3]] }, 8), null);
+  assert.equal(checkValue(g, { nodes: 0, edges: [] }, 8), null);
+  assert.match(checkValue(g, { nodes: 3, edges: [[0, 1], [1, 0]] }, 8), /repeats/);
+  assert.equal(checkValue(d, { nodes: 3, edges: [[0, 1], [1, 0]] }, 8), null);
+  assert.match(checkValue(g, { nodes: 3, edges: [[0, 3]] }, 8), /0 to 2/);
+  assert.match(checkValue(g, { nodes: 3, edges: [[1, 1]] }, 8), /self-loop/);
+  assert.match(checkValue(g, { nodes: 9, edges: [] }, 8), /0 to 8/);
+  assert.match(checkValue(g, { nodes: 3, edges: [[0, 1]], labels: [] }, 8), /must be/);
+});
