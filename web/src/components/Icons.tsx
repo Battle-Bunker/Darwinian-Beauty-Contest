@@ -11,6 +11,7 @@ export const PauseIcon = ({ size, ...r }: P) => <svg {...base(size, r)}><path d=
 export const ReplayIcon = ({ size, ...r }: P) => (
   <svg {...base(size, r)}><path d="M12 5V2L7 6.5 12 11V8a5 5 0 1 1-5 5H4.5A7.5 7.5 0 1 0 12 5z" fill="currentColor" /></svg>
 );
+export const SkipIcon = ({ size, ...r }: P) => <svg {...base(size, r)}><path d="M5 5v14l10-7zM16 5h3v14h-3z" fill="currentColor" /></svg>;
 export const CopyIcon = ({ size, ...r }: P) => (
   <svg {...base(size, r)}><path d="M8 3h11a2 2 0 0 1 2 2v11h-2V5H8zM4 7h11a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2zm0 2v11h11V9z" fill="currentColor" /></svg>
 );

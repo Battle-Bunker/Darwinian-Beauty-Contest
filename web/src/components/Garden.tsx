@@ -11,22 +11,30 @@ import {
   beeFrame, buildModel, layoutGarden, patchLook, slot, tallies, FLOWER_DX, FLOWER_Y, TOP_PAD,
   type BeeFrame, type Layout, type Model, type PatchLook, type Pt,
 } from "./gardenModel";
-import { DropIcon, FooledIcon, PauseIcon, PlayIcon, ReplayIcon } from "./Icons";
+import { DropIcon, FooledIcon, PauseIcon, PlayIcon, ReplayIcon, SkipIcon } from "./Icons";
 import { TeamChip } from "./ui";
 
 export type GardenStart = "start" | "end" | "play";
 
-const SPEEDS = [0.25, 0.5, 1, 2, 4, 8];
+// Playback speeds, as multiples of BASE_TPS turns per second. Engine v2 rounds have ~100 turns per
+// flower (1,200 with 6 teams), so the default speed is picked to play a round in about a minute.
+const BASE_TPS = 5;
+const SPEEDS = [0.5, 1, 2, 5, 10, 20, 50];
+const defaultSpeed = (turns: number) => {
+  const want = turns / 60 / BASE_TPS;
+  return SPEEDS.reduce((best, s) => (Math.abs(Math.log(s / want)) < Math.abs(Math.log(best / want)) ? s : best), 1);
+};
 
-export function Garden({ view, round, start, rounds, onSelectRound }: {
+export function Garden({ view, round, start, rounds, onSelectRound, loading = false }: {
   view: GameView;
-  round: Round | null;
+  round: Round | null;       // with visits
   start: GardenStart;
   rounds: number[];
   onSelectRound: (no: number) => void;
+  loading?: number | false;  // round number whose visits are still loading
 }) {
   const cfg = view.game.config;
-  const turns = cfg.turns;
+  const turns = round?.turns ?? view.game.turns ?? cfg.turns ?? 100;
   const endT = turns + 1.6;
   const teamsById = useMemo(() => Object.fromEntries(view.teams.map((t) => [t.id, t])), [view.teams]);
   const order = useMemo(() => {
@@ -44,13 +52,13 @@ export function Garden({ view, round, start, rounds, onSelectRound }: {
   const [t, setT] = useState(() => (round && start === "end" ? endT : 0));
   const [playing, setPlaying] = useState(() => !!round && start === "play");
   const [speed, setSpeed] = useState(() => {
-    const s = Number(storage.get("dbc:speed"));
-    return SPEEDS.includes(s) ? s : 1;
+    const s = Number(storage.get("dbc:speed2"));
+    return SPEEDS.includes(s) ? s : defaultSpeed(turns);
   });
   const [namesPick, setNames] = useState<boolean | null>(null);
   const tRef = useRef(t);
   tRef.current = t;
-  const rate = Math.max(2, turns / 40); // turns per second at 1x: a round takes about 40 seconds
+  const rate = BASE_TPS;
 
   useEffect(() => {
     if (!playing) return;
@@ -79,7 +87,10 @@ export function Garden({ view, round, start, rounds, onSelectRound }: {
     setPlaying(true);
   };
   const replay = () => { tRef.current = 0; setT(0); setPlaying(true); };
-  const changeSpeed = (s: number) => { setSpeed(s); storage.set("dbc:speed", String(s)); };
+  const skipToEnd = () => { setPlaying(false); tRef.current = endT; setT(endT); };
+  const changeSpeed = (s: number) => { setSpeed(s); storage.set("dbc:speed2", String(s)); };
+  // Feed results stay on screen at least ~0.7 s of real time, however fast the clock runs.
+  const fxMin = 0.7 * rate * speed;
 
   const n = model.n || order.length;
   const homes = useMemo(() => Object.fromEntries(order.map((id, i) => [id, layout.pos[id] ? slot(layout.pos[id], i, order.length) : { x: 0, y: 0 }])), [order, layout]);
@@ -129,36 +140,41 @@ export function Garden({ view, round, start, rounds, onSelectRound }: {
             const label = round ? `${pt?.fedAt ?? 0} fed here · ${pt?.nectarGiven ?? 0} nectar` : view.participants || !team ? "" : ready(team) ? "ready to play" : "getting ready…";
             return <text key={id} x={p.x} y={p.y + 68 + 18 * fontScale} className="patch-tally">{label}</text>;
           })}
-          {model.effects.map((e, i) => (t >= e.t0 && t < e.t1 ? <FeedFx key={i} at={e.at} u={(t - e.t0) / (e.t1 - e.t0)} nectar={e.nectar} /> : null))}
+          {model.effects.map((e, i) => {
+            const span = Math.max(e.span, fxMin);
+            return t >= e.t0 && t < e.t0 + span ? <FeedFx key={i} at={e.at} u={(t - e.t0) / span} nectar={e.nectar} /> : null;
+          })}
           {frames.map((f) => (
             <Bee key={f.teamId} f={f} team={teamsById[f.teamId]} mine={f.teamId === myTeamId} showName={names} />
           ))}
         </svg>
         {view.game.runningRound && <div className="garden-banner"><span className="pulse-dot" /> Round {view.game.runningRound} is being played…</div>}
+        {loading !== false && !view.game.runningRound && <div className="garden-banner"><span className="pulse-dot" /> Loading round {loading}'s flights…</div>}
         {round && !playing && (t === 0 || atEnd) && (
           <button className="garden-play" onClick={atEnd ? replay : play}>
             {atEnd ? <ReplayIcon /> : <PlayIcon />} {atEnd ? `Replay round ${round.no}` : `Play round ${round.no}`}
           </button>
         )}
       </div>
-      {!round && <p className="garden-note muted">{view.game.status === "lobby" ? "The bees are waiting at home. They'll fly as soon as round 1 is played." : "No rounds yet."}</p>}
+      {!round && loading === false && <p className="garden-note muted">{view.game.status === "lobby" ? "The bees are waiting at home. They'll fly as soon as round 1 is played." : "No rounds yet."}</p>}
 
       {round && (
         <div className="garden-controls">
           <button className="btn btn-round" onClick={playing ? () => setPlaying(false) : play} aria-label={playing ? "Pause" : "Play"}>
             {playing ? <PauseIcon /> : <PlayIcon />}
           </button>
-          <button className="btn btn-round btn-ghost" onClick={replay} aria-label="Replay from the start"><ReplayIcon /></button>
+          <button className="btn btn-round btn-ghost" onClick={replay} aria-label="Replay from the start" title="Replay"><ReplayIcon /></button>
+          <button className="btn btn-round btn-ghost" onClick={skipToEnd} aria-label="Skip to the end of the round" title="Skip to the end"><SkipIcon /></button>
           <label className="scrub">
             <span className="sr-only">Turn</span>
-            <input type="range" min={0} max={turns} step={0.05} value={Math.min(t, turns)}
+            <input type="range" min={0} max={turns} step={Math.max(0.05, turns / 4000)} value={Math.min(t, turns)}
               onChange={(e) => { const v = Number(e.target.value); tRef.current = v; setT(v); }} />
           </label>
           <span className="turn-counter" aria-live="off">Turn <b>{shownTurn}</b> / {turns}</span>
           <label className="speed">
             <span className="sr-only">Speed</span>
             <select value={speed} onChange={(e) => changeSpeed(Number(e.target.value))}>
-              {SPEEDS.map((s) => <option key={s} value={s}>{s < 1 ? `${s}×` : `${s}×`}</option>)}
+              {SPEEDS.map((s) => <option key={s} value={s}>{`${s}× (${s * BASE_TPS} turns/s)`}</option>)}
             </select>
           </label>
           <label className="check"><input type="checkbox" checked={names} onChange={(e) => setNames(e.target.checked)} /> names</label>
@@ -312,6 +328,13 @@ function Bee({ f, team, mine, showName }: { f: BeeFrame & { teamId: string }; te
           <text y="4.5" className="bubble-text">?</text>
         </g>
       )}
+      {f.mode === "study" && (
+        <g transform={`translate(13 -19) scale(${(0.6 + 0.5 * f.pulse).toFixed(2)})`} opacity={0.45 + 0.55 * f.pulse}>
+          <circle r="9.5" className="bubble bubble-study" />
+          <circle cx="-1.5" cy="-1.5" r="4" className="lens" />
+          <path d="M1.4 1.4 L5.2 5.2" className="lens-handle" />
+        </g>
+      )}
       {f.mode === "error" && (
         <g transform="translate(13 -19)">
           <circle r="9" className="bubble bubble-err" />
@@ -357,6 +380,7 @@ function GardenLegend() {
       <li><span className="lg lg-ask">?</span> the bee asks a question</li>
       <li><DropIcon size={16} /> fed and got nectar (it was a clover)</li>
       <li><FooledIcon size={16} /> fed but no nectar: fooled by an orchid</li>
+      <li><span className="lg lg-study"><svg width="12" height="12" viewBox="-6 -6 12 12" aria-hidden><circle cx="-1" cy="-1" r="3.4" fill="none" stroke="currentColor" strokeWidth="1.6" /><path d="M1.4 1.4 L4.4 4.4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg></span> studies a flower after feeding</li>
       <li><span className="lg lg-err">!</span> the bee made a mistake</li>
     </ul>
   );
@@ -376,6 +400,7 @@ function TallyTable({ order, teams, tally, myTeamId }: {
             <th scope="col" title="Feeds that paid off with nectar">Nectar</th>
             <th scope="col" title="Feeds with no nectar (orchids)">Fooled</th>
             <th scope="col" title="Questions asked so far">Asks</th>
+            <th scope="col" title="Questions asked after feeding, studying a flower whose truth the bee now knows">Studied</th>
             <th scope="col" title="Times bees fed at this team's patch">Fed at patch</th>
             <th scope="col" title="Different bee teams that fed at this patch">Pollinators</th>
           </tr>
@@ -390,6 +415,7 @@ function TallyTable({ order, teams, tally, myTeamId }: {
                 <td className="good">{b?.nectar ?? 0}</td>
                 <td className="bad">{(b?.feeds ?? 0) - (b?.nectar ?? 0)}</td>
                 <td>{b?.asks ?? 0}</td>
+                <td>{b?.studied ?? 0}</td>
                 <td>{p?.fedAt ?? 0}</td>
                 <td>{p?.pollinators.size ?? 0}</td>
               </tr>

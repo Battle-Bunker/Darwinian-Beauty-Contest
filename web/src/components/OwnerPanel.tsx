@@ -6,7 +6,6 @@ import { Alert, Spinner } from "./ui";
 import { PlayIcon } from "./Icons";
 
 const TYPES = ["int", "float", "bool", "str", "list[int]", "list[float]", "list[bool]", "list[str]", "tree[int]", "graph", "digraph"];
-const SIMPLE = ["int", "float", "bool"];
 
 export function RunRound({ view, base }: { view: GameView; base: string }) {
   const g = view.game;
@@ -42,7 +41,9 @@ export function RunRound({ view, base }: { view: GameView; base: string }) {
 }
 
 export function SettingsForm({ view, base }: { view: GameView; base: string }) {
-  const cfg = view.game.config;
+  // Older games' configs predate engine v2 fields; show the defaults for them.
+  const cfg: GameConfig = { turnsPerFlower: 100, maxNodes: 512, beeMemoryKb: 256, ...view.game.config };
+  const nTeams = Math.max(2, view.participants?.length ?? view.teams.length);
   const [draft, setDraft] = useState<GameConfig>(cfg);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: "ok" | "error" | "warn"; text: string } | null>(null);
@@ -87,19 +88,36 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
           </select>
         </label>
         <label className="field"><span>Rounds</span>{num(draft.rounds, (v) => set("rounds", v), 1, 100, "Rounds")}</label>
-        <label className="field"><span>Turns per bee</span>{num(draft.turns, (v) => set("turns", v), 1, 10000, "Turns per bee")}</label>
+        <label className="field"><span>Turns per flower</span>{num(draft.turnsPerFlower ?? 100, (v) => set("turnsPerFlower", v), 1, 1000, "Turns per flower")}</label>
+        <label className="field"><span>Fixed turns per round</span>
+          <input type="number" inputMode="numeric" min={1} max={100000} value={draft.turns ?? ""} placeholder="auto" aria-label="Fixed turns per round (empty = auto)"
+            onChange={(e) => set("turns", e.target.value === "" ? null : Number(e.target.value))} />
+        </label>
         <label className="field"><span>Feed cost (turns)</span>{num(draft.feedCost, (v) => set("feedCost", v), 0, 1000, "Feed cost")}</label>
         <label className="field"><span>Challenge type</span>{typeSelect(draft.challengeType, (v) => set("challengeType", v), "Challenge type")}</label>
         <label className="field"><span>Response type</span>{typeSelect(draft.responseType, (v) => set("responseType", v), "Response type")}</label>
-        <label className="field"><span>Max size (string/list length, tree/graph nodes)</span>{num(draft.maxLen, (v) => set("maxLen", v), 1, 1024, "Max length")}</label>
+        <label className="field"><span>Max string/list length</span>{num(draft.maxLen, (v) => set("maxLen", v), 1, 1024, "Max string or list length")}</label>
+        <label className="field"><span>Max tree/graph nodes</span>{num(draft.maxNodes ?? 512, (v) => set("maxNodes", v), 1, 4096, "Max tree or graph nodes")}</label>
+        <label className="field"><span>Bee memory (KB, 0 = off)</span>{num(draft.beeMemoryKb ?? 256, (v) => set("beeMemoryKb", v), 0, 4096, "Bee memory in KB")}</label>
       </div>
+      <p className="small muted settings-hint">
+        {draft.turns
+          ? <>Every bee gets exactly <b>{draft.turns}</b> turns each round.</>
+          : <>Every bee gets <b>{draft.turnsPerFlower ?? 100}</b> turns per flower: <b>{((draft.turnsPerFlower ?? 100) * 2 * nTeams).toLocaleString()}</b> turns a round with {nTeams} teams ({2 * nTeams} flowers). Leave "fixed turns" empty to keep it that way.</>}
+      </p>
       <div className="settings-checks">
         <label className="check"><input type="checkbox" checked={draft.flowerLogs} onChange={(e) => set("flowerLogs", e.target.checked)} /> Flower logs: teams see what bees asked their flowers</label>
         <label className="check"><input type="checkbox" checked={draft.revealOnFinish} onChange={(e) => set("revealOnFinish", e.target.checked)} /> Reveal all code and logs when the game ends</label>
       </div>
       <div className="table-scroll">
         <table className="data-table budgets">
-          <caption>Budgets per program</caption>
+          <caption>Budgets per program
+            <span className="budget-note">
+              The budgets are lopsided on purpose. <b>Clover</b>: small code but strong compute, so it can prove effort.{" "}
+              <b>Orchid</b>: big code and fast change between rounds. <b>Bee</b>: a big kit of detectors, but little time per decision.
+              Defaults: clover 150 / 30 / 150, orchid 300 / 210 / 50, bee 1500 / 300 / 25.
+            </span>
+          </caption>
           <thead><tr><th className="left">Program</th><th>Size (nodes)</th><th>Changes per round</th><th>Time (ms per call)</th></tr></thead>
           <tbody>
             {KINDS.map((k) => (
@@ -122,16 +140,18 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
   );
 }
 
-export function SettingsSummary({ cfg }: { cfg: GameConfig }) {
+export function SettingsSummary({ cfg, turnsNow }: { cfg: GameConfig; turnsNow?: number }) {
   return (
     <div className="settings-summary">
       <div className="chips">
         <span className="chip">{cfg.language === "python" ? "Python" : "TypeScript"}</span>
         <span className="chip">{cfg.rounds} rounds</span>
-        <span className="chip">{cfg.turns} turns per bee</span>
+        <span className="chip">{cfg.turns ? `${cfg.turns} turns per round` : `${cfg.turnsPerFlower ?? 100} turns per flower${turnsNow ? ` (${turnsNow.toLocaleString()} a round)` : ""}`}</span>
         <span className="chip">feed costs {cfg.feedCost}</span>
         <span className="chip mono">{cfg.challengeType} → {cfg.responseType}</span>
-        {!(SIMPLE.includes(cfg.challengeType.toLowerCase()) && SIMPLE.includes(cfg.responseType.toLowerCase())) && <span className="chip">max size {cfg.maxLen}</span>}
+        {[cfg.challengeType, cfg.responseType].some((t) => /str|list/i.test(t)) && <span className="chip">max length {cfg.maxLen}</span>}
+        {[cfg.challengeType, cfg.responseType].some((t) => /tree|graph/i.test(t)) && <span className="chip">max {cfg.maxNodes ?? 512} nodes</span>}
+        {cfg.beeMemoryKb !== undefined && <span className="chip">{cfg.beeMemoryKb ? `bee memory ${cfg.beeMemoryKb} KB` : "bee memory off"}</span>}
         <span className="chip">{cfg.flowerLogs ? "flower logs on" : "flower logs off"}</span>
         <span className="chip">{cfg.revealOnFinish ? "code revealed at the end" : "code stays secret"}</span>
       </div>

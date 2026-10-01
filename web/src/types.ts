@@ -9,11 +9,14 @@ export interface Budget { nodes: number; changes: number; ms: number }
 export interface GameConfig {
   language: "python" | "typescript";
   rounds: number;
-  turns: number;
+  turnsPerFlower?: number;  // v2: each bee gets turnsPerFlower × flowers turns per round
+  turns: number | null;     // v2: optional fixed override (null = scale with the garden)
   feedCost: number;
   challengeType: string;
   responseType: string;
   maxLen: number;
+  maxNodes?: number;        // trees and graphs
+  beeMemoryKb?: number;     // what a bee keeps between rounds for MEMORY
   flowerLogs: boolean;
   revealOnFinish: boolean;
   budgets: Record<Kind, Budget>;
@@ -51,10 +54,11 @@ export interface MyTeam {
   previous: Partial<Record<Kind, string>>;
 }
 
-export interface Step { c: unknown; r: unknown; challengeError?: string; flowerError?: string }
+export interface Step { c: unknown; r: unknown; after?: boolean; challengeError?: string; flowerError?: string }
 
 export interface Visit {
   bee: string; patch: string; seq: number; start: number; end: number; asks: number;
+  asksBeforeFeed?: number;  // v2: asks, then the feed, then (asks - asksBeforeFeed) more asks
   action: "feed" | "leave" | "error"; nectar: boolean | null;
   kind?: FlowerKind; steps?: Step[]; beeError?: string; beeLog?: string; note?: string; flowerError?: string;
 }
@@ -64,14 +68,19 @@ export interface TeamScore {
   feedsReceived: number; feedsGiven: number; nectarCollected: number; pollinators: number; nectarSources: number;
 }
 
-export interface ProgramInfo { nodes: number; distance: number | null; carriedOver: boolean; code?: string; problem?: string | null }
+export interface Compute { calls: number; meanMs: number; p90Ms: number; budgetMs: number }
+export interface ProgramInfo { nodes: number; distance: number | null; carriedOver: boolean; code?: string; problem?: string | null; compute?: Compute | null }
+export interface MemoryInfo { bytes: number; note: string | null }
+export interface MemorySnapshot { round: number; teamId: string; language: string; snapshot: string | null; bytes: number; note: string | null }
 
 export interface Round {
   no: number; startedAt: string; finishedAt: string;
+  turns?: number;                          // v2: turns each bee had this round
+  memory?: Record<string, MemoryInfo>;     // v2: what each bee kept (own team, or all once revealed)
   feeds: number[][]; nectar: number[][];
   scores: TeamScore[]; totals: TeamScore[];
   programs: Record<string, Record<Kind, ProgramInfo | null>>;
-  visits: Visit[];
+  visits?: Visit[];                        // left out of the game view for older rounds (?visits=last)
 }
 
 export interface GameView {
@@ -80,6 +89,7 @@ export interface GameView {
     id: string; shortId: string; url: string; status: GameStatus; config: GameConfig;
     roundsPlayed: number; runningRound: number | null; lastError: string | null; version: number;
     createdAt: string; finishedAt: string | null; revealed: boolean; isOwner: boolean;
+    turns?: number;                        // v2: turns per bee in the next round
   };
   me: { id: string; name: string; teamId: string | null } | null;
   participants: string[] | null;
@@ -101,7 +111,10 @@ export interface ProgramInterface {
 
 export interface TryFlowerResult { results: { c: unknown; r: unknown; error?: string }[]; error?: string }
 export interface TryBeeVisit {
-  bee: string; patch: string; kind: FlowerKind; start: number; end: number; seq: number; asks: number;
+  bee: string; patch: string; kind: FlowerKind; start: number; end: number; seq: number; asks: number; asksBeforeFeed?: number;
   steps: Step[]; action: "feed" | "leave" | "error"; nectar: boolean | null; beeError?: string; beeLog?: string; note?: string;
 }
-export interface TryBeeResult { visits: TryBeeVisit[]; problems: Record<Kind, string | null>; feeds: number; nectar: number }
+export interface TryBeeResult {
+  visits: TryBeeVisit[]; problems: Record<Kind, string | null>; feeds: number; nectar: number;
+  turns?: number; memory?: { snapshot: string | null; bytes: number; note: string | null };
+}

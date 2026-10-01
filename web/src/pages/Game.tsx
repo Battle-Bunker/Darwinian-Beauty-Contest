@@ -144,7 +144,7 @@ export function GamePage({ room, game }: { room: string; game: string }) {
         {!(g.isOwner && lobby) && (
           <details className="settings-details">
             <summary>Game settings</summary>
-            <SettingsSummary cfg={cfg} />
+            <SettingsSummary cfg={cfg} turnsNow={g.turns} />
           </details>
         )}
         <nav className="jump" aria-label="Jump to">

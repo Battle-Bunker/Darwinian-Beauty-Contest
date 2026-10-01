@@ -1,9 +1,10 @@
 // Geometry and timeline for the garden animation. Everything is a pure function of the round's
-// visits and a time t measured in turns (0 → config.turns), so scrubbing and replaying are exact.
+// visits and a time t measured in turns (0 → round.turns), so scrubbing and replaying are exact.
 //
-// Within a visit [start, end):
-//   asks occupy [start, start + asks), one turn each (the flight in fills the first half of the first ask)
-//   a feed occupies [start + asks, end) (feedCost turns); the result shows halfway through
+// Within a visit [start, end) (engine v2):
+//   asksBeforeFeed asks occupy [start, askEnd), one turn each (the flight in fills the first half of the first)
+//   a feed occupies [askEnd, feedEnd) (feedCost turns); the result shows a little before halfway
+//   the remaining asks [feedEnd, end) are the bee "studying" the flower it just fed at
 //   an error costs one turn after the asks; a leave costs nothing (or 1 turn if nothing was asked)
 import type { Visit } from "../types";
 
@@ -94,7 +95,7 @@ export interface Track {
   visits: Visit[];    // by seq
 }
 
-export type Mode = "home" | "fly" | "ask" | "feed" | "error" | "glance" | "done";
+export type Mode = "home" | "fly" | "ask" | "feed" | "study" | "error" | "glance" | "done";
 
 export interface BeeFrame {
   x: number; y: number;
@@ -106,18 +107,25 @@ export interface BeeFrame {
 }
 
 export interface FeedEffect {
-  t0: number; t1: number; at: Pt; nectar: boolean; bee: string; patch: string;
+  t0: number; span: number; at: Pt; nectar: boolean; bee: string; patch: string;
 }
 
-export interface Tally { feeds: number; nectar: number; errors: number; asks: number; visits: number }
+export interface Tally { feeds: number; nectar: number; errors: number; asks: number; studied: number; visits: number }
 export interface PatchTally { fedAt: number; nectarGiven: number; pollinators: Set<string>; visits: number }
 
 const ease = (u: number) => (u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2);
 const lerp = (a: Pt, b: Pt, u: number): Pt => ({ x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u });
 
-export const askEnd = (v: Visit) => v.start + v.asks;
+/** The phases of a visit: asks before the feed end at askEnd, the feed ends at feedEnd, then post-feed asks. */
+export function phases(v: Visit) {
+  const before = Math.min(v.asks, v.asksBeforeFeed ?? v.asks);
+  const after = v.action === "feed" ? v.asks - before : 0;
+  const askEnd = v.start + before;
+  const feedEnd = v.end - after;
+  return { askEnd, feedEnd, after };
+}
 /** When a feed's result (nectar or not) appears. */
-export const feedResultAt = (v: Visit) => askEnd(v) + (v.end - askEnd(v)) * 0.45;
+export const feedResultAt = (v: Visit) => { const p = phases(v); return p.askEnd + (p.feedEnd - p.askEnd) * 0.45; };
 
 export interface Model {
   tracks: Track[];
@@ -127,15 +135,15 @@ export interface Model {
 
 export function buildModel(visits: Visit[], beeOrder: string[], pos: Record<string, Pt>, looks: Record<string, PatchLook>): Model {
   const n = beeOrder.length;
-  const tracks: Track[] = beeOrder.map((teamId, index) => ({
-    teamId, index, visits: visits.filter((v) => v.bee === teamId).sort((a, b) => a.seq - b.seq),
-  }));
+  const byBee = new Map<string, Visit[]>(beeOrder.map((id) => [id, []]));
+  for (const v of visits) byBee.get(v.bee)?.push(v);
+  const tracks: Track[] = beeOrder.map((teamId, index) => ({ teamId, index, visits: byBee.get(teamId)!.sort((a, b) => a.seq - b.seq) }));
   const effects: FeedEffect[] = [];
   for (const tr of tracks) {
     for (const v of tr.visits) {
       if (v.action !== "feed" || !pos[v.patch]) continue;
-      const t0 = feedResultAt(v);
-      effects.push({ t0, t1: t0 + Math.max(1.6, (v.end - askEnd(v)) * 0.55 + 0.6), at: landing(pos[v.patch], v.kind, tr.index, n, looks[v.patch]), nectar: !!v.nectar, bee: v.bee, patch: v.patch });
+      const p = phases(v);
+      effects.push({ t0: feedResultAt(v), span: Math.max(1.6, (p.feedEnd - p.askEnd) * 0.55 + 0.6), at: landing(pos[v.patch], v.kind, tr.index, n, looks[v.patch]), nectar: !!v.nectar, bee: v.bee, patch: v.patch });
     }
   }
   effects.sort((a, b) => a.t0 - b.t0);
@@ -149,12 +157,21 @@ function bezier(a: Pt, b: Pt, u: number): Pt {
   return { x: k * k * a.x + 2 * k * u * c.x + u * u * b.x, y: k * k * a.y + 2 * k * u * c.y + u * u * b.y };
 }
 
+/** Where a bee hovers while it studies a flower it has fed at: close to the flower, a little above. */
+const studySpot = (land: Pt, slotPt: Pt): Pt => { const p = lerp(land, slotPt, 0.4); return { x: p.x, y: p.y - 6 }; };
+
 /** The bee's position and pose at time t (turns). */
 export function beeFrame(tr: Track, t: number, pos: Record<string, Pt>, n: number, home: Pt, looks: Record<string, PatchLook>): BeeFrame {
   const vs = tr.visits;
   const at = (teamId: string) => (pos[teamId] ? slot(pos[teamId], tr.index, n) : home);
   const faceTo = (p: Pt, patch: Pt | undefined) => (patch ? p.x > patch.x : false);
   const bob = Math.sin(t * 6 + tr.index) * 1.5;
+  // Where a visit leaves the bee: by the flower if it was studying it, else at its hover slot.
+  const endSpot = (v: Visit): Pt => {
+    const target = at(v.patch);
+    if (v.action === "feed" && phases(v).after > 0 && pos[v.patch]) return studySpot(landing(pos[v.patch], v.kind, tr.index, n, looks[v.patch]), target);
+    return target;
+  };
 
   if (!vs.length || t < vs[0].start) {
     const p = home;
@@ -170,9 +187,10 @@ export function beeFrame(tr: Track, t: number, pos: Record<string, Pt>, n: numbe
   const patch = pos[v.patch];
   const target = at(v.patch);
   if (t >= v.end) {
-    return { x: target.x, y: target.y + bob, flip: faceTo(target, patch), mode: k === vs.length - 1 ? "done" : "glance", pulse: 0, tilt: 0, visit: v };
+    const e = endSpot(v);
+    return { x: e.x, y: e.y + bob, flip: faceTo(target, patch), mode: k === vs.length - 1 ? "done" : "glance", pulse: 0, tilt: 0, visit: v };
   }
-  const from = k === 0 ? home : at(vs[k - 1].patch);
+  const from = k === 0 ? home : endSpot(vs[k - 1]);
   const rel = t - v.start, dur = v.end - v.start;
   const fly = Math.min(0.5, dur * 0.5);
   if (rel < fly) {
@@ -181,17 +199,26 @@ export function beeFrame(tr: Track, t: number, pos: Record<string, Pt>, n: numbe
     const dx = target.x - from.x;
     return { x: p.x, y: p.y, flip: Math.abs(dx) > 1 ? dx < 0 : faceTo(p, patch), mode: "fly", pulse: 0, tilt: Math.max(-18, Math.min(18, (target.y - from.y) * 0.08)) * (dx < 0 ? -1 : 1), visit: v };
   }
-  const ae = askEnd(v);
-  if (t < ae) {
-    const i = Math.floor(rel);
-    const frac = i === 0 ? (rel - fly) / Math.max(0.01, 1 - fly) : rel - i;
-    return { x: target.x, y: target.y + bob, flip: faceTo(target, patch), mode: "ask", pulse: Math.sin(Math.PI * Math.min(1, Math.max(0, frac))), tilt: 0, visit: v };
+  const { askEnd, feedEnd, after } = phases(v);
+  const pulseAt = (from0: number) => {
+    const r = t - from0, i = Math.floor(r);
+    const frac = i === 0 && from0 === v.start ? (r - fly) / Math.max(0.01, 1 - fly) : r - i;
+    return Math.sin(Math.PI * Math.min(1, Math.max(0, frac)));
+  };
+  if (t < askEnd) {
+    return { x: target.x, y: target.y + bob, flip: faceTo(target, patch), mode: "ask", pulse: pulseAt(v.start), tilt: 0, visit: v };
   }
   if (v.action === "feed") {
     const land = landing(patch, v.kind, tr.index, n, looks[v.patch]);
-    const q = (t - ae) / Math.max(0.01, v.end - ae);
-    const p = q < 0.25 ? lerp(target, land, ease(q / 0.25)) : q > 0.85 ? lerp(land, target, ease((q - 0.85) / 0.15)) : land;
-    return { x: p.x, y: p.y + (q > 0.25 && q < 0.85 ? Math.sin(t * 14) * 0.8 : 0), flip: faceTo(target, patch), mode: "feed", pulse: 0, tilt: 0, visit: v };
+    if (t < feedEnd) {
+      const q = (t - askEnd) / Math.max(0.01, feedEnd - askEnd);
+      // Fly down onto the flower, sip, then lift off: back to the hover slot, or just above the flower to study it.
+      const leaveTo = after > 0 ? studySpot(land, target) : target;
+      const p = q < 0.25 ? lerp(target, land, ease(q / 0.25)) : q > 0.85 ? lerp(land, leaveTo, ease((q - 0.85) / 0.15)) : land;
+      return { x: p.x, y: p.y + (q > 0.25 && q < 0.85 ? Math.sin(t * 14) * 0.8 : 0), flip: faceTo(target, patch), mode: "feed", pulse: 0, tilt: 0, visit: v };
+    }
+    const sp = studySpot(land, target);
+    return { x: sp.x, y: sp.y + bob * 0.6, flip: faceTo(target, patch), mode: "study", pulse: pulseAt(feedEnd), tilt: 0, visit: v };
   }
   if (v.action === "error") {
     return { x: target.x, y: target.y, flip: faceTo(target, patch), mode: "error", pulse: 0, tilt: Math.sin(t * 40) * 14, visit: v };
@@ -204,7 +231,7 @@ export function tallies(model: Model, t: number) {
   const bees: Record<string, Tally> = {};
   const patches: Record<string, PatchTally> = {};
   for (const tr of model.tracks) {
-    bees[tr.teamId] = { feeds: 0, nectar: 0, errors: 0, asks: 0, visits: 0 };
+    bees[tr.teamId] = { feeds: 0, nectar: 0, errors: 0, asks: 0, studied: 0, visits: 0 };
     patches[tr.teamId] ||= { fedAt: 0, nectarGiven: 0, pollinators: new Set(), visits: 0 };
   }
   for (const tr of model.tracks) {
@@ -214,14 +241,21 @@ export function tallies(model: Model, t: number) {
       b.visits++;
       const p = (patches[v.patch] ||= { fedAt: 0, nectarGiven: 0, pollinators: new Set(), visits: 0 });
       p.visits++;
-      b.asks += Math.min(v.asks, Math.max(0, Math.ceil(t - v.start)));
+      if (t >= v.end) {
+        b.asks += v.asks;
+        if (v.action === "feed") b.studied += v.asks - Math.min(v.asks, v.asksBeforeFeed ?? v.asks);
+      } else {
+        const ph = phases(v);
+        b.asks += Math.min(ph.askEnd - v.start, Math.max(0, Math.ceil(t - v.start)));
+        if (t > ph.feedEnd) { const s = Math.min(ph.after, Math.ceil(t - ph.feedEnd)); b.asks += s; b.studied += s; }
+      }
       if (v.action === "feed" && t >= feedResultAt(v)) {
         b.feeds++;
         p.fedAt++;
         p.pollinators.add(v.bee);
         if (v.nectar) { b.nectar++; p.nectarGiven++; }
       }
-      if (v.action === "error" && t >= askEnd(v)) b.errors++;
+      if (v.action === "error" && t >= phases(v).askEnd) b.errors++;
     }
   }
   return { bees, patches };
