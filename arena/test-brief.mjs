@@ -6,7 +6,7 @@ import { NOTICES, examplesNotice, roundBrief } from "./lib/prompts.js";
 import { changeable, nextChangeRound } from "../server/lib/schedule.js";
 
 const budgets = { clover: { changes: 70 }, orchid: { changes: 490 }, bee: { changes: 700 } };
-const view = { game: { config: { rounds: 5, budgets } }, teams: [{ id: "t", name: "Test Team" }], me: { teamId: "t" }, rounds: [] };
+const view = { game: { config: { rounds: 6, budgets } }, teams: [{ id: "t", name: "Test Team" }], me: { teamId: "t" }, rounds: [] };
 const base = { view, entry: { team_name: "Test Team" }, roundNo: 1, maxTurns: 30, ext: "py" };
 let failed = 0;
 const check = (name, ok) => { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) failed++; };
@@ -28,7 +28,7 @@ for (const g of [1, 2, 3]) {
 
 // Later rounds: whose turn it is, what is locked, and the restored-file note.
 const played = { ...view, rounds: [{ no: 1, totals: [{ teamId: "t", fitness: 1 }], scores: [{ teamId: "t", fitness: 1 }] }] };
-for (const r of [2, 3, 4, 5]) {
+for (const r of [2, 3, 4, 5, 6]) {
   const open = changeable(r), locked = ["clover", "orchid", "bee"].filter((k) => !open.includes(k));
   const nextTurns = Object.fromEntries(locked.map((k) => [k, nextChangeRound(k, r)]));
   const t = roundBrief({ ...base, view: played, generation: 1, roundNo: r, forked: true, changeable: open, nextTurns, notices: [examplesNotice(files)] });
@@ -36,9 +36,10 @@ for (const r of [2, 3, 4, 5]) {
   check(`round ${r}: no round-1 notices`, !/Shared examples|RULES CHANGED/.test(t));
 }
 const restored = roundBrief({ ...base, view: played, generation: 1, roundNo: 2, forked: true, changeable: changeable(2), restored: ["clover"] });
+// (clover is locked before round 2 in every schedule so far)
 check("restored note names the locked file", /edited clover\.py while it was locked/.test(restored));
 const fix = roundBrief({ ...base, view: played, generation: 1, roundNo: 2, forked: true, changeable: changeable(2), fix: "- orchid: too big" });
-check("fix brief: lists only the open files and points at the minified copy", /you may change orchid\.py/.test(fix) && /minified/.test(fix));
+check("fix brief: lists only the open files and points at the minified copy", fix.includes(`you may change ${changeable(2)[0]}.py`) && /minified/.test(fix));
 
 console.log(failed ? `${failed} check(s) failed` : "all brief checks passed");
 process.exit(failed ? 1 : 0);
