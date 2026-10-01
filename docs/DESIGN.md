@@ -189,26 +189,30 @@ What v3 does not prevent: nothing forces a flower to use randomness. A team can 
 deterministic clover, and bees can still fingerprint it by repeating a question. Whether the effort
 signal outcompetes that is what the v3 games test.
 
-## Complexity is the length of the minified program
+## Programs are measured on their minified form
 
-The complexity budget used to count syntax-tree nodes. That had two problems:
-- **A literal was one node however long it was,** so one string or number could hide a lookup table.
-- **Every name and every structure cost the same,** so a team saving space had reason to write
-  cramped code.
-
-Now the game minifies each program before measuring it (vendor/complexity.js, the same file in the
-server and the editor):
+Size and change are both measured on the program after the game minifies it (vendor/measure.js, the
+same file in the server and the editor):
 - It drops comments, blank lines and spacing.
 - It renames every name the program defines to the shortest free name, most-used first.
 - It strips TypeScript types.
 
-The budget is the length of what's left. Writing readable code costs nothing, so nobody gains by
-minifying by hand. Strings and numbers count character by character, which closes the lookup-table
-loophole.
+**Size** is the length of what's left. Writing readable code costs nothing, so nobody gains by
+minifying by hand. Strings and numbers count character by character, so a long literal can't hide a
+lookup table. A name's characters beyond the first 20 are charged, because renaming makes names free and
+a program can read its own names back (`globals()`, `__name__`).
 
-One leak stays bounded rather than closed. Renaming makes long names free, and a program can read its own
-names back (`globals()`, `__name__`). So a name's characters beyond the first 20 are charged.
+**Change** is the edit distance between last round's minified program and the new one. Before comparing,
+the new version's names are lined up with the old version's: both are minified with every name blanked
+out, the two texts are diffed, and names that fall in matching stretches are paired. So a rename,
+a comment or reformatting changes nothing, and a new variable doesn't reshuffle every other name. Budgets
+are a share of the size budget: 70% for orchids, 20% for clovers and bees.
 
-Change budgets still count syntax-tree edits between rounds. They're calibrated through `CHARS_PER_EDIT`
-(7/3, the median minified characters per node across all earlier programs). For example, an orchid's 210
-edits are about 70% of a full-size orchid.
+## Clovers and orchids take turns to change
+
+Before round 1 every program is written. After that, orchids may change before even rounds and clovers
+before odd ones; bees may change every round (server/lib/schedule.js). If both could change at once, a
+clover could rotate its password in the same round the orchids copied the old one, and imitating last
+round's behaviour would never pay. Taking turns gives each side a round in which the other stands still:
+orchids get to copy what clovers actually did, and clovers then get to respond to the copies. A flower out
+of its turn may still be resubmitted if its minified form is unchanged.

@@ -349,6 +349,7 @@ input[type="range"] { accent-color: var(--honey); }
 .meter.over .meter-fill { background: var(--danger); }
 .meter.over .meter-label b { color: var(--danger); }
 .meter-note { flex: 1 1 200px; font-size: 14px; align-self: center; }
+.tab-mark.locked { font-size: 11px; color: var(--ink-soft, inherit); opacity: 0.75; }
 .minified { margin: 0 0 10px; }
 .minified pre { font-family: var(--mono); white-space: pre-wrap; word-break: break-all; font-size: 12px; max-height: 240px; overflow: auto; margin: 6px 0 0; padding: 8px; background: var(--surface-2); border-radius: 6px; }
 .meters { display: flex; flex-wrap: wrap; gap: 12px 20px; margin: 8px 0 10px; }

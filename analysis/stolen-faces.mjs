@@ -23,13 +23,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { arenaGames, teamNames, entriesOf, visitsOf, programsOf, roundsOf, preSteps, key, mean, f2, pool } from "./game-data.mjs";
 import { ARENA_DIR } from "../arena/lib/db.js";
-import { tryFlower } from "../server/engine.js";
-import { mulberry32 } from "../server/engine.js";
 
-process.env.CPU_SLOTS ||= "2";
+process.env.CPU_SLOTS ||= "2"; // before the engine loads, so re-running flowers leaves cores free
+const { tryFlower, mulberry32 } = await import("../server/engine.js");
 const only = process.argv.slice(2);
 const games = await arenaGames(only.length ? only : null);
-const OUT = path.join(ARENA_DIR, "runs", "stolen-faces.json");
+const OUT = path.join(ARENA_DIR, "runs", only.length ? `stolen-faces-${only.join("-")}.json` : "stolen-faces.json");
 
 function freshChallenges(type, n, seed) {
   const rnd = mulberry32(seed);

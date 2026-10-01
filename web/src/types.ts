@@ -89,7 +89,8 @@ export interface GameView {
     id: string; shortId: string; url: string; status: GameStatus; config: GameConfig;
     roundsPlayed: number; runningRound: number | null; lastError: string | null; version: number;
     createdAt: string; finishedAt: string | null; revealed: boolean; isOwner: boolean;
-    turns?: number;                        // v2: turns per bee in the next round
+    turns?: number;                        // turns per bee in the next round
+    changeable: Kind[];                    // programs that may change for the next round (clovers and orchids take turns)
   };
   me: { id: string; name: string; teamId: string | null } | null;
   participants: string[] | null;

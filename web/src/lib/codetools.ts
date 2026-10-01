@@ -1,15 +1,15 @@
-// In-browser complexity, change distances and diff highlights, computed exactly like the server:
-// the same vendor/tree-sitter.js + vendor/astdiff.js + vendor/complexity.js + grammars that
-// server/lib/ast.js uses. Also a light syntax highlighter built on the same parse tree.
+// In-browser program size, change distance and diff highlights, computed exactly like the server: the
+// same vendor/tree-sitter.js + vendor/measure.js + grammars that server/lib/measure.js uses. Also a light
+// syntax highlighter built on the same parse tree.
 
 declare global {
-  interface Window { TreeSitter: any; AstDiffTS: any; DbcComplexity: any }
+  interface Window { TreeSitter: any; DbcMeasure: any }
 }
 
 export type Language = "python" | "typescript";
 export type Mark = [number, number, string];
 
-/** size: the complexity, the length of `minified`, the program as the game counts it (see vendor/complexity.js). */
+/** size: the program's size, the length of `minified`, the program as the game counts it (see vendor/measure.js). */
 export interface Parsed { size: number; minified: string; hasError: boolean }
 export interface DiffResult { distance: number; old: Mark[]; new: Mark[] }
 
@@ -37,27 +37,28 @@ const tools: Partial<Record<Language, Promise<LangTools>>> = {};
 export function getLangTools(lang: Language): Promise<LangTools> {
   init ||= (async () => {
     await loadScript("/vendor/tree-sitter.js");
-    await loadScript("/vendor/astdiff.js");
-    await loadScript("/vendor/complexity.js");
+    await loadScript("/vendor/measure.js");
     await window.TreeSitter.init({ locateFile: () => "/vendor/grammars/tree-sitter.wasm" });
   })();
   return (tools[lang] ||= init.then(async () => {
     const TS = window.TreeSitter;
     const parser = new TS();
     parser.setLanguage(await TS.Language.load(`/vendor/grammars/tree-sitter-${lang}.wasm`));
-    const differ = window.AstDiffTS.createTreeSitterDiff(parser);
+    const M = window.DbcMeasure;
     return {
       parse(code) {
         const tree = parser.parse(code);
         try {
-          const m = window.DbcComplexity.minify(tree.rootNode, code, lang);
+          const m = M.size(tree.rootNode, code, lang);
           return { size: m.chars, minified: m.text, hasError: !!tree.rootNode.hasError };
         } finally { tree.delete?.(); }
       },
       diff(before, after) {
-        const d = differ.diff(before, after);
-        const h = differ.highlights(d);
-        return { distance: d.distance, old: h.old, new: h.new };
+        const a = parser.parse(before), b = parser.parse(after);
+        try {
+          const marks = M.marks(before, after);
+          return { distance: M.changes(a.rootNode, before, b.rootNode, after, lang), old: marks.old, new: marks.new };
+        } finally { a.delete?.(); b.delete?.(); }
       },
       syntax(code) {
         const tree = parser.parse(code);

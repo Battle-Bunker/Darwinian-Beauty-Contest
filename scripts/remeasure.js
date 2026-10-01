@@ -1,22 +1,36 @@
-// Recompute every stored program's size (submissions and round_programs) under the current complexity
-// rule. Run after the rule changes:  npm run remeasure
+// Recompute every stored program's size and change distance under the current measures
+// (server/lib/measure.js). Run after a rule change:  npm run remeasure
 import { pool } from "../server/db/pool.js";
-import { measure } from "../server/lib/ast.js";
+import { changes, size } from "../server/lib/measure.js";
 
-const { rows } = await pool.query(`
-  SELECT DISTINCT g.config->>'language' AS language, p.code FROM (
-    SELECT game_id, code FROM submissions UNION ALL SELECT game_id, code FROM round_programs) p
-  JOIN games g ON g.id = p.game_id`);
-let changed = 0;
-for (const { language, code } of rows) {
-  const { chars } = await measure(language, code);
-  for (const table of ["submissions", "round_programs"]) {
-    const r = await pool.query(
-      `UPDATE ${table} t SET chars = $3 FROM games g
-        WHERE g.id = t.game_id AND g.config->>'language' = $1 AND t.code = $2 AND t.chars IS DISTINCT FROM $3`,
-      [language, code, chars]);
-    changed += r.rowCount;
+const { rows: games } = await pool.query("SELECT id, config->>'language' AS language FROM games");
+let updated = 0;
+for (const g of games) {
+  const { rows } = await pool.query(
+    "SELECT round_no, team_id, kind, code, chars, distance FROM round_programs WHERE game_id = $1 ORDER BY round_no", [g.id]);
+  const last = new Map(); // team|kind → code that played most recently
+  for (const p of rows) {
+    const key = `${p.team_id}|${p.kind}`;
+    const chars = (await size(g.language, p.code)).chars;
+    const distance = last.has(key) ? await changes(g.language, last.get(key), p.code) : null;
+    if (chars !== p.chars || distance !== p.distance) {
+      await pool.query("UPDATE round_programs SET chars = $5, distance = $6 WHERE game_id = $1 AND round_no = $2 AND team_id = $3 AND kind = $4",
+        [g.id, p.round_no, p.team_id, p.kind, chars, distance]);
+      updated++;
+    }
+    last.set(key, p.code);
+  }
+  const { rows: subs } = await pool.query("SELECT team_id, kind, code, chars, distance FROM submissions WHERE game_id = $1", [g.id]);
+  for (const s of subs) {
+    const prev = last.get(`${s.team_id}|${s.kind}`);
+    const chars = (await size(g.language, s.code)).chars;
+    const distance = prev === undefined ? null : await changes(g.language, prev, s.code);
+    if (chars !== s.chars || distance !== s.distance) {
+      await pool.query("UPDATE submissions SET chars = $4, distance = $5 WHERE game_id = $1 AND team_id = $2 AND kind = $3",
+        [g.id, s.team_id, s.kind, chars, distance]);
+      updated++;
+    }
   }
 }
-console.log(`measured ${rows.length} distinct programs; updated ${changed} rows`);
+console.log(`checked ${games.length} games; updated ${updated} program rows`);
 await pool.end();

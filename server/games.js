@@ -4,7 +4,8 @@ import { query, tx } from "./db/pool.js";
 import { env } from "./config.js";
 import { allocatePrefixLen, normalizeCode, shortId, uuidToCode } from "./lib/shortid.js";
 import { DEFAULT_CONFIG, normalizeConfig, turnsFor } from "./lib/gameConfig.js";
-import { changeDistance, measure } from "./lib/ast.js";
+import { changes, size } from "./lib/measure.js";
+import { changeable, nextChangeRound } from "./lib/schedule.js";
 import { addLedgers, score, zeroLedger } from "./lib/scoring.js";
 import { programInterface } from "./lib/interface.js";
 import { KINDS, simulateRound, tryFlower } from "./engine.js";
@@ -167,8 +168,10 @@ async function previousPrograms(gameId, teamId, roundNo, client = { query }) {
 }
 
 /**
- * Measure a program against its complexity budget and (after round 1) its change budget.
- * chars is the complexity: the length of the automatically minified program, which is `minified`.
+ * Measure a program against its size budget and (after round 1) its change budget. chars is the size,
+ * the length of the minified program (`minified`); distance is the change since last round, in
+ * characters of the minified forms. A flower that may not change this round (see schedule.js) has no
+ * change budget at all.
  */
 export async function checkProgram(game, team, kind, code) {
   if (!KINDS.includes(kind)) fail(400, "kind must be clover, orchid or bee");
@@ -176,7 +179,7 @@ export async function checkProgram(game, team, kind, code) {
   if (code.length > 100_000) fail(400, "Program is too long");
   const budget = game.config.budgets[kind];
   const errors = [];
-  const { chars, minified, syntaxError } = await measure(game.config.language, code);
+  const { chars, minified, syntaxError } = await size(game.config.language, code);
   if (syntaxError) errors.push("Syntax error");
   if (chars > budget.chars) {
     errors.push(`Too long: ${chars} characters after minifying > budget ${budget.chars} ` +
@@ -187,9 +190,17 @@ export async function checkProgram(game, team, kind, code) {
     previous = (await previousPrograms(game.id, team.id, game.rounds_played))[kind] ?? null;
     if (previous === null) errors.push("Your team isn't playing in this game (no programs in round 1)");
     else if (chars <= budget.chars * 4) {
-      distance = await changeDistance(game.config.language, previous, code);
-      if (distance > budget.changes) errors.push(`Too many changes: ${distance} edits > budget ${budget.changes}`);
-    } else errors.push("Too complex to compare with last round");
+      distance = await changes(game.config.language, previous, code);
+      const next = game.rounds_played + 1;
+      if (!changeable(next).includes(kind)) {
+        if (distance > 0) {
+          errors.push(`Your ${kind} is locked before round ${next}: clovers and orchids take turns to change ` +
+            `(orchids before even rounds, clovers before odd ones). It can change again before round ${nextChangeRound(kind, next)}.`);
+        }
+      } else if (distance > budget.changes) {
+        errors.push(`Too many changes: ${distance} characters changed (minified) > budget ${budget.changes}`);
+      }
+    } else errors.push("Too long to compare with last round");
   }
   return { ok: errors.length === 0, kind, chars, minified, distance, errors, budget };
 }
@@ -295,7 +306,7 @@ export async function startRound(room, game, user, opts = {}) {
           : { code: p.code, distance: 0, carriedOver: true };
         // Measured again so stored sizes follow the current complexity rule, even for a program
         // checked or carried over from before a rule change (it still plays: budgets apply when submitting).
-        programs[teamId][kind] = { ...prog, chars: (await measure(g.config.language, prog.code)).chars };
+        programs[teamId][kind] = { ...prog, chars: (await size(g.config.language, prog.code)).chars };
       }
     }
     await c.query("UPDATE games SET running_round = $2, participants = $3, status = 'running', last_error = NULL WHERE id = $1", [g.id, roundNo, participants]);
@@ -413,6 +424,8 @@ export async function viewGame(room, game, user, opts = {}) {
       createdAt: g.created_at, finishedAt: g.finished_at, revealed, isOwner,
       // Turns per bee in the next round (depends on how many teams play).
       turns: turnsFor(cfg, participants ? participants.length : teams.length),
+      // Programs teams may change for the next round (clovers and orchids take turns).
+      changeable: changeable(g.rounds_played + 1),
     },
     me: user ? { id: user.id, name: user.name, teamId: mine?.id ?? null } : null,
     participants,

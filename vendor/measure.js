@@ -1,23 +1,27 @@
 "use strict";
-// The game's complexity rule: a program's size is the length of its automatically minified form.
-// Not vendored code: it lives in /vendor because that folder is served to the browser, so the editor
-// (web/src/lib/codetools.ts) and the server (server/lib/ast.js) load this same file and always agree.
+// How the game measures programs. Not vendored code: it lives in /vendor because that folder is served
+// to the browser, so the editor (web/src/lib/codetools.ts) and the server (server/lib/measure.js) load
+// this same file and always agree. Everything works on web-tree-sitter syntax trees.
 //
-// Minifying makes the count independent of how readable the code is:
+// size(root, source, language) → { chars, text }
+//   A program's size is the length of its automatically minified form, so readable code costs nothing:
 //   - comments, blank lines and spacing are dropped (Python keeps one newline per statement and one
 //     space per indentation level; TypeScript gets one ";" per statement)
 //   - every name the program binds (variables, functions, classes, parameters, imports) is renamed to
-//     the shortest free name, most-used first, so descriptive names cost nothing extra. A name's first
-//     20 characters are free; longer names pay for the rest, because a program can read its own names
-//     back (globals(), __name__, …) and could otherwise hide data in them
+//     the shortest free name, most-used first. A name's first 20 characters are free; longer names pay
+//     for the rest, because a program can read its own names back (globals(), __name__, …)
 //   - TypeScript types are removed, as they are before the program runs
-// Everything else counts as written: strings and numbers character by character, keywords, operators,
-// attribute and keyword-argument names, and names the program uses but doesn't bind (len, Math, GAME).
+//   Everything else counts as written: strings and numbers character by character, keywords,
+//   operators, attribute and keyword-argument names, and names the program uses but doesn't bind.
 //
-// minify(rootNode, source, language) works on a web-tree-sitter syntax tree and returns
-// { text, chars, renamed }: the minified program, its size (characters of text plus long-name
-// surcharges), and the number of names it renamed.
-var DbcComplexity = (() => {
+// changes(oldRoot, oldSource, newRoot, newSource, language) → number
+//   How much a program changed between rounds: the edit distance (characters inserted, deleted or
+//   replaced) between the two minified forms. The new version's names are first matched to the old
+//   version's by where they occur, so renaming a variable costs nothing.
+//
+// marks(oldSource, newSource) → { old, new }
+//   Character ranges [start, end, "del" | "ins"] that differ between two sources, for the editor.
+var DbcMeasure = (() => {
   const FREE_NAME_CHARS = 20;
   const KEEP = new Set(["flower", "forage", "tasted", "GAME", "MEMORY"]); // looked up by name
   const RESERVED = {
@@ -123,7 +127,6 @@ var DbcComplexity = (() => {
   }
 
   // ---------------------------------------------------------------- emitting the minified text
-  const PY_STATEMENT_HOLDERS = new Set(["module", "block"]);
   const TS_SKIP = new Set(["type_annotation", "type_alias_declaration", "interface_declaration", "type_parameters", "type_arguments",
     "accessibility_modifier", "override_modifier", "ambient_declaration", "implements_clause", "asserts_annotation",
     "type_predicate_annotation", "omitting_type_annotation", "opting_type_annotation", "function_signature", "method_signature",
@@ -134,7 +137,21 @@ var DbcComplexity = (() => {
     "throw_statement", "break_statement", "continue_statement", "do_statement", "debugger_statement", "public_field_definition",
     "import_statement", "export_statement"]);
 
-  function minify(root, source, language) {
+  /** Most-used names get the shortest replacements. */
+  function byUse(uses, reserved) {
+    const order = [...uses.keys()];
+    const rank = order.slice().sort((a, b) => uses.get(b) - uses.get(a) || order.indexOf(a) - order.indexOf(b));
+    const names = new Map(), gen = shortNames(reserved);
+    for (const name of rank) names.set(name, gen.next().value);
+    return names;
+  }
+
+  /**
+   * The minified program. chooseNames(uses, reserved) maps every renamable name to its replacement
+   * (uses: name → count, in order of first use; reserved: names a replacement must avoid). Returns the
+   * text, the replacements, and `occurrences`: the original renamed names in the order they appear.
+   */
+  function minify(root, source, language, chooseNames = byUse) {
     const ts = language === "typescript";
     const word = ts ? /[A-Za-z0-9_$\u0080-\uffff]/ : /[A-Za-z0-9_\u0080-\uffff]/;
     const text = (n) => source.slice(n.startIndex, n.endIndex);
@@ -160,12 +177,9 @@ var DbcComplexity = (() => {
       for (const [c, f] of kids(n)) count(c, n, f);
     })(root, null, null);
     const reserved = new Set([...RESERVED[ts ? "typescript" : "python"], ...verbatim, ...KEEP]);
-    const order = [...uses.keys()];
-    const rank = order.slice().sort((a, b) => uses.get(b) - uses.get(a) || order.indexOf(a) - order.indexOf(b));
-    const short = new Map(), gen = shortNames(reserved);
-    for (const name of rank) short.set(name, gen.next().value);
-    let surcharge = 0;
-    for (const name of short.keys()) surcharge += Math.max(0, codePoints(name) - FREE_NAME_CHARS);
+    const short = chooseNames(uses, reserved);
+    const occurrences = [];
+    const renamed = (name) => { occurrences.push(name); return short.get(name); };
 
     // Output: lines of tokens with their indentation depth (TypeScript stays on one line).
     const lines = [];
@@ -234,10 +248,10 @@ var DbcComplexity = (() => {
         if (ts && t === ";" && parent && TS_HOLDERS.has(parent.type)) return;
         // {name} in an object or a destructuring pattern is both a key and a variable: {name: short}.
         if (ts && (t === "shorthand_property_identifier" || t === "shorthand_property_identifier_pattern") && short.has(text(n))) {
-          put(text(n) + ":" + short.get(text(n)));
+          put(text(n) + ":" + renamed(text(n)));
           return;
         }
-        put(isRenamable(n, parent, field) ? short.get(text(n)) : text(n));
+        put(isRenamable(n, parent, field) ? renamed(text(n)) : text(n));
         return;
       }
       if (!ts && (t === "module" || t === "block")) {
@@ -260,7 +274,7 @@ var DbcComplexity = (() => {
           put(text(c).replace(/\s+/g, ""));
           const ids = kids(c).map(([d]) => d).filter((d) => d.type === "identifier");
           const binds = text(t === "import_statement" ? ids[0] : ids[ids.length - 1]);
-          if (short.has(binds)) { put("as"); put(short.get(binds)); }
+          if (short.has(binds)) { put("as"); put(renamed(binds)); }
         }
         return;
       }
@@ -273,10 +287,136 @@ var DbcComplexity = (() => {
 
     emit(root, -1, null, null);
     const out = lines.filter((l) => l.s.length).map((l) => (ts ? "" : " ".repeat(Math.max(0, l.depth))) + l.s).join(ts ? "" : "\n");
-    return { text: out, chars: codePoints(out) + surcharge, renamed: short.size };
+    return { text: out, names: short, occurrences, reserved };
   }
 
-  return { minify, FREE_NAME_CHARS };
+  // ---------------------------------------------------------------- the three measures
+  function size(root, source, language) {
+    const m = minify(root, source, language);
+    let surcharge = 0;
+    for (const name of m.names.keys()) surcharge += Math.max(0, codePoints(name) - FREE_NAME_CHARS);
+    return { chars: codePoints(m.text) + surcharge, text: m.text };
+  }
+
+  const MARK = "\u0001"; // stands for every renamed name when lining two versions up
+  const MAX_ALIGN = 1500; // edits beyond which two versions aren't worth lining up name by name
+
+  function changes(oldRoot, oldSource, newRoot, newSource, language) {
+    const before = minify(oldRoot, oldSource, language);
+    // Line up the two versions with every renamed name blanked out; names that sit in matching
+    // stretches vote for being the same variable.
+    const blank = (uses) => new Map([...uses.keys()].map((k) => [k, MARK]));
+    const a = minify(oldRoot, oldSource, language, blank), b = minify(newRoot, newSource, language, blank);
+    const votes = new Map();
+    const runs = equalRuns(a.text, b.text, MAX_ALIGN) || [];
+    const markIndex = (text) => { const idx = []; for (let i = 0; i < text.length; i++) if (text[i] === MARK) idx.push(i); return idx; };
+    const aMarks = markIndex(a.text), bMarks = markIndex(b.text);
+    const aOcc = new Map(aMarks.map((pos, i) => [pos, a.occurrences[i]])), bOcc = new Map(bMarks.map((pos, i) => [pos, b.occurrences[i]]));
+    for (const [i, j, len] of runs) {
+      for (let k = 0; k < len; k++) {
+        if (a.text[i + k] !== MARK) continue;
+        const key = bOcc.get(j + k) + "\u0000" + aOcc.get(i + k);
+        votes.set(key, (votes.get(key) || 0) + 1);
+      }
+    }
+    const matched = new Map(), taken = new Set();
+    for (const [key] of [...votes].sort((x, y) => y[1] - x[1])) {
+      const [newName, oldName] = key.split("\u0000");
+      if (!matched.has(newName) && !taken.has(oldName)) { matched.set(newName, oldName); taken.add(oldName); }
+    }
+    // The new version keeps the old version's short names for matched variables.
+    const after = minify(newRoot, newSource, language, (uses, reserved) => {
+      const fresh = byUse(new Map([...uses].filter(([k]) => !matched.has(k))), new Set([...reserved, ...before.names.values()]));
+      return new Map([...uses.keys()].map((k) => [k, matched.has(k) ? before.names.get(matched.get(k)) : fresh.get(k)]));
+    });
+    return levenshtein([...before.text], [...after.text]);
+  }
+
+  function marks(oldSource, newSource) {
+    const runs = equalRuns(oldSource, newSource, MAX_ALIGN);
+    const out = { old: [], new: [] };
+    if (!runs) {
+      // Too different to line up: mark everything between the common start and end.
+      let p = 0;
+      while (p < oldSource.length && p < newSource.length && oldSource[p] === newSource[p]) p++;
+      let q = 0;
+      while (q < oldSource.length - p && q < newSource.length - p && oldSource[oldSource.length - 1 - q] === newSource[newSource.length - 1 - q]) q++;
+      if (oldSource.length - q > p) out.old.push([p, oldSource.length - q, "del"]);
+      if (newSource.length - q > p) out.new.push([p, newSource.length - q, "ins"]);
+      return out;
+    }
+    let i = 0, j = 0;
+    for (const [ri, rj, len] of [...runs, [oldSource.length, newSource.length, 0]]) {
+      if (ri > i) out.old.push([i, ri, "del"]);
+      if (rj > j) out.new.push([j, rj, "ins"]);
+      i = ri + len; j = rj + len;
+    }
+    return out;
+  }
+
+  // ---------------------------------------------------------------- text diffs
+  /** Myers' diff: the stretches [i, j, length] where a and b agree, or null if they differ in more than maxD edits. */
+  function equalRuns(a, b, maxD) {
+    let pre = 0;
+    while (pre < a.length && pre < b.length && a[pre] === b[pre]) pre++;
+    let suf = 0;
+    while (suf < a.length - pre && suf < b.length - pre && a[a.length - 1 - suf] === b[b.length - 1 - suf]) suf++;
+    const n = a.length - pre - suf, m = b.length - pre - suf;
+    const A = (x) => a[pre + x], B = (y) => b[pre + y];
+    const max = n + m, OFF = max + 1, V = new Int32Array(2 * max + 3), hist = [];
+    let dEnd = -1;
+    search: for (let d = 0; d <= Math.min(max, maxD); d++) {
+      for (let k = -d; k <= d; k += 2) {
+        let x = k === -d || (k !== d && V[OFF + k - 1] < V[OFF + k + 1]) ? V[OFF + k + 1] : V[OFF + k - 1] + 1;
+        let y = x - k;
+        while (x < n && y < m && A(x) === B(y)) { x++; y++; }
+        V[OFF + k] = x;
+        if (x >= n && y >= m) { hist.push(V.slice(OFF - d, OFF + d + 1)); dEnd = d; break search; }
+      }
+      hist.push(V.slice(OFF - d, OFF + d + 1));
+    }
+    if (dEnd < 0) return null;
+    const runs = [];
+    let x = n, y = m;
+    for (let d = dEnd; d > 0; d--) {
+      const prev = (k) => hist[d - 1][k + d - 1];
+      const k = x - y;
+      const pk = k === -d || (k !== d && prev(k - 1) < prev(k + 1)) ? k + 1 : k - 1;
+      const px = prev(pk), py = px - pk;
+      const sx = pk === k + 1 ? px : px + 1; // where this step's snake starts
+      if (x > sx) runs.push([pre + sx, pre + sx - k, x - sx]);
+      x = px; y = py;
+    }
+    if (x > 0) runs.push([pre, pre, x]);
+    runs.reverse();
+    if (pre) runs.unshift([0, 0, pre]);
+    if (suf) runs.push([a.length - suf, b.length - suf, suf]);
+    return runs;
+  }
+
+  /** Characters inserted, deleted or replaced to turn a into b (arrays of characters). */
+  function levenshtein(a, b) {
+    let s = 0;
+    while (s < a.length && s < b.length && a[s] === b[s]) s++;
+    let e = 0;
+    while (e < a.length - s && e < b.length - s && a[a.length - 1 - e] === b[b.length - 1 - e]) e++;
+    const n = a.length - s - e, m = b.length - s - e;
+    if (!n || !m) return n + m;
+    let prev = new Int32Array(m + 1), cur = new Int32Array(m + 1);
+    for (let j = 0; j <= m; j++) prev[j] = j;
+    for (let i = 1; i <= n; i++) {
+      cur[0] = i;
+      const ai = a[s + i - 1];
+      for (let j = 1; j <= m; j++) {
+        const sub = prev[j - 1] + (ai === b[s + j - 1] ? 0 : 1);
+        cur[j] = Math.min(sub, prev[j] + 1, cur[j - 1] + 1);
+      }
+      [prev, cur] = [cur, prev];
+    }
+    return prev[m];
+  }
+
+  return { size, changes, marks, FREE_NAME_CHARS };
 })();
 
-if (typeof module !== "undefined") module.exports = DbcComplexity;
+if (typeof module !== "undefined") module.exports = DbcMeasure;

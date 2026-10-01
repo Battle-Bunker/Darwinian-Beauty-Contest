@@ -1,18 +1,20 @@
-// Complexity = characters of the automatically minified program (vendor/complexity.js): comments,
-// spacing and name lengths don't count; strings, numbers, keywords and attribute names do.
+// Program size = characters of the automatically minified program; change = edit distance between two
+// versions' minified forms with names lined up (vendor/measure.js). Comments, spacing and name lengths
+// don't count; strings, numbers, keywords and attribute names do.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import vm from "node:vm";
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { measure } from "../server/lib/ast.js";
+import { changes, size } from "../server/lib/measure.js";
+import { changeable } from "../server/lib/schedule.js";
 
 const require = createRequire(import.meta.url);
 const Parser = require("web-tree-sitter");
 const { stripTypeScriptTypes } = require("node:module");
-const py = (code) => measure("python", code);
-const ts = (code) => measure("typescript", code);
+const py = (code) => size("python", code);
+const ts = (code) => size("typescript", code);
 
 const READABLE_PY = `import random
 import time
@@ -117,17 +119,44 @@ test("the minified programs are valid code", async () => {
   }
 });
 
-test("the browser loads the same rule as a plain script", async () => {
-  // web/src/lib/codetools.ts loads /vendor/complexity.js with a <script> tag.
+test("change: renames, comments and formatting are free; edits cost the characters they change", async () => {
+  const pc = (a, b) => changes("python", a, b);
+  assert.equal(await pc(TERSE_PY, READABLE_PY), 0, "the same program, written readably");
+  const base = `def flower(challenge):\n    size = 5\n    return size * challenge\n`;
+  assert.equal(await pc(base, base.replace("size", "ring_size").replace("size *", "ring_size *")), 0, "a rename");
+  assert.equal(await pc(base, base.replace("5", "7")), 1, "a constant");
+  assert.equal(await pc(base, base.replace("5", "1234")), 4);
+  // A new variable that becomes the most used doesn't reshuffle every other name's cost.
+  const more = `def flower(challenge):\n    size = 5\n    k = 3\n    return size * challenge + k + k + k\n`;
+  assert.equal(await pc(base, more), (await pc(base, more.replace(/\bk\b/g, "q"))));
+  assert.ok(await pc(base, more) <= " k=3\n".length + "+k+k+k".length, `${await pc(base, more)}`);
+  const tc = (a, b) => changes("typescript", a, b);
+  assert.equal(await tc("function flower(c: number) { return c * 2 }", "// doubled\nfunction flower(challenge: number): number {\n  return challenge * 2;\n}\n"), 0);
+});
+
+test("clovers and orchids take turns to change; bees change every round", () => {
+  assert.deepEqual(changeable(1), ["clover", "orchid", "bee"]);
+  assert.deepEqual(changeable(2), ["orchid", "bee"]);
+  assert.deepEqual(changeable(3), ["clover", "bee"]);
+  assert.deepEqual(changeable(4), ["orchid", "bee"]);
+});
+
+test("the browser loads the same rules as a plain script", async () => {
+  // web/src/lib/codetools.ts loads /vendor/measure.js with a <script> tag.
   const ctx = vm.createContext({});
-  vm.runInContext(fs.readFileSync(new URL("../vendor/complexity.js", import.meta.url), "utf8"), ctx);
-  assert.equal(typeof ctx.DbcComplexity.minify, "function");
+  vm.runInContext(fs.readFileSync(new URL("../vendor/measure.js", import.meta.url), "utf8"), ctx);
+  assert.equal(typeof ctx.DbcMeasure.size, "function");
   await Parser.init();
   const p = new Parser();
   p.setLanguage(await Parser.Language.load(new URL("../vendor/grammars/tree-sitter-python.wasm", import.meta.url).pathname));
   const tree = p.parse(READABLE_PY);
-  const browser = ctx.DbcComplexity.minify(tree.rootNode, READABLE_PY, "python");
+  const browser = ctx.DbcMeasure.size(tree.rootNode, READABLE_PY, "python");
   const server = await py(READABLE_PY);
   assert.equal(browser.chars, server.chars);
   assert.equal(browser.text, server.minified);
+  const other = p.parse(TERSE_PY.replace("1000", "999"));
+  assert.equal(ctx.DbcMeasure.changes(tree.rootNode, READABLE_PY, other.rootNode, TERSE_PY.replace("1000", "999"), "python"),
+    await changes("python", READABLE_PY, TERSE_PY.replace("1000", "999")));
+  const m = ctx.DbcMeasure.marks("abcdef", "abXdef");
+  assert.deepEqual(JSON.parse(JSON.stringify(m)), { old: [[2, 3, "del"]], new: [[2, 3, "ins"]] });
 });

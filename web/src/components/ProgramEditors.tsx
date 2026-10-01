@@ -107,8 +107,11 @@ export function ProgramEditors({ view, base }: { view: GameView; base: string })
   const current = code[kind];
   const participant = g.roundsPlayed === 0 || !!view.participants?.includes(team.id);
   const locked = !!g.runningRound || g.status === "finished" || !participant;
+  // Clovers and orchids take turns to change: a flower that can't change this round has no change budget.
+  const frozen = g.roundsPlayed > 0 && !g.changeable.includes(kind);
+  const allowance = frozen ? 0 : budget.changes;
   const overSize = !!s && s.chars > budget.chars;
-  const overChanges = !!s && s.distance !== null && s.distance > budget.changes;
+  const overChanges = !!s && s.distance !== null && s.distance > allowance;
   const empty = !current.trim();
   const blocked = empty || (!!s && (s.syntaxError || overSize || overChanges));
 
@@ -164,6 +167,7 @@ export function ProgramEditors({ view, base }: { view: GameView; base: string })
               <span className="tab-name">{k}</span>
               {submitted && !dirty && <span className="tab-mark ok" title="Submitted"><CheckIcon size={13} /></span>}
               {dirty && <span className="tab-mark dirty" title="Unsubmitted changes">•</span>}
+              {g.roundsPlayed > 0 && !g.changeable.includes(k) && <span className="tab-mark locked" title="Locked this round: clovers and orchids take turns">locked</span>}
             </button>
           );
         })}
@@ -176,14 +180,17 @@ export function ProgramEditors({ view, base }: { view: GameView; base: string })
         <div className="meters">
           <Meter label="Size (characters after minifying)" value={empty ? 0 : s?.chars ?? null} max={budget.chars} />
           {previous !== null
-            ? <Meter label="Changes since last round" value={s?.distance ?? null} max={budget.changes} />
-            : <div className="meter-note muted">Round 1: write anything that fits the size budget. After that, each round you may make up to {budget.changes} edits.</div>}
+            ? (frozen
+              ? <div className="meter-note muted">Locked until the next round: clovers and orchids take turns to change.</div>
+              : <Meter label="Changes since last round (characters, minified)" value={s?.distance ?? null} max={allowance} />)
+            : <div className="meter-note muted">Round 1: write anything that fits the size budget. After that, clovers and orchids take turns to change (orchids before even rounds, clovers before odd ones), up to {budget.changes} characters each time; bees can change every round.</div>}
           <div className="meter-note muted">Time limit: {budget.ms} ms per {kind === "bee" ? "call" : "question"}</div>
         </div>
         {s?.syntaxError && !empty && <Alert kind="warn">Syntax error: this code doesn't parse yet, so it can't be submitted.</Alert>}
         {overSize && <Alert kind="error">Too big: {s!.chars} characters after minifying, but the budget is {budget.chars}. Make it {s!.chars - budget.chars} characters smaller to submit. Comments, spacing and long names are free; strings, numbers and keywords count.</Alert>}
         {!empty && s?.minified && <details className="minified"><summary className="muted small">What counts: your program minified ({s.chars} characters)</summary><pre>{s.minified}</pre></details>}
-        {overChanges && <Alert kind="error">Too many changes: {s!.distance} edits since last round, but the budget is {budget.changes}. Undo {s!.distance! - budget.changes} to submit.</Alert>}
+        {frozen && <Alert kind="info">Your {kind} can't change before round {g.roundsPlayed + 1}: clovers and orchids take turns, and this round it's the {kind === "clover" ? "orchids'" : "clovers'"} turn. You can still try ideas out below.</Alert>}
+        {overChanges && !frozen && <Alert kind="error">Too many changes: {s!.distance} characters changed since last round (minified), but the budget is {allowance}. Undo {s!.distance! - allowance} to submit.</Alert>}
         {incoming[kind] && (
           <Alert kind="info">
             A teammate submitted a new {kind}. <button className="link-btn" onClick={() => revertTo(team.drafts[kind] ? "draft" : "previous")}>Load their version</button>
@@ -223,7 +230,7 @@ export function ProgramEditors({ view, base }: { view: GameView; base: string })
         {r?.error && <Alert kind="error">{r.error}</Alert>}
         {r?.check && (
           r.check.ok
-            ? <Alert kind="ok">{r.action === "submit" ? "Submitted! " : "Looks good. "}{r.check.chars} characters{r.check.distance !== null ? `, ${r.check.distance} changes` : ""}.</Alert>
+            ? <Alert kind="ok">{r.action === "submit" ? "Submitted! " : "Looks good. "}{r.check.chars} characters{r.check.distance !== null ? `, ${r.check.distance} changed` : ""}.</Alert>
             : <Alert kind="error">{r.action === "submit" && <b>Not submitted: </b>}{r.check.errors.join(" · ")}</Alert>
         )}
 

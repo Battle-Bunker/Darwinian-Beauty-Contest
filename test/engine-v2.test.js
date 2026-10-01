@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { simulateRound } from "../server/engine.js";
-import { CHARS_PER_EDIT, DEFAULT_CONFIG, normalizeConfig, turnsFor } from "../server/lib/gameConfig.js";
+import { DEFAULT_CONFIG, normalizeConfig, turnsFor } from "../server/lib/gameConfig.js";
 
 const clover = `def flower(c):\n    return c * 2\n`;
 const orchid = `def flower(c):\n    return c * 3\n`;
@@ -16,8 +16,11 @@ test("defaults: turns scale with the garden; budgets are asymmetric around the o
   assert.equal(cl.ms, 3 * or.ms);
   assert.equal(bee.chars, 5 * or.chars);
   assert.equal(bee.ms * 2, or.ms);
-  // Changes are syntax-tree edits: an orchid may rewrite about 70% of a full-size orchid each round.
-  assert.equal(or.changes, Math.round(0.7 * or.chars / CHARS_PER_EDIT));
+  // Changes count characters of the minified program: an orchid may rewrite 70% of a full-size orchid
+  // in its turn; clovers and bees 20%.
+  assert.equal(or.changes, Math.round(0.7 * or.chars));
+  assert.equal(cl.changes, Math.round(0.2 * cl.chars));
+  assert.equal(bee.changes, Math.round(0.2 * bee.chars));
 });
 
 test("a bee can keep asking after it feeds; feeding again just moves on", async () => {

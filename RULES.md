@@ -129,7 +129,8 @@ Every program can read a `GAME` dictionary/object: `turns`, `feed_cost`, `challe
 `response_type`, `max_len`, `max_nodes`, `flowers` (how many flowers are in the garden) and `ms` (your
 program's own time limit per call, in milliseconds). It does
 **not** say which round it is. (A bee can count its `MEMORY`; a flower can't know.) Flowers change
-between rounds only when you change their code.
+between rounds only when you change their code, and clovers and orchids take turns to do that (see
+"Taking turns to change" below).
 
 Python programs may import `math`, `random`, `hashlib`, `string`, `itertools`, `functools`,
 `collections`, `re`, `json`, `bisect`, `heapq`, `statistics`, `fractions`, `decimal`, `operator`,
@@ -145,7 +146,7 @@ programs get **different** budgets on purpose, measured against the orchid:
 | Budget | Measures | clover | orchid | bee |
 |---|---|---|---|---|
 | **complexity** | characters, after the game minifies your program (see below) | 350 (half an orchid's) | 700 | 3500 (5× an orchid's) |
-| **change** | syntax-tree edits allowed between rounds | 30 | 210 (70% of its size) | 300 |
+| **change** | characters of the minified program you may change in a round your program can change | 70 | 490 (70% of its size) | 700 |
 | **compute** | milliseconds per call (flowers: the whole program, every question) | 150 (3× an orchid's) | 50 | 25 (half an orchid's) |
 
 Why it's lopsided:
@@ -154,7 +155,7 @@ Why it's lopsided:
   tricky rule, is hard for an orchid to fake in a third of the time. With randomness and a clock, a
   clover can search for as long as its budget allows and return the best it found, so how good its
   answers are shows how hard it worked.
-- **Orchids** get more code and can change a lot between rounds. They make up for less compute with
+- **Orchids** get more code and can change a lot in their turn. They make up for less compute with
   cleverness: a faster way to produce the same kind of answer, or a shallower look-alike.
 - **Bees** get lots of code for a whole kit of detectors, but only a little time per decision. So the
   best signals are ones that are **hard to make but easy to check**.
@@ -178,13 +179,27 @@ code costs nothing:
 The editor shows exactly what gets counted: your program, minified. Strings and numbers count in
 full because otherwise a single long string or number could hide a whole lookup table.
 
-The change budget counts syntax-tree edits between rounds: changing a number or a name is one edit,
-and a new `if x == k: return v` line is about seven.
+### Taking turns to change
 
-Before round 1 you can write anything within the complexity budget. After that, each round's
-program must be within the change budget of the program that played the round before. If you don't
-submit a new version, your previous one plays again. Teams need all three programs submitted before
-round 1 to take part.
+Before round 1 you write all three programs, anything within the size budgets. After that, **clovers
+and orchids take turns**:
+
+| before round | may change |
+|---|---|
+| 2, 4, 6, … | orchid and bee |
+| 3, 5, 7, … | clover and bee |
+
+So orchids get a round to react to what the clovers did, and the clovers can't move at the same
+time. Then the clovers get a round to react to the imitators while the orchids stand still. Bees
+can change before every round.
+
+A change is measured on the minified programs too: the number of characters inserted, deleted or
+replaced to turn last round's minified program into the new one. Renaming a variable, editing
+comments or reformatting changes nothing. Changing `5` to `7` is 1 character, and a new line
+`if x == 3: return 1` costs its own length. In its turn a program may change up to its change budget.
+A program that isn't in its turn may still be resubmitted, as long as its minified form stays exactly
+the same (new comments, say). If you don't submit a new version, your previous one plays again.
+Teams need all three programs submitted before round 1 to take part.
 
 ## What you find out, and when
 

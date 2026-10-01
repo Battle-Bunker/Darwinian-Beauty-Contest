@@ -1,10 +1,6 @@
 // Per-game parameters, chosen by the room owner before round 1 and locked afterwards.
 import { parseType, typeToString } from "./types.js";
 
-// Minified characters per syntax-tree node, the median across every program played before complexity
-// was measured in characters. Change budgets count syntax-tree edits, so this converts between them.
-export const CHARS_PER_EDIT = 7 / 3;
-
 export const DEFAULT_CONFIG = Object.freeze({
   language: "python",          // "python" | "typescript"
   rounds: 5,                   // number of rounds in the game
@@ -20,14 +16,16 @@ export const DEFAULT_CONFIG = Object.freeze({
   revealOnFinish: true,        // when the game ends, everyone can see all code and all logs
   // The orchid is the reference point:
   //   clover: half the orchid's complexity, 3× its compute: honest flowers can prove they spent effort
-  //   orchid: room to build elaborate imitations and to change tack between rounds (70% change budget)
+  //   orchid: room to build elaborate imitations and to change tack in its turn (70% change budget)
   //   bee:    5× the orchid's complexity for detector repertoires, half its compute: checks must be cheap
   budgets: {
-    //        complexity (characters after automatic minifying)  change (syntax-tree edits per round)
-    //        compute (ms per call, one core each)
-    clover: { chars: 350, changes: 30, ms: 150 },
-    orchid: { chars: 700, changes: 210, ms: 50 },
-    bee: { chars: 3500, changes: 300, ms: 25 },
+    //   chars: size, in characters of the minified program
+    //   changes: characters of the minified program that may change in a round the program may change
+    //            (clovers and orchids take turns, see schedule.js)
+    //   ms: compute per call, one core each
+    clover: { chars: 350, changes: 70, ms: 150 },
+    orchid: { chars: 700, changes: 490, ms: 50 },
+    bee: { chars: 3500, changes: 700, ms: 25 },
   },
 });
 
@@ -60,7 +58,7 @@ export function normalizeConfig(input = {}, base = DEFAULT_CONFIG) {
     const b = (c.budgets && c.budgets[kind]) || {}, d = base.budgets[kind];
     out.budgets[kind] = {
       chars: int(b.chars, 1, 1000000, d.chars),
-      changes: int(b.changes, 0, 100000, d.changes),
+      changes: int(b.changes, 0, 1000000, d.changes),
       ms: int(b.ms, 1, 10000, d.ms),
     };
   }

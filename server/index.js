@@ -8,7 +8,7 @@ import { sessionMiddleware } from "./auth/index.js";
 import { apiRouter } from "./routes/api.js";
 import { startListening } from "./realtime.js";
 import { recoverInterruptedRounds } from "./games.js";
-import { initAst } from "./lib/ast.js";
+import { initMeasure } from "./lib/measure.js";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const WEB = path.join(ROOT, "web", "dist");
@@ -34,7 +34,7 @@ export async function createApp() {
 
 async function main() {
   await migrate();
-  await initAst();
+  await initMeasure();
   const recovered = await recoverInterruptedRounds();
   if (recovered) console.log(`cleared ${recovered} interrupted round(s)`);
   await startListening();

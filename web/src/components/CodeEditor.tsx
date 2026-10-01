@@ -1,5 +1,5 @@
 // A plain <textarea> over a highlighted <pre>, like quine-court's editor: syntax colours from
-// tree-sitter, plus diff marks (inserted / deleted / relabelled nodes) against last round's program.
+// tree-sitter, plus diff marks (inserted / deleted text) against last round's program.
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { getLangTools, paint, type Language, type Mark } from "../lib/codetools";
 

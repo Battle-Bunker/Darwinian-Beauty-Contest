@@ -64,13 +64,27 @@ await assert.rejects(api(players[1].token, "POST", `${g}/rounds?wait=1`), /403/)
 
 for (let round = 1; round <= 3; round++) {
   if (round === 2) {
-    // Change budget: a big rewrite is rejected, a small edit is accepted.
+    // Clovers and orchids take turns: before round 2 only orchids (and bees) may change.
+    const g2 = await api(players[1].token, "GET", g);
+    assert.deepEqual(g2.game.changeable, ["orchid", "bee"]);
+    const lockedClover = await api(players[1].token, "POST", `${g}/programs`, { kind: "clover", code: variants[1].clover.replace("% 1000", "% 997") });
+    assert.equal(lockedClover.ok, false);
+    console.log("locked clover rejects:", lockedClover.errors[0]);
+    const comments = await api(players[1].token, "POST", `${g}/programs`, { kind: "clover", code: "# same clover, explained\n" + variants[1].clover });
+    assert.ok(comments.ok && comments.distance === 0, "a locked flower may still change comments");
+    const orchidTweak = await api(players[1].token, "POST", `${g}/programs`, { kind: "orchid", code: variants[1].orchid.replace("% 1000", "% 997") });
+    assert.ok(orchidTweak.ok, orchidTweak.errors?.join());
+    console.log("orchid tweak accepted, distance", orchidTweak.distance);
+  }
+  if (round === 3) {
+    // Now it's the clovers' turn, within their change budget.
     const rewrite = await api(players[1].token, "POST", `${g}/programs`, { kind: "clover", code: "def flower(challenge):\n    x = challenge\n" + "    x = (x * 31 + 7) % 9973\n".repeat(10) + "    return x\n" });
     assert.equal(rewrite.ok, false);
     console.log("change budget rejects:", rewrite.errors[0]);
     const tweak = await api(players[1].token, "POST", `${g}/programs`, { kind: "clover", code: variants[1].clover.replace("% 1000", "% 997") });
     assert.ok(tweak.ok, tweak.errors?.join());
-    console.log("small tweak accepted, distance", tweak.distance);
+    const lockedOrchid = await api(players[1].token, "POST", `${g}/programs`, { kind: "orchid", code: variants[1].orchid.replace("% 1000", "% 991") });
+    assert.equal(lockedOrchid.ok, false);
   }
   const t0 = Date.now();
   const r = await api(owner, "POST", `${g}/rounds?wait=1`);
