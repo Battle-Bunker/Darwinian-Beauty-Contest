@@ -174,14 +174,14 @@ export function ProgramEditors({ view, base }: { view: GameView; base: string })
         <div className="editor-main">
         <p className="muted small">{BLURB[kind]}</p>
         <div className="meters">
-          <Meter label="Size (nodes)" value={empty ? 0 : s?.nodes ?? null} max={budget.nodes} />
+          <Meter label={!empty && s?.strings ? `Size (nodes, ${s.strings} of them string text)` : "Size (nodes)"} value={empty ? 0 : s?.nodes ?? null} max={budget.nodes} />
           {previous !== null
             ? <Meter label="Changes since last round" value={s?.distance ?? null} max={budget.changes} />
             : <div className="meter-note muted">Round 1: write anything that fits the size budget. After that, each round you may change up to {budget.changes} nodes.</div>}
           <div className="meter-note muted">Time limit: {budget.ms} ms per {kind === "bee" ? "call" : "question"}</div>
         </div>
         {s?.syntaxError && !empty && <Alert kind="warn">Syntax error: this code doesn't parse yet, so it can't be submitted.</Alert>}
-        {overNodes && <Alert kind="error">Too big: {s!.nodes} nodes, but the budget is {budget.nodes}. Make it {s!.nodes - budget.nodes} nodes smaller to submit (comments are free).</Alert>}
+        {overNodes && <Alert kind="error">Too big: {s!.nodes} nodes{s!.strings ? ` (${s!.strings} of them string characters)` : ""}, but the budget is {budget.nodes}. Make it {s!.nodes - budget.nodes} nodes smaller to submit. Comments are free, but string text costs one node per character.</Alert>}
         {overChanges && <Alert kind="error">Too many changes: {s!.distance} edits since last round, but the budget is {budget.changes}. Undo {s!.distance! - budget.changes} to submit.</Alert>}
         {incoming[kind] && (
           <Alert kind="info">

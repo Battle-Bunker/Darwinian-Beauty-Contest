@@ -100,7 +100,8 @@ export interface GameView {
   final: TeamScore[] | null;
 }
 
-export interface CheckResult { ok: boolean; kind: Kind; nodes: number; distance: number | null; errors: string[]; budget: Budget; submitted?: boolean }
+/** nodes: the complexity (syntax-tree nodes + string-text characters), of which `strings` are string text. */
+export interface CheckResult { ok: boolean; kind: Kind; nodes: number; strings: number; distance: number | null; errors: string[]; budget: Budget; submitted?: boolean }
 
 /** What every team knows before writing code: signatures and type rules (no starter code). */
 export interface ProgramInterface {

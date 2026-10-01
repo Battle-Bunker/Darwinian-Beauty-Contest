@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { getLangTools, paint, type Language, type Mark } from "../lib/codetools";
 
-export interface EditorStats { nodes: number; syntaxError: boolean; distance: number | null }
+/** nodes: the complexity, of which `strings` are string-text characters. */
+export interface EditorStats { nodes: number; strings: number; syntaxError: boolean; distance: number | null }
 
 interface Highlight { code: string; syntax: Mark[]; diff: Mark[]; prevHtml: string | null }
 
@@ -39,7 +40,7 @@ export function CodeEditor({ value, onChange, language, previous = null, readOnl
           prevHtml = paint(previous, tools.syntax(previous), d.old);
         }
         setHl({ code: value, syntax, diff, prevHtml });
-        statsRef.current?.({ nodes: parsed.size, syntaxError: parsed.hasError, distance });
+        statsRef.current?.({ nodes: parsed.size, strings: parsed.strings, syntaxError: parsed.hasError, distance });
       } catch (e) {
         if (!cancelled) setLoadError(e instanceof Error ? e.message : String(e));
       }

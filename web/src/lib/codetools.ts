@@ -1,15 +1,16 @@
-// In-browser node counts, change distances and diff highlights, computed exactly like the server:
-// the same vendor/tree-sitter.js + vendor/astdiff.js + grammars that server/lib/ast.js uses.
-// Also a light syntax highlighter built on the same parse tree.
+// In-browser complexity, change distances and diff highlights, computed exactly like the server:
+// the same vendor/tree-sitter.js + vendor/astdiff.js + vendor/complexity.js + grammars that
+// server/lib/ast.js uses. Also a light syntax highlighter built on the same parse tree.
 
 declare global {
-  interface Window { TreeSitter: any; AstDiffTS: any }
+  interface Window { TreeSitter: any; AstDiffTS: any; DbcComplexity: any }
 }
 
 export type Language = "python" | "typescript";
 export type Mark = [number, number, string];
 
-export interface Parsed { size: number; hasError: boolean }
+/** size: the complexity (syntax-tree nodes + string-text characters), of which `strings` are string text. */
+export interface Parsed { size: number; strings: number; hasError: boolean }
 export interface DiffResult { distance: number; old: Mark[]; new: Mark[] }
 
 export interface LangTools {
@@ -37,6 +38,7 @@ export function getLangTools(lang: Language): Promise<LangTools> {
   init ||= (async () => {
     await loadScript("/vendor/tree-sitter.js");
     await loadScript("/vendor/astdiff.js");
+    await loadScript("/vendor/complexity.js");
     await window.TreeSitter.init({ locateFile: () => "/vendor/grammars/tree-sitter.wasm" });
   })();
   return (tools[lang] ||= init.then(async () => {
@@ -47,7 +49,8 @@ export function getLangTools(lang: Language): Promise<LangTools> {
     return {
       parse(code) {
         const p = differ.parse(code);
-        return { size: p.size, hasError: !!p.hasError };
+        const c = window.DbcComplexity.complexity(p);
+        return { size: c.nodes, strings: c.strings, hasError: !!p.hasError };
       },
       diff(before, after) {
         const d = differ.diff(before, after);

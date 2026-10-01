@@ -166,16 +166,22 @@ async function previousPrograms(gameId, teamId, roundNo, client = { query }) {
   return Object.fromEntries(rows.map((r) => [r.kind, r.code]));
 }
 
-/** Measure a program against its complexity budget and (after round 1) its change budget. */
+/**
+ * Measure a program against its complexity budget and (after round 1) its change budget.
+ * nodes is the complexity: syntax-tree nodes plus string-text characters (`strings` of them).
+ */
 export async function checkProgram(game, team, kind, code) {
   if (!KINDS.includes(kind)) fail(400, "kind must be clover, orchid or bee");
   if (typeof code !== "string") fail(400, "code must be a string");
   if (code.length > 100_000) fail(400, "Program is too long");
   const budget = game.config.budgets[kind];
   const errors = [];
-  const { nodes, syntaxError } = await measure(game.config.language, code);
+  const { nodes, strings, syntaxError } = await measure(game.config.language, code);
   if (syntaxError) errors.push("Syntax error");
-  if (nodes > budget.nodes) errors.push(`Too complex: ${nodes} nodes > budget ${budget.nodes}`);
+  if (nodes > budget.nodes) {
+    errors.push(`Too complex: ${nodes} nodes > budget ${budget.nodes}` +
+      (strings ? ` (${strings} of them are string characters: string text costs one node per character, comments are free)` : ""));
+  }
   let distance = null, previous = null;
   if (game.rounds_played > 0) {
     previous = (await previousPrograms(game.id, team.id, game.rounds_played))[kind] ?? null;
@@ -185,7 +191,7 @@ export async function checkProgram(game, team, kind, code) {
       if (distance > budget.changes) errors.push(`Too many changes: ${distance} edits > budget ${budget.changes}`);
     } else errors.push("Too complex to compare with last round");
   }
-  return { ok: errors.length === 0, kind, nodes, distance, errors, budget };
+  return { ok: errors.length === 0, kind, nodes, strings, distance, errors, budget };
 }
 
 export async function submitProgram(game, user, kind, code) {
@@ -284,9 +290,12 @@ export async function startRound(room, game, user, opts = {}) {
       for (const kind of KINDS) {
         const s = subs.find((x) => x.team_id === teamId && x.kind === kind);
         const p = prev.find((x) => x.team_id === teamId && x.kind === kind);
-        programs[teamId][kind] = s
-          ? { code: s.code, nodes: s.nodes, distance: s.distance, carriedOver: false }
-          : { code: p.code, nodes: p.nodes, distance: 0, carriedOver: true };
+        const prog = s
+          ? { code: s.code, distance: s.distance, carriedOver: false }
+          : { code: p.code, distance: 0, carriedOver: true };
+        // Measured again so stored sizes follow the current complexity rule, even for a program
+        // checked or carried over from before a rule change (it still plays: budgets apply when submitting).
+        programs[teamId][kind] = { ...prog, nodes: (await measure(g.config.language, prog.code)).nodes };
       }
     }
     await c.query("UPDATE games SET running_round = $2, participants = $3, status = 'running', last_error = NULL WHERE id = $1", [g.id, roundNo, participants]);
