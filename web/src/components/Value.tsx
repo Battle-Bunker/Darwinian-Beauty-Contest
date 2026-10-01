@@ -9,19 +9,19 @@ export const useValueTypes = () => useContext(ValueTypes);
 
 interface TreeNode { value: unknown; children: TreeNode[] }
 type Shape =
-  | { kind: "graph" | "digraph"; nodes: number; edges: [number, number][] }
+  | { kind: "graph" | "digraph"; nodes: number; edges: [number, number][]; labels?: unknown[] }
   | { kind: "tree"; root: TreeNode }
   | { kind: "list"; items: unknown[] }
   | { kind: "scalar" };
 
 const isObj = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
 const isTree = (v: unknown): v is TreeNode => isObj(v) && "value" in v && Array.isArray(v.children);
-const isGraph = (v: unknown): v is { nodes: number; edges: [number, number][] } =>
+const isGraph = (v: unknown): v is { nodes: number; edges: [number, number][]; labels?: unknown[] } =>
   isObj(v) && typeof v.nodes === "number" && Array.isArray(v.edges);
 
 function classify(v: unknown, type?: string): Shape {
   const t = (type || "").toLowerCase().replace(/\s+/g, "");
-  if (isGraph(v)) return { kind: t === "digraph" ? "digraph" : "graph", nodes: v.nodes, edges: v.edges };
+  if (isGraph(v)) return { kind: t.startsWith("digraph") ? "digraph" : "graph", nodes: v.nodes, edges: v.edges, labels: Array.isArray(v.labels) ? v.labels : undefined };
   if (isTree(v)) return { kind: "tree", root: v };
   if (Array.isArray(v)) return { kind: "list", items: v };
   return { kind: "scalar" };
@@ -66,6 +66,7 @@ export function summarize(v: unknown, type?: string): string | null {
         const d = distance0ToLast(s.nodes, s.edges, s.kind === "digraph");
         parts.push(d === null ? "0→last: no path" : `0→last: ${d} ${d === 1 ? "step" : "steps"}`);
       }
+      if (s.labels) parts.push(`labels ${s.labels.slice(0, 4).map((l) => showValue(l, 8)).join(", ")}${s.labels.length > 4 ? ", …" : ""}`);
       return parts.join(" · ");
     }
     case "tree": {
@@ -102,7 +103,7 @@ export const isStructured = (v: unknown) => v !== null && typeof v === "object";
 
 function MiniDrawing({ v, type }: { v: unknown; type?: string }) {
   const s = classify(v, type);
-  if ((s.kind === "graph" || s.kind === "digraph") && s.nodes >= 1 && s.nodes <= 16) return <MiniGraph n={s.nodes} edges={s.edges} directed={s.kind === "digraph"} />;
+  if ((s.kind === "graph" || s.kind === "digraph") && s.nodes >= 1 && s.nodes <= 16) return <MiniGraph n={s.nodes} edges={s.edges} directed={s.kind === "digraph"} labels={s.labels} />;
   if (s.kind === "tree") {
     const st = treeStats(s.root);
     if (st.nodes <= 31) return <MiniTree root={s.root} />;
@@ -110,7 +111,7 @@ function MiniDrawing({ v, type }: { v: unknown; type?: string }) {
   return null;
 }
 
-function MiniGraph({ n, edges, directed }: { n: number; edges: [number, number][]; directed: boolean }) {
+function MiniGraph({ n, edges, directed, labels }: { n: number; edges: [number, number][]; directed: boolean; labels?: unknown[] }) {
   const id = useId().replace(/:/g, "");
   const R = n <= 2 ? 22 : 34, C = 46;
   const pt = (i: number) => {
@@ -137,7 +138,7 @@ function MiniGraph({ n, edges, directed }: { n: number; edges: [number, number][
         return (
           <g key={i}>
             <circle cx={p.x} cy={p.y} r={label ? 6.5 : 4} className={`mini-node ${i === 0 ? "first" : i === n - 1 ? "last" : ""}`} />
-            {label && <text x={p.x} y={p.y + 2.6} className="mini-label">{i}</text>}
+            {label && <text x={p.x} y={p.y + 2.6} className="mini-label">{labels ? showValue(labels[i], 3) : i}</text>}
           </g>
         );
       })}

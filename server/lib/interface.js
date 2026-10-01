@@ -1,6 +1,7 @@
 // What every team knows before writing a line: the function names, their arguments, and the game's
 // types. Deliberately no behaviour: no starter code, so there's no shared starting point to converge on.
 import { parseType } from "./types.js";
+import { limitsOf } from "./gameConfig.js";
 
 function describe(t) {
   switch (t.kind) {
@@ -10,8 +11,13 @@ function describe(t) {
     case "str": return "a string";
     case "list": return `a list of ${describePlural(t.of)}`;
     case "tree": return `a tree: {"value": ${t.of.kind === "int" ? "int" : t.of.kind}, "children": [tree, ...]}`;
-    case "graph": return `an undirected graph: {"nodes": n, "edges": [[a, b], ...]} on nodes 0..n-1`;
-    case "digraph": return `a directed graph: {"nodes": n, "edges": [[from, to], ...]} on nodes 0..n-1`;
+    case "any": return "any plain data (numbers, strings, true/false, null, lists, objects)";
+    case "graph": case "digraph": {
+      const kind = t.kind === "graph" ? "an undirected graph" : "a directed graph";
+      const e = t.kind === "graph" ? "[a, b]" : "[from, to]";
+      if (!t.of) return `${kind}: {"nodes": n, "edges": [${e}, ...]} on nodes 0..n-1`;
+      return `${kind} with labels: {"nodes": n, "edges": [${e}, ...], "labels": [one ${t.of.kind === "any" ? "label (any plain data)" : describe(t.of)} per node], "edgeLabels": [one per edge, optional]}`;
+    }
   }
 }
 const describePlural = (t) => ({ int: "integers", float: "numbers", bool: "booleans", str: "strings" }[t.kind] ?? describe(t));
@@ -23,20 +29,25 @@ function tsType(t) {
     case "str": return "string";
     case "list": return `${tsType(t.of)}[]`;
     case "tree": return `Tree<${tsType(t.of)}>`;
-    case "graph": case "digraph": return "Graph";
+    case "any": return "any";
+    case "graph": case "digraph": return t.of ? `LabeledGraph<${tsType(t.of)}>` : "Graph";
   }
 }
 const usesKind = (t, k) => t.kind === k || (t.of ? usesKind(t.of, k) : false);
 
-function typeRules(cT, rT, maxLen) {
+function typeRules(cT, rT, { maxLen, maxNodes }) {
   const notes = [];
   for (const t of [cT, rT]) {
     if (usesKind(t, "tree") && !notes.some((n) => n.startsWith("tree"))) {
-      notes.push(`tree: {"value": v, "children": [...]}, at most ${maxLen} nodes in total. A leaf has "children": [].`);
+      notes.push(`tree: {"value": v, "children": [...]}, at most ${maxNodes} nodes in total. A leaf has "children": [].`);
     }
     if ((usesKind(t, "graph") || usesKind(t, "digraph")) && !notes.some((n) => n.startsWith("graph"))) {
-      notes.push(`graph: {"nodes": n, "edges": [[a, b], ...]}: nodes are numbered 0..n-1 (n ≤ ${maxLen}), at most ${4 * maxLen} edges, no self-loops, no repeated edges${usesKind(t, "graph") ? " ([a, b] and [b, a] are the same edge)" : ""}.`);
+      notes.push(`graph: {"nodes": n, "edges": [[a, b], ...]}: nodes are numbered 0..n-1 (n ≤ ${maxNodes}), at most ${4 * maxNodes} edges, no self-loops, no repeated edges${usesKind(t, "graph") ? " ([a, b] and [b, a] are the same edge)" : ""}.`);
+      if ((t.kind === "graph" || t.kind === "digraph") && t.of) {
+        notes.push(`labels: "labels" has exactly one label per node (labels[i] belongs to node i); "edgeLabels", if present, one per edge in the same order as "edges". Labels can repeat.`);
+      }
     }
+    if (usesKind(t, "any") && !notes.some((n) => n.startsWith("any"))) notes.push(`any: plain data only; strings and lists at most ${maxLen} long, at most 32 levels deep.`);
     if (usesKind(t, "str") || usesKind(t, "list")) {
       if (!notes.some((n) => n.startsWith("strings"))) notes.push(`strings and lists: at most ${maxLen} long.`);
     }
@@ -51,13 +62,14 @@ export function programInterface(config) {
   const types = {
     challenge: c, response: r,
     challengeMeans: describe(cT), responseMeans: describe(rT),
-    rules: typeRules(cT, rT, config.maxLen),
+    rules: typeRules(cT, rT, limitsOf(config)),
   };
   if (config.language === "typescript") {
     const C = tsType(cT), R = tsType(rT);
     const aliases = [
       usesKind(cT, "tree") || usesKind(rT, "tree") ? "type Tree<T> = { value: T; children: Tree<T>[] };" : null,
       [cT, rT].some((t) => usesKind(t, "graph") || usesKind(t, "digraph")) ? "type Graph = { nodes: number; edges: [number, number][] };" : null,
+      [cT, rT].some((t) => (t.kind === "graph" || t.kind === "digraph") && t.of) ? "type LabeledGraph<L> = Graph & { labels: L[]; edgeLabels?: L[] };" : null,
     ].filter(Boolean).join("\n");
     return {
       types,

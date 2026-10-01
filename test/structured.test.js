@@ -77,3 +77,25 @@ test("the interface names types and functions but contains no behaviour", () => 
     assert.ok(i.types.rules.some((r) => r.startsWith("tree")));
   }
 });
+
+test("int -> graph[any]: a Paley-style clique certificate with number labels, in both languages", async () => {
+  // Clover: a clique of quadratic residues mod p (labels = the numbers); the bee checks every pair.
+  const py = {
+    clover: `def flower(c):\n    p = 13\n    q = sorted({(x * x) % p for x in range(1, p)})\n    clique = [0, 1, 4][: 2 + c % 2]  # differences 1, 3, 4 are all squares mod 13\n    k = len(clique)\n    return {"nodes": k, "edges": [[i, j] for i in range(k) for j in range(i + 1, k)], "labels": clique}\n`,
+    orchid: `def flower(c):\n    return {"nodes": 3, "edges": [[0, 1], [1, 2], [0, 2]], "labels": [0, 2, 5]}\n`,
+    bee: `def forage(seen, turns_left):\n    if not seen:\n        return ["ask", 7]\n    g = seen[0][1]\n    sq = {(x * x) % 13 for x in range(1, 13)}\n    ok = g and all((g["labels"][a] - g["labels"][b]) % 13 in sq for a, b in g["edges"])\n    return "feed" if ok else "leave"\n`,
+  };
+  const config = normalizeConfig({ responseType: "graph[any]", turns: 40 });
+  const r = await simulateRound({ config, seed: 5, teams: [{ id: "a", programs: py }] });
+  assert.deepEqual(r.problems[0], { clover: null, orchid: null, bee: null });
+  const fed = r.visits.filter((v) => v.action === "feed");
+  assert.ok(fed.length > 0 && fed.every((v) => v.kind === "clover"));
+  const ts = {
+    clover: `function flower(c: number) { return { nodes: 2, edges: [[0, 1]], labels: [{ x: c, y: 0 }, { x: 0, y: c }], edgeLabels: ["side"] }; }`,
+    orchid: `function flower(c: number) { return { nodes: 2, edges: [[0, 1]], labels: ["a", "b"] }; }`,
+    bee: `function forage(seen: any[], t: number): any { if (!seen.length) return ["ask", 3]; const g = seen[0][1]; return g && typeof g.labels[0] === "object" ? "feed" : "leave"; }`,
+  };
+  const r2 = await simulateRound({ config: normalizeConfig({ language: "typescript", responseType: "graph[any]", turns: 30 }), seed: 6, teams: [{ id: "b", programs: ts }] });
+  assert.ok(r2.visits.filter((v) => v.action === "feed").every((v) => v.kind === "clover"));
+  assert.deepEqual(r2.visits.find((v) => v.kind === "clover").steps[0].r, { nodes: 2, edges: [[0, 1]], labels: [{ x: 3, y: 0 }, { x: 0, y: 3 }], edgeLabels: ["side"] });
+});

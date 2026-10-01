@@ -68,9 +68,13 @@ other teams' flowers follow.
 | `tree[T]` | `{"value": 1, "children": [{"value": 2, "children": []}]}`: every node has a value and a list of children |
 | `graph` | `{"nodes": 4, "edges": [[0, 1], [1, 2], [2, 3]]}`: nodes are numbered `0` to `nodes - 1`; edges join two nodes, either way round |
 | `digraph` | same shape as `graph`, but `[a, b]` is a one-way edge from `a` to `b` |
+| `graph[T]` | a graph whose nodes carry labels: `{"nodes": 3, "edges": [[0, 1], [1, 2]], "labels": [17, 4, 9]}`. `labels[i]` belongs to node `i`; optional `"edgeLabels"` has one label per edge. `graph[any]` allows any labels |
+| `any` | any plain data: numbers, strings, `true`/`false`, `null`, lists and objects |
 
 The node numbers give a graph landmarks to measure from, such as how many steps it is from node `0`
-to node `1`, or to the last node, or how many neighbours node `0` has.
+to node `1`, or to the last node, or how many neighbours node `0` has. Labels let a graph carry more:
+numbers, positions, colours. For example, a group of numbers that all get along with each other under
+some rule, with an edge between every pair to show it.
 
 Strings and lists can be at most 64 long, and trees and graphs at most 512 nodes (graphs at most
 2,048 edges, with no self-loops or repeated edges). The owner can change both limits. A response of the wrong

@@ -71,8 +71,10 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 - `ms` is wall-clock time per call. The engine runs at most one program per CPU core, so this is
   effectively CPU time.
 
-Types: `int`, `float`, `bool`, `str`, `list[T]`, `tree[T]` (`{"value", "children"}`), `graph` and `digraph`
-(`{"nodes": n, "edges": [[a, b], ...]}` on nodes `0..n-1`). Languages: `python`, `typescript`.
+Types: `int`, `float`, `bool`, `str`, `any` (any plain JSON), `list[T]`, `tree[T]` (`{"value", "children"}`),
+`graph` and `digraph` (`{"nodes": n, "edges": [[a, b], ...]}` on nodes `0..n-1`), and labelled
+`graph[T]` / `digraph[T]` (plus `"labels": [one T per node]` and optional `"edgeLabels": [one T per edge]`;
+`graph[any]` = arbitrary labels). Languages: `python`, `typescript`.
 
 ### The game view
 

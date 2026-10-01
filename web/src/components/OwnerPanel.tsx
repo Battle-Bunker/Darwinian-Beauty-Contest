@@ -5,7 +5,7 @@ import { KINDS, type GameConfig, type GameView, type Kind } from "../types";
 import { Alert, Spinner } from "./ui";
 import { PlayIcon } from "./Icons";
 
-const TYPES = ["int", "float", "bool", "str", "list[int]", "list[float]", "list[bool]", "list[str]", "tree[int]", "graph", "digraph"];
+const TYPES = ["int", "float", "bool", "str", "any", "list[int]", "list[float]", "list[bool]", "list[str]", "tree[int]", "graph", "digraph", "graph[any]", "graph[int]", "digraph[any]"];
 
 export function RunRound({ view, base }: { view: GameView; base: string }) {
   const g = view.game;

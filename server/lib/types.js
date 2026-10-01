@@ -1,27 +1,50 @@
 // Challenge/response value types. A type is one of:
-//   int | float | bool | str | list[T] | tree[T] | graph | digraph
+//   int | float | bool | str | any | list[T] | tree[T] | graph | digraph | graph[T] | digraph[T]
 // Values travel as JSON. Limits keep every value small and JSON-safe: `maxLen` bounds the length of
 // strings and lists; `maxNodes` bounds the nodes in a tree or graph, and (×4) the number of graph edges.
 //
-//   tree[T]  {"value": T, "children": [tree[T], ...]}        a rooted tree with a value at every node
-//   graph    {"nodes": n, "edges": [[a, b], ...]}           undirected simple graph on nodes 0..n-1
-//   digraph  {"nodes": n, "edges": [[from, to], ...]}       directed simple graph on nodes 0..n-1
-// Node indices give patterns something to anchor on: degree of node 0, distance from 0 to 1 or to n-1...
+//   any         any JSON value: numbers, strings, true/false, null, lists and string-keyed objects
+//   tree[T]     {"value": T, "children": [tree[T], ...]}      a rooted tree with a value at every node
+//   graph       {"nodes": n, "edges": [[a, b], ...]}         undirected simple graph on nodes 0..n-1
+//   digraph     {"nodes": n, "edges": [[from, to], ...]}     directed simple graph on nodes 0..n-1
+//   graph[T]    graph plus "labels": [T × n] (one per node) and optionally "edgeLabels": [T × edges]
+//   digraph[T]  the same, directed. graph[any] = a graph with arbitrary labels.
+// Node indices give patterns something to anchor on: degree of node 0, distance from 0 to 1 or to n-1;
+// labels let a graph carry numbers, coordinates or colours (e.g. a clique of residues mod p).
 
 const MAX_INT = Number.MAX_SAFE_INTEGER;
 
 export function parseType(s) {
   const t = String(s || "").replace(/\s+/g, "").toLowerCase();
-  if (["int", "float", "bool", "str", "graph", "digraph"].includes(t)) return { kind: t };
-  const m = t.match(/^(list|tree)\[(.+)\]$/);
+  if (["int", "float", "bool", "str", "any", "graph", "digraph"].includes(t)) return { kind: t };
+  const m = t.match(/^(list|tree|graph|digraph)\[(.+)\]$/);
   if (m) return { kind: m[1], of: parseType(m[2]) };
-  throw new Error(`Unknown type "${s}" (use int, float, bool, str, list[T], tree[T], graph or digraph)`);
+  throw new Error(`Unknown type "${s}" (use int, float, bool, str, any, list[T], tree[T], graph, digraph, graph[T] or digraph[T])`);
 }
 
 export const typeToString = (t) => (t.of ? `${t.kind}[${typeToString(t.of)}]` : t.kind);
 
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const keysAre = (v, keys) => Object.keys(v).length === keys.length && keys.every((k) => k in v);
+
+function checkAny(v, maxLen, path, depth = 0) {
+  if (depth > 32) return `${path} is nested too deeply`;
+  if (v === null || typeof v === "boolean") return null;
+  if (typeof v === "number") return Number.isFinite(v) ? null : `${path} must be a finite number`;
+  if (typeof v === "string") return v.length > maxLen ? `${path} is longer than ${maxLen} characters` : null;
+  if (Array.isArray(v)) {
+    if (v.length > maxLen) return `${path} has more than ${maxLen} items`;
+    for (let i = 0; i < v.length; i++) { const e = checkAny(v[i], maxLen, `${path}[${i}]`, depth + 1); if (e) return e; }
+    return null;
+  }
+  if (isObj(v)) {
+    const keys = Object.keys(v);
+    if (keys.length > maxLen) return `${path} has more than ${maxLen} keys`;
+    for (const k of keys) { const e = checkAny(v[k], maxLen, `${path}.${k}`, depth + 1); if (e) return e; }
+    return null;
+  }
+  return `${path} must be plain data`;
+}
 
 /** Returns null when `v` fits type `t`, else a short reason. `limits` is {maxLen, maxNodes} (or just maxLen). */
 export function checkValue(t, v, limits, path = "value") {
@@ -64,8 +87,25 @@ export function checkValue(t, v, limits, path = "value") {
       };
       return walk(v, path, 1);
     }
+    case "any":
+      return checkAny(v, maxLen, path);
     case "graph":
     case "digraph": {
+      if (t.of) {
+        // Labelled: {"nodes", "edges", "labels"} plus optional "edgeLabels".
+        if (!isObj(v) || !("labels" in v) || !Object.keys(v).every((k) => ["nodes", "edges", "labels", "edgeLabels"].includes(k)) || !("nodes" in v) || !("edges" in v)) {
+          return `${path} must be {"nodes": n, "edges": [[a, b], ...], "labels": [one per node]} (plus optional "edgeLabels")`;
+        }
+        const bare = checkValue({ kind: t.kind }, { nodes: v.nodes, edges: v.edges }, limits, path);
+        if (bare) return bare;
+        if (!Array.isArray(v.labels) || v.labels.length !== v.nodes) return `${path}.labels must be a list with one label per node (${v.nodes})`;
+        for (let i = 0; i < v.labels.length; i++) { const e = checkValue(t.of, v.labels[i], limits, `${path}.labels[${i}]`); if (e) return e; }
+        if ("edgeLabels" in v) {
+          if (!Array.isArray(v.edgeLabels) || v.edgeLabels.length !== v.edges.length) return `${path}.edgeLabels must be a list with one label per edge (${v.edges.length})`;
+          for (let i = 0; i < v.edgeLabels.length; i++) { const e = checkValue(t.of, v.edgeLabels[i], limits, `${path}.edgeLabels[${i}]`); if (e) return e; }
+        }
+        return null;
+      }
       if (!isObj(v) || !keysAre(v, ["nodes", "edges"])) return `${path} must be {"nodes": n, "edges": [[a, b], ...]}`;
       const n = v.nodes;
       if (!Number.isInteger(n) || n < 0 || n > maxNodes) return `${path}.nodes must be an int from 0 to ${maxNodes}`;
@@ -97,6 +137,7 @@ export function exampleValue(t) {
     case "str": return "hello";
     case "list": return [exampleValue(t.of)];
     case "tree": return { value: exampleValue(t.of), children: [{ value: exampleValue(t.of), children: [] }] };
-    case "graph": case "digraph": return { nodes: 3, edges: [[0, 1], [1, 2]] };
+    case "any": return 7;
+    case "graph": case "digraph": return t.of ? { nodes: 3, edges: [[0, 1], [1, 2]], labels: [0, 1, 2].map(() => exampleValue(t.of)) } : { nodes: 3, edges: [[0, 1], [1, 2]] };
   }
 }

@@ -48,3 +48,16 @@ test("graph and digraph values", () => {
   assert.match(checkValue(g, { nodes: 9, edges: [] }, 8), /0 to 8/);
   assert.match(checkValue(g, { nodes: 3, edges: [[0, 1]], labels: [] }, 8), /must be/);
 });
+
+test("labelled graphs and any", () => {
+  const g = parseType("graph[any]"), L = { maxLen: 8, maxNodes: 16 };
+  assert.equal(checkValue(g, { nodes: 3, edges: [[0, 1]], labels: [5, "x", [1.5, 2]] }, L), null);
+  assert.equal(checkValue(g, { nodes: 2, edges: [[0, 1]], labels: [{ x: 1, y: 2 }, null], edgeLabels: ["w"] }, L), null);
+  assert.match(checkValue(g, { nodes: 3, edges: [], labels: [1] }, L), /one label per node/);
+  assert.match(checkValue(g, { nodes: 2, edges: [[0, 1]] }, L), /labels/);
+  assert.match(checkValue(g, { nodes: 2, edges: [[0, 1]], labels: [1, 2], edgeLabels: [] }, L), /one label per edge/);
+  assert.match(checkValue(parseType("digraph[int]"), { nodes: 2, edges: [[0, 1], [1, 0]], labels: [1, 2.5] }, L), /labels\[1\] must be an int/);
+  assert.match(checkValue(parseType("graph"), { nodes: 2, edges: [], labels: [1, 2] }, L), /must be/); // plain graphs stay unlabelled
+  assert.match(checkValue(parseType("any"), "x".repeat(9), L), /longer/);
+  assert.match(checkValue(parseType("any"), Infinity, L), /finite/);
+});
