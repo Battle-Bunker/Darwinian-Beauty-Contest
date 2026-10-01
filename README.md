@@ -18,12 +18,17 @@ feed at your patch (**allure**) and getting real nectar from many teams' patches
 ```
 npm install
 ./scripts/dev-db.sh          # local Postgres (or set DATABASE_URL)
+npm run build                # builds the web app (web/ → web/dist)
 npm start                    # http://localhost:3000, runs migrations on boot
 npm test                     # unit tests
 npm run smoke                # plays a short game through the API (server must be running)
+npm run demo                 # seeds a room with 6-team games (log in as "Gardener" or "Ada")
 ```
 
 Needs Node ≥ 22.13 and `python3` on PATH (for Python games).
+
+To work on the web app with hot reload, run the server and then `API=http://localhost:3000 npm run dev:web`
+(Vite on :5173, proxying `/api` and `/vendor` to the server).
 
 ## Architecture
 
@@ -37,7 +42,7 @@ Needs Node ≥ 22.13 and `python3` on PATH (for Python games).
 | `server/lib/shortid.js` | Crockford base32 codes and shortest-unique-prefix allocation |
 | `server/auth/` | pluggable login. `dev` = name only. Production adds e.g. Replit Auth in `replit.js` with the same shape |
 | `server/db/migrations/` | SQL schema, applied on boot |
-| `web/` | the web app |
+| `web/` | the web app: Vite + React + TypeScript, built to `web/dist`. `Garden.tsx` + `gardenModel.ts` replay a round's visits on a shared turn clock; `CodeEditor.tsx` measures nodes and change distance in the browser with the same tree-sitter + astdiff as the server |
 | `arena/` | LLM-agent tournaments for exploring the game's ecosystem |
 
 **One view, no replay mode.** Every round's programs, every visit and every score are stored in

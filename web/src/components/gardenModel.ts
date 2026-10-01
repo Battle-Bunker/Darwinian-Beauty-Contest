@@ -10,6 +10,7 @@ import type { Visit } from "../types";
 export const CELL_W = 250;
 export const CELL_H = 215;
 export const TOP_PAD = 70;
+export const SIDE_PAD = 26;
 export const FLOWER_DX = 30;
 export const FLOWER_Y = -30;
 
@@ -29,7 +30,7 @@ export function layoutGarden(teamIds: string[], containerWidth: number): Layout 
   let best = { cols: 1, score: Infinity };
   for (let cols = 1; cols <= Math.min(n, maxCols); cols++) {
     const rows = Math.ceil(n / cols);
-    const aspect = (cols * CELL_W) / (rows * CELL_H + TOP_PAD);
+    const aspect = (cols * CELL_W + 2 * SIDE_PAD) / (rows * CELL_H + TOP_PAD);
     const empty = rows * cols - n;
     const score = Math.abs(Math.log(aspect / 2)) + 0.25 * empty;
     if (score < best.score) best = { cols, score };
@@ -43,9 +44,9 @@ export function layoutGarden(teamIds: string[], containerWidth: number): Layout 
     const inRow = row === rows - 1 ? n - row * cols : cols;
     const offset = ((cols - inRow) * CELL_W) / 2;
     const jx = (((i * 37) % 11) - 5) * 2.5, jy = (((i * 53) % 7) - 3) * 4;
-    pos[id] = { x: offset + CELL_W * (col + 0.5) + jx, y: TOP_PAD + CELL_H * row + 120 + jy };
+    pos[id] = { x: SIDE_PAD + offset + CELL_W * (col + 0.5) + jx, y: TOP_PAD + CELL_H * row + 120 + jy };
   });
-  return { width: cols * CELL_W, height: TOP_PAD + rows * CELL_H + 10, cols, pos };
+  return { width: cols * CELL_W + 2 * SIDE_PAD, height: TOP_PAD + rows * CELL_H + 10, cols, pos };
 }
 
 /**
@@ -61,7 +62,7 @@ export function slot(p: Pt, b: number, n: number): Pt {
 /** Where a feeding bee sits: on the flower if the viewer may know which one, else between the two. */
 export function landing(p: Pt, kind: string | undefined, b: number, n: number): Pt {
   const s = slot({ x: 0, y: 0 }, b, n);
-  const nudge = { x: s.x * 0.12, y: (s.y - FLOWER_Y + 6) * 0.12 };
+  const nudge = { x: s.x * 0.2, y: (s.y - FLOWER_Y + 6) * 0.15 };
   const fx = kind === "clover" ? -FLOWER_DX : kind === "orchid" ? FLOWER_DX : 0;
   return { x: p.x + fx + nudge.x, y: p.y + FLOWER_Y - 4 + nudge.y };
 }

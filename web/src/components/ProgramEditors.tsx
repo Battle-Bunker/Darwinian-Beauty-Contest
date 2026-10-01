@@ -164,7 +164,9 @@ export function ProgramEditors({ view, base }: { view: GameView; base: string })
             : <div className="meter-note muted">Round 1: write anything that fits the size budget. After that, each round you may change up to {budget.changes} nodes.</div>}
           <div className="meter-note muted">Time limit: {budget.ms} ms per {kind === "bee" ? "call" : "question"}</div>
         </div>
-        {s?.syntaxError && <Alert kind="warn">Syntax error: the highlighted code doesn't parse yet.</Alert>}
+        {s?.syntaxError && <Alert kind="warn">Syntax error: this code doesn't parse yet, so it can't be submitted.</Alert>}
+        {overNodes && <Alert kind="error">Too big: {s!.nodes} nodes, but the budget is {budget.nodes}. Make it {s!.nodes - budget.nodes} nodes smaller to submit (comments are free).</Alert>}
+        {overChanges && <Alert kind="error">Too many changes: {s!.distance} edits since last round, but the budget is {budget.changes}. Undo {s!.distance! - budget.changes} to submit.</Alert>}
         {incoming[kind] && (
           <Alert kind="info">
             A teammate submitted a new {kind}. <button className="link-btn" onClick={() => revertTo(team.drafts[kind] ? "draft" : "previous")}>Load their version</button>

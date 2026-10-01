@@ -23,7 +23,8 @@ export function RoomPage({ room }: { room: string }) {
   }, [room]);
 
   useEffect(() => { load(); }, [load]);
-  useEventStream(view ? `/api/rooms/${encodeURIComponent(room)}/events` : null, () => { load(); });
+  // The stream opens with {room}; every later message names the game that changed.
+  useEventStream(view ? `/api/rooms/${encodeURIComponent(room)}/events` : null, (msg: { game?: string }) => { if (msg.game) load(); });
 
   const newGame = async () => {
     setBusy(true);

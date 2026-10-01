@@ -43,7 +43,7 @@ export function Garden({ view, round, start, rounds, onSelectRound }: {
     const s = Number(storage.get("dbc:speed"));
     return SPEEDS.includes(s) ? s : 1;
   });
-  const [names, setNames] = useState(true);
+  const [namesPick, setNames] = useState<boolean | null>(null);
   const tRef = useRef(t);
   tRef.current = t;
   const rate = Math.max(2, turns / 40); // turns per second at 1x: a round takes about 40 seconds
@@ -88,6 +88,10 @@ export function Garden({ view, round, start, rounds, onSelectRound }: {
   // Fill the width, but keep the whole garden on screen; the backdrop extends past the viewBox to letterbox.
   // Never more than 1.3x the drawing's own size, so a 2-team garden doesn't turn into giant flowers.
   const svgHeight = width ? Math.round(Math.min((width * layout.height) / layout.width, Math.max(340, window.innerHeight * 0.68), layout.height * 1.3)) : undefined;
+  // When the garden is drawn small (phones), make its text relatively bigger and hide bee names unless asked.
+  const scale = width && svgHeight ? Math.min(width / layout.width, svgHeight / layout.height) : 1;
+  const fontScale = Math.max(1, Math.min(1.5, 0.8 / scale));
+  const names = namesPick ?? scale >= 0.72;
   const shownTurn = Math.min(turns, Math.floor(t));
   const atEnd = t >= endT - 0.01;
   const ready = (team: Team) => team.submitted.clover && team.submitted.orchid && team.submitted.bee;
@@ -105,21 +109,21 @@ export function Garden({ view, round, start, rounds, onSelectRound }: {
       )}
 
       <div className="garden-stage" ref={boxRef}>
-        <svg className="garden-svg" viewBox={`0 0 ${layout.width} ${layout.height}`} style={{ height: svgHeight }}
+        <svg className="garden-svg" viewBox={`0 0 ${layout.width} ${layout.height}`} style={{ height: svgHeight, ["--fs" as string]: fontScale.toFixed(2) }}
           role="img" aria-label={round ? `Garden, round ${round.no}, turn ${shownTurn} of ${turns}` : "Garden: each team's patch and bee, waiting for round 1"}>
           <GardenBackdrop layout={layout} />
           {order.map((id) => {
             const team = teamsById[id];
             if (!team || !layout.pos[id]) return null;
             const showKinds = view.game.revealed || id === myTeamId;
-            return <Patch key={id} team={team} p={layout.pos[id]} mine={id === myTeamId} showKinds={showKinds} dim={!round && !view.participants && !ready(team)} />;
+            return <Patch key={id} team={team} p={layout.pos[id]} mine={id === myTeamId} showKinds={showKinds} dim={!round && !view.participants && !ready(team)} maxChars={Math.round(18 / fontScale)} />;
           })}
           {order.map((id) => {
             const p = layout.pos[id], pt = tally.patches[id];
             if (!p) return null;
             const team = teamsById[id];
             const label = round ? `${pt?.fedAt ?? 0} fed here · ${pt?.nectarGiven ?? 0} nectar` : view.participants || !team ? "" : ready(team) ? "ready to play" : "getting ready…";
-            return <text key={id} x={p.x} y={p.y + 86} className="patch-tally">{label}</text>;
+            return <text key={id} x={p.x} y={p.y + 68 + 18 * fontScale} className="patch-tally">{label}</text>;
           })}
           {model.effects.map((e, i) => (t >= e.t0 && t < e.t1 ? <FeedFx key={i} at={e.at} u={(t - e.t0) / (e.t1 - e.t0)} nectar={e.nectar} /> : null))}
           {frames.map((f) => (
@@ -132,8 +136,8 @@ export function Garden({ view, round, start, rounds, onSelectRound }: {
             {atEnd ? <ReplayIcon /> : <PlayIcon />} {atEnd ? `Replay round ${round.no}` : `Play round ${round.no}`}
           </button>
         )}
-        {!round && <div className="garden-empty">{view.game.status === "lobby" ? "The bees are waiting at home. They'll fly as soon as round 1 is played." : "No rounds yet."}</div>}
       </div>
+      {!round && <p className="garden-note muted">{view.game.status === "lobby" ? "The bees are waiting at home. They'll fly as soon as round 1 is played." : "No rounds yet."}</p>}
 
       {round && (
         <div className="garden-controls">
@@ -226,8 +230,8 @@ function FlowerShape({ x, color }: { x: number; color: string }) {
   );
 }
 
-const Patch = memo(function Patch({ team, p, mine, showKinds, dim }: { team: Team; p: Pt; mine: boolean; showKinds: boolean; dim: boolean }) {
-  const name = team.name.length > 18 ? team.name.slice(0, 17) + "…" : team.name;
+const Patch = memo(function Patch({ team, p, mine, showKinds, dim, maxChars }: { team: Team; p: Pt; mine: boolean; showKinds: boolean; dim: boolean; maxChars: number }) {
+  const name = team.name.length > maxChars ? team.name.slice(0, maxChars - 1) + "…" : team.name;
   return (
     <g transform={`translate(${p.x} ${p.y})`} className={`patch ${dim ? "dim" : ""}`}>
       <title>{`${team.name}'s patch: two flowers, a clover and an orchid. Which is which is secret.`}</title>

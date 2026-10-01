@@ -7,10 +7,13 @@
   "engines": { "node": ">=22.13" },
   "scripts": {
     "start": "node server/index.js",
+    "build": "npm --prefix web install --include=dev --no-audit --no-fund && npm --prefix web run build",
     "dev": "node --watch server/index.js",
+    "dev:web": "npm --prefix web run dev",
     "migrate": "node server/db/migrate.js",
     "test": "node --test test/*.test.js",
-    "smoke": "node scripts/smoke.js"
+    "smoke": "node scripts/smoke.js",
+    "demo": "node scripts/demo.js"
   },
   "dependencies": {
     "express": "^4.21.2",
