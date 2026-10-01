@@ -1,12 +1,13 @@
 // One team's turn before a round: a tool-using Claude Code session in the team's private workspace, a fair-play audit
 // of its transcript, then validation (POST base/check plus a runtime smoke test with base/try) and submission of the
 // programs the team may change this round. Failures go back to short fix sessions. Also the post-game interview.
+import fs from "node:fs";
 import path from "node:path";
 import { Api, login } from "./api.js";
 import { q, one } from "./db.js";
 import { BudgetError, callModel, extractTag, runSession } from "./llm.js";
 import { NOTICES, examplesNotice, interviewSystem, roundBrief, toolSystem } from "./prompts.js";
-import { TRANSCRIPTS, audit, collect, prepareWorkspace, recordViolations, restoreProgram, writeMinified } from "./workspace.js";
+import { TRANSCRIPTS, audit, collect, prepareWorkspace, recordViolations, restoreProgram, spillDir, writeMinified } from "./workspace.js";
 import { changeable as schedule, nextChangeRound } from "../../server/lib/schedule.js";
 
 const KINDS = ["clover", "orchid", "bee"];
@@ -126,6 +127,7 @@ export async function playTurn(ctx) {
     // Fair-play audit: a violation disqualifies this round's code (previous programs carry over).
     const found = audit(transcript, dir, arena.id, persona.slug);
     await recordViolations({ arena, gameRow, persona, roundNo, attempt, found });
+    fs.rmSync(spillDir(dir), { recursive: true, force: true }); // the session's saved tool outputs: audited, no longer needed
     if (found.some((f) => f.severity === "violation")) {
       disqualified = true;
       log(`  ${persona.name}: DISQUALIFIED for round ${roundNo}: ${found.filter((f) => f.severity === "violation").map((f) => f.detail.slice(0, 120)).join(" | ")}`);

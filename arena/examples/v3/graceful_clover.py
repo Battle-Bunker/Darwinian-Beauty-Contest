@@ -26,7 +26,7 @@ def build_links(n):
 
 
 def flower(challenge):
-    deadline = time.time() + 0.7 * GAME["ms"] / 1000  # stop at 70% of the budget, to be safe
+    deadline = time.time() + 0.65 * GAME["ms"] / 1000  # stop at 65%: no time left means no answer
     links = build_links(int(challenge))
     top = len(links)  # labels come from 0..top
     neighbours = [[] for _ in range(VERTICES)]

@@ -33,8 +33,8 @@ const README = (ext, cohort, examples) => `# Your workspace
 | logs/round-N/my-patch.jsonl | just the visits to your patch (which flower, which bee, what it asked) |
 | logs/game.json | scores and ledgers for every round so far, teams (id -> name), no visits |
 | memory/round-N.txt | the snapshot your bee kept at the end of round N (it reads it as MEMORY[N-1]) |
-${cohort ? "| previous-games/game-N/ | earlier games: standings.md, the final code of the top 2 teams (top2/), your own logs/history/memory (own/), and panel.md (panel scores and what the judges said about you) |"
-    : "| previous-games/ | earlier games in this arena, revealed: every team's final code and every round's full visits; panel.md has the standings, panel scores and what the judges said about you |"}
+${cohort ? "| previous-games/game-N/ | earlier games: standings.md, the final code of the top 2 teams (top2/), your own logs/history/memory (own/), and panel.md (panel scores and what the judges said about you). Raw visit logs (visits.jsonl, my-bee.jsonl, my-patch.jsonl) are kept for the previous game only; older games keep round.json summaries, code and memory |"
+    : "| previous-games/ | earlier games in this arena, revealed: every team's final code and round summaries (round.json), plus every round's full visits for the previous game; panel.md has the standings, panel scores and what the judges said about you |"}
 | notebook.md | your private notes; they persist across rounds and games |
 ${examples ? `| examples/ | example flower programs and bee-side checkers; every team in this garden has the same files (${examples.join(", ")}) |\n` : ""}
 A visit line: {"bee", "patch", "seq", "start", "end", "asks", "asksBeforeFeed", "action", "nectar", "kind"?, "steps"?: [{"c", "r", "after"?}]}.
@@ -70,6 +70,8 @@ export async function prepareWorkspace({ arena, gameRow, persona, entry, gPath, 
     }
   }
   write(marker, String(gameRow.generation));
+  pruneOldVisits(dir, gameRow.generation);
+  pruneShared(arena.id, gameRow.generation);
   for (const f of fs.readdirSync(dir)) if (/\.minified\.(py|ts)$/.test(f)) fs.rmSync(path.join(dir, f)); // last round's failures
 
   write(path.join(dir, "RULES.md"), rules());
@@ -102,7 +104,11 @@ export async function prepareWorkspace({ arena, gameRow, persona, entry, gPath, 
   }
   // Raw logs and memory for every round played so far (fetched once each).
   for (const r of view.rounds) {
-    if (!fs.existsSync(path.join(dir, "logs", `round-${r.no}`, "round.json"))) writeRound(path.join(dir, "logs", `round-${r.no}`), await Api.round(tok, gPath, r.no), view.me.teamId);
+    if (!fs.existsSync(path.join(dir, "logs", `round-${r.no}`, "round.json"))) {
+      // Public logs: every team sees the same visits, so the full file is written once per round and hard-linked.
+      const shared = config.publicLogs ? await sharedVisits(arena, gameRow, gPath, r.no) : null;
+      writeRound(path.join(dir, "logs", `round-${r.no}`), await Api.round(tok, gPath, r.no), view.me.teamId, { shared });
+    }
     const m = path.join(dir, "memory", `round-${r.no}.txt`);
     if (!fs.existsSync(m)) {
       const mem = await Api.memory(tok, gPath, r.no).catch((e) => ({ error: e.message }));
@@ -118,17 +124,90 @@ export async function prepareWorkspace({ arena, gameRow, persona, entry, gPath, 
   return { dir, ext, view };
 }
 
-/** A round as files that Grep/Read can handle: round.json (everything but visits) and visits as JSON Lines. */
-function writeRound(rdir, round, myId) {
+const jsonLines = (vs) => vs.map((v) => JSON.stringify(v)).join("\n") + (vs.length ? "\n" : "");
+const RAW_VISITS = new Set(["visits.jsonl", "my-bee.jsonl", "my-patch.jsonl"]);
+
+/** A round as files that Grep/Read can handle: round.json (everything but visits) and visits as JSON Lines.
+ * `shared`: a file holding every visit as all teams see it (public logs), hard-linked instead of written per team.
+ * `visits: false` writes the summary only. */
+function writeRound(rdir, round, myId, { shared = null, visits: withVisits = true } = {}) {
   const { visits = [], ...rest } = round;
   write(path.join(rdir, "round.json"), json(rest));
-  const lines = (vs) => vs.map((v) => JSON.stringify(v)).join("\n") + (vs.length ? "\n" : "");
-  write(path.join(rdir, "visits.jsonl"), lines(visits));
+  if (!withVisits) return;
+  const target = path.join(rdir, "visits.jsonl");
+  if (shared) linkOrCopy(shared, target);
+  else write(target, jsonLines(visits));
   if (myId) {
-    write(path.join(rdir, "my-bee.jsonl"), lines(visits.filter((v) => v.bee === myId)));
-    write(path.join(rdir, "my-patch.jsonl"), lines(visits.filter((v) => v.patch === myId)));
+    // Your own bee's and patch's visits as your team sees them (with its private details).
+    write(path.join(rdir, "my-bee.jsonl"), jsonLines(visits.filter((v) => v.bee === myId)));
+    write(path.join(rdir, "my-patch.jsonl"), jsonLines(visits.filter((v) => v.patch === myId)));
   }
 }
+
+export function linkOrCopy(src, dest) {
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.rmSync(dest, { force: true });
+  try { fs.linkSync(src, dest); }
+  catch (e) { fs.copyFileSync(src, dest); console.log(`[arena] could not hard-link ${src} (${e.code}); copied instead`); }
+}
+
+/** The shared visits file of a public-logs round: every visit as any team sees it (the unauthenticated view). Lives
+ * in <WS_ROOT>/<arena>/.shared/, outside every team's workspace; teams get hard links to it. */
+async function sharedVisits(arena, gameRow, gPath, roundNo) {
+  const file = path.join(WS_ROOT, arena.id, ".shared", `g${gameRow.generation}`, `round-${roundNo}`, "visits.jsonl");
+  if (!fs.existsSync(file)) {
+    const round = await Api.round(null, gPath, roundNo);
+    write(file + ".tmp", jsonLines(round.visits || []));
+    fs.renameSync(file + ".tmp", file); // concurrent teams: whoever finishes last wins, both write the same content
+  }
+  return file;
+}
+
+/** Keep raw visit logs for the current and the previous game only (disk): older games keep round.json, code, memory. */
+export function pruneOldVisits(dir, generation) {
+  const pg = path.join(dir, "previous-games");
+  if (!fs.existsSync(pg)) return;
+  for (const g of fs.readdirSync(pg)) {
+    const k = Number((g.match(/^game-(\d+)$/) || [])[1]);
+    if (!Number.isInteger(k) || k >= generation - 1) continue;
+    const walk = (d) => { for (const f of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, f.name);
+      if (f.isDirectory()) walk(p); else if (RAW_VISITS.has(f.name)) fs.rmSync(p, { force: true });
+    } };
+    walk(path.join(pg, g));
+  }
+}
+
+function pruneShared(arenaId, generation) {
+  const sd = path.join(WS_ROOT, arenaId, ".shared");
+  if (!fs.existsSync(sd)) return;
+  for (const g of fs.readdirSync(sd)) {
+    const k = Number((g.match(/^g(\d+)$/) || [])[1]);
+    if (Number.isInteger(k) && k < generation - 1) fs.rmSync(path.join(sd, g), { recursive: true, force: true });
+  }
+}
+
+/** Bytes of a round's logs across an arena's workspaces, counting hard-linked files once. */
+export function roundLogBytes(arenaId, roundNo) {
+  const root = path.join(WS_ROOT, arenaId);
+  const seen = new Set();
+  let bytes = 0;
+  if (!fs.existsSync(root)) return 0;
+  for (const slug of fs.readdirSync(root)) {
+    const rdir = path.join(root, slug, "logs", `round-${roundNo}`);
+    if (!fs.existsSync(rdir)) continue;
+    for (const f of fs.readdirSync(rdir)) {
+      const st = fs.statSync(path.join(rdir, f));
+      if (seen.has(st.ino)) continue;
+      seen.add(st.ino);
+      bytes += st.size;
+    }
+  }
+  return bytes;
+}
+
+/** The team's own Claude Code tool-output spill directory (big tool results are saved there during a session). */
+export const spillDir = (dir) => path.join(process.env.HOME || "/root", ".claude", "projects", dir.replace(/[^A-Za-z0-9]/g, "-"));
 
 function sampleFor(config) {
   const t = config.challengeType;
@@ -153,7 +232,8 @@ async function writePreviousGames(arena, dir, generation) {
       const tdir = path.join(gdir, "final-code", names[tid].replace(/[^A-Za-z0-9_-]+/g, "_"));
       for (const k of KINDS) if (progs[k]?.code) write(path.join(tdir, `${k}.${ext}`), progs[k].code);
     }
-    for (const r of view.rounds) writeRound(path.join(gdir, "rounds", `round-${r.no}`), await Api.round(null, gp, r.no), null);
+    const recent = g.generation === generation - 1; // full visits for the previous game only (disk)
+    for (const r of view.rounds) writeRound(path.join(gdir, "rounds", `round-${r.no}`), await Api.round(null, gp, r.no), null, { visits: recent });
     const { rounds, ...rest } = view;
     write(path.join(gdir, "game.json"), json({ ...rest, rounds: rounds.map(({ visits, ...r }) => r) }));
   }
@@ -285,7 +365,7 @@ export function audit(transcriptFile, dir, arenaId, slug) {
   const otherWs = new RegExp(`arena-ws/(?!${esc(arenaId)}/${esc(slug)}(?![\\w.-]))`);
   // Claude Code spills oversized tool output to ~/.claude/projects/<escaped cwd>/<session>/tool-results/ and tells the
   // agent the path: reading THAT (its own session's spill) is fine; another team's spill directory is not.
-  const spill = path.join(process.env.HOME || "/root", ".claude", "projects", dir.replace(/[^A-Za-z0-9]/g, "-"));
+  const spill = spillDir(dir);
   const ownSpill = (x) => String(x).replaceAll(spill + "/", "WS/").replaceAll(spill, "WS");
   let lines = [];
   try { lines = fs.readFileSync(transcriptFile, "utf8").split("\n").filter(Boolean); } catch { return found; }

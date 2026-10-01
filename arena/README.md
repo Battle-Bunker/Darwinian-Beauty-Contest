@@ -17,6 +17,7 @@ continuations and cohort experiments do.
 | `server.sh` | (re)starts the arena's game server on port 4000 with the dev secret and `CPU_SLOTS=3`, only when no round is simulating |
 | `test-brief.mjs` | dry-run check of the round briefs: fresh vs forked game 1, round-1 notices, change turns, locked-file notes |
 | `test-pause.mjs` | check of usage-limit detection and pause/resume, with a stub `claude` (no real calls) |
+| `test-workspace.mjs` | check of the disk savings: hard-linked shared visit files, and retention of raw visit logs |
 | `schema.sql` | the `arena` Postgres schema (same `dbc` database as the game), applied on every run |
 | `lib/llm.js` | `claude -p` wrapper: concurrency limiter, retries, rate-limit cool-down, usage-limit pause, spend guard, cost ledger (`arena.llm_calls`) |
 | `lib/api.js` | HTTP client for the game API (dev login with the dev secret and Bearer tokens) |
@@ -97,6 +98,20 @@ simulating (`arena/server.sh` checks this).
 `GAME["ms"]` budget is nearly spent. So the arenas in one runner process queue their round simulations
 (`simulateSerially` in `run.js`), and the server's `CPU_SLOTS` serve one game at a time. Agent sessions still run in
 parallel; only the simulation waits. A log line says when an arena waited more than 5 s for another arena's round.
+
+**Disk.** Visit logs grow with the size of flowers' answers: the example flowers answer with up to ~12 KB of JSON.
+- **Public-logs games:** every team sees the same visits. So `logs/round-N/visits.jsonl` is written once per round
+  (from the unauthenticated view, into `<WS_ROOT>/<arena>/.shared/g<game>/`) and hard-linked into each workspace, with
+  a copy only if linking fails. Each team still gets its own `my-bee.jsonl` and `my-patch.jsonl`, which carry its
+  private details.
+- **Retention:** raw visit logs (`visits.jsonl`, `my-bee.jsonl`, `my-patch.jsonl`) are kept for the current game and
+  the previous one. Older games keep `round.json` summaries, code, memory, standings and panel feedback. The
+  workspace README says so.
+- **Spill files:** a session's saved tool outputs (Claude Code's spill directory) are deleted after its audit.
+- **Guard:** before every round the runner checks free space on the workspace disk. Under 4 GB it pauses with the
+  usual pause file, with "low disk" as the reason; free space, then delete the file.
+- **Storage log:** after each round's sessions, the runner logs the previous round's visits in the DB (MB, and KB
+  per visit), its logs across the workspaces (hard links counted once), and the free space.
 
 **Quarantine.** Games hurt by an outage carry a reason in `arena.games.contaminated`. `analyze.js`, selection
 (retirements) and breeder scores ignore them, and they stay in the database for replay.

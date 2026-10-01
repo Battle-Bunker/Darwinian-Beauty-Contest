@@ -13,7 +13,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { Api, ApiError, gamePath, login } from "./lib/api.js";
 import { ARENA_DIR, all, migrate, one, pool, q } from "./lib/db.js";
-import { BudgetError, PAUSE_FILE, SessionLimitError, isPaused, llmStats, setArenaCap, spend, waitIfPaused } from "./lib/llm.js";
+import { BudgetError, PAUSE_FILE, SessionLimitError, isPaused, llmStats, pause, setArenaCap, spend, waitIfPaused } from "./lib/llm.js";
+import { WS_ROOT, roundLogBytes } from "./lib/workspace.js";
 import { storeMetrics } from "./lib/gamemetrics.js";
 import { fullView } from "./lib/dbview.js";
 import { classifyGame } from "./lib/adoption.js";
@@ -128,6 +129,7 @@ async function playGame(arena, generation, { ownerTok, gameRow, gPath, entries }
   const rounds = view.game.config.rounds;
   if (!gameRow.condition && arena.settings.condition) await q("UPDATE arena.games SET condition = $2 WHERE id = $1 AND condition IS NULL", [gameRow.id, arena.settings.condition]);
   for (let r = view.game.roundsPlayed + 1; r <= rounds; r++) {
+    await diskGuard(log);
     const t0 = Date.now();
     // After round 1 only participants play (a team that had no valid programs for round 1 sits the game out).
     const players = r === 1 ? personas : personas.filter((p) => view.participants?.includes(entries.find((e) => e.persona_id === p.id)?.team_id));
@@ -153,6 +155,7 @@ async function playGame(arena, generation, { ownerTok, gameRow, gPath, entries }
       }
     }));
     const tAgents = Date.now() - t0;
+    if (r > 1) await logStorage(arena, view.game.id, r - 1, log); // last round's logs are in the workspaces now
     await waitIfPaused(); // games don't advance while paused
     // Cohort experiment: one fixed seed per (game, round), identical in every cohort (same deck order, bee randomness).
     const seed = arena.settings.cohort ? (arena.settings.cohort.seedBase + 1009 * generation + 31 * r) % 2 ** 31 : undefined;
@@ -166,6 +169,29 @@ async function playGame(arena, generation, { ownerTok, gameRow, gPath, entries }
       [...rd.totals].sort((a, b) => b.fitness - a.fitness).map((x) => `${names[x.teamId]} ${x.fitness.toFixed(2)}`).join(", "));
   }
   await q("UPDATE arena.games SET stage = 'played', finished_at = now() WHERE id = $1", [gameRow.id]);
+}
+
+// Disk: workspaces hold raw visit logs, which grow with answer size. Below 4 GB free the runner pauses (same pause
+// file as usage limits; resume by deleting it once space is freed).
+const MIN_FREE_BYTES = 4e9;
+async function diskGuard(log) {
+  const st = fs.statfsSync(WS_ROOT);
+  const free = st.bavail * st.bsize;
+  if (free < MIN_FREE_BYTES) {
+    const msg = `${(free / 1e9).toFixed(1)} GB free on the workspace disk (${WS_ROOT}), under ${MIN_FREE_BYTES / 1e9} GB`;
+    log(`PAUSING: low disk: ${msg}`);
+    pause(msg, "low disk");
+  }
+  await waitIfPaused();
+}
+
+/** Storage of one played round: its visits in the DB, and its logs across the arena's workspaces. */
+async function logStorage(arena, gameUuid, roundNo, log) {
+  const db = await one("SELECT count(*)::int AS n, coalesce(sum(pg_column_size(steps)), 0)::bigint AS bytes FROM visits WHERE game_id = $1 AND round_no = $2", [gameUuid, roundNo]);
+  const ws = roundLogBytes(arena.id, roundNo);
+  const st = fs.statfsSync(WS_ROOT);
+  log(`  storage round ${roundNo}: DB visits ${(Number(db.bytes) / 1e6).toFixed(1)} MB (${db.n} visits, ${(Number(db.bytes) / Math.max(1, db.n) / 1e3).toFixed(1)} KB each); ` +
+    `workspace logs ${(ws / 1e6).toFixed(1)} MB; ${(st.bavail * st.bsize / 1e9).toFixed(1)} GB free`);
 }
 
 // CPU fairness: flowers' compute budgets are real signals, so arenas running in this process simulate one round at

@@ -95,10 +95,10 @@ export function classify(r) {
 
 export const isPaused = () => fs.existsSync(PAUSE_FILE);
 /** Enter the paused state (idempotent): write the pause file and log one line. */
-export function pause(msg) {
+export function pause(msg, reason = "usage limit hit") {
   if (isPaused()) return;
-  try { fs.writeFileSync(PAUSE_FILE, `${new Date().toISOString()}\n${msg}\n`); } catch {}
-  console.log(`[arena] PAUSED: usage limit hit (${String(msg).replace(/\s+/g, " ").slice(0, 200)}). Resume: rm ${path.relative(process.cwd(), PAUSE_FILE) || PAUSE_FILE}`);
+  try { fs.writeFileSync(PAUSE_FILE, `${new Date().toISOString()}\n${reason}: ${msg}\n`); } catch {}
+  console.log(`[arena] PAUSED: ${reason} (${String(msg).replace(/\s+/g, " ").slice(0, 200)}). Resume: rm ${path.relative(process.cwd(), PAUSE_FILE) || PAUSE_FILE}`);
 }
 let waitingLogged = false;
 /** Block while the pause file exists (polled every 30 s). Used before every call and before every round. */
