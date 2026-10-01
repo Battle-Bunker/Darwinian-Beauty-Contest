@@ -129,7 +129,7 @@ Every program can read a `GAME` dictionary/object: `turns`, `feed_cost`, `challe
 `response_type`, `max_len`, `max_nodes`, `flowers` (how many flowers are in the garden) and `ms` (your
 program's own time limit per call, in milliseconds). It does
 **not** say which round it is. (A bee can count its `MEMORY`; a flower can't know.) Flowers change
-between rounds only when you change their code, and orchids, clovers and bees take turns to do that (see
+between rounds only when you change their code, and bees, orchids and clovers take turns to do that (see
 "Taking turns to change" below).
 
 Python programs may import `math`, `random`, `hashlib`, `string`, `itertools`, `functools`,
@@ -186,18 +186,15 @@ lookup table.
 
 ### Taking turns to change
 
-Before round 1 you write all three programs, anything within the size budgets. After that, **orchids,
-clovers and bees take turns**, one kind before each round:
+Before round 1 you write all three programs, anything within the size budgets. After that, **programs
+take turns**, one kind before each round. A game has 6 rounds:
 
-| before round | may change |
-|---|---|
-| 2, 5, 8, … | orchid |
-| 3, 6, 9, … | clover |
-| 4, 7, 10, … | bee |
+| before round | 1 | 2 | 3 | 4 | 5 | 6 |
+|---|---|---|---|---|---|---|
+| may change | all three | bee | orchid | clover | bee | orchid |
 
-So orchids always get a round to imitate both the clovers' answers and the bees' questions while
-neither can react. Then the clovers get a round to react to the imitators, and then the bees get a
-round to react to both.
+Each kind gets a round to react while the others stand still: bees change their questions, then orchids
+imitate what the clovers answer and what the bees ask, then clovers respond to the imitators, and so on.
 
 A change is measured on the minified programs too: the number of characters inserted, deleted or
 replaced to turn last round's minified program into the new one. Renaming a variable, editing
@@ -219,6 +216,10 @@ many questions it asks, whether it feeds, and whether that feed paid off with ne
   what each feed gave you. You only learn whether a flower is a clover by feeding at it.
 - **your flowers' log**: every bee that visited your patch, whose bee it was, which of your flowers it
   met, and what it asked and heard (unless the owner turns flower logs off).
+
+**Public logs** (a game setting): after each round **everyone** sees every visit in full: whose bee
+visited which flower of whose patch, every challenge and response, every feed and whether it paid. Code,
+bee printouts, flower error messages, compute use and saved memory stay private until the game ends.
 
 When the game ends, all code and all logs are revealed to everyone (unless the owner turns that off).
 

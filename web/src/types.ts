@@ -17,6 +17,7 @@ export interface GameConfig {
   maxNodes: number;         // trees and graphs
   beeMemoryKb: number;      // what a bee keeps between rounds for MEMORY
   flowerLogs: boolean;
+  publicLogs: boolean;      // everyone sees every visit (challenges, responses, flower) after each round
   revealOnFinish: boolean;
   budgets: Record<Kind, Budget>;
 }

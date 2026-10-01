@@ -3,7 +3,7 @@ import { parseType, typeToString } from "./types.js";
 
 export const DEFAULT_CONFIG = Object.freeze({
   language: "python",          // "python" | "typescript"
-  rounds: 5,                   // number of rounds in the game
+  rounds: 6,                   // number of rounds: one to write, then bee, orchid, clover, bee, orchid turns
   turnsPerFlower: 100,         // each bee gets this many turns per flower in the garden, every round
   feedCost: 5,                 // turns a feed costs (an ask always costs 1)
   challengeType: "int",        // type of the value a bee asks with
@@ -12,6 +12,7 @@ export const DEFAULT_CONFIG = Object.freeze({
   maxNodes: 512,               // max nodes in a tree or graph (graphs: at most 4× as many edges)
   beeMemoryKb: 256,            // max size of what a bee keeps from one round to the next
   flowerLogs: true,            // after each round, flower owners see who asked their flowers what
+  publicLogs: false,           // after each round, everyone sees every visit: challenges, responses, feeds, nectar, which flower
   revealOnFinish: true,        // when the game ends, everyone can see all code and all logs
   // The orchid is the reference point:
   //   clover: half the orchid's complexity, 3× its compute: honest flowers can prove they spent effort
@@ -20,7 +21,7 @@ export const DEFAULT_CONFIG = Object.freeze({
   budgets: {
     //   chars: size, in characters of the minified program
     //   changes: characters of the minified program that may change in a round the program may change
-    //            (orchids, clovers and bees take turns, see schedule.js)
+    //            (bees, orchids and clovers take turns, see schedule.js)
     //   ms: compute per call, one core each
     clover: { chars: 350, changes: 70, ms: 150 },
     orchid: { chars: 700, changes: 490, ms: 50 },
@@ -48,6 +49,7 @@ export function normalizeConfig(input = {}, base = DEFAULT_CONFIG) {
     maxNodes: int(c.maxNodes, 1, 4096, base.maxNodes),
     beeMemoryKb: int(c.beeMemoryKb, 0, 4096, base.beeMemoryKb),
     flowerLogs: bool(c.flowerLogs, base.flowerLogs),
+    publicLogs: bool(c.publicLogs, base.publicLogs),
     revealOnFinish: bool(c.revealOnFinish, base.revealOnFinish),
     budgets: {},
   };

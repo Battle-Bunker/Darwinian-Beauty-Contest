@@ -24,16 +24,17 @@ export const CATALOGUE = [
     kw: /certificate|verifier|\bverif(y|ies|ication)\b/i },
 ];
 
-// Engine v3 (experiments v3 and v3x): the example flowers' ideas plus the strategies the v3 rules invite. The
-// second example's entry is filled in from arena/examples/v3/README.md once the examples are final.
+// Engine v3 (experiments v3 and v3x): the two example flowers' ideas (arena/examples/v3) plus the strategies the v3
+// rules invite.
 export const V3_CATALOGUE = [
-  { id: "paley", name: "Paley clique hunt (example 1)", desc: "graph whose edges join numbers whose difference is a quadratic residue mod a prime p (Legendre symbol, pow(d, (p-1)//2, p)), and a search for a big clique in it",
-    kw: /paley|quadratic.?residue|legendre|pow\([^()]*,\s*\(\s*\w+\s*-\s*1\s*\)\s*\/\/\s*2\s*,\s*\w+\s*\)/i },
-  { id: "example-2", name: "Second example flower", desc: "(filled in when the examples are final)", kw: /$^/ },
+  { id: "paley", name: "Paley clique chain (example paley_clover.py)", desc: "numbers are friends mod a prime p (p % 4 == 1) when their difference is a square mod p (Euler's criterion, pow(d, (p-1)//2, p)); the flower searches for cliques along a chain of primes chosen by n and answers with as many as it finds in time",
+    kw: /paley|quadratic.?residue|legendre|euler'?s criterion|chain_primes|check_paley|pow\([^()]*,\s*\(\s*\w+\s*-\s*1\s*\)\s*\/\/\s*2\s*,\s*\w+\s*\)/i },
+  { id: "graceful", name: "Graceful labelling (example graceful_clover.py)", desc: "n builds a graph (each new dot links back to two earlier dots chosen from n); the flower labels the dots with distinct numbers 0..links and searches for labels whose link differences |label(a) - label(b)| are as many different values as possible",
+    kw: /graceful|build_links|check_graceful|abs\(\s*\w+\[\s*\w+\s*\]\s*-\s*\w+\[\s*\w+\s*\]\s*\)/i },
   { id: "anytime-search", name: "Anytime search within the budget", desc: "flower uses random and the clock (time, GAME['ms']) to keep improving an answer until its budget is nearly spent, then returns the best found",
     kw: /GAME\s*\[\s*["']ms["']\s*\][\s\S]*\btime\.|\btime\.[\s\S]*GAME\s*\[\s*["']ms["']\s*\]/ },
   { id: "checker", name: "Bee checks answer quality", desc: "bee verifies a property of the answer (validity and how good it is, e.g. clique size) instead of recognising the exact answer",
-    kw: /\bcheck(er|s)?_?\w*\(|\bverif(y|ies|ier)\b|\bscore\w*\(/i },
+    kw: /check_paley|check_graceful|\bcheck(er|s)?_?\w*\(|\bverif(y|ies|ier)\b|\bscore\w*\(/i },
   { id: "face", name: "Fingerprint by repeated question", desc: "bee asks the same challenge(s) and keys its verdict on the exact answer (the flower's face), remembering which faces paid",
     kw: /fingerprint|\bface\b|json\.dumps\(|hashlib\.(md5|sha\d+)\(.*(seen|resp|answer|r\b)/i },
   { id: "hash-key", name: "Secret hash-keyed answer", desc: "flower derives its answer from a secret salted hash of the challenge, so it is deterministic and unforgeable without the salt",

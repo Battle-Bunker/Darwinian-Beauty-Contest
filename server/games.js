@@ -194,7 +194,7 @@ export async function checkProgram(game, team, kind, code) {
       const next = game.rounds_played + 1;
       if (!changeable(next).includes(kind)) {
         if (distance > 0) {
-          errors.push(`Your ${kind} is locked before round ${next}: orchids, clovers and bees take turns to change, ` +
+          errors.push(`Your ${kind} is locked before round ${next}: bees, orchids and clovers take turns to change, ` +
             `and this round it's the ${changeable(next)[0]}s' turn. Your ${kind} can change again before round ${nextChangeRound(kind, next)}.`);
         }
       } else if (distance > budget.changes) {
@@ -424,7 +424,7 @@ export async function viewGame(room, game, user, opts = {}) {
       createdAt: g.created_at, finishedAt: g.finished_at, revealed, isOwner,
       // Turns per bee in the next round (depends on how many teams play).
       turns: turnsFor(cfg, participants ? participants.length : teams.length),
-      // Programs teams may change for the next round (orchids, clovers and bees take turns).
+      // Programs teams may change for the next round (bees, orchids and clovers take turns).
       changeable: changeable(g.rounds_played + 1),
     },
     me: user ? { id: user.id, name: user.name, teamId: mine?.id ?? null } : null,
@@ -463,7 +463,7 @@ function roundViewOf(r, visits, { cfg, mine, revealed, participants, progs, mems
     }))])),
     // Size of what each bee kept for later rounds (your own team's, or everyone's once revealed).
     memory: Object.fromEntries(mems.filter((m) => m.round_no === r.round_no && canSeeTeam(m.team_id)).map((m) => [m.team_id, { bytes: m.bytes, note: m.note }])),
-    ...(withVisits ? { visits: visits.map((v) => visitView(v, mine?.id, revealed, cfg.flowerLogs)) } : {}),
+    ...(withVisits ? { visits: visits.map((v) => visitView(v, mine?.id, revealed, cfg)) } : {}),
   };
 }
 
@@ -493,7 +493,13 @@ export async function beeMemory(game, user, roundNo, teamId) {
   return { round: roundNo, teamId: team, language: g.config.language, snapshot: m.snapshot, bytes: m.bytes, note: m.note };
 }
 
-function visitView(v, myTeamId, revealed, flowerLogs) {
+/**
+ * One visit as a viewer may see it. Everyone sees who visited whom and what happened. A team's own bee's
+ * visits show their challenges and responses; a patch's owner sees which of its flowers was visited and
+ * (with flowerLogs) what was asked. With publicLogs everyone sees every visit's challenges, responses and
+ * flower; bee logs and flower errors stay with their owners. A finished, revealed game shows everything.
+ */
+function visitView(v, myTeamId, revealed, { flowerLogs, publicLogs }) {
   const asksBeforeFeed = v.action === "feed" ? v.steps.filter((s) => !s.after).length : v.steps.length;
   const out = {
     bee: v.bee_team, patch: v.patch_team, seq: v.seq, start: v.turn_start, end: v.turn_end,
@@ -502,15 +508,15 @@ function visitView(v, myTeamId, revealed, flowerLogs) {
   const isBee = revealed || v.bee_team === myTeamId;
   const isPatch = revealed || v.patch_team === myTeamId;
   const keep = (s) => (s.after ? { after: true } : {});
-  if (isPatch) out.kind = v.kind;
+  if (isPatch || publicLogs) out.kind = v.kind;
   if (isBee) {
     // Your bee saw challenges and responses, but not why another team's flower failed.
     out.steps = v.steps.map((s) => (revealed ? s : { c: s.c, r: s.r, ...keep(s), ...(s.challengeError ? { challengeError: s.challengeError } : {}) }));
     if (v.bee_error) out.beeError = v.bee_error;
     if (v.bee_log) out.beeLog = v.bee_log;
     if (v.note) out.note = v.note;
-  } else if (isPatch && flowerLogs) {
-    out.steps = v.steps.map((s) => ({ c: s.c, r: s.r, ...keep(s), ...(s.flowerError ? { flowerError: s.flowerError } : {}) }));
+  } else if ((isPatch && flowerLogs) || publicLogs) {
+    out.steps = v.steps.map((s) => ({ c: s.c, r: s.r, ...keep(s), ...(isPatch && s.flowerError ? { flowerError: s.flowerError } : {}) }));
   }
   if (isPatch && !isBee && v.steps.some((s) => s.flowerError)) out.flowerError = v.steps.find((s) => s.flowerError).flowerError;
   return out;

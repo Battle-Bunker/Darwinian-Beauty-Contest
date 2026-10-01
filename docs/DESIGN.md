@@ -222,16 +222,32 @@ out, the two texts are diffed, and names that fall in matching stretches are pai
 comment or reformatting changes nothing, and a new variable doesn't reshuffle every other name. Budgets
 are a share of the size budget: 70% for orchids, 20% for clovers and bees.
 
-## Orchids, clovers and bees take turns to change
+## Programs take turns to change
 
 Before round 1 every program is written. After that exactly one kind may change before each round, in
-rotation: orchids, then clovers, then bees (server/lib/schedule.js).
+rotation: bees, then orchids, then clovers (server/lib/schedule.js). A game has 6 rounds: all, bee,
+orchid, clover, bee, orchid.
 
 If everyone could change at once, static signatures would stay competitive:
 - a bee can pick a new secret probe every round
 - a clover can answer with a keyed hash that bees recognise but orchids can't forge
 - whatever an orchid copies from last round is already stale
 
-With turns, orchids always get a round to imitate both the clovers' answers and the bees' probes before
-either can react. Then clovers respond to the imitations, and then bees respond to both. A program out of
-its turn may still be resubmitted if its minified form is unchanged.
+With turns, each kind reacts while the others stand still:
+- bees settle their questions
+- orchids imitate both the clovers' answers and those questions
+- clovers respond to the imitators
+- bees respond to both
+
+A program out of its turn may still be resubmitted if its minified form is unchanged.
+
+## Public logs: an open-information variant
+
+By default information is private and partial. A bee's team sees its own visits, a patch owner sees
+which of its flowers was visited and what was asked, and nectar is the only ground truth. Hidden
+information gives teams reasons to probe and gather intelligence, which may drive dynamism, or may
+protect static signatures from imitation.
+
+`publicLogs` tests the alternative. After each round everyone sees every visit in full: the flower
+kind, the challenges, the responses and the feeds. Code, bee printouts, flower errors, compute and
+memory stay private until the game ends.

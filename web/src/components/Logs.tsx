@@ -1,5 +1,6 @@
-// Private logs for one round: a team's bee visits and the visitors to its flowers, plus its programs'
-// problems. Your own team always; every team once the game is finished and revealed.
+// Logs for one round: a team's bee visits and the visitors to its flowers, plus its programs' problems.
+// Your own team always; every team's visits after each round in games with public logs; everything once
+// the game is finished and revealed.
 import { useMemo, useState } from "react";
 import { api, errorText } from "../api";
 import { poss } from "../lib/format";
@@ -12,7 +13,7 @@ import { Value } from "./Value";
 
 export function visibleTeams(view: GameView): string[] {
   const parts = view.participants ?? [];
-  if (view.game.revealed) return parts;
+  if (view.game.revealed || view.game.config.publicLogs) return parts;
   const mine = view.me?.teamId;
   return mine && parts.includes(mine) ? [mine] : [];
 }
@@ -194,7 +195,7 @@ export function Logs({ view, round, base }: { view: GameView; round: Round; base
           </tbody>
         </table>
       </div>
-      <MemoryPanel key={`${teamId}:${round.no}`} view={view} round={round} teamId={teamId} base={base} mine={mine} />
+      {(mine || view.game.revealed) && <MemoryPanel key={`${teamId}:${round.no}`} view={view} round={round} teamId={teamId} base={base} mine={mine} />}
 
       {!round.visits ? <p className="muted"><Spinner label="Loading this round's visits…" /></p> : (
         <>
@@ -327,7 +328,7 @@ function FlowerLog({ view, visits, who, teams }: { view: GameView; visits: Visit
   const [result, setResult] = useState<ResultFilter>("all");
   const [page, setPage] = useState(0);
   const order = view.participants ?? [];
-  const flowerSteps = view.game.config.flowerLogs || view.game.revealed;
+  const flowerSteps = view.game.config.flowerLogs || view.game.config.publicLogs || view.game.revealed;
   const byBee = useMemo(() => {
     const g = Object.fromEntries(groupBy(visits, (v) => v.bee).map((x) => [x.id, x]));
     return order.filter((id) => g[id]).map((id) => g[id]);

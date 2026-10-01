@@ -107,7 +107,7 @@ export function ProgramEditors({ view, base }: { view: GameView; base: string })
   const current = code[kind];
   const participant = g.roundsPlayed === 0 || !!view.participants?.includes(team.id);
   const locked = !!g.runningRound || g.status === "finished" || !participant;
-  // Orchids, clovers and bees take turns to change: a program out of its turn has no change budget.
+  // Bees, orchids and clovers take turns to change: a program out of its turn has no change budget.
   const frozen = g.roundsPlayed > 0 && !g.changeable.includes(kind);
   const allowance = frozen ? 0 : budget.changes;
   const overSize = !!s && s.chars > budget.chars;
@@ -167,7 +167,7 @@ export function ProgramEditors({ view, base }: { view: GameView; base: string })
               <span className="tab-name">{k}</span>
               {submitted && !dirty && <span className="tab-mark ok" title="Submitted"><CheckIcon size={13} /></span>}
               {dirty && <span className="tab-mark dirty" title="Unsubmitted changes">•</span>}
-              {g.roundsPlayed > 0 && !g.changeable.includes(k) && <span className="tab-mark locked" title="Locked this round: orchids, clovers and bees take turns">locked</span>}
+              {g.roundsPlayed > 0 && !g.changeable.includes(k) && <span className="tab-mark locked" title="Locked this round: bees, orchids and clovers take turns">locked</span>}
             </button>
           );
         })}
@@ -181,15 +181,15 @@ export function ProgramEditors({ view, base }: { view: GameView; base: string })
           <Meter label="Size (characters after minifying)" value={empty ? 0 : s?.chars ?? null} max={budget.chars} />
           {previous !== null
             ? (frozen
-              ? <div className="meter-note muted">Locked this round: orchids, clovers and bees take turns to change.</div>
+              ? <div className="meter-note muted">Locked this round: bees, orchids and clovers take turns to change.</div>
               : <Meter label="Changes since last round (characters, minified)" value={s?.distance ?? null} max={allowance} />)
-            : <div className="meter-note muted">Round 1: write anything that fits the size budget. After that, programs take turns to change, one kind per round: orchids, then clovers, then bees, then orchids again. In its turn your {kind} may change up to {budget.changes} characters.</div>}
+            : <div className="meter-note muted">Round 1: write anything that fits the size budget. After that, programs take turns to change, one kind per round: bees, then orchids, then clovers, then bees again. In its turn your {kind} may change up to {budget.changes} characters.</div>}
           <div className="meter-note muted">Time limit: {budget.ms} ms per {kind === "bee" ? "call" : "question"}</div>
         </div>
         {s?.syntaxError && !empty && <Alert kind="warn">Syntax error: this code doesn't parse yet, so it can't be submitted.</Alert>}
         {overSize && <Alert kind="error">Too big: {s!.chars} characters after minifying, but the budget is {budget.chars}. Make it {s!.chars - budget.chars} characters smaller to submit. Comments, spacing and long names are free; strings, numbers and keywords count.</Alert>}
         {!empty && s?.minified && <details className="minified"><summary className="muted small">What counts: your program minified ({s.chars} characters)</summary><pre>{s.minified}</pre></details>}
-        {frozen && <Alert kind="info">Your {kind} can't change before round {g.roundsPlayed + 1}: orchids, clovers and bees take turns, and this round it's the {g.changeable[0]}s' turn. You can still try ideas out below.</Alert>}
+        {frozen && <Alert kind="info">Your {kind} can't change before round {g.roundsPlayed + 1}: bees, orchids and clovers take turns, and this round it's the {g.changeable[0]}s' turn. You can still try ideas out below.</Alert>}
         {overChanges && !frozen && <Alert kind="error">Too many changes: {s!.distance} characters changed since last round (minified), but the budget is {allowance}. Undo {s!.distance! - allowance} to submit.</Alert>}
         {incoming[kind] && (
           <Alert kind="info">

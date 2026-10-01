@@ -320,14 +320,14 @@ for (const [experiment, cohortArenas] of Object.entries(cohortGroups)) {
           `${f2(r.stolenShare)} / ${f2(r.twinShare)}`, `${r.nondet.clover}/${r.nondet.cloverAsked} · ${r.nondet.orchid}/${r.nondet.orchidAsked}`,
           `${mk("clover", "random")}/${mk("clover", "clock")}/${mk("clover", "gameMs")} of ${n}`,
           `${f2(r.compute.clover.mean)} (p90 max ${f2(r.compute.clover.p90max)})`, `${f2(r.compute.orchid.mean)} (p90 max ${f2(r.compute.orchid.p90max)})`,
-          `${mk("clover", "legendre") + mk("clover", "paley")}/${mk("orchid", "legendre") + mk("orchid", "paley")}/${mk("bee", "legendre") + mk("bee", "paley")}`]);
+          `${mk("clover", "paley")}/${mk("orchid", "paley")}/${mk("bee", "paley")}`, `${mk("clover", "graceful")}/${mk("orchid", "graceful")}/${mk("bee", "graceful")}`]);
       }
     }
     p("Engine v3, per round (rival = other teams' patches; fingerprinting = share of a bee's pre-feed asks repeating a challenge it already asked this game; " +
       "stolen / twin = rival-orchid visits whose every pre-feed answer equals a rival's / its own clover's answer that round; non-deterministic = flowers seen giving 2+ answers to one challenge, of flowers asked; " +
-      "clover code using random / time / GAME[\"ms\"]; compute = mean share of the ms budget; Paley/Legendre markers in clover/orchid/bee code):");
+      "clover code using random / time / GAME[\"ms\"]; compute = mean share of the ms budget; example markers (Paley clique chain, graceful labelling) in clover/orchid/bee code):");
     table(["arena game.round", "nectar/turn", "precision", "rival clover / orchid fed", "gap", "fingerprinting", "stolen / twin orchids", "non-det. clovers · orchids",
-      "clovers using random/time/ms", "clover compute", "orchid compute", "Paley markers c/o/b"], vrow);
+      "clovers using random/time/ms", "clover compute", "orchid compute", "Paley c/o/b", "graceful c/o/b"], vrow);
     if (T && C1) {
       // Paired by (game, round): treatment − mean(controls); noise = |control − control2|.
       const keys = ["nectarPerTurn", "precision", "gap", "repeatShare", "stolenShare"];

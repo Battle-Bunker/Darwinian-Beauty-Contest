@@ -1,10 +1,11 @@
 // Which programs a team may change before each round. All three are written before round 1. After that
-// exactly one kind may change before each round, in rotation: orchids (before rounds 2, 5, 8, …), then
-// clovers (3, 6, 9, …), then bees (4, 7, 10, …). So orchids always get a round to imitate both the
-// clovers' signatures and the bees' probes before either can react, then clovers respond to the
-// imitations, then bees respond to both. A program out of its turn may still be resubmitted with
-// changes that leave its minified form identical (comments, spacing, names).
-const CYCLE = ["orchid", "clover", "bee"];
+// exactly one kind may change before each round, in rotation: bees (before rounds 2, 5, 8, …), then
+// orchids (3, 6, 9, …), then clovers (4, 7, 10, …). In a 6-round game: all, bee, orchid, clover, bee,
+// orchid. Each kind gets a round to react to the others while they stand still: orchids imitate the
+// clovers' answers and the bees' current questions, clovers respond to the imitations, and bees respond
+// to both. A program out of its turn may still be resubmitted with changes that leave its minified form
+// identical (comments, spacing, names).
+const CYCLE = ["bee", "orchid", "clover"];
 
 export function changeable(roundNo) {
   if (roundNo <= 1) return ["clover", "orchid", "bee"];

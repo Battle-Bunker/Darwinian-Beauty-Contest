@@ -22,7 +22,7 @@ console.log("room", room.url);
 const game = await api(owner, "POST", `/rooms/${room.shortId}/games`);
 console.log("game", game.url);
 const g = `/rooms/${room.shortId}/games/${game.shortId}`;
-await api(owner, "PATCH", `${g}/config`, { config: { rounds: 3, turnsPerFlower: 10, budgets: { bee: { changes: 200 } } } });
+await api(owner, "PATCH", `${g}/config`, { config: { rounds: 4, turnsPerFlower: 10, budgets: { bee: { changes: 200 } } } });
 
 const players = [];
 for (const name of ["Ada", "Bo", "Cy"]) {
@@ -62,33 +62,36 @@ console.log("try bee:", tb.visits.length, "visits, nectar", tb.nectar);
 // Only the owner can run rounds.
 await assert.rejects(api(players[1].token, "POST", `${g}/rounds?wait=1`), /403/);
 
-for (let round = 1; round <= 3; round++) {
+for (let round = 1; round <= 4; round++) {
   if (round === 2) {
-    // Orchids, clovers and bees take turns: before round 2 only orchids may change.
-    const g2 = await api(players[1].token, "GET", g);
-    assert.deepEqual(g2.game.changeable, ["orchid"]);
+    // Programs take turns: before round 2 only bees may change.
+    assert.deepEqual((await api(players[1].token, "GET", g)).game.changeable, ["bee"]);
     const lockedClover = await api(players[1].token, "POST", `${g}/programs`, { kind: "clover", code: variants[1].clover.replace("% 1000", "% 997") });
     assert.equal(lockedClover.ok, false);
     console.log("locked clover rejects:", lockedClover.errors[0]);
     const comments = await api(players[1].token, "POST", `${g}/programs`, { kind: "clover", code: "# same clover, explained\n" + variants[1].clover });
-    assert.ok(comments.ok && comments.distance === 0, "a locked flower may still change comments");
+    assert.ok(comments.ok && comments.distance === 0, "a locked program may still change comments");
+    const beeTweak = await api(players[1].token, "POST", `${g}/programs`, { kind: "bee", code: variants[1].bee.replace("500", "501") });
+    assert.ok(beeTweak.ok, beeTweak.errors?.join());
+  }
+  if (round === 3) {
+    // Then the orchids' turn.
+    assert.deepEqual((await api(players[1].token, "GET", g)).game.changeable, ["orchid"]);
     const orchidTweak = await api(players[1].token, "POST", `${g}/programs`, { kind: "orchid", code: variants[1].orchid.replace("% 1000", "% 997") });
     assert.ok(orchidTweak.ok, orchidTweak.errors?.join());
     console.log("orchid tweak accepted, distance", orchidTweak.distance);
+    const lockedBee = await api(players[1].token, "POST", `${g}/programs`, { kind: "bee", code: variants[1].bee.replace("500", "502") });
+    assert.equal(lockedBee.ok, false);
+    console.log("locked bee rejects:", lockedBee.errors[0]);
   }
-  if (round === 3) {
-    // Now it's the clovers' turn, within their change budget; orchids and bees wait.
+  if (round === 4) {
+    // Then the clovers', within their change budget.
     assert.deepEqual((await api(players[1].token, "GET", g)).game.changeable, ["clover"]);
     const rewrite = await api(players[1].token, "POST", `${g}/programs`, { kind: "clover", code: "def flower(challenge):\n    x = challenge\n" + "    x = (x * 31 + 7) % 9973\n".repeat(10) + "    return x\n" });
     assert.equal(rewrite.ok, false);
     console.log("change budget rejects:", rewrite.errors[0]);
     const tweak = await api(players[1].token, "POST", `${g}/programs`, { kind: "clover", code: variants[1].clover.replace("% 1000", "% 997") });
     assert.ok(tweak.ok, tweak.errors?.join());
-    const lockedOrchid = await api(players[1].token, "POST", `${g}/programs`, { kind: "orchid", code: variants[1].orchid.replace("% 1000", "% 991") });
-    assert.equal(lockedOrchid.ok, false);
-    const lockedBee = await api(players[1].token, "POST", `${g}/programs`, { kind: "bee", code: variants[1].bee.replace("500", "501") });
-    assert.equal(lockedBee.ok, false);
-    console.log("locked bee rejects:", lockedBee.errors[0]);
   }
   const t0 = Date.now();
   const r = await api(owner, "POST", `${g}/rounds?wait=1`);
@@ -100,7 +103,7 @@ const pub = await api(null, "GET", g);
 const ada = await api(players[0].token, "GET", g);
 const bo = await api(players[1].token, "GET", g);
 assert.equal(pub.game.status, "finished");
-assert.equal(pub.rounds.length, 3);
+assert.equal(pub.rounds.length, 4);
 const names = Object.fromEntries(pub.teams.map((t) => [t.id, t.name]));
 console.log("final fitness:", pub.final.map((s) => `${names[s.teamId]}=${s.fitness.toFixed(3)} (allure ${s.allure.toFixed(2)}, forage ${s.forage.toFixed(2)})`).join("  "));
 const sumFit = pub.final.reduce((a, s) => a + s.fitness, 0);
@@ -136,8 +139,23 @@ assert.ok(adaLive.rounds[0].programs[myId].clover.compute?.budgetMs, "own flower
 assert.ok(Object.entries(pubLive.rounds[0].programs).every(([, p]) => p.clover.compute === undefined), "public view leaks compute use");
 console.log("visibility checks passed;", pubLive.rounds[0].visits.length, "visits in live game");
 
+// Public logs: after each round everyone sees every visit's challenges, responses and flower, but not
+// other teams' code, bee logs or compute.
+const game3 = await api(owner, "POST", `/rooms/${room.shortId}/games`);
+const g3 = `/rooms/${room.shortId}/games/${game3.shortId}`;
+await api(owner, "PATCH", `${g3}/config`, { config: { rounds: 2, turnsPerFlower: 10, publicLogs: true } });
+for (const [i, p] of players.slice(0, 2).entries()) {
+  await api(p.token, "POST", `${g3}/teams`, { name: p.name });
+  for (const kind of ["clover", "orchid", "bee"]) await api(p.token, "POST", `${g3}/programs`, { kind, code: variants[i][kind] });
+}
+await api(owner, "POST", `${g3}/rounds?wait=1`);
+const open = await api(null, "GET", g3);
+assert.ok(open.rounds[0].visits.length && open.rounds[0].visits.every((v) => v.kind && v.steps && !("beeLog" in v)), "public logs show every visit");
+assert.ok(Object.values(open.rounds[0].programs).every((p) => !p.bee.code && p.clover.compute === undefined), "public logs leak code or compute");
+console.log("public logs checks passed;", open.rounds[0].visits.length, "visits visible to everyone");
+
 // Short ids: the full 26-char code resolves too, case-insensitively.
 const roomFull = await api(null, "GET", `/rooms/${room.shortId}`);
-assert.equal(roomFull.games.length, 2);
+assert.equal(roomFull.games.length, 3);
 console.log("room games:", roomFull.games.map((x) => x.url).join(" "));
 console.log("SMOKE OK", BASE + game.url);

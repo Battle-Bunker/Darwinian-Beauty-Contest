@@ -100,6 +100,7 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
       </p>
       <div className="settings-checks">
         <label className="check"><input type="checkbox" checked={draft.flowerLogs} onChange={(e) => set("flowerLogs", e.target.checked)} /> Flower logs: teams see what bees asked their flowers</label>
+        <label className="check"><input type="checkbox" checked={draft.publicLogs} onChange={(e) => set("publicLogs", e.target.checked)} /> Public logs: after each round everyone sees every visit (challenges, responses, feeds, which flower)</label>
         <label className="check"><input type="checkbox" checked={draft.revealOnFinish} onChange={(e) => set("revealOnFinish", e.target.checked)} /> Reveal all code and logs when the game ends</label>
       </div>
       <div className="table-scroll">
@@ -145,7 +146,7 @@ export function SettingsSummary({ cfg, turnsNow }: { cfg: GameConfig; turnsNow?:
         {[cfg.challengeType, cfg.responseType].some((t) => /str|list/i.test(t)) && <span className="chip">max length {cfg.maxLen}</span>}
         {[cfg.challengeType, cfg.responseType].some((t) => /tree|graph/i.test(t)) && <span className="chip">max {cfg.maxNodes} nodes</span>}
         {cfg.beeMemoryKb !== undefined && <span className="chip">{cfg.beeMemoryKb ? `bee memory ${cfg.beeMemoryKb} KB` : "bee memory off"}</span>}
-        <span className="chip">{cfg.flowerLogs ? "flower logs on" : "flower logs off"}</span>
+        <span className="chip">{cfg.publicLogs ? "public logs" : cfg.flowerLogs ? "flower logs on" : "flower logs off"}</span>
         <span className="chip">{cfg.revealOnFinish ? "code revealed at the end" : "code stays secret"}</span>
       </div>
       <div className="table-scroll">

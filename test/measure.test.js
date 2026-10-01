@@ -128,9 +128,9 @@ test("change: renames, comments and formatting are free; edits cost the characte
   assert.equal(await tc("function flower(c: number) { return c * 2 }", "// doubled\nfunction flower(challenge: number): number {\n  return challenge * 2;\n}\n"), 0);
 });
 
-test("orchids, clovers and bees take turns to change, one kind per round", () => {
-  assert.deepEqual(changeable(1), ["clover", "orchid", "bee"]);
-  assert.deepEqual([2, 3, 4, 5, 6, 7].map((r) => changeable(r)), [["orchid"], ["clover"], ["bee"], ["orchid"], ["clover"], ["bee"]]);
+test("programs take turns to change, one kind per round: all, bee, orchid, clover, bee, orchid", () => {
+  assert.deepEqual([1, 2, 3, 4, 5, 6].map((r) => changeable(r)),
+    [["clover", "orchid", "bee"], ["bee"], ["orchid"], ["clover"], ["bee"], ["orchid"]]);
 });
 
 test("renaming never changes what a program does", async () => {

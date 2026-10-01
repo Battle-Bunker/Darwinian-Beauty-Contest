@@ -7,7 +7,7 @@
 //   - non-determinism: flowers seen giving different answers to the same challenge within a round, and flowers whose
 //     code imports random or time
 //   - compute use against budget (round_programs.compute: every call counts under v3)
-//   - markers of the example ideas in code (Paley / Legendre symbol, the second example's markers, anytime search)
+//   - markers of the example ideas in code (Paley clique chain, graceful labelling), random/time/GAME["ms"] use
 import { all } from "./db.js";
 
 const KINDS = ["clover", "orchid", "bee"];
@@ -18,8 +18,10 @@ export const CODE_MARKERS = {
   random: /\bimport\s+random\b|\bfrom\s+random\s+import\b|\brandom\.\w+\(/,
   clock: /\bimport\s+time\b|\bfrom\s+time\s+import\b|\btime\.(time|perf_counter|monotonic|process_time)\b/,
   gameMs: /GAME\s*\[\s*["']ms["']\s*\]|GAME\.get\(\s*["']ms["']/,
-  legendre: /legendre|quadratic.?residue|pow\([^()]*,\s*\(\s*\w+\s*-\s*1\s*\)\s*\/\/\s*2\s*,\s*\w+\s*\)/i,
-  paley: /paley/i,
+  // Example 1 (paley_clover.py): Euler's criterion / Legendre symbol, the prime chain, its checker.
+  paley: /paley|quadratic.?residue|legendre|chain_primes|check_paley|pow\([^()]*,\s*\(\s*\w+\s*-\s*1\s*\)\s*\/\/\s*2\s*,\s*\w+\s*\)/i,
+  // Example 2 (graceful_clover.py): the graph n builds, distinct label differences, its checker.
+  graceful: /graceful|build_links|check_graceful/i,
   clique: /\bcliques?\b/i,
 };
 export function codeMarkers(code) {

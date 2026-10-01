@@ -55,7 +55,7 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
   "language": "python",
   "rounds": 5, "turnsPerFlower": 100, "feedCost": 5,
   "challengeType": "int", "responseType": "int", "maxLen": 64, "maxNodes": 512, "beeMemoryKb": 256,
-  "flowerLogs": true, "revealOnFinish": true,
+  "flowerLogs": true, "publicLogs": false, "revealOnFinish": true,
   "budgets": {
     "clover": { "chars": 350,  "changes": 30,  "ms": 150 },
     "orchid": { "chars": 700,  "changes": 210, "ms": 50 },
@@ -65,12 +65,14 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 ```
 
 - `turnsPerFlower`: each bee gets `turnsPerFlower × flowers` turns per round (`flowers` = 2 × teams).
+- `publicLogs`: after each round everyone sees every visit's flower kind, challenges and responses (not
+  code, bee logs, flower errors, compute or memory, which wait for `revealOnFinish`).
 - `maxLen` bounds strings and lists. `maxNodes` bounds trees and graphs (graphs: ≤ 4 × maxNodes edges).
 - `beeMemoryKb`: how much of a bee's top-level data is kept each round for `MEMORY`. 0 turns memory off.
 - `budgets.<kind>.chars`: size, in characters of the automatically minified program (vendor/measure.js;
   RULES.md explains it to players). `changes`: characters of the minified program that may change in a
-  round the program may change. One kind may change before each round, in rotation: orchids (rounds
-  2, 5, 8, …), clovers (3, 6, 9, …), bees (4, 7, 10, …).
+  round the program may change. One kind may change before each round, in rotation: bees (rounds
+  2, 5, 8, …), orchids (3, 6, 9, …), clovers (4, 7, 10, …). Games have 6 rounds by default.
 - Flowers are stateless (a fresh process or context per call) but get fresh randomness every call and
   the clock, so every ask runs the flower again. Every program can read `GAME.ms`, its own compute
   budget per call.
@@ -93,7 +95,7 @@ returns everything that has happened so far, filtered to what this viewer is all
   "game": { "shortId", "url", "status": "lobby|running|finished", "config", "roundsPlayed",
             "runningRound": null | n, "lastError", "version", "revealed", "isOwner",
             "turns",                       // turns per bee in the next round
-            "changeable": ["orchid"] },     // programs that may change for the next round (server/lib/schedule.js)
+            "changeable": ["bee"] },        // programs that may change for the next round (server/lib/schedule.js)
   "me": { "id", "name", "teamId" } | null,
   "participants": [teamId, ...] | null,   // fixed when round 1 runs; ledger row/column order
   "teams": [{ "id", "name", "color", "members": [names], "participant",
