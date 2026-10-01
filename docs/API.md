@@ -53,7 +53,7 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 ```json
 {
   "language": "python",
-  "rounds": 5, "turnsPerFlower": 100, "turns": null, "feedCost": 5,
+  "rounds": 5, "turnsPerFlower": 100, "feedCost": 5,
   "challengeType": "int", "responseType": "int", "maxLen": 64, "maxNodes": 512, "beeMemoryKb": 256,
   "flowerLogs": true, "revealOnFinish": true,
   "budgets": {
@@ -65,7 +65,6 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 ```
 
 - `turnsPerFlower`: each bee gets `turnsPerFlower × flowers` turns per round (`flowers` = 2 × teams).
-  `turns` overrides this with a fixed number when set.
 - `maxLen` bounds strings and lists. `maxNodes` bounds trees and graphs (graphs: ≤ 4 × maxNodes edges).
 - `beeMemoryKb`: how much of a bee's top-level data is kept each round for `MEMORY`. 0 turns memory off.
 - `budgets.<kind>.chars`: size, in characters of the automatically minified program (vendor/measure.js;

@@ -453,7 +453,7 @@ function roundViewOf(r, visits, { cfg, mine, revealed, participants, progs, mems
   const canSeeTeam = (teamId) => revealed || (mine && mine.id === teamId);
   return {
     no: r.round_no, startedAt: r.started_at, finishedAt: r.finished_at,
-    turns: r.turns ?? cfg.turns ?? 100,
+    turns: r.turns,
     feeds: r.feeds, nectar: r.nectar, scores: r.scores, totals: r.totals,
     programs: Object.fromEntries((participants || []).map((teamId) => [teamId, Object.fromEntries(KINDS.map((kind) => {
       const p = progs.find((x) => x.round_no === r.round_no && x.team_id === teamId && x.kind === kind);

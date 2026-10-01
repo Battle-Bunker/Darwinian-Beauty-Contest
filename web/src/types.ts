@@ -9,14 +9,13 @@ export interface Budget { chars: number; changes: number; ms: number }
 export interface GameConfig {
   language: "python" | "typescript";
   rounds: number;
-  turnsPerFlower?: number;  // v2: each bee gets turnsPerFlower × flowers turns per round
-  turns: number | null;     // v2: optional fixed override (null = scale with the garden)
+  turnsPerFlower: number;   // each bee gets turnsPerFlower × flowers turns per round
   feedCost: number;
   challengeType: string;
   responseType: string;
   maxLen: number;
-  maxNodes?: number;        // trees and graphs
-  beeMemoryKb?: number;     // what a bee keeps between rounds for MEMORY
+  maxNodes: number;         // trees and graphs
+  beeMemoryKb: number;      // what a bee keeps between rounds for MEMORY
   flowerLogs: boolean;
   revealOnFinish: boolean;
   budgets: Record<Kind, Budget>;
@@ -58,7 +57,7 @@ export interface Step { c: unknown; r: unknown; after?: boolean; challengeError?
 
 export interface Visit {
   bee: string; patch: string; seq: number; start: number; end: number; asks: number;
-  asksBeforeFeed?: number;  // v2: asks, then the feed, then (asks - asksBeforeFeed) more asks
+  asksBeforeFeed?: number;  // fed visits: asks, then the feed, then (asks - asksBeforeFeed) more asks
   action: "feed" | "leave" | "error"; nectar: boolean | null;
   kind?: FlowerKind; steps?: Step[]; beeError?: string; beeLog?: string; note?: string; flowerError?: string;
 }
@@ -75,8 +74,8 @@ export interface MemorySnapshot { round: number; teamId: string; language: strin
 
 export interface Round {
   no: number; startedAt: string; finishedAt: string;
-  turns?: number;                          // v2: turns each bee had this round
-  memory?: Record<string, MemoryInfo>;     // v2: what each bee kept (own team, or all once revealed)
+  turns: number;                           // turns each bee had this round
+  memory?: Record<string, MemoryInfo>;     // what each bee kept (own team, or all once revealed)
   feeds: number[][]; nectar: number[][];
   scores: TeamScore[]; totals: TeamScore[];
   programs: Record<string, Record<Kind, ProgramInfo | null>>;
@@ -89,7 +88,7 @@ export interface GameView {
     id: string; shortId: string; url: string; status: GameStatus; config: GameConfig;
     roundsPlayed: number; runningRound: number | null; lastError: string | null; version: number;
     createdAt: string; finishedAt: string | null; revealed: boolean; isOwner: boolean;
-    turns?: number;                        // turns per bee in the next round
+    turns: number;                         // turns per bee in the next round
     changeable: Kind[];                    // programs that may change for the next round (clovers and orchids take turns)
   };
   me: { id: string; name: string; teamId: string | null } | null;

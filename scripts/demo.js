@@ -145,7 +145,7 @@ def forage(seen, turns_left):
 async function makeGame(owner, roomId, { rounds, play, teams = Object.keys(PROGRAMS) }) {
   const game = await api(owner, "POST", `/rooms/${roomId}/games`);
   const g = `/rooms/${roomId}/games/${game.shortId}`;
-  await api(owner, "PATCH", `${g}/config`, { config: { rounds, turns: 100 } });
+  await api(owner, "PATCH", `${g}/config`, { config: { rounds, turnsPerFlower: 10 } });
   const players = {};
   for (const name of teams) {
     const token = await login(name);

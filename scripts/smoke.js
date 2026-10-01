@@ -22,7 +22,7 @@ console.log("room", room.url);
 const game = await api(owner, "POST", `/rooms/${room.shortId}/games`);
 console.log("game", game.url);
 const g = `/rooms/${room.shortId}/games/${game.shortId}`;
-await api(owner, "PATCH", `${g}/config`, { config: { rounds: 3, turns: 60, budgets: { bee: { changes: 200 } } } });
+await api(owner, "PATCH", `${g}/config`, { config: { rounds: 3, turnsPerFlower: 10, budgets: { bee: { changes: 200 } } } });
 
 const players = [];
 for (const name of ["Ada", "Bo", "Cy"]) {

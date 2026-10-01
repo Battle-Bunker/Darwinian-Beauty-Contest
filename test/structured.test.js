@@ -43,7 +43,7 @@ function forage(seen: [number, Tree | null][], turnsLeft: number): any {
 };
 
 test("int -> graph: a bee measuring shortest paths only feeds at clovers", async () => {
-  const config = normalizeConfig({ responseType: "graph", turns: 60 });
+  const config = normalizeConfig({ responseType: "graph", turnsPerFlower: 15 });
   const r = await simulateRound({ config, seed: 3, teams: [{ id: "a", programs: PY }, { id: "b", programs: PY }] });
   assert.deepEqual(r.problems.map((p) => [p.clover, p.orchid, p.bee]), [[null, null, null], [null, null, null]]);
   const fed = r.visits.filter((v) => v.action === "feed");
@@ -52,7 +52,7 @@ test("int -> graph: a bee measuring shortest paths only feeds at clovers", async
 });
 
 test("int -> tree[int] in TypeScript", async () => {
-  const config = normalizeConfig({ language: "typescript", responseType: "tree[int]", turns: 40 });
+  const config = normalizeConfig({ language: "typescript", responseType: "tree[int]", turnsPerFlower: 10 });
   const r = await simulateRound({ config, seed: 4, teams: [{ id: "a", programs: TS }, { id: "b", programs: TS }] });
   const fed = r.visits.filter((v) => v.action === "feed");
   assert.ok(fed.length > 0 && fed.every((v) => v.kind === "clover"));
@@ -60,7 +60,7 @@ test("int -> tree[int] in TypeScript", async () => {
 });
 
 test("malformed structures reach the bee as null", async () => {
-  const config = normalizeConfig({ responseType: "graph", turns: 10 });
+  const config = normalizeConfig({ responseType: "graph", turnsPerFlower: 5 });
   const bad = `def flower(c):\n    return {"nodes": 2, "edges": [[0, 5]]}\n`;
   const r = await simulateRound({ config, seed: 1, teams: [{ id: "a", programs: { clover: bad, orchid: bad, bee: PY.bee } }] });
   assert.ok(r.visits.every((v) => v.steps.every((s) => s.r === null && /edges\[0\]/.test(s.flowerError))));
@@ -85,7 +85,7 @@ test("int -> graph[any]: a Paley-style clique certificate with number labels, in
     orchid: `def flower(c):\n    return {"nodes": 3, "edges": [[0, 1], [1, 2], [0, 2]], "labels": [0, 2, 5]}\n`,
     bee: `def forage(seen, turns_left):\n    if not seen:\n        return ["ask", 7]\n    g = seen[0][1]\n    sq = {(x * x) % 13 for x in range(1, 13)}\n    ok = g and all((g["labels"][a] - g["labels"][b]) % 13 in sq for a, b in g["edges"])\n    return "feed" if ok else "leave"\n`,
   };
-  const config = normalizeConfig({ responseType: "graph[any]", turns: 40 });
+  const config = normalizeConfig({ responseType: "graph[any]", turnsPerFlower: 20 });
   const r = await simulateRound({ config, seed: 5, teams: [{ id: "a", programs: py }] });
   assert.deepEqual(r.problems[0], { clover: null, orchid: null, bee: null });
   const fed = r.visits.filter((v) => v.action === "feed");
@@ -95,7 +95,7 @@ test("int -> graph[any]: a Paley-style clique certificate with number labels, in
     orchid: `function flower(c: number) { return { nodes: 2, edges: [[0, 1]], labels: ["a", "b"] }; }`,
     bee: `function forage(seen: any[], t: number): any { if (!seen.length) return ["ask", 3]; const g = seen[0][1]; return g && typeof g.labels[0] === "object" ? "feed" : "leave"; }`,
   };
-  const r2 = await simulateRound({ config: normalizeConfig({ language: "typescript", responseType: "graph[any]", turns: 30 }), seed: 6, teams: [{ id: "b", programs: ts }] });
+  const r2 = await simulateRound({ config: normalizeConfig({ language: "typescript", responseType: "graph[any]", turnsPerFlower: 15 }), seed: 6, teams: [{ id: "b", programs: ts }] });
   assert.ok(r2.visits.filter((v) => v.action === "feed").every((v) => v.kind === "clover"));
   assert.deepEqual(r2.visits.find((v) => v.kind === "clover").steps[0].r, { nodes: 2, edges: [[0, 1]], labels: [{ x: 3, y: 0 }, { x: 0, y: 3 }], edgeLabels: ["side"] });
 });

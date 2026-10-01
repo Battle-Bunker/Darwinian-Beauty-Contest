@@ -5,7 +5,6 @@ export const DEFAULT_CONFIG = Object.freeze({
   language: "python",          // "python" | "typescript"
   rounds: 5,                   // number of rounds in the game
   turnsPerFlower: 100,         // each bee gets this many turns per flower in the garden, every round
-  turns: null,                 // optional fixed turns per round, overriding turnsPerFlower
   feedCost: 5,                 // turns a feed costs (an ask always costs 1)
   challengeType: "int",        // type of the value a bee asks with
   responseType: "int",         // type of the value a flower answers with
@@ -34,7 +33,6 @@ const int = (v, lo, hi, dflt) => {
   return Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : dflt;
 };
 const bool = (v, dflt) => (typeof v === "boolean" ? v : v === "true" ? true : v === "false" ? false : dflt);
-const optionalInt = (v, lo, hi, dflt) => (v === null || v === "" || v === 0 || v === "0" || v === "auto" ? null : v === undefined ? dflt : int(v, lo, hi, dflt));
 
 /** Merge a partial config onto `base`, clamping everything to sane ranges. Throws on bad types. */
 export function normalizeConfig(input = {}, base = DEFAULT_CONFIG) {
@@ -42,14 +40,13 @@ export function normalizeConfig(input = {}, base = DEFAULT_CONFIG) {
   const out = {
     language: c.language === "typescript" ? "typescript" : c.language === "python" ? "python" : base.language,
     rounds: int(c.rounds, 1, 100, base.rounds),
-    turnsPerFlower: int(c.turnsPerFlower, 1, 1000, base.turnsPerFlower ?? DEFAULT_CONFIG.turnsPerFlower),
-    turns: optionalInt(c.turns, 1, 100000, base.turns ?? null),
+    turnsPerFlower: int(c.turnsPerFlower, 1, 1000, base.turnsPerFlower),
     feedCost: int(c.feedCost, 0, 1000, base.feedCost),
     challengeType: typeToString(parseType(c.challengeType ?? base.challengeType)),
     responseType: typeToString(parseType(c.responseType ?? base.responseType)),
     maxLen: int(c.maxLen, 1, 1024, base.maxLen),
-    maxNodes: int(c.maxNodes, 1, 4096, base.maxNodes ?? DEFAULT_CONFIG.maxNodes),
-    beeMemoryKb: int(c.beeMemoryKb, 0, 4096, base.beeMemoryKb ?? DEFAULT_CONFIG.beeMemoryKb),
+    maxNodes: int(c.maxNodes, 1, 4096, base.maxNodes),
+    beeMemoryKb: int(c.beeMemoryKb, 0, 4096, base.beeMemoryKb),
     flowerLogs: bool(c.flowerLogs, base.flowerLogs),
     revealOnFinish: bool(c.revealOnFinish, base.revealOnFinish),
     budgets: {},
@@ -67,9 +64,8 @@ export function normalizeConfig(input = {}, base = DEFAULT_CONFIG) {
 
 /** Turns each bee gets per round in a garden of `nTeams` patches (2 flowers each). */
 export function turnsFor(config, nTeams) {
-  if (config.turns) return config.turns;
-  return (config.turnsPerFlower ?? DEFAULT_CONFIG.turnsPerFlower) * 2 * nTeams;
+  return config.turnsPerFlower * 2 * nTeams;
 }
 
-/** Size limits applied to challenges and responses. Older games predate maxNodes and keep maxLen. */
-export const limitsOf = (config) => ({ maxLen: config.maxLen, maxNodes: config.maxNodes ?? config.maxLen });
+/** Size limits applied to challenges and responses. */
+export const limitsOf = (config) => ({ maxLen: config.maxLen, maxNodes: config.maxNodes });

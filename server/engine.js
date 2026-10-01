@@ -99,7 +99,7 @@ export async function simulateRound({ config, teams, seed }) {
   const limits = limitsOf(config);
   const game = gameInfo(config, n);
   const TURNS = game.turns;
-  const memoryBytes = (config.beeMemoryKb ?? 0) * 1024;
+  const memoryBytes = config.beeMemoryKb * 1024;
   const flowers = teams.flatMap((t, ti) => ["clover", "orchid"].map((kind) => ({ team: ti, kind, code: t.programs[kind] })));
   const killers = [];
   const problems = teams.map(() => ({ clover: null, orchid: null, bee: null }));

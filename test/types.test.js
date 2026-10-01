@@ -15,8 +15,9 @@ test("types parse and check", () => {
 });
 
 test("config clamps and keeps defaults", () => {
-  const c = normalizeConfig({ turns: -5, budgets: { bee: { ms: "200" } }, challengeType: "str" });
-  assert.equal(c.turns, 1);
+  const c = normalizeConfig({ turnsPerFlower: -5, budgets: { bee: { ms: "200" } }, challengeType: "str" });
+  assert.equal(c.turnsPerFlower, 1);
+  assert.equal("turns" in c, false);
   assert.equal(c.budgets.bee.ms, 200);
   assert.equal(c.budgets.clover.chars, DEFAULT_CONFIG.budgets.clover.chars);
   assert.equal(c.challengeType, "str");

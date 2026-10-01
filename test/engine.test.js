@@ -6,7 +6,7 @@ import { normalizeConfig } from "../server/lib/gameConfig.js";
 
 for (const language of ["python", "typescript"]) {
   test(`${language}: round invariants hold`, async () => {
-    const config = normalizeConfig({ language, turns: 60, feedCost: 4 });
+    const config = normalizeConfig({ language, turnsPerFlower: 8, feedCost: 4 });
     const s = starters(config);
     const teams = [0, 1, 2, 3].map((i) => ({ id: "t" + i, programs: s }));
     const r = await simulateRound({ config, teams, seed: 99 });
@@ -22,7 +22,7 @@ for (const language of ["python", "typescript"]) {
         else assert.equal(v.nectar, null);
         t = v.end;
       }
-      assert.ok(t <= config.turns);
+      assert.ok(t <= r.turns);
       // Shuffled deck: every flower appears once before any repeats.
       const firstLap = vs.slice(0, 8).map((v) => `${v.patch}:${v.kind}`);
       assert.equal(new Set(firstLap).size, Math.min(8, vs.length));
@@ -35,7 +35,7 @@ for (const language of ["python", "typescript"]) {
 
 for (const language of ["python", "typescript"]) {
   test(`${language}: flowers are stateless: fresh randomness, a clock, their own budget, and no answer cache`, async () => {
-    const config = normalizeConfig({ language, turns: 60 });
+    const config = normalizeConfig({ language, turnsPerFlower: 30 });
     const py = {
       counter: `import math\nn = 0\ndef flower(c):\n    global n\n    n += 1\n    math.k = getattr(math, "k", 0) + 1\n    return n * 1000 + math.k\n`,
       // An anytime search: keep drawing until most of the budget is gone, return the best draw.

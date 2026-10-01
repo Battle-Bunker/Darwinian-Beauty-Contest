@@ -10,7 +10,6 @@ const orchid = `def flower(c):\n    return c * 3\n`;
 test("defaults: turns scale with the garden; budgets are asymmetric around the orchid", () => {
   const c = normalizeConfig({});
   assert.equal(turnsFor(c, 5), 1000);
-  assert.equal(turnsFor(normalizeConfig({ turns: 80 }), 5), 80);
   const { clover: cl, orchid: or, bee } = DEFAULT_CONFIG.budgets;
   assert.equal(cl.chars * 2, or.chars);
   assert.equal(cl.ms, 3 * or.ms);
@@ -31,7 +30,7 @@ test("a bee can keep asking after it feeds; feeding again just moves on", async 
         return ["ask", len(seen) + 10]
     return "feed" if visit["nectar"] is False else "leave"
 `;
-  const config = normalizeConfig({ turns: 40, feedCost: 5 });
+  const config = normalizeConfig({ turnsPerFlower: 20, feedCost: 5 });
   const r = await simulateRound({ config, seed: 7, teams: [{ id: "a", programs: { clover, orchid, bee } }] });
   for (const kind of ["clover", "orchid"]) {
     const v = r.visits.find((x) => x.kind === kind);
@@ -74,7 +73,7 @@ function forage(seen: any[], t: number): any {
 `],
 ]) {
   test(`${language}: bees keep read-only MEMORY of earlier rounds`, async () => {
-    const config = normalizeConfig({ language, turns: 20 });
+    const config = normalizeConfig({ language, turnsPerFlower: 10 });
     const flowers = language === "python" ? { clover, orchid } : {
       clover: `function flower(c: number): number { return c * 2; }`, orchid: `function flower(c: number): number { return c * 3; }`,
     };
@@ -86,7 +85,7 @@ function forage(seen: any[], t: number): any {
     assert.deepEqual(r2.problems[0], { clover: null, orchid: null, bee: null });
     assert.equal(r2.visits[0].steps[0].c, 1000 + 0 + 10 + 2);
     // An oversized memory is dropped with a note rather than truncated.
-    const tiny = normalizeConfig({ language, turns: 20, beeMemoryKb: 0 });
+    const tiny = normalizeConfig({ language, turnsPerFlower: 10, beeMemoryKb: 0 });
     const r3 = await simulateRound({ config: tiny, seed: 1, teams: [{ id: "a", programs: { ...flowers, bee: bee1 } }] });
     assert.equal(r3.memories[0].snapshot, null);
   });
@@ -97,7 +96,7 @@ test("compute budgets are per program: a clover can be given far more compute th
   // so the test checks the mechanism, not the machine's speed.
   const busy = `def flower(c):\n    x = 0\n    for i in range(1_400_000):\n        x = (x + i * c) % 1000003\n    return x\n`;
   const bee = `def forage(seen, turns_left):\n    return "leave" if seen else ["ask", 3]\n`;
-  const config = normalizeConfig({ turns: 4, budgets: { clover: { ms: 400 }, orchid: { ms: 50 } } });
+  const config = normalizeConfig({ turnsPerFlower: 2, budgets: { clover: { ms: 400 }, orchid: { ms: 50 } } });
   const r = await simulateRound({ config, seed: 3, teams: [{ id: "a", programs: { clover: busy, orchid: busy, bee } }] });
   const byKind = Object.fromEntries(r.visits.map((v) => [v.kind, v.steps[0]]));
   assert.equal(typeof byKind.clover.r, "number", JSON.stringify(byKind.clover));

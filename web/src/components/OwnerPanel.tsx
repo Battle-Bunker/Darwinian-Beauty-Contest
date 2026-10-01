@@ -41,8 +41,7 @@ export function RunRound({ view, base }: { view: GameView; base: string }) {
 }
 
 export function SettingsForm({ view, base }: { view: GameView; base: string }) {
-  // Older games' configs predate engine v2 fields; show the defaults for them.
-  const cfg: GameConfig = { turnsPerFlower: 100, maxNodes: 512, beeMemoryKb: 256, ...view.game.config };
+  const cfg: GameConfig = view.game.config;
   const nTeams = Math.max(2, view.participants?.length ?? view.teams.length);
   const [draft, setDraft] = useState<GameConfig>(cfg);
   const [busy, setBusy] = useState(false);
@@ -88,22 +87,16 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
           </select>
         </label>
         <label className="field"><span>Rounds</span>{num(draft.rounds, (v) => set("rounds", v), 1, 100, "Rounds")}</label>
-        <label className="field"><span>Turns per flower</span>{num(draft.turnsPerFlower ?? 100, (v) => set("turnsPerFlower", v), 1, 1000, "Turns per flower")}</label>
-        <label className="field"><span>Fixed turns per round</span>
-          <input type="number" inputMode="numeric" min={1} max={100000} value={draft.turns ?? ""} placeholder="auto" aria-label="Fixed turns per round (empty = auto)"
-            onChange={(e) => set("turns", e.target.value === "" ? null : Number(e.target.value))} />
-        </label>
+        <label className="field"><span>Turns per flower</span>{num(draft.turnsPerFlower, (v) => set("turnsPerFlower", v), 1, 1000, "Turns per flower")}</label>
         <label className="field"><span>Feed cost (turns)</span>{num(draft.feedCost, (v) => set("feedCost", v), 0, 1000, "Feed cost")}</label>
         <label className="field"><span>Challenge type</span>{typeSelect(draft.challengeType, (v) => set("challengeType", v), "Challenge type")}</label>
         <label className="field"><span>Response type</span>{typeSelect(draft.responseType, (v) => set("responseType", v), "Response type")}</label>
         <label className="field"><span>Max string/list length</span>{num(draft.maxLen, (v) => set("maxLen", v), 1, 1024, "Max string or list length")}</label>
-        <label className="field"><span>Max tree/graph nodes</span>{num(draft.maxNodes ?? 512, (v) => set("maxNodes", v), 1, 4096, "Max tree or graph nodes")}</label>
-        <label className="field"><span>Bee memory (KB, 0 = off)</span>{num(draft.beeMemoryKb ?? 256, (v) => set("beeMemoryKb", v), 0, 4096, "Bee memory in KB")}</label>
+        <label className="field"><span>Max tree/graph nodes</span>{num(draft.maxNodes, (v) => set("maxNodes", v), 1, 4096, "Max tree or graph nodes")}</label>
+        <label className="field"><span>Bee memory (KB, 0 = off)</span>{num(draft.beeMemoryKb, (v) => set("beeMemoryKb", v), 0, 4096, "Bee memory in KB")}</label>
       </div>
       <p className="small muted settings-hint">
-        {draft.turns
-          ? <>Every bee gets exactly <b>{draft.turns}</b> turns each round.</>
-          : <>Every bee gets <b>{draft.turnsPerFlower ?? 100}</b> turns per flower: <b>{((draft.turnsPerFlower ?? 100) * 2 * nTeams).toLocaleString()}</b> turns a round with {nTeams} teams ({2 * nTeams} flowers). Leave "fixed turns" empty to keep it that way.</>}
+        Every bee gets <b>{draft.turnsPerFlower}</b> turns per flower: <b>{(draft.turnsPerFlower * 2 * nTeams).toLocaleString()}</b> turns a round with {nTeams} teams ({2 * nTeams} flowers).
       </p>
       <div className="settings-checks">
         <label className="check"><input type="checkbox" checked={draft.flowerLogs} onChange={(e) => set("flowerLogs", e.target.checked)} /> Flower logs: teams see what bees asked their flowers</label>
@@ -146,11 +139,11 @@ export function SettingsSummary({ cfg, turnsNow }: { cfg: GameConfig; turnsNow?:
       <div className="chips">
         <span className="chip">{cfg.language === "python" ? "Python" : "TypeScript"}</span>
         <span className="chip">{cfg.rounds} rounds</span>
-        <span className="chip">{cfg.turns ? `${cfg.turns} turns per round` : `${cfg.turnsPerFlower ?? 100} turns per flower${turnsNow ? ` (${turnsNow.toLocaleString()} a round)` : ""}`}</span>
+        <span className="chip">{`${cfg.turnsPerFlower} turns per flower${turnsNow ? ` (${turnsNow.toLocaleString()} a round)` : ""}`}</span>
         <span className="chip">feed costs {cfg.feedCost}</span>
         <span className="chip mono">{cfg.challengeType} → {cfg.responseType}</span>
         {[cfg.challengeType, cfg.responseType].some((t) => /str|list/i.test(t)) && <span className="chip">max length {cfg.maxLen}</span>}
-        {[cfg.challengeType, cfg.responseType].some((t) => /tree|graph/i.test(t)) && <span className="chip">max {cfg.maxNodes ?? 512} nodes</span>}
+        {[cfg.challengeType, cfg.responseType].some((t) => /tree|graph/i.test(t)) && <span className="chip">max {cfg.maxNodes} nodes</span>}
         {cfg.beeMemoryKb !== undefined && <span className="chip">{cfg.beeMemoryKb ? `bee memory ${cfg.beeMemoryKb} KB` : "bee memory off"}</span>}
         <span className="chip">{cfg.flowerLogs ? "flower logs on" : "flower logs off"}</span>
         <span className="chip">{cfg.revealOnFinish ? "code revealed at the end" : "code stays secret"}</span>

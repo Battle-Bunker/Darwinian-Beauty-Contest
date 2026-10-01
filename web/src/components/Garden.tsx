@@ -33,8 +33,7 @@ export function Garden({ view, round, start, rounds, onSelectRound, loading = fa
   onSelectRound: (no: number) => void;
   loading?: number | false;  // round number whose visits are still loading
 }) {
-  const cfg = view.game.config;
-  const turns = round?.turns ?? view.game.turns ?? cfg.turns ?? 100;
+  const turns = round?.turns ?? view.game.turns;
   const endT = turns + 1.6;
   const teamsById = useMemo(() => Object.fromEntries(view.teams.map((t) => [t.id, t])), [view.teams]);
   const order = useMemo(() => {
