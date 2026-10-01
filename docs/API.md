@@ -44,7 +44,7 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 | POST | `base/check` | team member | `{ kind, code }` | `{ ok, nodes, distance, errors[], budget }`. Validates without saving |
 | POST | `base/programs` | team member | `{ kind, code }` | same as check plus `submitted: true`; **422** with `errors` if over budget |
 | POST | `base/try` | team member | `{ kind, code, challenges?, flowers?: {clover, orchid} }` | flower: `{ results: [{c, r, error?}] }`. bee: forages your own patch (the `flowers` you pass, else your submissions, else last round's) with your real `MEMORY`: `{ visits, problems, feeds, nectar, turns, memory }` |
-| POST | `base/rounds` | owner | | **202** `{ round }`. Runs in the background; add `?wait=1` to block until done |
+| POST | `base/rounds` | owner | `{ seed? }` | **202** `{ round }`. Runs in the background; add `?wait=1` to block until done. `seed` (0…2³¹−1) fixes the deck order and bee randomness, e.g. to replay identical games with two cohorts; omitted = random |
 
 `kind` is `clover`, `orchid` or `bee`.
 

@@ -43,7 +43,7 @@ export function apiRouter() {
   }));
   r.post(`${base}/try`, requireUser, wrap(async (req, res) => res.json(await G.tryProgram(req.game, req.user, req.body?.kind, req.body?.code, req.body?.challenges, req.body?.flowers))));
   r.post(`${base}/rounds`, requireUser, wrap(async (req, res) => {
-    const { round, done } = await G.startRound(req.room, req.game, req.user);
+    const { round, done } = await G.startRound(req.room, req.game, req.user, { seed: req.body?.seed });
     if (req.query.wait) {
       try { await done; } catch (e) { return res.status(500).json({ error: `Round ${round} failed: ${e.message}` }); }
       return res.json({ round, finished: true });

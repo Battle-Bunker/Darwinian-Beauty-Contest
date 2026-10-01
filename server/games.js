@@ -254,8 +254,17 @@ function release() {
 }
 
 /** Locks in programs for the next round, then simulates it in the background. Returns { round, done }. */
-export async function startRound(room, game, user) {
+/**
+ * opts.seed: the owner may fix the round's seed (deck order, bee randomness), e.g. to replay the same
+ * games with two cohorts of teams in a controlled experiment. Otherwise it's random.
+ */
+export async function startRound(room, game, user, opts = {}) {
   if (room.owner_id !== user.id) fail(403, "Only the room owner can run rounds");
+  let fixedSeed = null;
+  if (opts.seed !== undefined && opts.seed !== null) {
+    fixedSeed = Number(opts.seed);
+    if (!Number.isInteger(fixedSeed) || fixedSeed < 0 || fixedSeed >= 2 ** 31) fail(400, "seed must be an integer from 0 to 2^31-1");
+  }
   const plan = await tx(async (c) => {
     const g = (await c.query("SELECT * FROM games WHERE id = $1 FOR UPDATE", [game.id])).rows[0];
     if (g.status === "finished") fail(409, "Game over");
@@ -282,7 +291,7 @@ export async function startRound(room, game, user) {
     }
     await c.query("UPDATE games SET running_round = $2, participants = $3, status = 'running', last_error = NULL WHERE id = $1", [g.id, roundNo, participants]);
     await touch(c, g.id);
-    return { roundNo, participants, programs, config: g.config, seed: crypto.randomInt(0, 2 ** 31) };
+    return { roundNo, participants, programs, config: g.config, seed: fixedSeed ?? crypto.randomInt(0, 2 ** 31) };
   });
   const done = executeRound(game.id, plan).catch(async (e) => {
     console.error("round failed", game.id, e);
