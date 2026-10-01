@@ -4,18 +4,25 @@ import { parseType, typeToString } from "./types.js";
 export const DEFAULT_CONFIG = Object.freeze({
   language: "python",          // "python" | "typescript"
   rounds: 5,                   // number of rounds in the game
-  turns: 100,                  // turns each bee gets per round
+  turnsPerFlower: 100,         // each bee gets this many turns per flower in the garden, every round
+  turns: null,                 // optional fixed turns per round, overriding turnsPerFlower
   feedCost: 5,                 // turns a feed costs (an ask always costs 1)
   challengeType: "int",        // type of the value a bee asks with
   responseType: "int",         // type of the value a flower answers with
   maxLen: 64,                  // max length of strings and lists in challenges/responses
+  maxNodes: 512,               // max nodes in a tree or graph (graphs: at most 4× as many edges)
+  beeMemoryKb: 256,            // max size of what a bee keeps from one round to the next
   flowerLogs: true,            // after each round, flower owners see who asked their flowers what
   revealOnFinish: true,        // when the game ends, everyone can see all code and all logs
+  // The orchid is the reference point:
+  //   clover: half the orchid's complexity, 3× its compute: honest flowers can prove they spent effort
+  //   orchid: room to build elaborate imitations and to change tack between rounds (70% change budget)
+  //   bee:    5× the orchid's complexity for detector repertoires, half its compute: checks must be cheap
   budgets: {
-    //        complexity (AST nodes)  change (AST edits per round)  compute (ms per call)
-    clover: { nodes: 150, changes: 30, ms: 50 },
-    orchid: { nodes: 150, changes: 30, ms: 50 },
-    bee: { nodes: 400, changes: 60, ms: 50 },
+    //        complexity (AST nodes)  change (AST edits per round)  compute (ms per call, one core each)
+    clover: { nodes: 150, changes: 30, ms: 150 },
+    orchid: { nodes: 300, changes: 210, ms: 50 },
+    bee: { nodes: 1500, changes: 300, ms: 25 },
   },
 });
 
@@ -24,6 +31,7 @@ const int = (v, lo, hi, dflt) => {
   return Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : dflt;
 };
 const bool = (v, dflt) => (typeof v === "boolean" ? v : v === "true" ? true : v === "false" ? false : dflt);
+const optionalInt = (v, lo, hi, dflt) => (v === null || v === "" || v === 0 || v === "0" || v === "auto" ? null : v === undefined ? dflt : int(v, lo, hi, dflt));
 
 /** Merge a partial config onto `base`, clamping everything to sane ranges. Throws on bad types. */
 export function normalizeConfig(input = {}, base = DEFAULT_CONFIG) {
@@ -31,11 +39,14 @@ export function normalizeConfig(input = {}, base = DEFAULT_CONFIG) {
   const out = {
     language: c.language === "typescript" ? "typescript" : c.language === "python" ? "python" : base.language,
     rounds: int(c.rounds, 1, 100, base.rounds),
-    turns: int(c.turns, 1, 10000, base.turns),
+    turnsPerFlower: int(c.turnsPerFlower, 1, 1000, base.turnsPerFlower ?? DEFAULT_CONFIG.turnsPerFlower),
+    turns: optionalInt(c.turns, 1, 100000, base.turns ?? null),
     feedCost: int(c.feedCost, 0, 1000, base.feedCost),
     challengeType: typeToString(parseType(c.challengeType ?? base.challengeType)),
     responseType: typeToString(parseType(c.responseType ?? base.responseType)),
     maxLen: int(c.maxLen, 1, 1024, base.maxLen),
+    maxNodes: int(c.maxNodes, 1, 4096, base.maxNodes ?? DEFAULT_CONFIG.maxNodes),
+    beeMemoryKb: int(c.beeMemoryKb, 0, 4096, base.beeMemoryKb ?? DEFAULT_CONFIG.beeMemoryKb),
     flowerLogs: bool(c.flowerLogs, base.flowerLogs),
     revealOnFinish: bool(c.revealOnFinish, base.revealOnFinish),
     budgets: {},
@@ -50,3 +61,12 @@ export function normalizeConfig(input = {}, base = DEFAULT_CONFIG) {
   }
   return out;
 }
+
+/** Turns each bee gets per round in a garden of `nTeams` patches (2 flowers each). */
+export function turnsFor(config, nTeams) {
+  if (config.turns) return config.turns;
+  return (config.turnsPerFlower ?? DEFAULT_CONFIG.turnsPerFlower) * 2 * nTeams;
+}
+
+/** Size limits applied to challenges and responses. Older games predate maxNodes and keep maxLen. */
+export const limitsOf = (config) => ({ maxLen: config.maxLen, maxNodes: config.maxNodes ?? config.maxLen });

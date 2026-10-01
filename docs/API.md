@@ -33,7 +33,9 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 
 | Method | Path | Who | Body | Returns |
 |---|---|---|---|---|
-| GET | `base` | anyone | | the **game view** (below), filtered for the viewer |
+| GET | `base` | anyone | | the **game view** (below), filtered for the viewer. `?visits=none` or `?visits=last` leaves out older rounds' visits, which can be thousands per round |
+| GET | `base/rounds/:no` | anyone | | one round, in the same shape as an entry of `rounds` (with its visits), filtered for the viewer |
+| GET | `base/memory/:no` | team member | | `{ round, teamId, language, snapshot, bytes, note }`: what your bee kept at the end of round `no` (any team's once revealed, via `?team=`) |
 | GET | `base/version` | anyone | | `{ version, status, runningRound, roundsPlayed }` |
 | GET | `base/events` | anyone | | SSE: `data: {"game", "version"}` on every change. Refetch the view when it arrives |
 | PATCH | `base/config` | owner, before round 1 | `{ config: {...partial} }` | `{ config, clearedSubmissions }` |
@@ -41,7 +43,7 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 | POST | `base/teams/join` | user | `{ joinCode }` | `{ id, name }` |
 | POST | `base/check` | team member | `{ kind, code }` | `{ ok, nodes, distance, errors[], budget }`. Validates without saving |
 | POST | `base/programs` | team member | `{ kind, code }` | same as check plus `submitted: true`; **422** with `errors` if over budget |
-| POST | `base/try` | team member | `{ kind, code, challenges?, flowers?: {clover, orchid} }` | flower: `{ results: [{c, r, error?}] }`. bee: forages your own patch (the `flowers` you pass, else your submissions, else last round's): `{ visits, problems, feeds, nectar }` |
+| POST | `base/try` | team member | `{ kind, code, challenges?, flowers?: {clover, orchid} }` | flower: `{ results: [{c, r, error?}] }`. bee: forages your own patch (the `flowers` you pass, else your submissions, else last round's) with your real `MEMORY`: `{ visits, problems, feeds, nectar, turns, memory }` |
 | POST | `base/rounds` | owner | | **202** `{ round }`. Runs in the background; add `?wait=1` to block until done |
 
 `kind` is `clover`, `orchid` or `bee`.
@@ -51,16 +53,23 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 ```json
 {
   "language": "python",
-  "rounds": 5, "turns": 100, "feedCost": 5,
-  "challengeType": "int", "responseType": "int", "maxLen": 64,
+  "rounds": 5, "turnsPerFlower": 100, "turns": null, "feedCost": 5,
+  "challengeType": "int", "responseType": "int", "maxLen": 64, "maxNodes": 512, "beeMemoryKb": 256,
   "flowerLogs": true, "revealOnFinish": true,
   "budgets": {
-    "clover": { "nodes": 150, "changes": 30, "ms": 50 },
-    "orchid": { "nodes": 150, "changes": 30, "ms": 50 },
-    "bee":    { "nodes": 400, "changes": 60, "ms": 50 }
+    "clover": { "nodes": 150, "changes": 30,  "ms": 150 },
+    "orchid": { "nodes": 300, "changes": 210, "ms": 50 },
+    "bee":    { "nodes": 1500, "changes": 300, "ms": 25 }
   }
 }
 ```
+
+- `turnsPerFlower`: each bee gets `turnsPerFlower × flowers` turns per round (`flowers` = 2 × teams).
+  `turns` overrides this with a fixed number when set.
+- `maxLen` bounds strings and lists. `maxNodes` bounds trees and graphs (graphs: ≤ 4 × maxNodes edges).
+- `beeMemoryKb`: how much of a bee's top-level data is kept each round for `MEMORY`. 0 turns memory off.
+- `ms` is wall-clock time per call. The engine runs at most one program per CPU core, so this is
+  effectively CPU time.
 
 Types: `int`, `float`, `bool`, `str`, `list[T]`, `tree[T]` (`{"value", "children"}`), `graph` and `digraph`
 (`{"nodes": n, "edges": [[a, b], ...]}` on nodes `0..n-1`). Languages: `python`, `typescript`.
@@ -85,10 +94,11 @@ returns everything that has happened so far, filtered to what this viewer is all
   "interface": { "flower", "bee", "types": { "challenge", "response", "challengeMeans", "responseMeans", "rules": [..] } },
                                                   // signatures + type rules only: no starter code, no example values
   "rounds": [{
-    "no", "startedAt", "finishedAt",
+    "no", "startedAt", "finishedAt", "turns",    // turns each bee had this round
     "feeds":  [[...]],  "nectar": [[...]],        // ledgers: row = bee team, column = patch team (participants order)
     "scores": [teamScore], "totals": [teamScore],  // this round alone / all rounds so far
     "programs": { teamId: { kind: { nodes, distance, carriedOver, code?, problem? } } },  // code: own team or revealed
+    "memory": { teamId: { bytes, note } },        // what each bee kept for later rounds: own team or revealed
     "visits": [visit]
   }],
   "final": [teamScore] | null
@@ -98,9 +108,11 @@ returns everything that has happened so far, filtered to what this viewer is all
 `teamScore`: `{ teamId, allure, forage, allureShare, forageShare, fitness, feedsReceived, feedsGiven,
 nectarCollected, pollinators, nectarSources }`.
 
-`visit`: everyone sees `{ bee, patch, seq, start, end, asks, action: "feed"|"leave"|"error", nectar }`
+`visit`: everyone sees `{ bee, patch, seq, start, end, asks, asksBeforeFeed, action: "feed"|"leave"|"error", nectar }`
 (`bee` and `patch` are team ids; `start`/`end` are turn numbers, so all bees move in parallel from
-turn 0 to `config.turns`; `nectar` is non-null only for feeds). Extra fields by viewer:
+turn 0 to the round's `turns`; `nectar` is non-null only for feeds). A visit runs `asksBeforeFeed`
+asks, then the feed (`feedCost` turns) if there was one, then any remaining asks: bees may keep
+questioning a flower after feeding. In `steps`, those later asks carry `after: true`. Extra fields by viewer:
 
 - **the bee's team**: `steps: [{c, r, challengeError?}]`, `beeError?`, `beeLog?` (what the bee printed), `note?`
 - **the patch owner**: `kind: "clover"|"orchid"`, plus `steps: [{c, r, flowerError?}]` if `flowerLogs`, and `flowerError?`

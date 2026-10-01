@@ -1,7 +1,7 @@
 // Challenge/response value types. A type is one of:
 //   int | float | bool | str | list[T] | tree[T] | graph | digraph
-// Values travel as JSON. Limits keep every value small and JSON-safe; `maxLen` bounds the length of
-// strings and lists, the number of nodes in a tree or graph, and (×4) the number of graph edges.
+// Values travel as JSON. Limits keep every value small and JSON-safe: `maxLen` bounds the length of
+// strings and lists; `maxNodes` bounds the nodes in a tree or graph, and (×4) the number of graph edges.
 //
 //   tree[T]  {"value": T, "children": [tree[T], ...]}        a rooted tree with a value at every node
 //   graph    {"nodes": n, "edges": [[a, b], ...]}           undirected simple graph on nodes 0..n-1
@@ -23,8 +23,9 @@ export const typeToString = (t) => (t.of ? `${t.kind}[${typeToString(t.of)}]` : 
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const keysAre = (v, keys) => Object.keys(v).length === keys.length && keys.every((k) => k in v);
 
-/** Returns null when `v` fits type `t`, else a short reason. */
-export function checkValue(t, v, maxLen, path = "value") {
+/** Returns null when `v` fits type `t`, else a short reason. `limits` is {maxLen, maxNodes} (or just maxLen). */
+export function checkValue(t, v, limits, path = "value") {
+  const { maxLen, maxNodes } = typeof limits === "number" ? { maxLen: limits, maxNodes: limits } : limits;
   switch (t.kind) {
     case "int":
       if (typeof v !== "number" || !Number.isInteger(v)) return `${path} must be an int`;
@@ -42,7 +43,7 @@ export function checkValue(t, v, maxLen, path = "value") {
       if (!Array.isArray(v)) return `${path} must be a list`;
       if (v.length > maxLen) return `${path} has more than ${maxLen} items`;
       for (let i = 0; i < v.length; i++) {
-        const e = checkValue(t.of, v[i], maxLen, `${path}[${i}]`);
+        const e = checkValue(t.of, v[i], limits, `${path}[${i}]`);
         if (e) return e;
       }
       return null;
@@ -50,9 +51,9 @@ export function checkValue(t, v, maxLen, path = "value") {
       let count = 0;
       const walk = (node, p, depth) => {
         if (!isObj(node) || !keysAre(node, ["value", "children"])) return `${p} must be {"value": ..., "children": [...]}`;
-        if (++count > maxLen) return `${path} has more than ${maxLen} nodes`;
-        if (depth > maxLen) return `${path} is deeper than ${maxLen}`;
-        const e = checkValue(t.of, node.value, maxLen, `${p}.value`);
+        if (++count > maxNodes) return `${path} has more than ${maxNodes} nodes`;
+        if (depth > maxNodes) return `${path} is deeper than ${maxNodes}`;
+        const e = checkValue(t.of, node.value, limits, `${p}.value`);
         if (e) return e;
         if (!Array.isArray(node.children)) return `${p}.children must be a list`;
         for (let i = 0; i < node.children.length; i++) {
@@ -67,9 +68,9 @@ export function checkValue(t, v, maxLen, path = "value") {
     case "digraph": {
       if (!isObj(v) || !keysAre(v, ["nodes", "edges"])) return `${path} must be {"nodes": n, "edges": [[a, b], ...]}`;
       const n = v.nodes;
-      if (!Number.isInteger(n) || n < 0 || n > maxLen) return `${path}.nodes must be an int from 0 to ${maxLen}`;
+      if (!Number.isInteger(n) || n < 0 || n > maxNodes) return `${path}.nodes must be an int from 0 to ${maxNodes}`;
       if (!Array.isArray(v.edges)) return `${path}.edges must be a list`;
-      if (v.edges.length > 4 * maxLen) return `${path} has more than ${4 * maxLen} edges`;
+      if (v.edges.length > 4 * maxNodes) return `${path} has more than ${4 * maxNodes} edges`;
       const seen = new Set();
       for (let i = 0; i < v.edges.length; i++) {
         const e = v.edges[i];

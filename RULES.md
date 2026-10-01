@@ -17,24 +17,37 @@ flowers is which. All they see is "a flower from your patch".
 
 ## A round
 
-Every bee gets **100 turns** (the owner can change this). The game hands your bee one flower at a
-time, picked from a shuffled deck of every flower in the garden. Your own two flowers are in the deck
-too, and every flower comes up once before any flower comes up again. At each flower your bee can:
+Every bee gets **100 turns for every flower in the garden**: with 5 teams (10 flowers) that's 1,000
+turns. The owner can change the 100. The game hands your bee one flower at a time, picked from a
+shuffled deck of every flower in the garden. Your own two flowers are in the deck too, and every flower
+comes up once before any flower comes up again. So in a round your bee meets each flower many times,
+and there's plenty of room to learn which ones are worth feeding at.
+
+At each flower your bee can:
 
 - **ask** a challenge: costs **1 turn**. The flower answers with its response.
-- **feed**: costs **5 turns** (the owner can change this). You get 1 nectar if it was a clover and 0 if it was an orchid. The visit ends.
-- **leave**: free once you've asked something. The visit ends and the next flower appears.
+- **feed**: costs **5 turns** (the owner can change this). You get 1 nectar if it was a clover and 0
+  if it was an orchid. You can feed **once** per visit.
+- **leave**: free once you've asked something. The next flower appears.
 
-You must ask at least once before you feed. A bee that leaves without asking anything still loses 1
-turn. If your bee crashes, runs out of time or returns something odd, that costs 1 turn and counts as
-leaving.
+You must ask at least once before you feed. **After feeding you can keep asking the same flower**:
+that's how you study a flower you now know is generous (or know is a fake). Once you've fed, anything
+other than another ask moves on to the next flower.
 
-**Bees remember things during a round.** Top-level variables in your bee program last for the whole
-round, so your bee can learn as it goes. They reset at the start of every round.
+A bee that leaves without asking anything still loses 1 turn. If your bee crashes, runs out of time or
+returns something odd, that costs 1 turn and ends the visit.
+
+**Bees remember things.** Top-level variables in your bee program last for the whole round, so your
+bee can learn as it goes. At the end of each round the game saves them. In every later round your bee
+can read them in `MEMORY`, a list with one entry per earlier round: `MEMORY[0]` is what your bee had
+at the end of round 1, and `MEMORY[-1]` is the most recent round. Each entry maps variable names to
+values. Only plain data is kept: numbers, strings, `True`/`False`/`None`, lists, tuples, dicts and sets
+(in TypeScript: arrays, objects, `Map` and `Set`). `MEMORY` is read-only, so copy what you want to
+change, e.g. `tally = dict(MEMORY[-1]["tally"]) if MEMORY else {}`. Each round can keep up to 256 KB.
 
 **Flowers remember nothing.** A flower is a *pure function*: the same challenge always gets the same
 response. The whole flower program runs fresh for every single question, and `random` always starts
-from the same seed. That means a flower can't count visitors or change its mind.
+from the same seed. That means a flower can't count visitors or change its mind during a round.
 
 **Nobody knows who's who.** Programs never learn which team a flower or bee belongs to.
 
@@ -59,8 +72,8 @@ other teams' flowers follow.
 The node numbers give a graph landmarks to measure from, such as how many steps it is from node `0`
 to node `1`, or to the last node, or how many neighbours node `0` has.
 
-Strings and lists can be at most 64 long, and trees and graphs at most 64 nodes (graphs at most 256
-edges, with no self-loops or repeated edges). The owner can change the 64. A response of the wrong
+Strings and lists can be at most 64 long, and trees and graphs at most 512 nodes (graphs at most
+2,048 edges, with no self-loops or repeated edges). The owner can change both limits. A response of the wrong
 type or shape, a crash or a timeout reaches the bee as `None`/`null`.
 
 ## The programs
@@ -75,31 +88,38 @@ def flower(challenge):
     ...  # return a value of the game's response type
 
 # bee
-def forage(seen, turns_left):
-    # seen = [[challenge, response], ...] at the flower in front of you (empty when it arrives)
+def forage(seen, turns_left, visit):
+    # seen  = [[challenge, response], ...] at the flower in front of you (empty when it arrives)
+    # visit = {"fed": True/False, "nectar": True/False/None}: have you fed here yet, and what you got
     ...  # return ["ask", challenge] (1 turn), "feed" (GAME["feed_cost"] turns) or "leave" (free)
 
 def tasted(seen, nectar):   # optional: called right after you feed; nectar is True or False
     ...
 ```
 
-Top-level variables in the bee program last for the whole round. Use them to remember things.
+`visit` is optional: `def forage(seen, turns_left)` works too. Top-level variables last for the whole
+round, and earlier rounds' arrive in `MEMORY`.
 
 ### TypeScript
 
 ```ts
 function flower(challenge: Challenge): Response
 
-function forage(seen: [Challenge, Response | null][], turnsLeft: number): ["ask", Challenge] | "feed" | "leave"
+function forage(seen: [Challenge, Response | null][], turnsLeft: number,
+                visit: { fed: boolean; nectar: boolean | null }): ["ask", Challenge] | "feed" | "leave"
 function tasted(seen: [Challenge, Response | null][], nectar: boolean): void   // optional
 ```
+
+In TypeScript, a bee keeps its top-level `const`/`let`/`var` variables (written at the start of a line)
+for `MEMORY`.
 
 In TypeScript, `tree[T]` is `{ value: T; children: Tree<T>[] }` and a graph is
 `{ nodes: number; edges: [number, number][] }`.
 
 Every program can read a `GAME` dictionary/object: `turns`, `feed_cost`, `challenge_type`,
-`response_type`, `max_len`, and `flowers` (how many flowers are in the garden). It does **not** say
-which round it is. Programs change between rounds only when you change them.
+`response_type`, `max_len`, `max_nodes` and `flowers` (how many flowers are in the garden). It does
+**not** say which round it is. (A bee can count its `MEMORY`; a flower can't know.) Flowers change
+between rounds only when you change their code.
 
 Python programs may import `math`, `random`, `hashlib`, `string`, `itertools`, `functools`,
 `collections`, `re`, `json`, `bisect`, `heapq`, `statistics`, `fractions`, `decimal`, `operator`,
@@ -108,13 +128,23 @@ TypeScript programs get the standard JavaScript built-ins except `Date`.
 
 ## Budgets
 
-Each of your three programs has three budgets, and the room owner sets them per game:
+Each of your three programs has three budgets, and the room owner sets them per game. The three
+programs get **different** budgets on purpose, measured against the orchid:
 
-| Budget | Measures | Default (clover / orchid / bee) |
-|---|---|---|
-| **complexity** | size of the program in syntax-tree nodes (comments are free) | 150 / 150 / 400 |
-| **change** | how many syntax-tree edits you may make between rounds | 30 / 30 / 60 |
-| **compute** | milliseconds per call (flowers: the whole program, every question) | 50 / 50 / 50 |
+| Budget | Measures | clover | orchid | bee |
+|---|---|---|---|---|
+| **complexity** | size of the program in syntax-tree nodes (comments are free) | 150 (half an orchid's) | 300 | 1500 (5× an orchid's) |
+| **change** | syntax-tree edits allowed between rounds | 30 | 210 (70% of its size) | 300 |
+| **compute** | milliseconds per call (flowers: the whole program, every question) | 150 (3× an orchid's) | 50 | 25 (half an orchid's) |
+
+Why it's lopsided:
+- **Clovers** are small but powerful: they can spend 3× an orchid's compute on every answer. That
+  makes effort a signal. An answer that takes real work to produce, like a big graph that fits a
+  tricky rule, is hard for an orchid to fake in a third of the time.
+- **Orchids** get more code and can change a lot between rounds. They make up for less compute with
+  cleverness: a faster way to produce the same kind of answer, or a shallower look-alike.
+- **Bees** get lots of code for a whole kit of detectors, but only a little time per decision. So the
+  best signals are ones that are **hard to make but easy to check**.
 
 Before round 1 you can write anything within the complexity budget. After that, each round's
 program must be within the change budget of the program that played the round before. If you don't

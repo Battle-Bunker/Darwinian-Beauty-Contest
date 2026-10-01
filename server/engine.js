@@ -1,13 +1,18 @@
-// The round simulator. Pure with respect to the database: programs + config + seed in, visits out.
+// The round simulator. Pure with respect to the database: programs + config + seed (+ bee memory) in,
+// visits out.
 //
 // Every team owns a patch of two flowers (clover = rewarding, orchid = deceptive) and one bee.
-// Each bee gets `turns` turns. It is shown flowers drawn from a shuffled deck of all 2N flowers
-// (every flower comes up once before any repeats). At each flower it may ask challenges
-// (1 turn each), then feed (feedCost turns; nectar only at clovers) or leave (free).
-// Bees run independently and in parallel; flowers are stateless, so order never matters.
+// Each bee gets turnsPerFlower × (number of flowers) turns, and is shown flowers drawn from a
+// shuffled deck of all 2N flowers (every flower comes up once before any repeats). At each flower it
+// may ask challenges (1 turn each), feed once (feedCost turns; nectar only at clovers), keep asking
+// after feeding, and leave (free). After a feed, anything other than an ask ends the visit. Bees run independently and in parallel; flowers are stateless, so
+// order never matters. At the end of the round each bee's top-level data is snapshotted; later rounds
+// see those snapshots, read-only, as MEMORY.
+import os from "node:os";
 import { ProgramProcess } from "./runners/proc.js";
 import { checkValue, parseType } from "./lib/types.js";
 import { zeroLedger } from "./lib/scoring.js";
+import { limitsOf, turnsFor } from "./lib/gameConfig.js";
 
 export const KINDS = ["clover", "orchid", "bee"];
 
@@ -21,50 +26,100 @@ export function mulberry32(seed) {
   };
 }
 
-/** What programs may read as GAME. No round number: that would let code change without spending change budget. */
+/** What programs may read as GAME. (Flowers can't tell which round it is; bees can, from MEMORY.) */
 export function gameInfo(config, nTeams) {
+  const { maxLen, maxNodes } = limitsOf(config);
   return {
-    turns: config.turns, feed_cost: config.feedCost, challenge_type: config.challengeType,
-    response_type: config.responseType, max_len: config.maxLen, flowers: 2 * nTeams,
+    turns: turnsFor(config, nTeams), feed_cost: config.feedCost, challenge_type: config.challengeType,
+    response_type: config.responseType, max_len: maxLen, max_nodes: maxNodes, flowers: 2 * nTeams,
   };
 }
 
+// Responses can be big trees and graphs; this caps the JSON text of any single value.
+const MAX_CHARS = 262144;
 const MAX_LOG = 4000;
 
+// Compute budgets are a costly signal (clovers get 3× an orchid's), so timing must be fair: never run
+// more programs at once than there are CPU cores, across every round this process is simulating.
+// Each program then has a core to itself, and its wall-clock time limit is effectively a CPU limit.
+const CPU_SLOTS = Math.max(1, Number(process.env.CPU_SLOTS) || os.availableParallelism?.() || os.cpus().length);
+let cpuBusy = 0;
+const cpuWaiters = [];
+async function withCpu(fn) {
+  if (cpuBusy < CPU_SLOTS) cpuBusy++;
+  else await new Promise((resolve) => cpuWaiters.push(resolve));
+  try {
+    return await fn();
+  } finally {
+    const next = cpuWaiters.shift();
+    if (next) next(); else cpuBusy--;
+  }
+}
+
+// A flower is pure, so any of a few identical processes can answer for it: popular clovers that many
+// bees question at once don't queue behind one process.
+const FLOWER_POOL = Math.max(1, Number(process.env.FLOWER_POOL) || 2);
+class FlowerPool {
+  constructor(language, setup) {
+    this.procs = Array.from({ length: FLOWER_POOL }, () => new ProgramProcess(language, "flower", setup));
+    this.pending = this.procs.map(() => 0);
+    this.ready = Promise.all(this.procs.map((p) => p.ready)).then((r) => r[0]);
+  }
+  async call(obj) {
+    let i = 0;
+    for (let j = 1; j < this.procs.length; j++) if (this.pending[j] < this.pending[i]) i = j;
+    this.pending[i]++;
+    try {
+      return await withCpu(() => this.procs[i].call(obj));
+    } finally {
+      this.pending[i]--;
+    }
+  }
+  kill() { for (const p of this.procs) p.kill(); }
+}
+
 /**
- * teams: [{ id, programs: { clover, orchid, bee } }] (code strings), in a stable order.
- * Returns { visits, feeds, nectar, problems }, ledgers indexed like `teams`.
+ * teams: [{ id, programs: { clover, orchid, bee }, memory?: (string|null)[] }] in a stable order.
+ *   memory[k] is the bee's snapshot from round k+1 (null when nothing was kept).
+ * Returns { visits, feeds, nectar, problems, memories, turns }, ledgers indexed like `teams`.
+ *   memories[i] = { snapshot: string|null, bytes, note } — what this round leaves for the next.
  */
 export async function simulateRound({ config, teams, seed }) {
   const n = teams.length;
   const cType = parseType(config.challengeType);
   const rType = parseType(config.responseType);
+  const limits = limitsOf(config);
   const game = gameInfo(config, n);
+  const TURNS = game.turns;
+  const memoryBytes = (config.beeMemoryKb ?? 0) * 1024;
   const flowers = teams.flatMap((t, ti) => ["clover", "orchid"].map((kind) => ({ team: ti, kind, code: t.programs[kind] })));
-  const procs = [];
+  const killers = [];
   const problems = teams.map(() => ({ clover: null, orchid: null, bee: null }));
+  const memories = teams.map(() => ({ snapshot: null, bytes: 0, note: null }));
 
   try {
     for (const f of flowers) {
-      f.proc = new ProgramProcess(config.language, "flower", { code: f.code, ms: config.budgets[f.kind].ms, game });
+      f.pool = new FlowerPool(config.language, { code: f.code, ms: config.budgets[f.kind].ms, game, maxChars: MAX_CHARS });
       f.cache = new Map(); // pure functions: one answer per challenge per round
-      procs.push(f.proc);
+      killers.push(f.pool);
     }
     const bees = teams.map((t, ti) => {
-      const proc = new ProgramProcess(config.language, "bee", { code: t.programs.bee, ms: config.budgets.bee.ms, seed: (seed + 7919 * (ti + 1)) >>> 0, game });
-      procs.push(proc);
+      const proc = new ProgramProcess(config.language, "bee", {
+        code: t.programs.bee, ms: config.budgets.bee.ms, seed: (seed + 7919 * (ti + 1)) >>> 0, game, maxChars: MAX_CHARS, memory: t.memory || [],
+      });
+      killers.push(proc);
       return proc;
     });
-    const loads = await Promise.all([...flowers.map((f) => f.proc.ready), ...bees.map((b) => b.ready)]);
+    const loads = await Promise.all([...flowers.map((f) => f.pool.ready), ...bees.map((b) => b.ready)]);
     flowers.forEach((f, i) => { if (!loads[i].ok) problems[f.team][f.kind] = loads[i].e; });
     bees.forEach((_, ti) => { const r = loads[flowers.length + ti]; if (!r.ok) problems[ti].bee = r.e; });
 
     async function ask(flower, c) {
       const key = JSON.stringify(c);
       if (!flower.cache.has(key)) {
-        flower.cache.set(key, flower.proc.call({ c }).then((res) => {
+        flower.cache.set(key, flower.pool.call({ c }).then((res) => {
           if (res.e) return { r: null, flowerError: res.e };
-          const bad = checkValue(rType, res.v, config.maxLen, "response");
+          const bad = checkValue(rType, res.v, limits, "response");
           return bad ? { r: null, flowerError: bad } : { r: res.v };
         }));
       }
@@ -73,6 +128,7 @@ export async function simulateRound({ config, teams, seed }) {
 
     const runBee = async (ti) => {
       const bee = bees[ti];
+      const callBee = (obj) => withCpu(() => bee.call(obj));
       const rand = mulberry32((seed ^ Math.imul(ti + 1, 2654435761)) >>> 0);
       let deck = [];
       const draw = () => {
@@ -83,7 +139,7 @@ export async function simulateRound({ config, teams, seed }) {
         return deck.pop();
       };
       const visits = [];
-      let turns = config.turns, logLen = 0;
+      let turns = TURNS, logLen = 0;
       const note = (visit, text) => {
         if (!text || logLen >= MAX_LOG) return;
         const t = text.slice(0, MAX_LOG - logLen);
@@ -92,12 +148,13 @@ export async function simulateRound({ config, teams, seed }) {
       };
       if (problems[ti].bee) return visits;
       while (turns > 0 && !bee.dead) {
-        const fi = draw();
-        const flower = flowers[fi];
-        const visit = { bee: ti, patch: flower.team, kind: flower.kind, start: config.turns - turns, steps: [], action: null, nectar: null };
-        const seen = [];
+        const flower = flowers[draw()];
+        const visit = { bee: ti, patch: flower.team, kind: flower.kind, start: TURNS - turns, steps: [], action: null, nectar: null };
+        let fed = false, step = null, first = true;
         for (;;) {
-          const res = await bee.call({ op: "forage", seen, turns });
+          const res = await callBee({ op: "forage", new: first, step, turns, visit: { fed, nectar: visit.nectar } });
+          first = false;
+          step = null;
           note(visit, res.out);
           let action = res.a, err = res.e || null;
           if (!err) {
@@ -106,41 +163,52 @@ export async function simulateRound({ config, teams, seed }) {
           }
           if (err) { // any mistake costs a turn and ends the visit, so a broken bee always runs out
             turns -= 1;
-            visit.action = "error";
+            if (!fed) visit.action = "error";
             visit.beeError = err.slice(0, 300);
             break;
           }
           if (action === "ask") {
             turns -= 1;
             const c = res.a[1];
-            const bad = checkValue(cType, c, config.maxLen, "challenge");
-            const step = bad ? { c, r: null, challengeError: bad } : { c, ...(await ask(flower, c)) };
-            visit.steps.push(step);
-            seen.push([c, step.r]);
-            if (turns <= 0) { visit.action = "leave"; break; }
+            const bad = checkValue(cType, c, limits, "challenge");
+            const s = bad ? { c, r: null, challengeError: bad } : { c, ...(await ask(flower, c)) };
+            if (fed) s.after = true; // asked after feeding
+            visit.steps.push(s);
+            step = [c, s.r];
+            if (turns <= 0) { if (!fed) visit.action = "leave"; break; }
             continue;
           }
+          if (action === "feed" && fed) break; // one feed per visit: after feeding, anything but an ask moves on
           if (action === "feed") {
-            if (!seen.length) { turns -= 1; visit.action = "error"; visit.beeError = "must ask at least once before feeding"; break; }
+            if (!visit.steps.length) { turns -= 1; visit.action = "error"; visit.beeError = "must ask at least once before feeding"; break; }
             if (turns < config.feedCost) { visit.action = "leave"; visit.note = "not enough turns left to feed"; break; }
             turns -= config.feedCost;
+            fed = true;
             visit.action = "feed";
             visit.nectar = flower.kind === "clover";
-            const t = await bee.call({ op: "tasted", seen, nectar: visit.nectar });
+            const t = await callBee({ op: "tasted", nectar: visit.nectar });
             note(visit, t.out);
             if (t.e) visit.beeError = ("tasted: " + t.e).slice(0, 300);
-            break;
+            if (turns <= 0) break;
+            continue; // it may keep asking this flower, or leave
           }
           // leave: free once you've looked; a glance with no questions still costs a turn
-          if (!seen.length) turns -= 1;
-          visit.action = "leave";
+          if (!visit.steps.length) turns -= 1;
+          if (!fed) visit.action = "leave";
           break;
         }
-        visit.end = config.turns - turns;
+        visit.end = TURNS - turns;
         visits.push(visit);
       }
       if (bee.dead && !problems[ti].bee) problems[ti].bee = bee.dead;
       if (!problems[ti].bee) problems[ti].bee = visits.find((v) => v.beeError)?.beeError ?? null;
+      if (memoryBytes > 0 && !bee.dead) {
+        const snap = await withCpu(() => bee.call({ op: "snapshot", maxBytes: memoryBytes }, 10000));
+        if (snap.e) memories[ti].note = "memory not saved: " + snap.e;
+        else memories[ti] = { snapshot: snap.snap ?? null, bytes: snap.snap ? Buffer.byteLength(snap.snap) : 0, note: snap.note ?? null };
+      } else if (bee.dead) {
+        memories[ti].note = "the bee stopped responding, so nothing was kept this round";
+      }
       return visits;
     };
 
@@ -159,27 +227,28 @@ export async function simulateRound({ config, teams, seed }) {
         if (res.flowerError) { problems[f.team][f.kind] = res.flowerError; break; }
       }
     }
-    return { visits, feeds, nectar, problems };
+    return { visits, feeds, nectar, problems, memories, turns: TURNS };
   } finally {
-    for (const p of procs) p.kill();
+    for (const k of killers) k.kill();
   }
 }
 
 /** Run a flower program on a list of challenges (for the "try it" tool). */
 export async function tryFlower({ config, code, kind, challenges, nTeams = 2 }) {
   const cType = parseType(config.challengeType), rType = parseType(config.responseType);
-  const proc = new ProgramProcess(config.language, "flower", { code, ms: config.budgets[kind].ms, game: gameInfo(config, nTeams) });
+  const limits = limitsOf(config);
+  const proc = new ProgramProcess(config.language, "flower", { code, ms: config.budgets[kind].ms, game: gameInfo(config, nTeams), maxChars: MAX_CHARS });
   try {
     const load = await proc.ready;
     if (!load.ok) return { error: load.e, results: [] };
     const results = [];
     for (const c of challenges.slice(0, 50)) {
-      const bad = checkValue(cType, c, config.maxLen, "challenge");
+      const bad = checkValue(cType, c, limits, "challenge");
       if (bad) { results.push({ c, r: null, error: bad }); continue; }
-      const res = await proc.call({ c });
+      const res = await withCpu(() => proc.call({ c }));
       if (res.e) results.push({ c, r: null, error: res.e });
       else {
-        const badR = checkValue(rType, res.v, config.maxLen, "response");
+        const badR = checkValue(rType, res.v, limits, "response");
         results.push(badR ? { c, r: null, error: badR } : { c, r: res.v });
       }
     }

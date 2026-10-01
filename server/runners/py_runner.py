@@ -1,10 +1,13 @@
 # Python runner for Darwinian Beauty Contest programs.
 #   python3 py_runner.py flower   — stateless: every call forks a fresh process that runs the
 #                                   whole program from scratch, then calls flower(challenge)
-#   python3 py_runner.py bee      — stateful for one round: module globals persist between calls
-# Protocol: JSON lines on stdin/stdout. First line is the setup {code, ms, seed, game}.
+#   python3 py_runner.py bee      — stateful for one round: module globals persist between calls,
+#                                   and earlier rounds' globals arrive read-only as MEMORY
+# Protocol: JSON lines on stdin/stdout. First line is the setup {code, ms, seed, game, maxChars, memory}.
+# Compute budgets are wall-clock time per call. The engine runs at most one program per CPU core, so
+# wall time is effectively CPU time. (CPU-time timers, ITIMER_PROF, fire late on tickless kernels.)
 # NOT a security sandbox: restricted builtins + import whitelist + timeouts + memory cap only.
-import builtins, io, json, os, random, resource, select, signal, sys
+import ast, builtins, copy, inspect, io, json, os, random, resource, select, signal, sys, types
 
 ALLOWED_MODULES = {
     "math", "cmath", "random", "hashlib", "string", "itertools", "functools", "collections",
@@ -39,6 +42,77 @@ def _alarm(*_):
 signal.signal(signal.SIGALRM, _alarm)
 
 
+def cpu_timer(seconds):
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+
+
+# ---------- MEMORY: earlier rounds' bee globals, read-only ----------
+
+def _read_only(*_a, **_k):
+    raise TypeError("MEMORY is read-only: make a copy first, e.g. dict(x), list(x) or copy.deepcopy(x)")
+
+
+class FrozenDict(dict):
+    __slots__ = ()
+    __setitem__ = __delitem__ = clear = pop = popitem = setdefault = update = __ior__ = _read_only
+
+    def __copy__(self):
+        return dict(self)
+
+    def __deepcopy__(self, memo):
+        return {copy.deepcopy(k, memo): copy.deepcopy(v, memo) for k, v in self.items()}
+
+
+class FrozenList(list):
+    __slots__ = ()
+    __setitem__ = __delitem__ = append = extend = insert = pop = remove = clear = sort = reverse = _read_only
+    __iadd__ = __imul__ = _read_only
+
+    def __copy__(self):
+        return list(self)
+
+    def __deepcopy__(self, memo):
+        return [copy.deepcopy(x, memo) for x in self]
+
+
+def freeze(v):
+    if isinstance(v, dict):
+        return FrozenDict({k: freeze(x) for k, x in v.items()})
+    if isinstance(v, list):
+        return FrozenList(freeze(x) for x in v)
+    if isinstance(v, set):
+        return frozenset(v)
+    if isinstance(v, tuple):
+        return tuple(freeze(x) for x in v)
+    return v
+
+
+SNAPSHOT_SKIP = {"GAME", "MEMORY"}
+
+
+def snapshot(ns, max_bytes):
+    """Top-level variables that are plain data (dict/list/tuple/set/str/numbers/bools/None), as a literal."""
+    parts, total, skipped = [], 2, []
+    for name, value in ns.items():
+        if name in SNAPSHOT_SKIP or name.startswith("__") or callable(value) or isinstance(value, types.ModuleType):
+            continue
+        try:
+            text = repr(value)
+            ast.literal_eval(text)
+        except BaseException:
+            skipped.append(name)
+            continue
+        piece = repr(name) + ": " + text
+        total += len(piece) + 2
+        if total > max_bytes:
+            return None, f"memory is over {max_bytes // 1024} KB, so nothing was kept this round"
+        parts.append(piece)
+    note = ("not kept (not plain data): " + ", ".join(skipped[:10])) if skipped else None
+    return "{" + ", ".join(parts) + "}", note
+
+
+# ---------- shared ----------
+
 def fresh_namespace(game):
     return {"__name__": "__program__", "__builtins__": SAFE_BUILTINS, "GAME": dict(game)}
 
@@ -47,13 +121,13 @@ def short(e):
     return (type(e).__name__ + ": " + str(e))[:300]
 
 
-def encode(v):
+def encode(v, max_chars):
     try:
         s = json.dumps(v, allow_nan=False)
     except (TypeError, ValueError) as e:
         return None, "response is not plain data: " + short(e)
-    if len(s) > 20000:
-        return None, "response too large"
+    if len(s) > max_chars:
+        return None, f"response too large (over {max_chars} characters)"
     return s, None
 
 
@@ -67,6 +141,7 @@ def reply(obj):
 
 def run_flower(setup):
     ms = setup["ms"]
+    max_chars = setup.get("maxChars", 20000)
     try:
         code = compile(setup["code"], "<flower>", "exec")
         reply({"ok": True})
@@ -88,18 +163,18 @@ def run_flower(setup):
             out = {}
             try:
                 random.seed(0)
-                signal.setitimer(signal.ITIMER_REAL, ms / 1000)
+                cpu_timer(ms / 1000)
                 ns = fresh_namespace(setup["game"])
                 exec(code, ns)
                 fn = ns.get("flower")
                 if not callable(fn):
                     raise NameError("program must define flower(challenge)")
                 v = fn(req["c"])
-                signal.setitimer(signal.ITIMER_REAL, 0)
-                s, err = encode(v)
+                cpu_timer(0)
+                s, err = encode(v, max_chars)
                 out = {"e": err} if err else {"v": s}
             except BaseException as e:
-                signal.setitimer(signal.ITIMER_REAL, 0)
+                cpu_timer(0)
                 out = {"e": short(e)}
             data = json.dumps(out).encode()
             while data:
@@ -107,14 +182,16 @@ def run_flower(setup):
                 data = data[n:]
             os._exit(0)
         os.close(w)
-        chunks, deadline_s = [], ms / 1000 + 0.5
+        # Wall-clock backstop for a child that ignores its CPU timer (the engine keeps the machine
+        # from being oversubscribed, so CPU time and wall time stay close).
+        chunks, deadline_s = [], 2 * ms / 1000 + 0.5
         ok = True
         while True:
             ready, _, _ = select.select([r], [], [], deadline_s)
             if not ready:
                 ok = False
                 break
-            b = os.read(r, 65536)
+            b = os.read(r, 1 << 20)
             if not b:
                 break
             chunks.append(b)
@@ -135,8 +212,20 @@ def run_flower(setup):
             reply({"e": out.get("e", "flower crashed")})
 
 
+def takes_visit(fn):
+    """forage(seen, turns_left, visit): the third argument is optional, for bees that want it."""
+    try:
+        params = inspect.signature(fn).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    if any(p.kind == p.VAR_POSITIONAL for p in params):
+        return True
+    return sum(p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD) for p in params) >= 3
+
+
 def run_bee(setup):
     ms = setup["ms"]
+    max_chars = setup.get("maxChars", 20000)
     random.seed(setup.get("seed", 0))
     ns = fresh_namespace(setup["game"])
     captured = io.StringIO()
@@ -150,12 +239,17 @@ def run_bee(setup):
         return s[:2000]
 
     def timed(fn, *args, budget=ms):
-        signal.setitimer(signal.ITIMER_REAL, budget / 1000)
+        cpu_timer(budget / 1000)
         try:
             return fn(*args)
         finally:
-            signal.setitimer(signal.ITIMER_REAL, 0)
+            cpu_timer(0)
 
+    try:
+        ns["MEMORY"] = tuple(None if s is None else freeze(ast.literal_eval(s)) for s in setup.get("memory") or [])
+    except BaseException as e:
+        ns["MEMORY"] = ()
+        print("MEMORY could not be restored: " + short(e))
     try:
         timed(lambda: exec(compile(setup["code"], "<bee>", "exec"), ns), budget=ms * 10)
         if not callable(ns.get("forage")):
@@ -164,20 +258,34 @@ def run_bee(setup):
     except BaseException as e:
         reply({"ok": False, "e": short(e), "out": take_output()})
         return
+    seen = []
     for line in sys.stdin:
         req = json.loads(line)
         try:
             if req["op"] == "forage":
-                a = timed(ns["forage"], req["seen"], req["turns"])
+                if req.get("new"):
+                    seen = []
+                if req.get("step") is not None:
+                    seen.append(req["step"])
+                fn = ns["forage"]
+                args = (list(seen), req["turns"]) + ((dict(req["visit"]),) if takes_visit(fn) else ())
+                a = timed(fn, *args)
                 if isinstance(a, tuple):
                     a = list(a)
-                s, err = encode(a)
+                s, err = encode(a, max_chars)
                 reply({"e": "forage returned " + err, "out": take_output()} if err else {"a": json.loads(s), "out": take_output()})
             elif req["op"] == "tasted":
                 fn = ns.get("tasted")
                 if callable(fn):
-                    timed(fn, req["seen"], req["nectar"])
+                    timed(fn, list(seen), req["nectar"])
                 reply({"ok": True, "out": take_output()})
+            elif req["op"] == "snapshot":
+                cpu_timer(5)
+                try:
+                    snap, note = snapshot(ns, req["maxBytes"])
+                finally:
+                    cpu_timer(0)
+                reply({"snap": snap, "note": note})
         except BaseException as e:
             reply({"e": short(e), "out": take_output()})
 

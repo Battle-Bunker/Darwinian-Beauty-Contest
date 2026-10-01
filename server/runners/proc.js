@@ -72,8 +72,9 @@ export class ProgramProcess {
     });
   }
 
-  call(obj) {
-    return this.#request(obj, this.ms + 1500);
+  /** One request; the hard deadline is the program's budget plus slack, unless given. */
+  call(obj, timeoutMs = this.ms * 2 + 1500) {
+    return this.#request(obj, timeoutMs);
   }
 
   kill() {

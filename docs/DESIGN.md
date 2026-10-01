@@ -147,3 +147,25 @@ A strict bee that only feeds at readable clovers earns `(h/2) / (1 + h·f/2)` ne
 lax once `h > 2/f`: for the default `f = 5`, that's when more than 40% of patches are readable. So
 **feed cost is the main knob** for how much honesty the ecosystem can sustain. A higher feed cost
 makes bees pickier, which rewards readable clovers. A lower one lets indistinguishable patches free-ride.
+
+## Engine v2: making recognition worth more than novelty
+
+The arena and the research notes ([signal-forensics](research/signal-forensics.md),
+[signal-mechanics](research/signal-mechanics.md)) showed that recognising a clover barely paid. With
+100 turns and 12 flowers, a bee met each flower about twice per round. Tasting each new answer once
+used up most of the round, which capped an ideal learner near 0.68 precision. Orchids mostly earned
+their feeds from bees' first tastes, not from imitation. v2 changes the economics:
+
+| Change | Why |
+|---|---|
+| **100 turns per flower** (`turnsPerFlower`): 1,000 turns with 5 teams | Bees meet each flower 10–20 times a round. A taste is now a small share of the budget, and a bee that recognises clovers can feed at them again and again. Recognition finally compounds. |
+| **Bee `MEMORY`**: earlier rounds' top-level data, read-only, indexed by round | Reputation survives between rounds without hardcoding answers into code (which costs change budget) and without asking leaky fixed questions. |
+| **Asks after feeding** | A bee can study a flower once it knows the truth (nectar or not), building labelled data about generous flowers and fakes, within and across rounds. |
+| **Asymmetric budgets** (orchid = reference): clover ½ complexity, 3× compute; orchid 70% change budget; bee 5× complexity, ½ compute | **Costly signalling**: a clover can spend effort an orchid can't afford on every answer: a bigger, harder instance of its pattern. Orchids answer with more code and faster adaptation (more efficient generators, shallower look-alikes). Bees get room for detector repertoires but little time per decision, so the winning signals are *hard to make, easy to check*. |
+| **Fair compute**: at most one program per CPU core; flower process pools | When compute is the signal, a busy machine mustn't make a clover time out. Wall-clock limits with one program per core behave like CPU limits. CPU-time interval timers fire late on this VM's tickless kernel. |
+| **`maxNodes`** separate from `maxLen` (default 512) | Room for impressive structures, e.g. graphs where the 0→(x mod 37) path length and the component sizes k·(prime factors of x mod 37) are both signals, and a clover proves effort by finding a large k. |
+
+The expected dynamic is that discernment becomes consequential:
+- A team's orchid should now steer clear of its *own* clover. A successful imitation would make discerning bees feed there less.
+- Orchids should chase other teams' signals instead.
+- Clovers should lean into whichever hard-to-compute, easy-to-check properties prove most discriminating.

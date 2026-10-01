@@ -24,14 +24,16 @@ export function apiRouter() {
 
   // Games: one view for everyone, filtered to what this viewer may know.
   const base = "/rooms/:room/games/:game";
-  r.get(base, wrap(async (req, res) => res.json(await G.viewGame(req.room, req.game, req.user))));
+  r.get(base, wrap(async (req, res) => res.json(await G.viewGame(req.room, req.game, req.user, { visits: req.query.visits }))));
+  r.get(`${base}/rounds/:no`, wrap(async (req, res) => res.json(await G.roundView(req.room, req.game, req.user, Number(req.params.no)))));
+  r.get(`${base}/memory/:no`, requireUser, wrap(async (req, res) => res.json(await G.beeMemory(req.game, req.user, Number(req.params.no), req.query.team))));
   r.get(`${base}/version`, (req, res) => res.json({ version: req.game.version, status: req.game.status, runningRound: req.game.running_round, roundsPlayed: req.game.rounds_played }));
   r.get(`${base}/events`, (req, res) => sse(req, res, { game: req.game.id }, { game: req.game.id, version: req.game.version }));
   r.patch(`${base}/config`, requireUser, wrap(async (req, res) => res.json(await G.updateConfig(req.room, req.game, req.user, req.body?.config ?? req.body))));
   r.post(`${base}/teams`, requireUser, wrap(async (req, res) => res.status(201).json(await G.createTeam(req.game, req.user, req.body?.name))));
   r.post(`${base}/teams/join`, requireUser, wrap(async (req, res) => res.json(await G.joinTeam(req.game, req.user, req.body?.joinCode))));
   r.post(`${base}/check`, requireUser, wrap(async (req, res) => {
-    const view = await G.viewGame(req.room, req.game, req.user);
+    const view = await G.viewGame(req.room, req.game, req.user, { visits: "none" });
     if (!view.myTeam) return res.status(403).json({ error: "Join a team first" });
     res.json(await G.checkProgram(req.game, view.myTeam, req.body?.kind, req.body?.code));
   }));

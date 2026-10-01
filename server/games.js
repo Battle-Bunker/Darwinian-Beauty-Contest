@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import { query, tx } from "./db/pool.js";
 import { env } from "./config.js";
 import { allocatePrefixLen, normalizeCode, shortId, uuidToCode } from "./lib/shortid.js";
-import { DEFAULT_CONFIG, normalizeConfig } from "./lib/gameConfig.js";
+import { DEFAULT_CONFIG, normalizeConfig, turnsFor } from "./lib/gameConfig.js";
 import { changeDistance, measure } from "./lib/ast.js";
 import { addLedgers, score, zeroLedger } from "./lib/scoring.js";
 import { programInterface } from "./lib/interface.js";
@@ -208,6 +208,12 @@ export async function submitProgram(game, user, kind, code) {
   return { ...check, submitted: true };
 }
 
+/** A team's bee memories for rounds 1..beforeRound-1, in order (null where nothing was kept). */
+async function memoriesOf(gameId, teamId, beforeRound, client = { query }) {
+  const { rows } = await client.query("SELECT round_no, snapshot FROM bee_memories WHERE game_id = $1 AND team_id = $2 AND round_no < $3", [gameId, teamId, beforeRound]);
+  return Array.from({ length: Math.max(0, beforeRound - 1) }, (_, i) => rows.find((r) => r.round_no === i + 1)?.snapshot ?? null);
+}
+
 /** Try a program without submitting it. Flowers: answer challenges. Bee: forage your own patch. */
 export async function tryProgram(game, user, kind, code, challenges, flowers = {}) {
   const team = await myTeam(game.id, user.id);
@@ -225,10 +231,13 @@ export async function tryProgram(game, user, kind, code, challenges, flowers = {
   const pick = (k) => (typeof flowers?.[k] === "string" ? flowers[k] : null) ?? subs.find((s) => s.kind === k)?.code ?? prev[k];
   const clover = pick("clover"), orchid = pick("orchid");
   if (!clover || !orchid) fail(409, "Your bee needs flowers to visit: submit a clover and an orchid first (or pass them as flowers.clover / flowers.orchid)");
-  const result = await simulateRound({ config: cfg, teams: [{ id: team.id, programs: { clover, orchid, bee: code } }], seed: 1 });
+  // With your bee's real MEMORY from the rounds played so far. (A garden of 2 flowers is small, so the
+  // try gets as many turns as one patch would get in the real game.)
+  const memory = await memoriesOf(game.id, team.id, game.rounds_played + 1);
+  const result = await simulateRound({ config: cfg, teams: [{ id: team.id, programs: { clover, orchid, bee: code }, memory }], seed: 1 });
   // Same shape as the game view: team ids, plus which of your flowers it was.
-  const visits = result.visits.map((v) => ({ ...v, bee: team.id, patch: team.id, asks: v.steps.length }));
-  return { visits, problems: result.problems[0], feeds: result.feeds[0][0], nectar: result.nectar[0][0] };
+  const visits = result.visits.map((v) => ({ ...v, bee: team.id, patch: team.id, asks: v.steps.length, asksBeforeFeed: v.steps.filter((x) => !x.after).length }));
+  return { visits, problems: result.problems[0], feeds: result.feeds[0][0], nectar: result.nectar[0][0], turns: result.turns, memory: result.memories[0] };
 }
 
 // ---------- rounds ----------
@@ -291,7 +300,8 @@ async function executeRound(gameId, { roundNo, participants, programs, config, s
   await slot();
   let sim;
   try {
-    sim = await simulateRound({ config, seed, teams: participants.map((id) => ({ id, programs: Object.fromEntries(KINDS.map((k) => [k, programs[id][k].code])) })) });
+    const memory = await Promise.all(participants.map((id) => memoriesOf(gameId, id, roundNo)));
+    sim = await simulateRound({ config, seed, teams: participants.map((id, i) => ({ id, programs: Object.fromEntries(KINDS.map((k) => [k, programs[id][k].code])), memory: memory[i] })) });
   } finally {
     release();
   }
@@ -302,8 +312,13 @@ async function executeRound(gameId, { roundNo, participants, programs, config, s
       .reduce((acc, r) => ({ feeds: addLedgers(acc.feeds, r.feeds), nectar: addLedgers(acc.nectar, r.nectar) }), { feeds: zeroLedger(ids.length), nectar: zeroLedger(ids.length) });
     const totFeeds = addLedgers(cumulative.feeds, sim.feeds), totNectar = addLedgers(cumulative.nectar, sim.nectar);
     await c.query(
-      "INSERT INTO rounds (game_id, round_no, seed, feeds, nectar, scores, totals, started_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-      [gameId, roundNo, seed, JSON.stringify(sim.feeds), JSON.stringify(sim.nectar), JSON.stringify(score(ids, sim.feeds, sim.nectar)), JSON.stringify(score(ids, totFeeds, totNectar)), startedAt]);
+      "INSERT INTO rounds (game_id, round_no, seed, feeds, nectar, scores, totals, started_at, turns) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+      [gameId, roundNo, seed, JSON.stringify(sim.feeds), JSON.stringify(sim.nectar), JSON.stringify(score(ids, sim.feeds, sim.nectar)), JSON.stringify(score(ids, totFeeds, totNectar)), startedAt, sim.turns]);
+    for (const [ti, teamId] of ids.entries()) {
+      const m = sim.memories[ti];
+      await c.query("INSERT INTO bee_memories (game_id, round_no, team_id, snapshot, bytes, note) VALUES ($1, $2, $3, $4, $5, $6)",
+        [gameId, roundNo, teamId, m.snapshot, m.bytes, m.note]);
+    }
     for (const [ti, teamId] of ids.entries()) {
       for (const kind of KINDS) {
         const p = programs[teamId][kind];
@@ -345,7 +360,11 @@ export async function recoverInterruptedRounds() {
 
 // ---------- the view: everything a given viewer may see, live or later, identically ----------
 
-export async function viewGame(room, game, user) {
+/**
+ * opts.visits: "all" (default) includes every round's visits; "last" only the latest round's; "none"
+ * none (fetch rounds one at a time with roundView). Games now have thousands of visits per round.
+ */
+export async function viewGame(room, game, user, opts = {}) {
   const g = (await query("SELECT * FROM games WHERE id = $1", [game.id])).rows[0];
   const cfg = g.config;
   const mine = await myTeam(g.id, user?.id);
@@ -356,10 +375,15 @@ export async function viewGame(room, game, user) {
   const subs = (await query("SELECT s.*, u.name AS submitted_by_name FROM submissions s JOIN users u ON u.id = s.submitted_by WHERE s.game_id = $1", [g.id])).rows;
   const rounds = (await query("SELECT * FROM rounds WHERE game_id = $1 ORDER BY round_no", [g.id])).rows;
   const progs = (await query("SELECT * FROM round_programs WHERE game_id = $1 ORDER BY round_no", [g.id])).rows;
-  const visits = (await query("SELECT * FROM visits WHERE game_id = $1 ORDER BY round_no, bee_team, seq", [g.id])).rows;
+  const which = opts.visits || "all";
+  const visitRounds = which === "none" ? [] : which === "last" ? rounds.slice(-1).map((r) => r.round_no) : rounds.map((r) => r.round_no);
+  const visits = visitRounds.length
+    ? (await query("SELECT * FROM visits WHERE game_id = $1 AND round_no = ANY($2) ORDER BY round_no, bee_team, seq", [g.id, visitRounds])).rows
+    : [];
+  const mems = (await query("SELECT round_no, team_id, bytes, note FROM bee_memories WHERE game_id = $1", [g.id])).rows;
   const participants = g.participants || null;
+  const ctx = { cfg, mine, revealed, participants, progs, mems };
 
-  const canSeeTeam = (teamId) => revealed || (mine && mine.id === teamId);
   const latestProg = {};
   for (const p of progs) (latestProg[p.team_id] ||= {})[p.kind] = p;
 
@@ -369,6 +393,8 @@ export async function viewGame(room, game, user) {
       id: g.id, shortId: shortId(g), url: `/room/${shortId(room)}/game/${shortId(g)}`, status: g.status, config: cfg,
       roundsPlayed: g.rounds_played, runningRound: g.running_round, lastError: g.last_error, version: g.version,
       createdAt: g.created_at, finishedAt: g.finished_at, revealed, isOwner,
+      // Turns per bee in the next round (depends on how many teams play).
+      turns: turnsFor(cfg, participants ? participants.length : teams.length),
     },
     me: user ? { id: user.id, name: user.name, teamId: mine?.id ?? null } : null,
     participants,
@@ -387,37 +413,73 @@ export async function viewGame(room, game, user) {
       previous: Object.fromEntries(KINDS.filter((k) => latestProg[mine.id]?.[k]).map((k) => [k, latestProg[mine.id][k].code])),
     } : null,
     interface: programInterface(cfg),
-    rounds: rounds.map((r) => ({
-      no: r.round_no, startedAt: r.started_at, finishedAt: r.finished_at,
-      feeds: r.feeds, nectar: r.nectar, scores: r.scores, totals: r.totals,
-      programs: Object.fromEntries((participants || []).map((teamId) => [teamId, Object.fromEntries(KINDS.map((kind) => {
-        const p = progs.find((x) => x.round_no === r.round_no && x.team_id === teamId && x.kind === kind);
-        if (!p) return [kind, null];
-        const own = canSeeTeam(teamId);
-        return [kind, { nodes: p.nodes, distance: p.distance, carriedOver: p.carried_over, ...(own ? { code: p.code, problem: p.problem } : {}) }];
-      }))])),
-      visits: visits.filter((v) => v.round_no === r.round_no).map((v) => visitView(v, mine?.id, revealed, cfg.flowerLogs)),
-    })),
+    rounds: rounds.map((r) => roundViewOf(r, visits.filter((v) => v.round_no === r.round_no), ctx, visitRounds.includes(r.round_no))),
     final: g.status === "finished" && rounds.length ? rounds[rounds.length - 1].totals : null,
   };
 }
 
+function roundViewOf(r, visits, { cfg, mine, revealed, participants, progs, mems }, withVisits = true) {
+  const canSeeTeam = (teamId) => revealed || (mine && mine.id === teamId);
+  return {
+    no: r.round_no, startedAt: r.started_at, finishedAt: r.finished_at,
+    turns: r.turns ?? cfg.turns ?? 100,
+    feeds: r.feeds, nectar: r.nectar, scores: r.scores, totals: r.totals,
+    programs: Object.fromEntries((participants || []).map((teamId) => [teamId, Object.fromEntries(KINDS.map((kind) => {
+      const p = progs.find((x) => x.round_no === r.round_no && x.team_id === teamId && x.kind === kind);
+      if (!p) return [kind, null];
+      const own = canSeeTeam(teamId);
+      return [kind, { nodes: p.nodes, distance: p.distance, carriedOver: p.carried_over, ...(own ? { code: p.code, problem: p.problem } : {}) }];
+    }))])),
+    // Size of what each bee kept for later rounds (your own team's, or everyone's once revealed).
+    memory: Object.fromEntries(mems.filter((m) => m.round_no === r.round_no && canSeeTeam(m.team_id)).map((m) => [m.team_id, { bytes: m.bytes, note: m.note }])),
+    ...(withVisits ? { visits: visits.map((v) => visitView(v, mine?.id, revealed, cfg.flowerLogs)) } : {}),
+  };
+}
+
+/** One round, with its visits, filtered for this viewer. */
+export async function roundView(room, game, user, roundNo) {
+  const g = (await query("SELECT * FROM games WHERE id = $1", [game.id])).rows[0];
+  const r = (await query("SELECT * FROM rounds WHERE game_id = $1 AND round_no = $2", [g.id, roundNo])).rows[0];
+  if (!r) fail(404, "No such round");
+  const mine = await myTeam(g.id, user?.id);
+  const progs = (await query("SELECT * FROM round_programs WHERE game_id = $1 AND round_no = $2", [g.id, roundNo])).rows;
+  const visits = (await query("SELECT * FROM visits WHERE game_id = $1 AND round_no = $2 ORDER BY bee_team, seq", [g.id, roundNo])).rows;
+  const mems = (await query("SELECT round_no, team_id, bytes, note FROM bee_memories WHERE game_id = $1 AND round_no = $2", [g.id, roundNo])).rows;
+  const revealed = g.status === "finished" && g.config.revealOnFinish;
+  return roundViewOf(r, visits, { cfg: g.config, mine, revealed, participants: g.participants || [], progs, mems });
+}
+
+/** What a team's bee kept at the end of a round (the serialised MEMORY entry). Own team, or revealed games. */
+export async function beeMemory(game, user, roundNo, teamId) {
+  const g = (await query("SELECT * FROM games WHERE id = $1", [game.id])).rows[0];
+  const mine = await myTeam(g.id, user?.id);
+  const revealed = g.status === "finished" && g.config.revealOnFinish;
+  const team = teamId || mine?.id;
+  if (!team) fail(403, "Join a team first");
+  if (!revealed && team !== mine?.id) fail(403, "You can only see your own bee's memory until the game is revealed");
+  const m = (await query("SELECT * FROM bee_memories WHERE game_id = $1 AND round_no = $2 AND team_id = $3", [g.id, roundNo, team])).rows[0];
+  if (!m) fail(404, "No memory for that round");
+  return { round: roundNo, teamId: team, language: g.config.language, snapshot: m.snapshot, bytes: m.bytes, note: m.note };
+}
+
 function visitView(v, myTeamId, revealed, flowerLogs) {
+  const asksBeforeFeed = v.action === "feed" ? v.steps.filter((s) => !s.after).length : v.steps.length;
   const out = {
     bee: v.bee_team, patch: v.patch_team, seq: v.seq, start: v.turn_start, end: v.turn_end,
-    asks: v.steps.length, action: v.action, nectar: v.nectar,
+    asks: v.steps.length, asksBeforeFeed, action: v.action, nectar: v.nectar,
   };
   const isBee = revealed || v.bee_team === myTeamId;
   const isPatch = revealed || v.patch_team === myTeamId;
+  const keep = (s) => (s.after ? { after: true } : {});
   if (isPatch) out.kind = v.kind;
   if (isBee) {
     // Your bee saw challenges and responses, but not why another team's flower failed.
-    out.steps = v.steps.map((s) => (revealed ? s : { c: s.c, r: s.r, ...(s.challengeError ? { challengeError: s.challengeError } : {}) }));
+    out.steps = v.steps.map((s) => (revealed ? s : { c: s.c, r: s.r, ...keep(s), ...(s.challengeError ? { challengeError: s.challengeError } : {}) }));
     if (v.bee_error) out.beeError = v.bee_error;
     if (v.bee_log) out.beeLog = v.bee_log;
     if (v.note) out.note = v.note;
   } else if (isPatch && flowerLogs) {
-    out.steps = v.steps.map((s) => ({ c: s.c, r: s.r, ...(s.flowerError ? { flowerError: s.flowerError } : {}) }));
+    out.steps = v.steps.map((s) => ({ c: s.c, r: s.r, ...keep(s), ...(s.flowerError ? { flowerError: s.flowerError } : {}) }));
   }
   if (isPatch && !isBee && v.steps.some((s) => s.flowerError)) out.flowerError = v.steps.find((s) => s.flowerError).flowerError;
   return out;
