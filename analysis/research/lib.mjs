@@ -12,7 +12,9 @@ export const CACHE_DIR = process.env.RESEARCH_CACHE || "/tmp/claude-0/-home-user
 fs.mkdirSync(CACHE_DIR, { recursive: true });
 
 export const md5 = (s) => crypto.createHash("md5").update(s).digest("hex");
-export const K = (x) => JSON.stringify(x);
+export const canon = (x) => (Array.isArray(x) ? x.map(canon) : x && typeof x === "object" ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, canon(x[k])])) : x);
+/** canonical JSON key (sorted object keys: jsonb reorders them) */
+export const K = (x) => JSON.stringify(canon(x));
 export const mean = (a) => (a.length ? a.reduce((s, x) => s + x, 0) / a.length : NaN);
 export const pct = (x, d = 0) => (Number.isFinite(x) ? (100 * x).toFixed(d) + "%" : "-");
 export const f2 = (x) => (Number.isFinite(x) ? x.toFixed(2) : "-");
