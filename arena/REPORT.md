@@ -695,7 +695,7 @@ rows.
 | games | 3 per cohort, 5 rounds each, int → `graph[any]`, v2 engine defaults |
 | identical conditions | same personas, models and session limits; fixed membership (no retirement or breeding); identical seeds per (game, round): `(20261001 + 1009·g + 31·r) mod 2^31` |
 | information flow | `revealOnFinish: false` during the experiment, so no rival code came through the API. Between games each team saw the top-2 teams' final code, the standings and its own panel feedback (the only diffusion channel). The judges' idea ledger excluded the sibling cohorts |
-| treatment | in gx-treat, 3 of the 6 teams got a different slice of the catalogue as `ideas.md`, chosen by a recorded rule (the first team of each model in slug order): **Grace** (haiku), G1 = skeleton, Recipe A, Paley clique hunt, how-far scoring; **Kenji** (opus), G2 = Recipe B, Golomb ruler with forbidden distances, Schur colouring; **Luna** (sonnet), G3 = prime necklace, graceful Prüfer tree, cleverness vs work, pitfalls. In game 1 round 1 the brief said once: "There's a new file in your workspace, ideas.md: optional ideas some players are exploring" |
+| treatment | in gx-treat, 3 of the 6 teams got a different slice of the catalogue as `ideas.md`, chosen by a recorded rule (the first team of each model in slug order): **Grace** (haiku), G1 = skeleton, Recipe A, Paley clique hunt, how-far scoring; **Kenji** (opus), G2 = Recipe B, Golomb ruler with forbidden distances, Schur colouring; **Luna** (sonnet), G3 = prime necklace, graceful Prüfer tree, cleverness vs work, pitfalls. The game 1 round 1 brief was meant to say once: "There's a new file in your workspace, ideas.md: optional ideas some players are exploring". Because of a bug it never did (see "Correction" under Caveats) |
 | Python | off in game 1 and on from game 2 in all three cohorts (`settings.pythonFromGame = 2`), recorded in `arena.games.python` |
 | measures | `node arena/analyze.js --arenas gx-control,gx-treat,gx-control2` ("Cohort experiment"): paired fitness; adoption per team and round (keywords plus a haiku classifier, `arena.adoption`); the answer-shape census; borrowing from the top-2 demo (code similarity); idea-file reads and Python use from the transcripts |
 
@@ -716,7 +716,8 @@ All 9 games now have `revealOnFinish: true` and replay in full.
 | Luna (sonnet, G3) | never opened it | `cat ideas.md \| head -20` in round 1 | – | no |
 | Grace (haiku, G1) | never opened it | – | opened it | no |
 
-A one-line mention of an optional file is too weak a dose. Kenji, the one holder who read his card in game 1, wrote
+Not even the planned one-line mention reached the holders (see "Correction" under Caveats). They could find the file
+only in README.md's file table or by listing the workspace. Kenji, the one holder who read his card in game 1, wrote
 "My clover and orchid both use last game's shape", and his clover's comment says why: "shape-checking bees liked rings
 last game".
 
@@ -818,6 +819,13 @@ fingerprinting bees, not from certificate checks:
   in degree, so a design built on "same seeds, same personas" still diverges within one game.
 - **The treatment was weak.** Two of three holders didn't read the card when it mattered. A stronger arm would put the
   catalogue in the brief, or in a "previous game" file the teams already read.
+- **Correction: the game-1 notices were never shown.** `roundBrief` tested "first round of the first game" before the
+  forked-cohort case. So in game 1 of all three cohorts every team was told "This is the first round of the first
+  game: the program files are empty; write all three programs", and neither the `ideas.md` pointer nor the
+  `graph[any]` rule-change notice appeared. The evidence is the code path (now fixed, with a check in
+  `arena/test-brief.mjs`) and the transcripts. For example, Grace's first message in gx-treat game 1 was "I'll start
+  by understanding the exact requirements, then write all three programs from scratch". (`arena.agent_turns.prompt_chars`
+  records only the system prompt, so it cannot show this.)
 - **Disqualifications that stood.** False-positive disqualifications that landed after their round had simulated:
   - Mallory, gx-treat game 1 round 3: `echo ..`
   - Kenji, gx-control2 game 2 round 3: a Python variable `nc`
@@ -900,6 +908,357 @@ gx-treat; she didn't need to in gx-control.
 Programs may be 100,000 characters, so a flower can carry a ~100 KB lookup table for a handful of nodes. Nobody used
 it, but it makes a large replay table nearly free.
 
+## 17. v3 games: hidden vs public logs
+
+**Question.** Engine v3 makes flowers stateless across calls but not pure. Every call gets fresh randomness and the
+clock, and there is no answer cache, so a clover can run an optimisation within its compute budget and answer
+differently each time. Does that end fingerprinting? And does making every visit public (challenges, answers, which
+flower, nectar) play differently from private logs?
+
+**Short answer.** Not on its own, and no:
+- **Public and private logs played the same.** Over 2 games of 6 rounds:
+
+  | measure | public | private |
+  |---|---|---|
+  | nectar per turn | 0.095 | 0.089 |
+  | precision | 0.72 | 0.71 |
+  | rival clover−orchid gap | 0.38 | 0.41 |
+
+  The paired fitness change was +0.004 (n = 12), against §15's noise floor of 0.26.
+- **Fingerprinting survived non-pure flowers.** The two winning bees reused a handful of challenges: 97–100% of
+  their asks were repeats in 7 of 8 bee-games. They fed rival clovers at 0.86–0.99 and rival orchids at 0.05–0.34.
+  Clovers stayed effectively pure: only 1–2 of 6 were ever seen giving two answers to one challenge in a round, and
+  they used 6–25% of their 150 ms.
+- **Dynamism was the same.** About 0.6 of teams used each change turn, at roughly 350 characters per change, with rank
+  τ 0.61 (private) and 0.72 (public).
+
+### Design as run
+
+| | |
+|---|---|
+| fork point | gx-control game 3 ([/room/2/game/4](/room/2/game/4)): same six personas, their notebooks and programs, and that game as `previous-games/game-0/` |
+| arms | **v3-hidden** [/room/SAG](/room/SAG): `publicLogs: false` · **v3-open** [/room/07](/room/07): `publicLogs: true` (after each round every team gets every visit in the garden as one shared file) |
+| games | 2 per arm, 6 rounds each, int → `graph[any]` |
+| engine v3 (server defaults) | **Flowers:** stateless and non-pure, with a fresh `random` seed, `time` and `GAME["ms"]` on every call. No answer cache: every ask runs the flower again. **Size:** programs run minified and are measured in minified characters: clover 2,400, orchid 4,800, bee 24,000. **Compute per call:** 150 / 50 / 25 ms. **Turns:** all three programs change before round 1. After that, one kind changes per round: the bee before rounds 2 and 5, the orchid before 3 and 6, the clover before 4. A change may alter at most 480 / 3,360 / 4,800 minified characters. **Bees** keep only the top-level `keep` between rounds, read back as `MEMORY` |
+| identical conditions | same personas, models and session limits; fixed membership; seeds `(20261020 + 1009·g + 31·r) mod 2^31` in both arms; top-2 code demo between games; `revealOnFinish: false` |
+| round-1 notices | game 1: a neutral "RULES CHANGED" list. Every game: one sentence saying whether logs are public or private and what they contain |
+| CPU fairness | `CPU_SLOTS=3`, and only one round simulates at a time across a runner's arenas, so compute budgets mean the same thing in every cohort |
+
+Games: v3-hidden [S](/room/SAG/game/S), [F](/room/SAG/game/F); v3-open [A](/room/07/game/A), [R](/room/07/game/R).
+
+### Results
+
+**1. Same winners, same numbers.**
+
+| game | winner, private / public | nectar per turn | precision | rival clover / orchid fed | fitness σ |
+|---|---|---|---|---|---|
+| 1 | Kenji 1.41 / Kenji 1.43 | 0.093 / 0.096 | 0.69 / 0.70 | 0.72 / 0.36 · 0.76 / 0.38 | 0.19 / 0.27 |
+| 2 | Mallory 1.41 / Mallory 1.38 | 0.084 / 0.095 | 0.72 / 0.74 | 0.71 / 0.26 · 0.67 / 0.28 | 0.27 / 0.22 |
+
+Mean per-round Δ (public − private, 12 rounds):
+
+| measure | Δ |
+|---|---|
+| nectar per turn | +0.007 |
+| precision | +0.016 |
+| rival clover−orchid gap | −0.022 |
+| fingerprinting (share of asks repeating a challenge) | +0.036 |
+| new challenges vs the previous round | −0.027 |
+| stolen-face orchids | −0.032 |
+| rank τ | +0.11 |
+| fitness σ | +0.01 |
+
+The one visible difference was in game 1. From round 3, 16–29% of rival-orchid visits in v3-hidden served a stolen
+face, meaning a rival clover's exact answer to the same challenge. In v3-open it was 7–10%. In game 2 both arms were
+at 0–9%.
+
+**2. Fingerprinting survived** (rival patches; `node analysis/fingerprint-bees.mjs v3-hidden v3-open`).
+
+| bee style | bees | distinct challenges per game | rival clover fed | rival orchid fed |
+|---|---|---|---|---|
+| fixed probes, winners | Kenji, Mallory (97–100% repeats; Mallory 79% in v3-hidden game 2) | 6–460 | 0.86–0.99 | 0.05–0.34 |
+| fixed probes, others | Grace, Rosa (50–100% repeats) | 1–1,311 | 0.32–0.90 | 0.06–0.66 |
+| a fresh challenge every ask | Luna, Theo | 1,835–3,579 | 0.43–0.67 | 0.18–0.55 |
+
+Costly answers did appear without any prompting:
+- Mallory's clover was a "lottery-ticket necklace", later a "four-leaf clover hunt": tickets whose SHA-256 starts
+  with ten zero bits, about 1 in 1,024 tickets.
+- Kenji kept his backtracking "prime necklace".
+
+But both are pure functions of the challenge, so each answer is still a stable face.
+
+Bees in turn tested consistency. For example, Kenji's "ask twice" stutter test catches an orchid that draws a fresh
+random face on every call.
+
+**3. The metagame inherited from gx-control.**
+- **Clovers:** Mallory's SHA-256 lottery tickets, Kenji's prime necklace (which Grace copied), Luna's prime-factor
+  star, Rosa's ring with hashed shortcuts and degree labels, and Theo's square chain.
+- **Orchids:** stolen faces and twins in game 1, then fewer of both.
+- **Model gap:**
+
+  | | opus | sonnet | haiku |
+  |---|---|---|---|
+  | fitness range across the 4 games | 1.17–1.37 | 0.87–0.90 | 0.63–1.05 |
+
+**4. Dynamism: no difference.**
+
+| | private | public |
+|---|---|---|
+| teams using each change turn | 34 of 60 | 37 of 60 |
+| mean change | 369 minified characters | 336 minified characters |
+| mean rank τ | 0.61 | 0.72 |
+| orchid style turnover per orchid turn | 0.38 | 0.33 |
+
+- The only churn difference was game 1: τ 0.44 private against 0.65 public. Game 2 was 0.79 in both.
+- Clover answer styles almost never changed: one clover per arm switched shape, at game 1's clover turn.
+
+**Storage.**
+- DB visits: 1.3–2.4 MB per round (0.7–1.3 KB per visit).
+- Workspace logs: 4.9–9.7 MB per round. Public logs are one hard-linked file per round per arena.
+- Free disk went from 30.9 to 30.8 GB.
+
+**Spend:**
+
+| | USD |
+|---|---|
+| v3-hidden | $26.51 |
+| v3-open | $28.22 |
+| total | **$54.73** (about $13.7 per game) |
+
+### Caveats
+
+- **Two games per arm, one replicate.** Treat "no difference" as "nothing larger than about 0.01 nectar per turn or
+  0.03 precision".
+- **Disqualifications.**
+
+  | team, game | what happened | outcome |
+  |---|---|---|
+  | Theo, v3-open game 1 round 3 | a false positive: a `cd` inside a command the CLI had refused | detector fixed; turn re-run after a runner restart at 13:38 |
+  | Mallory, v3-hidden game 1 round 5 | analysis scripts carried over from gx-control still held gx-control paths | stood; no data outside her workspace was read; `arena/fork.js` now rewrites copied scripts' paths |
+  | Grace, v3-open game 2 round 6 | a real violation: `ls /home/user/arena-ws/v3-open/` | her orchid turn was lost |
+- **Moonpetal's clover times out.** Its trial division has no cap, so the 90th-percentile compute was 1.0–1.5× budget.
+  This is why the `exploit-or-degenerate` flags fired; they are real.
+
+## 18. v3 example-flower experiment in both variants
+
+**Question.** If the whole garden knows a hard-to-fake signature strategy, does that change nectar collection and the
+metagame? The strategy: a clover that searches a puzzle for its full 150 ms, which anyone can score quickly but a
+50 ms orchid can't match. Each team got two worked example flowers and their checkers, with the same files and the
+same notice for everyone. Run in both log variants.
+
+**Short answer.** The metagame changed completely. Nectar collection did not change reliably.
+- **Adoption.** By game 3, 5 of 6 clovers in each treatment cohort were built on an example puzzle; the controls had
+  none. By game 2, 5–6 of 6 bees carried a checker.
+- **Compute.** Clover compute rose to 63–68% of budget (controls 25–42%) and orchid compute to 80–85% (controls
+  30–47%).
+- **Private logs: verification replaced fingerprinting.**
+  - The top bees asked a brand-new random challenge on every visit and graded the answer with the checkers.
+  - Fingerprinting fell from 0.48 to 0.10. Twins and stolen faces disappeared.
+  - Precision was 0.77 against 0.65.
+- **Public logs: a forgery race.**
+  - The top teams chose the graceful labelling, which a tuned 50 ms orchid can nearly match.
+  - Orchids answering with the same graph as a rival clover rose to 0.37 of rival-orchid visits.
+  - Precision was 0.71 against 0.78.
+- **Nectar per turn moved in opposite directions,** +0.020 with private logs and −0.012 with public. The two controls
+  themselves differ by 0.021, so neither change is distinguishable from cohort drift. Paired fitness: −0.03 and
+  +0.01, inside the 0.26 noise floor.
+- **Variant or chance?** The split between Paley (private) and graceful (public) was made in round 1 of game 1 by the
+  same two opus teams. That was before any of that game's logs existed. With one replicate it may be chance rather
+  than log visibility.
+
+### Design as run
+
+| | |
+|---|---|
+| fork points | v3-hidden game 2 → **v3-hidden-treat** [/room/5E](/room/5E) and **v3-hidden-control** [/room/BY](/room/BY); v3-open game 2 → **v3-open-treat** [/room/4Z](/room/4Z) and **v3-open-control** [/room/97](/room/97) |
+| games | 3 per cohort, 6 rounds, the same engine and budgets as §17 |
+| identical conditions | as §17, with seeds `(20261030 + 1009·g + 31·r) mod 2^31` in all four cohorts |
+| treatment | the whole cohort received `arena/examples/v3/` as `examples/`, refreshed every round: `README.md` (with calibration tables: the Paley chain averages 23.6 cliques at 150 ms against 9.7 for the best 50 ms orchid; graceful labelling averages 918 against 892), `paley_clover.py`, `graceful_clover.py` and `checkers.py`. Round 1 of every game also showed: "Shared examples: every team in this garden received the same two example flowers and checkers, in examples/ (README.md, checkers.py, graceful_clover.py, paley_clover.py). Every team has exactly these files and was told the same thing." No code was put in the prompt |
+| controls | no examples and no notice. There was no second control; the noise floor is §15's 0.26 fitness per persona-game |
+| measures | `node arena/analyze.js --arenas v3-hidden,v3-open,v3-hidden-treat,v3-hidden-control,v3-open-treat,v3-open-control` (cohort tables, per-round v3 table, dynamism) and `node analysis/fingerprint-bees.mjs` |
+
+Games 1/2/3:
+- v3-hidden-treat: [F](/room/5E/game/F), [7](/room/5E/game/7), [3](/room/5E/game/3)
+- v3-hidden-control: [R](/room/BY/game/R), [S](/room/BY/game/S), [2](/room/BY/game/2) (5 teams, see Caveats)
+- v3-open-treat: [X](/room/4Z/game/X), [F](/room/4Z/game/F), [V](/room/4Z/game/V)
+- v3-open-control: [Y](/room/97/game/Y), [C](/room/97/game/C), [D](/room/97/game/D)
+
+### Results
+
+**1. Adoption: the examples became the metagame.** Flower family at round 6 of each game, read from the submitted
+code and its comments:
+
+| cohort | game 1 | game 2 | game 3 |
+|---|---|---|---|
+| v3-hidden-treat | Paley: Kenji, Mallory. Graceful: Rosa, Luna. Own: Theo's square chain, Grace's hash tickets | same; Grace's orchid goes Paley | + Grace's clover goes Paley: **5 of 6** |
+| v3-open-treat | graceful: Kenji, Mallory, Rosa | + Luna (graceful), Grace (Paley) | **5 of 6** |
+| both controls | none | none | none |
+
+- **Bees with a checker,** at the start of games 1/2/3: 4 → 6 → 6 of 6 in v3-hidden-treat, and 3 → 5 → 5 in
+  v3-open-treat.
+- **The teams improved the examples rather than copying them.** The Paley clover (2,500 characters) didn't fit the
+  2,400 budget. Kenji replaced Miller–Rabin with a sieve, and both he and Mallory stopped at 75–80% of the budget
+  instead of 65%. In the public cohort, Kenji and Mallory each labelled the graceful graph in build order, which
+  reaches about 930 against the example's 915.
+- **Measurement notes.**
+  - `arena/lib/v3.js`'s code markers miss Paley clovers squeezed to fit, so its Paley counts are low.
+  - The haiku classifier's generic categories fire in the controls too.
+
+**2. Nectar, precision and discrimination** (rival patches; per-game means):
+
+| cohort game | nectar/turn | precision | clover−orchid gap | fingerprinting | generator-copy orchids | clover / orchid compute |
+|---|---|---|---|---|---|---|
+| hidden-treat g1 | 0.091 | 0.80 | 0.39 | 0.26 | 0.05 | 0.58 / 0.73 |
+| hidden-treat g2 | **0.113** | 0.80 | **0.60** | 0.00 | 0.00 | 0.73 / 0.86 |
+| hidden-treat g3 | 0.094 | 0.71 | 0.34 | 0.05 | 0.02 | 0.73 / 0.95 |
+| hidden-control g1 | 0.080 | 0.63 | 0.26 | 0.57 | 0.06 | 0.18 / 0.30 |
+| hidden-control g2 | 0.093 | 0.68 | 0.37 | 0.50 | 0.05 | 0.32 / 0.36 |
+| hidden-control g3 (5 teams) | 0.066 (0.079 per playing bee) | 0.65 | 0.21 | 0.38 | 0.02 | 0.25 / 0.24 |
+| open-treat g1 | 0.084 | 0.71 | 0.27 | 0.40 | 0.15 | 0.39 / 0.54 |
+| open-treat g2 | 0.090 | 0.71 | 0.29 | 0.45 | 0.26 | 0.77 / 0.95 |
+| open-treat g3 | 0.092 | 0.71 | 0.36 | 0.45 | **0.37** | 0.74 / 0.90 |
+| open-control g1 | 0.101 | 0.77 | 0.45 | 0.68 | 0.05 | 0.37 / 0.30 |
+| open-control g2 | 0.098 | 0.81 | 0.41 | 0.42 | 0.03 | 0.53 / 0.58 |
+| open-control g3 | 0.104 | 0.76 | 0.55 | 0.46 | 0.01 | 0.37 / 0.51 |
+
+Mean per-round Δ (treatment − control, 18 rounds):
+
+| measure | private logs | public logs |
+|---|---|---|
+| nectar per turn | **+0.020** (+0.016 over games 1–2) | **−0.012** (negative in all 18 rounds) |
+| precision | +0.12 | −0.07 |
+| rival clover−orchid gap | +0.16 | −0.16 |
+| fingerprinting | −0.38 | −0.09 |
+| generator copies | −0.02 | **+0.23** |
+| rank τ | +0.08 | −0.03 |
+| fitness σ | −0.02 | +0.08 |
+
+For scale: the two controls end up apart by 0.021 nectar per turn, 0.13 precision and 0.19 gap, against 0.006, 0.01
+and 0.03 for §17's two arms. So the nectar and precision effects are the size of cohort drift. The changes in compute,
+fingerprinting, generator copies and adoption are far beyond it.
+
+**3. The bees: from recognising faces to grading work** (`analysis/fingerprint-bees.mjs`).
+
+| cohort | Kenji's bee: repeats; rival clover / orchid fed | Mallory's bee | Rosa's bee |
+|---|---|---|---|
+| v3-hidden-treat g1–3 | 0%; 0.92–0.98 / 0.05–0.17 | 0%; 0.84–0.96 / 0.07–0.16 | 0%; 0.77–0.95 / 0.20–0.41 |
+| v3-hidden-control g1–2 | 100%; 0.97–0.99 / 0.12–0.17 | 90–100%; 0.87–0.91 / 0.15–0.64 | 0–50%; 0.42–0.71 / 0.26–0.39 |
+| v3-open-treat g1–3 | 29% → 100% → 100%; 0.74–0.98 / 0.14–0.32 | 100%; 0.79–0.88 / 0.08–0.27 | 0%; 0.64–0.78 / 0.25–0.43 |
+| v3-open-control g1–3 | 93–98%; 0.97–0.98 / 0.03–0.11 | 96–99%; 0.96–0.99 / 0.06–0.19 | 100%; 0.31–0.75 / 0.07–0.19 |
+
+- **Private logs: graded tasting.** The winning bees became graders.
+  - Kenji's bee, "the score diary", asks a brand-new random number on every visit and grades the answer with the
+    shared checkers: cliques in a row for Paley, distinct differences for graceful, a rough shape for anything else.
+    It learns which grades pay, with old counts halved each round, so "if orchids get better, the line moves up by
+    itself".
+  - Mallory's bee, "the inspector with a notebook", does the same. It added the puzzles it found in round-1 logs (the
+    square chain, a Fibonacci ring) and moved its graceful cut-off from 900 to 903 when one orchid reached 902.
+  - In game 2 every bee in the cohort asked fresh challenges (0% repeats), and in game 3 all but Grace's. Twin and
+    stolen-face orchids fell to 0.
+- **Public logs: fingerprinting survived and learned handwriting.**
+  - Mallory's bee kept one question per visit and a secret SHA-256 handshake for its own flowers.
+  - It accepts a Paley chain of 13 or more cliques as proof of work. It no longer trusts graceful scores ("we showed
+    a 50 ms orchid can score like a 150 ms clover") and instead judges their "handwriting": the average gap a solver
+    failed to make, which shows whose algorithm wrote the answer.
+  - Kenji's bee went back to fixed probes in games 2–3, with "cards" and lap counting.
+- **Solver fingerprints in both cohorts.**
+  - In the private cohort, Mallory's bee found that a fast graceful forger betrays itself by where its mistakes fall,
+    and Kenji's game-2 bee adopted the rule. A clover that polishes the whole graph leaves about 45% of its mistakes
+    in the late half. A forger building dot by dot runs out of good labels and leaves 55–60% there, so Mallory's
+    cut-off sits at 0.55.
+  - In the public cohort, Mallory's bee reads the "shadow" of the gaps a solver failed to make.
+
+  This is the "hard but tractable to fingerprint" signature the experiment hoped for: bees identify the algorithm,
+  not a memorised answer.
+
+**4. Orchids: forgers that run out of time.**
+- Treatment orchids run the example searches in 50 ms. Mean orchid compute was 0.80–0.85 of budget (0.54–0.95 by
+  game), with the 90th percentile up to 2.2×. So many calls time out, and a timed-out flower gives no answer.
+- **Public cohort.** Graceful forgeries worked well enough to matter. Kenji found "my ORCHID (50 ms) scored the same
+  as my CLOVER (150 ms), ~934", after only speeding up the orchid. By game 3, 37% of rival-orchid visits answered
+  with the same graph shape, size and edge count as a rival clover's answer.
+- **Private cohort.** Paley chains scale with time (3× time, about 3× cliques), so the forgeries stayed visibly short.
+  Generator copies there were 0–5%.
+
+**5. Fitness, model gap, dynamism and social scores: unchanged.**
+- **Paired fitness (treatment − control).**
+  - Private cohort: −0.033 (n = 17); −0.008 over games 1–2, which excludes the 5-team game.
+  - Public cohort: +0.007 (n = 18).
+  - Notable individual results: Luna (sonnet) gained in all three public games (+0.32, +0.19, +0.23), with a
+    graceful clover from game 2. Rosa gained +0.55 in private game 1, with the first graceful clover. Grace (haiku)
+    lost 0.48 in public game 1.
+- **Winners.**
+
+  | cohort | game 1 | game 2 | game 3 |
+  |---|---|---|---|
+  | v3-hidden-treat | Kenji | Kenji | Kenji |
+  | v3-open-treat | Mallory | Kenji | Kenji |
+  | v3-hidden-control | Kenji | Mallory | Mallory (Kenji absent) |
+  | v3-open-control | Mallory | Mallory | Kenji |
+- **Model gap.**
+
+  | mean fitness | treatment | control |
+  |---|---|---|
+  | opus | 1.36 | 1.36 |
+  | haiku (Grace) | 0.72 | 0.80 |
+- **Dynamism.**
+
+  | | private treat | public treat | private control (g1–2) | public control |
+  |---|---|---|---|---|
+  | teams using each change turn | 0.60 | 0.63 | 0.65 | 0.58 |
+  | mean change (minified characters) | 447 | 422 | 425 | 429 |
+  | rank τ | 0.83 | 0.79 | 0.69 | 0.81 |
+
+  Answer-style turnover was low everywhere.
+- **Social scores:** 5.39 and 5.42 (treatment) against 5.04 and 5.40 (control).
+
+**6. Storage and spend.**
+- **Storage.** The example answers are large: a graceful answer is 512 nodes and 1,021 edges.
+
+  | | treatment cohorts | controls |
+  |---|---|---|
+  | DB visits per round | 5.9–17.5 MB (up to 9.9 KB per visit) | 1.1–5.3 MB |
+  | workspace logs per round | 25–100 MB | 4–25 MB |
+
+  Free disk fell from 30.8 to 27 GB over phase B, and the arena workspaces total 2.0 GB. The 4 GB disk guard never
+  fired.
+- **Spend.**
+
+  | cohort | USD | per game |
+  |---|---|---|
+  | v3-hidden-treat | $46.42 | $15.5 |
+  | v3-open-treat | $46.42 | $15.5 |
+  | v3-hidden-control | $37.35 | |
+  | v3-open-control | $41.92 | |
+  | **phase B total** | **$172.10** | |
+
+  - v3 total, §17 and §18: **$226.83**.
+  - The ledger ended at **$611.12** against the $660 cap.
+  - Calls killed by the restarts below are not in the ledger.
+
+### Caveats
+
+- **v3-hidden-control game 3 had 5 teams.** In round 1 the audit disqualified Kenji for a placeholder string `'..'`
+  inside `python3 -c`, a false positive. A round-1 disqualification leaves no programs, so his team sat the whole
+  game out. The fix had landed after Theo hit the same false positive in v3-open-treat game 1 round 3 (no effect: he
+  resubmitted his orchid unchanged), but it was not loaded yet.
+  - The runner was restarted at 17:05 to load it. 7 in-flight sessions were killed and re-run, and Kenji's
+    game-3 round-1 sessions in the other three cohorts then ran under the fixed audit.
+  - Use v3-hidden-control games 1–2 for the private-logs comparison.
+  - Violations 50 (Theo) and 57 (Kenji) are still labelled `violation` in `arena.violations`. Relabelling them
+    `false-positive` is pending a decision, after the permission classifier refused the update.
+- **Usage-limit pause.** The runner paused at 17:55 on the session limit. The container then restarted, and Postgres,
+  the port-4000 server and the runner were restarted; the pause was lifted at 18:57.
+  - v3-hidden-treat resumed in game 3 round 5, re-running the three turns not yet done.
+  - v3-open-treat re-ran its game-3 adoption classification.
+- **One replicate per arm, no second control.** The two controls drifted apart by as much as the treatment effects
+  on nectar and precision. The private-versus-public contrast also hangs on one early choice (Paley versus graceful)
+  by the same two players.
+- **Measurement.**
+  - The non-determinism measure needs a challenge asked twice in a round. It reads 0 when every bee asks fresh
+    challenges, as in v3-hidden-treat games 2–3.
+  - The Paley code markers undercount, as noted above.
+
 ## Most interesting games
 
 1. [/room/T/game/W](/room/T/game/W) baseline gen 2: primed lock-in, starter clovers with secret handshakes, one team
@@ -919,3 +1278,9 @@ it, but it makes a large replay table nearly free.
    remembers which answers paid (§16)
 10. [/room/K0/game/T](/room/K0/game/T) gx-control2 game 3: the same start relapses into secret handshakes; 15 of 30
     orchids copy their own clover
+11. [/room/5E/game/7](/room/5E/game/7) v3-hidden-treat game 2: the verification garden. Every bee asks a fresh
+    random number on every visit and grades Paley chains and graceful labellings with the shared checkers. It has the
+    highest nectar per turn of any v3 game (0.113) and no twin or stolen-face orchids (§18)
+12. [/room/4Z/game/V](/room/4Z/game/V) v3-open-treat game 3: the graceful forgery race. 37% of rival-orchid visits
+    answer with a rival clover's graph at a lower score, and Mallory's bee judges graceful answers by the solver's
+    "handwriting" (§18)
