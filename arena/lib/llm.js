@@ -212,6 +212,9 @@ const SESSION_PATH = ["/opt/node22/bin", "/usr/local/bin", "/usr/bin", "/bin"].j
 function runSessionCli({ model, cwd, appendSystem, prompt, maxTurns, maxBudgetUsd, transcriptFile, timeoutMs }) {
   return new Promise((resolve) => {
     const args = ["-p", "--model", model, "--tools", "Bash,Read,Write,Edit,Glob,Grep", "--permission-mode", "acceptEdits",
+      // The user explicitly approved a Python interpreter for team agents (this container is isolated and
+      // disposable), so they can analyse raw logs and test programs with scripts, not just grep/sort.
+      "--allowedTools", "Bash(python3:*)", "Bash(python:*)",
       "--max-turns", String(maxTurns), "--output-format", "stream-json", "--verbose", "--no-session-persistence",
       // A full system prompt (not appended): Claude Code's default one advertises an auto-memory directory under
       // ~/.claude/projects/ (outside the workspace, next to the other teams'), plus env and cwd details.
