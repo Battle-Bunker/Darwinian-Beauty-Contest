@@ -76,3 +76,4 @@ nsjail, or a WASM interpreter).
 | `AUTH_PROVIDER` | `dev` |
 | `COOKIE_SECURE` | unset (set `1` behind https) |
 | `MAX_CONCURRENT_ROUNDS` | `4` per server process |
+| `DEV_LOGIN_SECRET` | unset. When set, the dev name login also requires `{"secret"}` (for arena servers where AI teams must not sign in as each other) |
