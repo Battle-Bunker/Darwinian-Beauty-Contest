@@ -200,3 +200,7 @@ ALTER TABLE arena.entries ADD COLUMN IF NOT EXISTS sat_out boolean NOT NULL DEFA
 ALTER TABLE arena.games ADD COLUMN IF NOT EXISTS condition text;
 -- Games hit by an outage (e.g. the account session limit): excluded from metrics, leaderboards and selection.
 ALTER TABLE arena.games ADD COLUMN IF NOT EXISTS contaminated text;
+-- v2 phase: optional idea card given to a subset of teams (A = clover costly/keyed signals, B = bee detectors +
+-- rival-imitating orchids), and where a seeded persona came from.
+ALTER TABLE arena.personas ADD COLUMN IF NOT EXISTS idea_card text;
+ALTER TABLE arena.personas ADD COLUMN IF NOT EXISTS source text;

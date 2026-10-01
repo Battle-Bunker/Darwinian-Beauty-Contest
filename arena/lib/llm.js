@@ -7,7 +7,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { ARENA_DIR, one, q } from "./db.js";
 
-export const MODELS = ["fable", "opus", "sonnet", "haiku"];
+// No fable anywhere (user instruction for the v2 phase): team personas, judges and breeders use opus, sonnet, haiku.
+export const MODELS = ["opus", "sonnet", "haiku"];
 
 const EMPTY_CWD = path.join(ARENA_DIR, "runs", "cwd"); // no CLAUDE.md, no repo: nothing leaks into prompts
 fs.mkdirSync(EMPTY_CWD, { recursive: true });

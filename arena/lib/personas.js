@@ -160,7 +160,7 @@ cool to show your friends. Walls of text bore you, and big words you don't know 
 honest, and you can tell when someone is just showing off.`,
   },
   {
-    id: "hana", name: "Hana", age: 14, model: "fable",
+    id: "hana", name: "Hana", age: 14, model: "opus",
     prompt: `You are Hana, 14, captain of your school's robotics team. You're practical: does it work, could I build on it, would this
 person be a good teammate who explains things clearly? You can't stand buzzwords, copying without credit, or people who
 explain things to sound smart instead of to help. You give credit generously when it's earned.`,
@@ -174,7 +174,38 @@ to understand things you don't.`,
 ];
 
 export const BREEDERS = [
-  { id: "fern", name: "Fern", model: "fable" },
+  { id: "fern", name: "Fern", model: "opus" },
   { id: "oak", name: "Oak", model: "opus" },
   { id: "moss", name: "Moss", model: "sonnet" },
 ];
+
+// ---------------------------------------------------------------- v2 idea cards
+// The user's ideas, paraphrased (not solutions), given to a SUBSET of teams to test whether they perform well
+// and whether they spread. Who got which card is recorded in arena.personas.idea_card.
+const KEYED = {
+  graph: "for challenge x, the shortest-path length from node 0 to node (x mod p) could equal x mod p, or the graph could " +
+    "have separate components whose sizes are k times the prime factors of (x mod p)",
+  tree: "for challenge x, the depth, the number of leaves or a node's child count could be tied to x mod p, or subtrees " +
+    "could have sizes that are k times the prime factors of (x mod p)",
+  int: "for challenge x, the answer could satisfy an arithmetic relation tied to x mod p that is quick to check (say, a " +
+    "multiple of something derived from x, with a factor that is expensive to find)",
+};
+export function ideaCard(card, responseType) {
+  const kind = /graph/.test(responseType) ? "graph" : /tree/.test(responseType) ? "tree" : "int";
+  if (card === "A") return `Some players are exploring ideas like these. Use, adapt or ignore them.
+- Clover as a costly signal: a clover has three times an orchid's compute per question. Some players spend it on answers
+  that take real work to produce but are quick for a bee to check, e.g. searching for a bigger or more impressive
+  instance of a pattern than an imitator could build in a third of the time.
+- Challenge-keyed signals: make a checkable property of the answer depend on the challenge. For example, ${KEYED[kind]}.
+  Several independent signals can be stacked. Parameters like p or k are cheap to change between rounds, like a
+  password: your own bee can rediscover them by tasting, while imitators lag a round behind. A bigger k is a more
+  impressive instance that's harder to fake.`;
+  if (card === "B") return `Some players are exploring ideas like these. Use, adapt or ignore them.
+- Bees with a repertoire of detectors: fingerprint each flower on several properties that are hard to compute but easy to
+  check, and use MEMORY to track which properties actually separated generous flowers from fakes in earlier rounds. Keep
+  asking after you feed at a generous flower, to learn its pattern.
+- Orchids that imitate other teams' clovers, never their own: a good copy of your own clover teaches discerning bees to
+  feed at your patch less. The orchid's bigger code and change budgets leave room for efficient imitations of rival
+  signals.`;
+  return null;
+}

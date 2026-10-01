@@ -9,7 +9,7 @@ import { retryPrompt, teamRoundPrompt, teamSystem } from "./prompts.js";
 const KINDS = ["clover", "orchid", "bee"];
 const MAX_RETRIES = 2;
 // Haiku at medium effort thinks for 10k+ tokens (slower and pricier than sonnet), so it runs at low.
-const EFFORT = { haiku: "low", sonnet: "medium", opus: "medium", fable: "medium", ...JSON.parse(process.env.ARENA_TEAM_EFFORT || "{}") };
+const EFFORT = { haiku: "low", sonnet: "medium", opus: "medium", ...JSON.parse(process.env.ARENA_TEAM_EFFORT || "{}") };
 
 function parseType(s) {
   s = s.trim();

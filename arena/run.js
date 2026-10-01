@@ -48,14 +48,30 @@ async function ensureArena(id, presetName, generations) {
   const owner = `Arena owner ${id}`;
   const tok = await login(owner);
   const room = await Api.createRoom(tok);
-  const settings = { config: preset.config, teams: preset.lineup.length, generations, description: preset.description, recap: preset.recap || "full", unprimed: true, budgetUsd: args.budget ? Number(args.budget) : null };
+  const settings = { config: preset.config, teams: preset.lineup.length, generations, description: preset.description, recap: preset.recap || "full", unprimed: true, condition: preset.condition || null, budgetUsd: args.budget ? Number(args.budget) : null };
   await q("INSERT INTO arena.arenas (id, preset, settings, owner_name, room_short_id, room_url) VALUES ($1,$2,$3,$4,$5,$6)",
     [id, presetName, settings, owner, room.shortId, room.url]);
-  for (const [slug, model] of preset.lineup) {
-    const f = FOUNDERS.find((x) => x.slug === slug);
-    await q(`INSERT INTO arena.personas (id, arena_id, slug, name, team_name, model, archetype, is_kid, persona_prompt, generation_born)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,1)`, [`${id}/${slug}`, id, slug, f.name, f.teamName, model, f.archetype, f.isKid, f.prompt]);
-    await q("INSERT INTO arena.population_events (arena_id, generation, persona_id, event, reason) VALUES ($1,1,$2,'born','founder')", [id, `${id}/${slug}`]);
+  for (const [source, model, card] of preset.lineup) {
+    if (model === "fable") throw new Error("no fable personas (v2 phase rule)");
+    let row;
+    if (source.startsWith("from:")) {
+      // A strong persona from an earlier arena: same prompt and team, plus its last notebook (marked as v1 notes).
+      const src = await one("SELECT * FROM arena.personas WHERE id = $1", [source.slice(5)]);
+      if (!src) throw new Error(`unknown source persona ${source}`);
+      const nb = src.notebook ? `(Your notes from an earlier tournament, under older rules: 100 turns per round, no MEMORY, no asks after feeding, ` +
+        `different budgets. Some of it may not apply any more.)\n${src.notebook}` : "";
+      row = { slug: src.slug, name: src.name, teamName: src.team_name, archetype: src.archetype, isKid: src.is_kid, prompt: src.persona_prompt, notebook: nb, source: src.id };
+    } else {
+      const slug = source.replace(/^founder:/, "");
+      const f = FOUNDERS.find((x) => x.slug === slug);
+      if (!f) throw new Error(`unknown founder ${slug}`);
+      row = { slug, name: f.name, teamName: f.teamName, archetype: f.archetype, isKid: f.isKid, prompt: f.prompt, notebook: "", source: "founder" };
+    }
+    const pid = `${id}/${row.slug}`;
+    await q(`INSERT INTO arena.personas (id, arena_id, slug, name, team_name, model, archetype, is_kid, persona_prompt, generation_born, notebook, idea_card, source)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,1,$10,$11,$12)`, [pid, id, row.slug, row.name, row.teamName, model, row.archetype, row.isKid, row.prompt, row.notebook, card || null, row.source]);
+    await q("INSERT INTO arena.population_events (arena_id, generation, persona_id, event, reason, details) VALUES ($1,1,$2,'born',$3,$4)",
+      [id, pid, row.source === "founder" ? "founder" : `seeded from ${row.source}`, JSON.stringify({ ideaCard: card || null })]);
   }
   return one("SELECT * FROM arena.arenas WHERE id = $1", [id]);
 }
@@ -144,7 +160,7 @@ async function playGame(arena, generation, { ownerTok, gameRow, gPath, entries }
   let view = await Api.view(ownerTok, gPath);
   const rounds = view.game.config.rounds;
   if (!gameRow.condition) {
-    const condition = arena.settings.unprimed ? "unprimed" : "post-primed";
+    const condition = arena.settings.condition || (arena.settings.unprimed ? "unprimed" : "post-primed");
     await q("UPDATE arena.games SET condition = $2 WHERE id = $1 AND condition IS NULL", [gameRow.id, condition]);
   }
   for (let r = view.game.roundsPlayed + 1; r <= rounds; r++) {

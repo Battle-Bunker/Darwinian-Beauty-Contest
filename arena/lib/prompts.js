@@ -257,7 +257,7 @@ ${ledgerText(ideas, 80)}
 ${exemplars}
 
 # Your task
-Fill one open slot in arena "${arena.id}". The new team agent will run on model "${slot.model}"${slot.model === "haiku" ? " (the smallest, fastest model: keep the persona's approach simple and robust)" : slot.model === "fable" ? " (the strongest model)" : ""}.
+Fill one open slot in arena "${arena.id}". The new team agent will run on model "${slot.model}"${slot.model === "haiku" ? " (the smallest, fastest model: keep the persona's approach simple and robust)" : slot.model === "opus" ? " (the strongest model in this arena)" : ""}.
 It replaces "${slot.replacing}" (retired: ${slot.reason}).
 Write a persona that will do well on game fitness AND with the teen judges, and that is different from the existing population.
 

@@ -64,4 +64,28 @@ export const PRESETS = {
     },
     lineup: [["theo", "fable"], ["mallory", "opus"], ["priya", "sonnet"], ["tess", "sonnet"], ["jayden", "haiku"], ["echo", "haiku"]],
   },
+  // ---- engine v2 phase: no fable; v2 defaults (100 turns per flower, MEMORY, asks after feeding, asymmetric budgets).
+  // Lineup entries: [source, model, ideaCard?] where source is a founder slug, "founder:<slug>", or "from:<persona id>"
+  // (a strong persona from an earlier arena: same prompt, plus its last notebook marked as notes from v1).
+  "v2-graphs": {
+    description: "Engine v2, python, int→graph, v2 defaults, 6 teams, 5 rounds (main v2 arena)",
+    config: { language: "python", challengeType: "int", responseType: "graph", rounds: 5 },
+    condition: "v2",
+    lineup: [["from:graphs/mallory", "opus"], ["from:norecap/kenji", "opus"], ["from:graphs/theo", "sonnet"],
+      ["founder:luna", "sonnet", "A"], ["from:baseline/rosa-12", "sonnet"], ["founder:grace", "haiku", "B"]],
+  },
+  "v2-trees": {
+    description: "Engine v2, python, int→tree[int], v2 defaults, 6 teams, 5 rounds",
+    config: { language: "python", challengeType: "int", responseType: "tree[int]", rounds: 5 },
+    condition: "v2",
+    lineup: [["from:trees/koan", "opus"], ["from:trees/ava", "opus", "A"], ["from:trees/rosalind", "sonnet"],
+      ["founder:zoe", "sonnet"], ["founder:priya", "sonnet"], ["from:trees/kit", "haiku", "B"]],
+  },
+  "v2-ints": {
+    description: "Engine v2, python, int→int, v2 defaults, 6 teams, 5 rounds",
+    config: { language: "python", challengeType: "int", responseType: "int", rounds: 5 },
+    condition: "v2",
+    lineup: [["from:unprimed/nash", "opus", "B"], ["from:lists/ada", "opus"], ["founder:tess", "sonnet", "A"],
+      ["founder:milo", "sonnet"], ["from:norecap/wren-12", "sonnet"], ["founder:gremlin", "haiku"]],
+  },
 };
