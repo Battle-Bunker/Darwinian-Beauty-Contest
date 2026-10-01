@@ -63,6 +63,24 @@ for (const a of arenas) {
   }
   table(["gen.round", "feeds", "precision", "feed rate", "bees not feeding", "orchid feed share", "orchid self-mimic", "orchid cross-mimic", "clover agreement", "top challenge share", "distinct 1st challenges", "asks/visit", "rank tau", "fit std", "edits c/o/b", "error rate", "timeouts", "self-feed", "flags"], rrows);
   p(`</details>\n`);
+  // Winners, social tops and new ideas per generation; dominance across generations.
+  p("Per generation: fitness winner, social winner, ideas new to the ledger (by team):");
+  const winners = [];
+  for (const g of games) {
+    const ent = await all("SELECT e.*, p.name, p.model, p.archetype FROM arena.entries e JOIN arena.personas p ON p.id = e.persona_id WHERE game_id = $1", [g.id]);
+    const fw = [...ent].filter((e) => e.fitness != null).sort((x, y) => y.fitness - x.fitness)[0];
+    const sw = [...ent].filter((e) => e.social != null).sort((x, y) => y.social - x.social)[0];
+    if (fw) winners.push(fw);
+    const ni = await all(`SELECT i.tag, string_agg(DISTINCT e.team_name, ', ') AS teams FROM arena.idea_sightings s JOIN arena.ideas i ON i.id = s.idea_id
+                            JOIN arena.entries e ON e.game_id = s.game_id AND e.persona_id = s.persona_id WHERE s.game_id = $1 AND s.new_in_game GROUP BY i.tag ORDER BY i.tag`, [g.id]);
+    p(`- gen ${g.generation}: fitness ${fw ? `${fw.team_name} (${fw.name}, ${fw.model}) ${f2(fw.fitness)}` : "-"}; social ${sw ? `${sw.team_name} ${f2(sw.social)}` : "-"}; new ideas: ${ni.map((x) => `${x.tag} [${x.teams}]`).join("; ") || "none"}`);
+  }
+  let streak = 1, best = 1;
+  for (let i = 1; i < winners.length; i++) { streak = winners[i].persona_id === winners[i - 1].persona_id ? streak + 1 : 1; best = Math.max(best, streak); }
+  const archWins = {};
+  winners.forEach((w) => (archWins[w.archetype] = (archWins[w.archetype] || 0) + 1));
+  p(`\nLongest winning streak by one persona: ${best}. Wins by archetype: ${Object.entries(archWins).map(([k, v]) => `${k} ${v}`).join(", ")}.`);
+  p();
   // Population events
   const ev = await all(`SELECT e.*, p.name, p.team_name, p.model, p.archetype FROM arena.population_events e JOIN arena.personas p ON p.id = e.persona_id WHERE e.arena_id = $1 AND e.event IN ('retired','born') AND e.generation > 1 ORDER BY e.generation, e.id`, [a.id]);
   if (ev.length) {
