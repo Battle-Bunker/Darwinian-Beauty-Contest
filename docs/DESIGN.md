@@ -169,3 +169,23 @@ The expected dynamic is that discernment becomes consequential:
 - A team's orchid should now steer clear of its *own* clover. A successful imitation would make discerning bees feed there less.
 - Orchids should chase other teams' signals instead.
 - Clovers should lean into whichever hard-to-compute, easy-to-check properties prove most discriminating.
+
+## Engine v3: flowers are stateless, not pure
+
+Under v2 a flower was a pure function: a fixed random seed, no clock, one cached answer per challenge
+per round. The cohort games showed what that does (arena/REPORT.md §16). A bee asks the same number at
+every visit and treats the answer as the flower's face. It tastes each face once and remembers which
+faces paid. A clover with a secret hash key then has a face nobody can forge, and it costs nothing to
+produce. Recognition came from repetition, not from any signal of effort.
+
+In v3 (`pureFlowers: false`, the default), flowers are still stateless: the whole program runs fresh for
+every call, so nothing carries over between questions. But each call gets fresh randomness and the
+clock (`time`, `Date.now()`) and can read its own budget as `GAME.ms`. A clover can run an anytime
+search, such as a local search for a big clique or an untangling with few crossings, and answer with
+the best result it found within 150 ms. An orchid has 50 ms to fake one. Bees then judge how good an
+answer is, not whether they have seen it before. The engine no longer caches answers, so every ask runs
+the flower again and its compute stats count every call.
+
+What v3 does not prevent: a team can still choose to write a deterministic clover, since nothing forces a
+flower to use randomness. Such a clover can still be fingerprinted by repeating a question. Whether the
+effort signal outcompetes that is what the v3 games test.

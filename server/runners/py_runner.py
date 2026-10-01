@@ -1,6 +1,9 @@
 # Python runner for Darwinian Beauty Contest programs.
 #   python3 py_runner.py flower   — stateless: every call forks a fresh process that runs the
-#                                   whole program from scratch, then calls flower(challenge)
+#                                   whole program from scratch, then calls flower(challenge).
+#                                   Unless the game has pure flowers, `random` is freshly seeded on
+#                                   every call and `time` is available, so a flower can run an
+#                                   anytime search until its budget (GAME["ms"]) is nearly spent.
 #   python3 py_runner.py bee      — stateful for one round: module globals persist between calls,
 #                                   and earlier rounds' globals arrive read-only as MEMORY
 # Protocol: JSON lines on stdin/stdout. First line is the setup {code, ms, seed, game, maxChars, memory}.
@@ -14,14 +17,16 @@ ALLOWED_MODULES = {
     "re", "json", "bisect", "heapq", "statistics", "fractions", "decimal", "operator", "typing",
     "dataclasses", "enum", "zlib", "struct", "binascii", "base64", "copy", "numbers", "array",
 }
-for _m in ALLOWED_MODULES:
+CLOCK_MODULES = {"time"}  # only when the game's flowers aren't pure functions
+for _m in ALLOWED_MODULES | CLOCK_MODULES:
     __import__(_m)  # pre-import so forked flowers start fast
 
 _real_import = builtins.__import__
+_allowed = set(ALLOWED_MODULES)
 
 
 def _safe_import(name, globals=None, locals=None, fromlist=(), level=0):
-    if level != 0 or name.split(".")[0] not in ALLOWED_MODULES:
+    if level != 0 or name.split(".")[0] not in _allowed:
         raise ImportError(f"module '{name}' is not allowed in this game")
     return _real_import(name, globals, locals, fromlist, level)
 
@@ -162,7 +167,10 @@ def run_flower(setup):
             os.dup2(devnull, 2)
             out = {}
             try:
-                random.seed(0)
+                if setup.get("pure", True):
+                    random.seed(0)
+                else:
+                    random.seed()  # fresh entropy: the forked child would otherwise repeat the parent's sequence
                 cpu_timer(ms / 1000)
                 ns = fresh_namespace(setup["game"])
                 exec(code, ns)
@@ -296,4 +304,6 @@ if __name__ == "__main__":
     except (ValueError, OSError):
         pass
     setup = json.loads(sys.stdin.readline())
+    if setup.get("clock"):
+        _allowed |= CLOCK_MODULES
     (run_flower if sys.argv[1] == "flower" else run_bee)(setup)

@@ -68,6 +68,8 @@ function configText(view, nTeams) {
     `Rounds in this game: ${c.rounds}. Turns per bee per round: ${c.turns}. Feed cost: ${c.feedCost} turns (an ask costs 1).`,
     `Teams: ${nTeams}, so the garden has ${2 * nTeams} flowers. Flower logs: ${c.flowerLogs ? "ON" : "OFF"}. Code revealed after the game: ${c.revealOnFinish ? "yes" : "no"}.`,
     `Budgets (complexity nodes / change edits per round / ms per call): clover ${b.clover.nodes}/${b.clover.changes}/${b.clover.ms}, orchid ${b.orchid.nodes}/${b.orchid.changes}/${b.orchid.ms}, bee ${b.bee.nodes}/${b.bee.changes}/${b.bee.ms}.`,
+    c.pureFlowers ? `Flowers are pure functions: fixed random seed, no clock, the same challenge always gets the same answer.`
+      : `Flowers are stateless but not pure: every call runs fresh with new randomness and the clock, so they can search until their budget (GAME["ms"]) is nearly spent; the same challenge can get different answers.`,
     `Rough edit costs: change a constant = 1, add a term to an expression = 2, a new "if x == k: return v" branch = about 7, renaming a variable = 1 per use. Comments cost 0. Each string-literal character costs 1 complexity node (editing a string's text is about 1 edit).`,
   ].join("\n");
 }
@@ -154,7 +156,7 @@ Reply with <explanation>...</explanation>`;
 export const GAME_SUMMARY = `Darwinian Beauty Contest: each team writes three programs. A clover is an honest flower (bees that feed there get nectar).
 An orchid is a trick flower (bees that feed there get nothing, but the orchid's team still gets the credit for the visit).
 A bee visits flowers one at a time; it can ask a flower a question (a "challenge", costs 1 turn) and see its answer, then feed
-(costs several turns) or leave. Flowers always give the same answer to the same question and can't tell who's asking.
+(costs several turns) or leave. Flowers keep nothing from one question to the next and can't tell who's asking.
 A team scores when bees from many different teams feed at its flowers, and when its own bee finds real nectar at many different teams' clovers.`;
 
 export function judgeSystem(judge) {

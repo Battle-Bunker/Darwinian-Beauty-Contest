@@ -14,6 +14,7 @@ export const DEFAULT_CONFIG = Object.freeze({
   beeMemoryKb: 256,            // max size of what a bee keeps from one round to the next
   flowerLogs: true,            // after each round, flower owners see who asked their flowers what
   revealOnFinish: true,        // when the game ends, everyone can see all code and all logs
+  pureFlowers: false,          // old rules: flowers are pure functions (fixed random seed, no clock)
   // The orchid is the reference point:
   //   clover: half the orchid's complexity, 3× its compute: honest flowers can prove they spent effort
   //   orchid: room to build elaborate imitations and to change tack between rounds (70% change budget)
@@ -49,6 +50,7 @@ export function normalizeConfig(input = {}, base = DEFAULT_CONFIG) {
     beeMemoryKb: int(c.beeMemoryKb, 0, 4096, base.beeMemoryKb ?? DEFAULT_CONFIG.beeMemoryKb),
     flowerLogs: bool(c.flowerLogs, base.flowerLogs),
     revealOnFinish: bool(c.revealOnFinish, base.revealOnFinish),
+    pureFlowers: bool(c.pureFlowers, base.pureFlowers ?? false),
     budgets: {},
   };
   for (const kind of ["clover", "orchid", "bee"]) {

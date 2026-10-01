@@ -19,6 +19,7 @@ export interface GameConfig {
   beeMemoryKb?: number;     // what a bee keeps between rounds for MEMORY
   flowerLogs: boolean;
   revealOnFinish: boolean;
+  pureFlowers?: boolean;
   budgets: Record<Kind, Budget>;
 }
 

@@ -55,7 +55,7 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
   "language": "python",
   "rounds": 5, "turnsPerFlower": 100, "turns": null, "feedCost": 5,
   "challengeType": "int", "responseType": "int", "maxLen": 64, "maxNodes": 512, "beeMemoryKb": 256,
-  "flowerLogs": true, "revealOnFinish": true,
+  "flowerLogs": true, "revealOnFinish": true, "pureFlowers": false,
   "budgets": {
     "clover": { "nodes": 150, "changes": 30,  "ms": 150 },
     "orchid": { "nodes": 300, "changes": 210, "ms": 50 },
@@ -68,6 +68,10 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
   `turns` overrides this with a fixed number when set.
 - `maxLen` bounds strings and lists. `maxNodes` bounds trees and graphs (graphs: ≤ 4 × maxNodes edges).
 - `beeMemoryKb`: how much of a bee's top-level data is kept each round for `MEMORY`. 0 turns memory off.
+- `pureFlowers` (default false): the old rules. Flowers get a fixed random seed and no clock, and the engine
+  computes one answer per flower per distinct challenge per round. When false, flowers are still stateless
+  (fresh process or context per call) but get fresh randomness every call and the clock, every ask runs
+  the flower again, and programs can read `GAME.ms`, their own compute budget per call.
 - `ms` is wall-clock time per call. The engine runs at most one program per CPU core, so this is
   effectively CPU time.
 

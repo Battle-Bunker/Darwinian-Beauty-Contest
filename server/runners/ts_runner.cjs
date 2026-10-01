@@ -1,5 +1,7 @@
 // TypeScript runner for Darwinian Beauty Contest programs (types are stripped, then run in a vm).
-//   node ts_runner.cjs flower — stateless: every call runs the program in a brand-new context
+//   node ts_runner.cjs flower — stateless: every call runs the program in a brand-new context.
+//                               Unless the game has pure flowers, Math.random is the context's own
+//                               (unseeded) generator and Date.now() works, for anytime searches.
 //   node ts_runner.cjs bee    — stateful for one round: one context reused between calls, and
 //                               earlier rounds' top-level variables arrive read-only as MEMORY
 // Protocol: JSON lines on stdin/stdout. First line is the setup {code, ms, seed, game, maxChars, memory}.
@@ -13,19 +15,20 @@ const { stripTypeScriptTypes } = require("node:module");
 const out = (o) => process.stdout.write(JSON.stringify(o) + "\n");
 const short = (e) => String((e && e.message) || e).slice(0, 300);
 
-// Runs inside each context before the program: deterministic Math.random, no clock, captured console,
-// and (for bees) MEMORY rebuilt from earlier rounds' snapshots as deeply read-only values.
-const PRELUDE = (seed, game, memory) => `
+// Runs inside each context before the program: a seeded Math.random (unless `random`), the clock only
+// when `clock`, captured console, and (for bees) MEMORY rebuilt from earlier rounds' snapshots as
+// deeply read-only values.
+const PRELUDE = (seed, game, memory, { random = false, clock = false } = {}) => `
 (() => {
   let s = ${seed >>> 0};
-  Math.random = () => { s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s);
+  if (!${random}) Math.random = () => { s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s);
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
   const buf = [];
   globalThis.__out = buf;
   const log = (...a) => { if (buf.join("").length < 2000) buf.push(a.map((x) => typeof x === "string" ? x : JSON.stringify(x)).join(" ") + "\\n"); };
   globalThis.console = { log, error: log, warn: log, info: log };
   globalThis.GAME = Object.freeze(${JSON.stringify(game)});
-  delete globalThis.Date;
+  if (!${clock}) delete globalThis.Date;
   const readOnly = () => { throw new TypeError("MEMORY is read-only: copy it first, e.g. new Map(m), [...a] or {...o}"); };
   class FrozenMap extends Map {}
   FrozenMap.prototype.set = FrozenMap.prototype.delete = FrozenMap.prototype.clear = readOnly;
@@ -87,7 +90,7 @@ lines.on("line", (line) => {
     if (process.argv[2] === "bee" && !loadError) {
       try {
         ctx = newContext();
-        vm.runInContext(PRELUDE(setup.seed || 0, setup.game, setup.memory), ctx);
+        vm.runInContext(PRELUDE(setup.seed || 0, setup.game, setup.memory, { clock: !!setup.clock }), ctx);
         vm.runInContext("globalThis.__seen = [];", ctx);
         script.runInContext(ctx, { timeout: setup.ms * 10 });
         if (vm.runInContext("typeof __fns.forage", ctx) !== "function") throw new Error("program must define function forage(seen, turnsLeft)");
@@ -102,7 +105,7 @@ lines.on("line", (line) => {
   try {
     if (process.argv[2] === "flower") {
       const c = newContext();
-      vm.runInContext(PRELUDE(0, setup.game, []), c);
+      vm.runInContext(PRELUDE(0, setup.game, [], { random: setup.pure === false, clock: !!setup.clock }), c);
       script.runInContext(c, { timeout: setup.ms });
       if (vm.runInContext("typeof __fns.flower", c) !== "function") throw new Error("program must define function flower(challenge)");
       // The remaining budget isn't tracked separately: module setup + call each get the full budget.

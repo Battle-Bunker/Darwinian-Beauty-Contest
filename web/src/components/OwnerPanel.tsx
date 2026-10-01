@@ -108,6 +108,7 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
       <div className="settings-checks">
         <label className="check"><input type="checkbox" checked={draft.flowerLogs} onChange={(e) => set("flowerLogs", e.target.checked)} /> Flower logs: teams see what bees asked their flowers</label>
         <label className="check"><input type="checkbox" checked={draft.revealOnFinish} onChange={(e) => set("revealOnFinish", e.target.checked)} /> Reveal all code and logs when the game ends</label>
+        <label className="check"><input type="checkbox" checked={!!draft.pureFlowers} onChange={(e) => set("pureFlowers", e.target.checked)} /> Old rules: flowers are pure functions (fixed random seed, no clock)</label>
       </div>
       <div className="table-scroll">
         <table className="data-table budgets">
@@ -154,6 +155,7 @@ export function SettingsSummary({ cfg, turnsNow }: { cfg: GameConfig; turnsNow?:
         {cfg.beeMemoryKb !== undefined && <span className="chip">{cfg.beeMemoryKb ? `bee memory ${cfg.beeMemoryKb} KB` : "bee memory off"}</span>}
         <span className="chip">{cfg.flowerLogs ? "flower logs on" : "flower logs off"}</span>
         <span className="chip">{cfg.revealOnFinish ? "code revealed at the end" : "code stays secret"}</span>
+        {cfg.pureFlowers && <span className="chip">pure flowers (old rules)</span>}
       </div>
       <div className="table-scroll">
         <table className="data-table budgets compact">

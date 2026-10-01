@@ -45,9 +45,17 @@ values. Only plain data is kept: numbers, strings, `True`/`False`/`None`, lists,
 (in TypeScript: arrays, objects, `Map` and `Set`). `MEMORY` is read-only, so copy what you want to
 change, e.g. `tally = dict(MEMORY[-1]["tally"]) if MEMORY else {}`. Each round can keep up to 256 KB.
 
-**Flowers remember nothing.** A flower is a *pure function*: the same challenge always gets the same
-response. The whole flower program runs fresh for every single question, and `random` always starts
-from the same seed. That means a flower can't count visitors or change its mind during a round.
+**Flowers remember nothing, but they don't have to repeat themselves.** The whole flower program runs
+fresh for every single question, so nothing survives from one call to the next: a flower can't count
+visitors or change its mind during a round. Within one call, though, a flower can use `random` (freshly
+seeded every call) and the clock (`import time`; in TypeScript `Math.random()` and `Date.now()`). So
+it can run a search or an optimisation until its compute budget is nearly spent and answer with the best
+result it found. The same challenge can get a different answer every time. `GAME["ms"]` (TypeScript:
+`GAME.ms`) is your program's own budget per call in milliseconds. The clock starts when your program
+starts, so stop with a margin to spare: a flower that runs out of time gives no answer at all.
+
+(A game can switch on the old rules, `pureFlowers`: then `random` starts from the same seed every time,
+there is no clock, and the same challenge always gets the same response.)
 
 **Nobody knows who's who.** Programs never learn which team a flower or bee belongs to.
 
@@ -127,8 +135,10 @@ between rounds only when you change their code.
 
 Python programs may import `math`, `random`, `hashlib`, `string`, `itertools`, `functools`,
 `collections`, `re`, `json`, `bisect`, `heapq`, `statistics`, `fractions`, `decimal`, `operator`,
-`typing`, `dataclasses`, `enum`, `zlib`, `struct`, `binascii`, `base64`, `copy`, `numbers`, `array`.
-TypeScript programs get the standard JavaScript built-ins except `Date`.
+`typing`, `dataclasses`, `enum`, `zlib`, `struct`, `binascii`, `base64`, `copy`, `numbers`, `array`,
+and `time`. TypeScript programs get the standard JavaScript built-ins, including `Date`. (With the old
+`pureFlowers` rules there is no clock: no `time`, no `Date`.) A bee's `random` is seeded once per
+round, so it varies from round to round.
 
 ## Budgets
 
@@ -144,7 +154,9 @@ programs get **different** budgets on purpose, measured against the orchid:
 Why it's lopsided:
 - **Clovers** are small but powerful: they can spend 3× an orchid's compute on every answer. That
   makes effort a signal. An answer that takes real work to produce, like a big graph that fits a
-  tricky rule, is hard for an orchid to fake in a third of the time.
+  tricky rule, is hard for an orchid to fake in a third of the time. With randomness and a clock, a
+  clover can search for as long as its budget allows and return the best it found, so how good its
+  answers are shows how hard it worked.
 - **Orchids** get more code and can change a lot between rounds. They make up for less compute with
   cleverness: a faster way to produce the same kind of answer, or a shallower look-alike.
 - **Bees** get lots of code for a whole kit of detectors, but only a little time per decision. So the
