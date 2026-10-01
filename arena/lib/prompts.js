@@ -301,7 +301,7 @@ Comments are free: they never count toward any budget. The change budget counts 
 played last round, so keep each round's changes focused.
 
 # Fair play (breaking these disqualifies your team for the round)
-- Use only the files in this workspace. Do not read or list any other directory.
+- Use only the files in this workspace. Do not read, list or write any other directory (not even /tmp).
 - Do not access the database, the network, the game server, or other teams' data.
 - Do not log in as anyone, and do not print or inspect environment variables.
 ${card ? `
