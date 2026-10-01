@@ -162,11 +162,100 @@ export async function playTurn(ctx) {
 /** Post-game interview: "teach us your code". Same system prompt as the team turns (cache-friendly). */
 export async function interview({ arena, gameRow, persona, entry, gPath, buildPrompt }) {
   const tok = await login(entry.login_name);
-  const view = await Api.view(tok, gPath);
+  const view = await Api.view(tok, gPath, "none");
   const system = teamSystem(persona, view.game.config);
   const notebook = (await all("SELECT notebook FROM arena.personas WHERE id = $1", [persona.id]))[0]?.notebook || "";
   const prompt = buildPrompt(view, persona, { notebook });
   const r = await callModel({ model: persona.model, system, prompt, effort: "low", ctx: { purpose: "interview", arenaId: arena.id, gameId: gameRow.id, personaId: persona.id } });
   const ex = (extractTag(r.text, "explanation") || r.text).trim().slice(0, 4000);
   return ex;
+}
+
+// ---------------------------------------------------------------- tool-using team turn (engine v2 phase)
+import path from "node:path";
+import { runSession } from "./llm.js";
+import { roundBrief, toolSystem } from "./prompts.js";
+import { TRANSCRIPTS, audit, collect, prepareWorkspace, recordViolations } from "./workspace.js";
+
+export const SESSION_LIMITS = {
+  // max agent turns and USD per session, by model (tuned after the pilot)
+  opus: { turns: 30, usd: 2.5 }, sonnet: { turns: 30, usd: 1.0 }, haiku: { turns: 25, usd: 0.6 },
+  ...JSON.parse(process.env.ARENA_SESSION_LIMITS || "{}"),
+};
+
+/** One team's turn before a round, as a tool-using session in its workspace. Returns { submitted, failed, cost, satOut, disqualified }. */
+export async function playTurnTools(ctx) {
+  const { arena, gameRow, persona, entry, gPath, roundNo, log } = ctx;
+  const tok = await login(entry.login_name);
+  const { dir, ext, view, card } = await prepareWorkspace({ arena, gameRow, persona, entry, gPath, roundNo });
+  const config = view.game.config;
+  const lim = SESSION_LIMITS[persona.model];
+  const system = toolSystem(persona, config, card);
+  const prev = roundNo > 1 ? view.myTeam?.previous || {} : {};
+  let cost = 0, failures = [], disqualified = false;
+  const submitted = new Set();
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const fix = attempt ? failures.map((f) => `- ${f.kind}: ${f.errors.join("; ")}`).join("\n") : null;
+    const maxTurns = attempt ? Math.min(15, lim.turns) : lim.turns;
+    const transcript = path.join(TRANSCRIPTS, arena.id, persona.slug, `g${gameRow.generation}-r${roundNo}-a${attempt}.jsonl`);
+    let s;
+    try {
+      s = await runSession({
+        model: persona.model, cwd: dir, appendSystem: system, maxTurns, maxBudgetUsd: attempt ? lim.usd / 3 : lim.usd, transcriptFile: transcript,
+        prompt: roundBrief({ view, entry, generation: gameRow.generation, roundNo, maxTurns, ext, fix }),
+        ctx: { purpose: attempt ? "team-fix" : "team-session", arenaId: arena.id, gameId: gameRow.id, personaId: persona.id },
+      });
+    } catch (e) {
+      if (e instanceof BudgetError) throw e;
+      log(`  ${persona.name}: session failed: ${e.message}`);
+      break;
+    }
+    cost += s.cost;
+    // Fair-play audit: a violation disqualifies this round's code (previous programs carry over).
+    const found = audit(transcript, dir, arena.id, persona.slug);
+    await recordViolations({ arena, gameRow, persona, roundNo, attempt, found });
+    if (found.some((f) => f.severity === "violation")) {
+      disqualified = true;
+      log(`  ${persona.name}: DISQUALIFIED for round ${roundNo}: ${found.filter((f) => f.severity === "violation").map((f) => f.detail.slice(0, 120)).join(" | ")}`);
+      if (roundNo > 1) for (const k of KINDS) if (prev[k] !== undefined) await Api.submit(tok, gPath, k, prev[k]); // overwrite anything it submitted itself
+      break;
+    }
+    const files = collect(dir, ext);
+    if (files.notes !== null) await q("UPDATE arena.personas SET notebook = $2 WHERE id = $1", [persona.id, files.notes]);
+    // Validate and submit what changed (round 1: everything). Flowers first so the bee test forages the new flowers.
+    failures = [];
+    const checks = [], good = {};
+    for (const kind of KINDS) {
+      const code = files[kind];
+      if (roundNo > 1 && code === prev[kind]) continue; // unchanged: carries over
+      if (!code.trim()) { if (roundNo === 1) failures.push({ kind, code, errors: [`${kind}.${ext} is empty`] }); continue; }
+      const v = await validate(tok, gPath, kind, code, config);
+      if (kind === "bee" && !v.errors.length) v.errors.push(...(await beeRuntime(tok, gPath, code, Object.keys(good).length ? good : undefined)));
+      checks.push({ kind, nodes: v.nodes, distance: v.distance, errors: v.errors });
+      if (v.errors.length) { failures.push(v); continue; }
+      const r = await Api.submit(tok, gPath, kind, code);
+      if (r.submitted) { submitted.add(kind); if (kind !== "bee") good[kind] = code; }
+      else failures.push({ ...v, errors: r.errors || ["not accepted"] });
+    }
+    await q("INSERT INTO arena.agent_turns (game_id, persona_id, round_no, attempt, prompt_chars, reply, parsed, checks, submitted, notes, cost_usd) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+      [gameRow.id, persona.id, roundNo, attempt, system.length, (s.text || "").slice(0, 20000), JSON.stringify({ turns: s.turns, subtype: s.subtype, ms: s.ms }),
+        JSON.stringify(checks), JSON.stringify([...submitted]), files.notes, s.cost]);
+    if (!failures.length) break;
+    log(`  ${persona.name} r${roundNo} attempt ${attempt + 1}: ${failures.map((f) => `${f.kind}: ${f.errors.join("; ").slice(0, 140)}`).join(" | ")}`);
+  }
+
+  let satOut = false;
+  if (roundNo === 1) {
+    const v = await Api.view(tok, gPath, "none");
+    const missing = KINDS.filter((k) => !v.myTeam.drafts[k]);
+    if (missing.length) {
+      satOut = true;
+      log(`  ${persona.name}: SITS OUT this game (no valid ${missing.join(", ")})`);
+      await q("UPDATE arena.entries SET sat_out = true WHERE game_id = $1 AND persona_id = $2", [gameRow.id, persona.id]);
+    }
+  }
+  const failed = failures.map((f) => f.kind).filter((k) => !submitted.has(k));
+  if (failed.length) await q("UPDATE arena.entries SET agent_errors = agent_errors + $3 WHERE game_id = $1 AND persona_id = $2", [gameRow.id, persona.id, failed.length]);
+  return { submitted: [...submitted], failed, cost, satOut, disqualified };
 }

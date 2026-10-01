@@ -70,22 +70,29 @@ export const PRESETS = {
   "v2-graphs": {
     description: "Engine v2, python, int→graph, v2 defaults, 6 teams, 5 rounds (main v2 arena)",
     config: { language: "python", challengeType: "int", responseType: "graph", rounds: 5 },
-    condition: "v2",
+    condition: "v2", mode: "tools",
     lineup: [["from:graphs/mallory", "opus"], ["from:norecap/kenji", "opus"], ["from:graphs/theo", "sonnet"],
       ["founder:luna", "sonnet", "A"], ["from:baseline/rosa-12", "sonnet"], ["founder:grace", "haiku", "B"]],
   },
   "v2-trees": {
     description: "Engine v2, python, int→tree[int], v2 defaults, 6 teams, 5 rounds",
     config: { language: "python", challengeType: "int", responseType: "tree[int]", rounds: 5 },
-    condition: "v2",
+    condition: "v2", mode: "tools",
     lineup: [["from:trees/koan", "opus"], ["from:trees/ava", "opus", "A"], ["from:trees/rosalind", "sonnet"],
       ["founder:zoe", "sonnet"], ["founder:priya", "sonnet"], ["from:trees/kit", "haiku", "B"]],
   },
   "v2-ints": {
     description: "Engine v2, python, int→int, v2 defaults, 6 teams, 5 rounds",
     config: { language: "python", challengeType: "int", responseType: "int", rounds: 5 },
-    condition: "v2",
+    condition: "v2", mode: "tools",
     lineup: [["from:unprimed/nash", "opus", "B"], ["from:lists/ada", "opus"], ["founder:tess", "sonnet", "A"],
       ["founder:milo", "sonnet"], ["from:norecap/wren-12", "sonnet"], ["founder:gremlin", "haiku"]],
+  },
+  // Pilot for the tool-using v2 setup: measures cost per team-round by model.
+  "v2-pilot": {
+    description: "Pilot: engine v2, tool-using team sessions, int→graph, 3 teams, 2 rounds",
+    config: { language: "python", challengeType: "int", responseType: "graph", rounds: 2 },
+    condition: "v2", mode: "tools",
+    lineup: [["from:graphs/mallory", "opus"], ["founder:luna", "sonnet", "A"], ["founder:grace", "haiku", "B"]],
   },
 };

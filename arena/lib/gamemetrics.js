@@ -1,11 +1,17 @@
 // Compute and store all metrics of a finished (revealed) game: round metrics (incl. orchid targets),
 // game metrics, and collapse events. Used by run.js after each game and by backfill.js.
-import { q } from "./db.js";
+import { all, q } from "./db.js";
 import { gameCollapses, gameMetrics, roundMetrics } from "./metrics.js";
 import { orchidTargets } from "./targets.js";
 
 export async function storeMetrics(arena, gameRow, view) {
   const rms = [];
+  // Per-flower compute use (round_programs.compute; not in the API view yet), read-only by game uuid.
+  const comp = view.game.id ? await all("SELECT round_no, team_id, kind, compute FROM round_programs WHERE game_id = $1 AND compute IS NOT NULL", [view.game.id]).catch(() => []) : [];
+  for (const r of view.rounds) {
+    r.compute = {};
+    for (const c of comp.filter((x) => x.round_no === r.no)) (r.compute[c.team_id] ||= {})[c.kind] = c.compute;
+  }
   for (const [i, r] of view.rounds.entries()) {
     const m = roundMetrics(view, r, i ? view.rounds[i - 1] : null);
     try { m.orchidTargets = await orchidTargets(view, r); } catch (e) { m.orchidTargets = { error: e.message }; }

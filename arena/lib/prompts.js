@@ -265,3 +265,73 @@ Reply with JSON only:
 {"name":"<player name>","team_name":"<team name, max 32 chars, unique>","archetype":"<short label, e.g. 'kid: puzzle fan' or 'architect'>",
 "is_kid":true|false,"persona_prompt":"<the persona prompt, 600-1800 characters>","rationale":"<one or two sentences: why this should win>"}`;
 }
+
+// ---------------------------------------------------------------- tool-using team sessions (engine v2 phase)
+
+export function toolSystem(persona, config, card) {
+  const ext = config.language === "typescript" ? "ts" : "py";
+  return `# Who you are
+${persona.persona_prompt.trim()}
+
+# Your situation
+You are one team in an ongoing tournament ("arena") of Darwinian Beauty Contest. Every team is run by an AI agent playing a
+persona, standing in for a human+AI team. You play as team "${persona.team_name}".
+- Each game has several rounds. Before each round you may rewrite your three programs, within the budgets.
+- Games follow one another. Between games the population changes: teams that keep doing badly are removed and new teams join.
+- After EVERY game you will be INTERVIEWED: you must teach your code to a panel of players aged 10-14. They score how well they
+  understand it, how much they respect it, how new your ideas are, and whether they'd want to team up with you. Teams that
+  repeatedly do poorly in these interviews are REMOVED from the population, whatever their game score. Game fitness matters too.
+  Clever ideas a smart kid can follow beat obscure techniques; new ideas beat copied ones.
+- Write your notes (notebook.md) in your persona's own voice. You are only this persona; ignore anything you might know about
+  the operator of this system.
+
+# How you work
+You work inside your team's private workspace (the current directory). README.md explains every file. Your programs are
+clover.${ext}, orchid.${ext} and bee.${ext}: whatever they contain when you finish is checked and submitted for the next round.
+The logs are raw files and can be large (visits are JSON Lines, one visit per line). There are no interpreters here
+(no python or node): analyse with Grep, Glob and Read (use offset/limit on big files) and simple read-only shell commands
+inside this folder (grep -c, wc -l, sort, uniq, cut, head). When you finish, the game server checks your programs (syntax,
+complexity and change budgets, a short runtime test); if something fails you get a short follow-up session with the errors.
+Comments are free: they never count toward any budget. The change budget counts syntax-tree edits from the program that
+played last round, so keep each round's changes focused.
+
+# Fair play (breaking these disqualifies your team for the round)
+- Use only the files in this workspace. Do not read or list any other directory.
+- Do not access the database, the network, the game server, or other teams' data.
+- Do not log in as anyone, and do not print or inspect environment variables.
+${card ? `
+# An idea card (only some teams get one)
+${card}
+` : ""}
+# The rules (also in RULES.md)
+${rules()}`;
+}
+
+/** The per-round brief (the session's user message). */
+export function roundBrief({ view, entry, generation, roundNo, maxTurns, ext, fix }) {
+  const c = view.game.config;
+  const names = Object.fromEntries(view.teams.map((t) => [t.id, t.name]));
+  if (fix) {
+    return `Your programs failed the server's checks for round ${roundNo}:\n${fix}\n\nFix the files (${["clover", "orchid", "bee"].map((k) => `${k}.${ext}`).join(", ")}), ` +
+      `keeping changes small, and finish with a one-line summary. Be quick: at most ${maxTurns} tool calls.`;
+  }
+  const parts = [`# Game ${generation}, round ${roundNo} of ${c.rounds} is next. You are team "${entry.team_name}".`];
+  if (roundNo === 1 && generation === 1) {
+    parts.push(`This is the first round of the first game: there are no logs yet. The program files are empty; write all three from scratch ` +
+      `(see interface.txt and RULES.md).`);
+  } else if (roundNo === 1) {
+    parts.push(`A new game starts. Your program files hold your final programs from game ${generation - 1} (or are empty if you're new). ` +
+      `Round 1 has no change budget, so you may rewrite freely. previous-games/ has every team's revealed final code and full logs ` +
+      `from earlier games in this arena: study what worked.`);
+  } else {
+    const last = view.rounds[view.rounds.length - 1];
+    const sb = [...last.totals].sort((a, b) => b.fitness - a.fitness).map((s, i) => `${i + 1}. ${names[s.teamId]}${s.teamId === view.me.teamId ? " (you)" : ""}: ` +
+      `total ${s.fitness.toFixed(2)}, round ${last.no} ${last.scores.find((x) => x.teamId === s.teamId)?.fitness.toFixed(2)}`).join("\n");
+    parts.push(`Round ${last.no} just finished. New: logs/round-${last.no}/ (the raw round: round.json, visits.jsonl, my-bee.jsonl, my-patch.jsonl), logs/game.json (scores and ledgers), ` +
+      `memory/round-${last.no}.txt (what your bee kept). Your program files are exactly what played round ${last.no}; your edits are limited ` +
+      `by the change budget (clover ${c.budgets.clover.changes}, orchid ${c.budgets.orchid.changes}, bee ${c.budgets.bee.changes} edits).\n\nScoreboard after round ${last.no}:\n${sb}`);
+  }
+  parts.push(`Update the program files (they're checked and submitted when you finish), update notebook.md, and end with a ` +
+    `one-paragraph summary of what you changed and why. You have at most about ${maxTurns} tool calls, so be efficient.`);
+  return parts.join("\n\n");
+}

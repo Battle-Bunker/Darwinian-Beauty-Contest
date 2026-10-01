@@ -115,8 +115,46 @@ export function roundMetrics(view, round, prev) {
   // Orchid that is literally the team's own clover (after stripping comments).
   const orchidIsClover = ids.filter((id) => { const p = round.programs[id]; return p?.clover?.code && p?.orchid?.code && tokens(p.clover.code, lang).join(" ") === tokens(p.orchid.code, lang).join(" "); }).length;
 
+  // ---- engine v2 extras: turns, post-feed asks, MEMORY, compute (round.compute is attached by gamemetrics.js) ----
+  const turns = round.turns || cfg.turns || 100;
+  const afterSteps = steps.filter((s) => s.after).length;
+  const fedWithAfter = feeds.filter((v) => (v.steps || []).some((s) => s.after)).length;
+  const compute = round.compute || {};
+  const frac = (k) => ids.map((id) => compute[id]?.[k]).filter(Boolean).map((c) => (c.budgetMs ? c.meanMs / c.budgetMs : null)).filter((x) => x != null);
+  const teamFeatures = Object.fromEntries(ids.map((id, i) => {
+    const code = (k) => round.programs[id]?.[k]?.code || "";
+    const myFeeds = feeds.filter((v) => v.bee === id);
+    return [id, {
+      precision: r3(myFeeds.length ? myFeeds.filter((v) => v.nectar).length / myFeeds.length : null),
+      nectar: perBeeNectar[i], feeds: perBeeFeeds[i],
+      nectarPerTurn: r3(perBeeNectar[i] / turns),
+      postFeedAsks: V.filter((v) => v.bee === id).reduce((a, v) => a + (v.steps || []).filter((s) => s.after).length, 0),
+      memoryBytes: round.memory?.[id]?.bytes ?? null,
+      beeReadsMemory: /\bMEMORY\b/.test(code("bee")),
+      beeUsesVisitArg: /def\s+forage\s*\([^)]*,[^)]*,[^)]*\)/.test(code("bee")) || /visit\s*[\[.]\s*["']?fed/.test(code("bee")),
+      cloverComputeFrac: r3(compute[id]?.clover?.budgetMs ? compute[id].clover.meanMs / compute[id].clover.budgetMs : null),
+      cloverP90Frac: r3(compute[id]?.clover?.budgetMs ? compute[id].clover.p90Ms / compute[id].clover.budgetMs : null),
+      orchidComputeFrac: r3(compute[id]?.orchid?.budgetMs ? compute[id].orchid.meanMs / compute[id].orchid.budgetMs : null),
+      cloverLoops: /\b(for|while)\b/.test(code("clover")),
+      cloverKeyedMod: /(challenge|\bc\b|\bx\b)\s*%\s*\w+|%\s*(P|K|MOD)\b/i.test(code("clover")),
+      cloverDistance: round.programs[id]?.clover?.distance ?? null,
+      orchidDistance: round.programs[id]?.orchid?.distance ?? null,
+      beeDistance: round.programs[id]?.bee?.distance ?? null,
+      beeNodes: round.programs[id]?.bee?.nodes ?? null,
+    }];
+  }));
+
   return {
-    round: round.no, n,
+    round: round.no, n, turns,
+    nectarPerTurn: r3(nectar.length / (n * turns)),
+    feedsPerBeePerFlower: r3(feeds.length / n / (2 * n)),
+    postFeedAskSteps: afterSteps,
+    fedVisitsWithPostFeedAsks: r3(feeds.length ? fedWithAfter / feeds.length : null),
+    beesWithMemory: ids.filter((id) => (round.memory?.[id]?.bytes || 0) > 0).length,
+    beesReadingMemory: ids.filter((id) => /\bMEMORY\b/.test(round.programs[id]?.bee?.code || "")).length,
+    cloverComputeFrac: r3(mean(frac("clover"))), orchidComputeFrac: r3(mean(frac("orchid"))),
+    cloverComputeMaxFrac: r3(frac("clover").length ? Math.max(...frac("clover")) : null),
+    teamFeatures,
     visits: V.length, feeds: feeds.length, nectar: nectar.length,
     precision: r3(feeds.length ? nectar.length / feeds.length : null),
     feedRate: r3(V.length ? feeds.length / V.length : 0),

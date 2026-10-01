@@ -204,3 +204,17 @@ ALTER TABLE arena.games ADD COLUMN IF NOT EXISTS contaminated text;
 -- rival-imitating orchids), and where a seeded persona came from.
 ALTER TABLE arena.personas ADD COLUMN IF NOT EXISTS idea_card text;
 ALTER TABLE arena.personas ADD COLUMN IF NOT EXISTS source text;
+ALTER TABLE arena.llm_calls ADD COLUMN IF NOT EXISTS turns int;     -- agent turns in a tool-using session
+-- Fair-play audit of tool-using sessions (v2 phase).
+CREATE TABLE IF NOT EXISTS arena.violations (
+  id          serial PRIMARY KEY,
+  arena_id    text NOT NULL,
+  game_id     int,
+  persona_id  text NOT NULL,
+  round_no    int,
+  attempt     int,
+  severity    text NOT NULL,                     -- violation (disqualifies the round) | warning
+  tool        text,
+  detail      text,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);

@@ -202,3 +202,79 @@ export function extractTag(text, tag) {
   const f = last.match(/^\s*```[a-zA-Z]*\s*\n([\s\S]*?)\n?```\s*$/);
   return (f ? f[1] : last).replace(/^\n+/, "").replace(/\s+$/, "") + "\n";
 }
+
+// ---------- tool-using sessions (engine v2 phase) ----------
+// One `claude -p` agent session with file and shell tools, run inside a team's workspace. Minimal environment
+// (HOME and PATH only): no database URL, no proxy or session tokens, no login secret. The stream-json transcript is
+// saved for auditing. Same limiter, cost ledger and usage-limit pause as callModel.
+const SESSION_PATH = ["/opt/node22/bin", "/usr/local/bin", "/usr/bin", "/bin"].join(":");
+
+function runSessionCli({ model, cwd, appendSystem, prompt, maxTurns, maxBudgetUsd, transcriptFile, timeoutMs }) {
+  return new Promise((resolve) => {
+    const args = ["-p", "--model", model, "--tools", "Bash,Read,Write,Edit,Glob,Grep", "--permission-mode", "acceptEdits",
+      "--max-turns", String(maxTurns), "--output-format", "stream-json", "--verbose", "--no-session-persistence",
+      "--append-system-prompt", appendSystem];
+    if (maxBudgetUsd) args.push("--max-budget-usd", String(maxBudgetUsd));
+    fs.mkdirSync(path.dirname(transcriptFile), { recursive: true });
+    const out = fs.createWriteStream(transcriptFile);
+    const child = spawn("claude", args, { cwd, stdio: ["pipe", "pipe", "pipe"], env: { HOME: process.env.HOME || "/root", PATH: SESSION_PATH, LANG: "C.UTF-8" } });
+    let buf = "", last = null, err = "", limitText = null;
+    const timer = setTimeout(() => { err += "\n[arena] session timeout"; child.kill("SIGKILL"); }, timeoutMs);
+    child.stdout.on("data", (d) => {
+      out.write(d);
+      buf += d;
+      let i;
+      while ((i = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, i); buf = buf.slice(i + 1);
+        try {
+          const ev = JSON.parse(line);
+          if (ev.type === "result") last = ev;
+          if (ev.type === "assistant" && ev.error) limitText = JSON.stringify(ev.message?.content ?? ev.error).slice(0, 500);
+        } catch {}
+      }
+    });
+    child.stderr.on("data", (d) => (err += d));
+    child.on("error", (e) => (err += String(e)));
+    child.on("close", (code) => { clearTimeout(timer); out.end(); resolve({ code, result: last, err, limitText }); });
+    child.stdin.on("error", () => {});
+    child.stdin.end(prompt);
+  });
+}
+
+/**
+ * Run one tool-using session. Returns { text, cost, turns, subtype, isError, ms }.
+ * Usage-limit failures pause the runner and the session is re-run unchanged after resume (not an attempt).
+ */
+export async function runSession({ model, cwd, appendSystem, prompt, maxTurns = 30, maxBudgetUsd = null, transcriptFile, timeoutMs = 40 * 60_000, ctx = {} }) {
+  if (!MODELS.includes(model)) throw new Error("unknown model " + model);
+  for (let hold = 0; ; hold++) {
+    await waitIfPaused();
+    await checkBudget(ctx.arenaId);
+    await acquire();
+    if (isPaused()) { release(); continue; }
+    const t0 = Date.now();
+    let r;
+    try {
+      r = await runSessionCli({ model, cwd, appendSystem, prompt, maxTurns, maxBudgetUsd, transcriptFile: hold ? transcriptFile.replace(/\.jsonl$/, `.hold${hold}.jsonl`) : transcriptFile, timeoutMs });
+    } finally {
+      release();
+    }
+    const ms = Date.now() - t0;
+    const res = r.result || {};
+    const cost = Number(res.total_cost_usd || 0);
+    const usage = res.usage || {};
+    const text = typeof res.result === "string" ? res.result : "";
+    const limitMsg = [text, r.err, r.limitText, res.api_error_status].filter(Boolean).join(" ");
+    const limit = (res.is_error || !r.result) && USAGE_LIMIT.test(limitMsg);
+    const ok = !!r.result && !limit;
+    await q(
+      `INSERT INTO arena.llm_calls (model, resolved, purpose, arena_id, game_id, persona_id, cost_usd, input_tokens, output_tokens, cache_read, cache_write, duration_ms, ok, error, turns)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+      [model, res.modelUsage ? Object.keys(res.modelUsage).join(",") : null, ctx.purpose || "session", ctx.arenaId || null, ctx.gameId || null, ctx.personaId || null, cost,
+        usage.input_tokens ?? null, usage.output_tokens ?? null, usage.cache_read_input_tokens ?? null, usage.cache_creation_input_tokens ?? null,
+        ms, ok, limit ? `[held: usage limit] ${limitMsg.slice(0, 400)}` : ok ? (res.subtype !== "success" ? res.subtype : null) : (r.err || "no result").slice(0, 500), res.num_turns ?? null])
+      .catch((e) => console.error("ledger insert failed", e.message));
+    if (limit) { pause(limitMsg); continue; }
+    return { text, cost, turns: res.num_turns ?? null, subtype: res.subtype ?? null, isError: !!res.is_error || !r.result, ms, err: r.err };
+  }
+}

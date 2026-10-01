@@ -27,9 +27,16 @@ export async function api(token, method, path, body, { okStatuses = [422], retri
   }
 }
 
+// Servers started with DEV_LOGIN_SECRET require it at dev login (so agents can't log in as rival teams).
+// The runner reads it from its env or arena/runs/.dev-secret; it never goes into workspaces or prompts.
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+const SECRET_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "runs", ".dev-secret");
+const devSecret = () => process.env.ARENA_DEV_SECRET || (fs.existsSync(SECRET_FILE) ? fs.readFileSync(SECRET_FILE, "utf8").trim() : undefined);
 const tokens = new Map();
 export async function login(name) {
-  if (!tokens.has(name)) tokens.set(name, (await api(null, "POST", "/auth/dev/login", { name })).token);
+  if (!tokens.has(name)) tokens.set(name, (await api(null, "POST", "/auth/dev/login", { name, secret: devSecret() })).token);
   return tokens.get(name);
 }
 
@@ -44,7 +51,9 @@ export const Api = {
   check: (tok, g, kind, code) => api(tok, "POST", `${g}/check`, { kind, code }),
   submit: (tok, g, kind, code) => api(tok, "POST", `${g}/programs`, { kind, code }),
   try: (tok, g, kind, code, challenges, flowers) => api(tok, "POST", `${g}/try`, { kind, code, challenges, flowers }),
-  view: (tok, g) => api(tok, "GET", g),
+  view: (tok, g, visits) => api(tok, "GET", g + (visits ? `?visits=${visits}` : "")),
+  round: (tok, g, no) => api(tok, "GET", `${g}/rounds/${no}`),
+  memory: (tok, g, no) => api(tok, "GET", `${g}/memory/${no}`),
   version: (g) => api(null, "GET", `${g}/version`),
   /** Start the next round and poll until it has been stored (avoids long-held HTTP requests). */
   async runRound(tok, g) {

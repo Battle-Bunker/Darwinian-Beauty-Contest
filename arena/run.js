@@ -19,7 +19,7 @@ import { breed, decideRetirements, retire, seedBreeders } from "./lib/population
 import { PRESETS } from "./lib/presets.js";
 import { interviewPrompt } from "./lib/prompts.js";
 import { judgeGame, seedJudges } from "./lib/social.js";
-import { interview, playTurn } from "./lib/team.js";
+import { interview, playTurn, playTurnTools } from "./lib/team.js";
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((acc, a, i, arr) => {
   if (a.startsWith("--")) acc.push([a.slice(2), arr[i + 1] && !arr[i + 1].startsWith("--") ? arr[i + 1] : true]);
@@ -48,7 +48,7 @@ async function ensureArena(id, presetName, generations) {
   const owner = `Arena owner ${id}`;
   const tok = await login(owner);
   const room = await Api.createRoom(tok);
-  const settings = { config: preset.config, teams: preset.lineup.length, generations, description: preset.description, recap: preset.recap || "full", unprimed: true, condition: preset.condition || null, budgetUsd: args.budget ? Number(args.budget) : null };
+  const settings = { config: preset.config, teams: preset.lineup.length, generations, description: preset.description, recap: preset.recap || "full", unprimed: true, condition: preset.condition || null, mode: preset.mode || "prompt", budgetUsd: args.budget ? Number(args.budget) : null };
   await q("INSERT INTO arena.arenas (id, preset, settings, owner_name, room_short_id, room_url) VALUES ($1,$2,$3,$4,$5,$6)",
     [id, presetName, settings, owner, room.shortId, room.url]);
   for (const [source, model, card] of preset.lineup) {
@@ -81,7 +81,7 @@ async function ensureArena(id, presetName, generations) {
 async function recapFor(arena, generation) {
   const prev = await one("SELECT * FROM arena.games WHERE arena_id = $1 AND generation = $2", [arena.id, generation - 1]);
   if (!prev || !prev.game_short_id) return null;
-  const view = await Api.view(null, gamePath(arena.room_short_id, prev.game_short_id));
+  const view = await Api.view(null, gamePath(arena.room_short_id, prev.game_short_id), "none");
   if (!view.game.revealed) return null;
   const entries = await all("SELECT e.*, p.name FROM arena.entries e JOIN arena.personas p ON p.id = e.persona_id WHERE e.game_id = $1", [prev.id]);
   const names = Object.fromEntries(view.teams.map((t) => [t.id, t.name]));
@@ -156,7 +156,7 @@ async function setupGame(arena, generation, log) {
 async function playGame(arena, generation, { ownerTok, gameRow, gPath, entries }, log) {
   await q("UPDATE arena.games SET stage = 'playing' WHERE id = $1 AND stage = 'created'", [gameRow.id]);
   const personas = await all("SELECT * FROM arena.personas WHERE id = ANY($1)", [entries.map((e) => e.persona_id)]);
-  const recap = generation > 1 ? await recapFor(arena, generation) : null;
+  const recap = generation > 1 && arena.settings.mode !== "tools" ? await recapFor(arena, generation) : null;
   let view = await Api.view(ownerTok, gPath);
   const rounds = view.game.config.rounds;
   if (!gameRow.condition) {
@@ -176,8 +176,9 @@ async function playGame(arena, generation, { ownerTok, gameRow, gPath, entries }
         const v = await Api.view(tok, gPath);
         if (r > 1 || ["clover", "orchid", "bee"].every((k) => v.myTeam.drafts[k])) { log(`  ${p.name}: round ${r} turn already done before restart; skipping`); return { submitted: [], failed: [], cost: 0 }; }
       }
-      const personalRecap = r === 1 && recap ? recap.text + (await personalFeedback(recap.prevGameId, p.id)) : null;
+      const personalRecap = arena.settings.mode !== "tools" && r === 1 && recap ? recap.text + (await personalFeedback(recap.prevGameId, p.id)) : null;
       try {
+        if (arena.settings.mode === "tools") return await playTurnTools({ arena, gameRow, persona: p, entry, gPath, roundNo: r, log });
         return await playTurn({ arena, gameRow, persona: p, entry, gPath, roundNo: r, recap: personalRecap, log });
       } catch (e) {
         if (e instanceof BudgetError) throw e;
@@ -239,7 +240,7 @@ async function socialEvaluation(arena, generation, ctx, log) {
     log(`gen ${generation}: interviews done`);
   }
   if (!atLeast(gameRow.stage, "judged")) {
-    const view = await Api.view(null, gPath);
+    const view = await Api.view(null, gPath, "none");
     const last = view.rounds[view.rounds.length - 1];
     const fresh = await all("SELECT * FROM arena.entries WHERE game_id = $1 AND NOT sat_out", [gameRow.id]);
     const teams = fresh.map((e) => ({
