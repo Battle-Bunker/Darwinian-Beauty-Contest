@@ -15,8 +15,9 @@ export class HttpError extends Error {
 }
 const fail = (status, message) => { throw new HttpError(status, message); };
 
-const TEAM_COLORS = ["#e4572e", "#2e86ab", "#f2a541", "#7a9e3f", "#9b5de5", "#00a6a6", "#d1495b", "#5c6bc0",
-  "#c17c74", "#3d9970", "#ff7f50", "#6d597a", "#b8860b", "#1b998b", "#ef476f", "#4a4e69"];
+// Colour-blind-friendly hues (Okabe–Ito first, then Paul Tol's muted set); names are always shown too.
+const TEAM_COLORS = ["#D55E00", "#0072B2", "#E69F00", "#009E73", "#CC79A7", "#56B4E9", "#882255", "#117733",
+  "#332288", "#DDCC77", "#44AA99", "#AA4499", "#999933", "#CC6677", "#88CCEE", "#6B4226"];
 
 // ---------- realtime: every change bumps games.version and notifies listeners ----------
 
