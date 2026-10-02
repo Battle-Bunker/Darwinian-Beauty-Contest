@@ -12,6 +12,8 @@ The key findings below are from phase 1 (engine v1, summarised logs). Phase 2 is
 - §14 covers engine v2: tool-using teams with raw files and Python, and no Fable models.
 - §15 covers the int→graph[any] cohort experiment with the asymmetric-graph-games catalogue.
 - §16 corrects §15: most bee discrimination comes from fingerprinting, not certificate checks.
+- §17 compares hidden and public logs under engine v3; §18 gives every team two example signature flowers.
+- §19 asks why orchid change rounds don't wipe out fingerprinting bees.
 
 ## Key findings
 
@@ -1258,6 +1260,60 @@ fingerprinting, generator copies and adoption are far beyond it.
   - The non-determinism measure needs a challenge asked twice in a round. It reads 0 when every bee asks fresh
     challenges, as in v3-hidden-treat games 2–3.
   - The Paley code markers undercount, as noted above.
+
+## 19. Why orchid rounds don't wipe out fingerprinting bees
+
+**Question.** The top bees in §17 recognise flowers by their answers to a few challenges and learn by tasting which
+answers pay. The change cycle gives orchids a round (3 and 6) in which bees and clovers can't change code. Why don't
+orchids copy each bee's challenge and the clovers' answers to it, and fool those bees for two rounds?
+
+**Short answer.** The copy works, and teams used it, but only against bees that really ask the same question in every
+round. The top bees don't: their question is new every round in which a flower can change, so the logs an orchid
+copies from are stale.
+- **A locked bee still asks a new question every round.**
+  - Kenji's bee (quiet bees) draws its secret `S1` from its per-round random seed, so `S1` changes with no code change.
+  - It re-asks last round's secret only in rounds 2 and 5, when only bees could change, so every flower still
+    answers as before. Its own comment: "the secret is public after a round, but no flower can change to copy it. yet."
+  - Within a round it tastes each new answer once ("test once, then trust or skip forever"). Flowers are stateless
+    and logs only appear after the round, so no orchid can know a rival clover's answer to that round's question in
+    advance.
+- **"Repeated challenges" in §17 means repeated within a round.** Kenji's bee asked 8 distinct challenges in all of
+  v3-open game 2, about one per round. In the public-log games, the share of a bee's asks in orchid rounds that repeat
+  its own previous-round challenge is 0% in v3-open game 2 and v3-open-control games 2–3. The non-zero rounds come
+  mostly from the two bees that did ask a fixed question (below).
+- **Against a bee that really is fixed, the attack works.** `analysis/orchid-replay.mjs` finds orchids whose code
+  names a challenge some bee asked the round before. Mallory's and Kenji's orchids both do this, in both log variants;
+  with hidden logs, a rival bee's question still shows up in your own orchid's log when that bee visits it.
+  - **v3-hidden-control game 1.** Kenji's round-3 orchid recognises Steady State's and Red Team's fixed questions.
+    - Steady State's bee kept asking its question; its feeding at Kenji's orchid went from 0.06 and 0.00 in rounds
+      1–2 to 1.00 in each of rounds 3–6.
+    - Red Team's bee went from 0.10 to 1.00 and 0.95 in rounds 3–4, until Red Team changed its bee in round 5 (0.11,
+      0.05).
+  - **v3-open game 1.** Mallory's orchid "hears the accent": it recognises Rosa's fixed 731904265 and Steady State's
+    42 and 0, and shows those bees the costume they trust. Those two bees fed at rival orchids 0.27–0.39 in rounds
+    1–2 and about 0.60 from round 3 on. Mallory's orchid had already fooled both of them before round 3, so most of
+    that rise came from other orchids. By game 2 both teams' bees asked a new question every round.
+- **Against a rotating bee, it fails.** In v3-open-control games 1 and 2, Mallory's round-3 and round-6 orchids name
+  Kenji's previous-round secret, but Kenji's bee had moved on. It fed at Mallory's orchid 0.32 and 0.19 in rounds 3–4
+  of game 1, and at most 0.04 in game 2.
+
+**What this means for the rules.**
+- **The change cycle locks code, not behaviour.** A bee can use its per-round seed, or `len(MEMORY)` with a secret,
+  to make each round's question one that nobody has seen. One taste per answer then labels each flower for that
+  round.
+- **The answer is unforgeable but proves no effort.** An orchid can't produce a rival clover's answer to an unseen
+  question unless it can compute that clover's function, so a keyed-hash clover is impossible to imitate. But the bee
+  learns it by tasting, not by checking any signal of work.
+- **The pressure the cycle creates selects for rotating secret questions, not for checkable signatures.**
+- **Engine-chosen challenges alone would not close this.** A clover could add a tag that changes with the wall clock,
+  `hash(secret, minutes // 2)`, and bees would learn it the same way. Closing it takes both:
+  - the engine picks every challenge at random
+  - flowers see only time elapsed since their call started
+  
+  A tag is then fixed between code changes, and orchids copy it in their round. What is left to learn in a round is
+  the style of an answer that is costly to reproduce.
+- **The alternative is delayed tasting.** Nectar would arrive in `MEMORY` after the round, with no `tasted` during it.
+  That removes in-round learning entirely and changes the bee game much more.
 
 ## Most interesting games
 
