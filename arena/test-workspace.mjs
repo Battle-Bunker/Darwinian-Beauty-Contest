@@ -137,6 +137,10 @@ check("audit: another team's workspace is a violation", sev(bash(`cat ${root}/${
 check("audit: environment and database access are violations", sev(bash("env | head")) === "violation" && sev(bash("psql -c 'select 1'")) === "violation");
 check("audit: allowedUrl", allowedUrl(`${apiBase}/events?after=3`) && allowedUrl("http://127.0.0.1:4000/api/rooms/X") && !allowedUrl("http://localhost:4000/api/auth/dev/login") && !allowedUrl("http://localhost:5432/"));
 check("audit: '..' inside the workspace is fine, leaving it isn't", !escapesWorkspace("cat history/cosmos/../orchid/v1.py", dir) && escapesWorkspace("cat ../../x", dir));
+check("audit: '..' in a sed replacement isn't a path; a file argument or a non-sed command still is",
+  !escapesWorkspace(`cd ${dir}; python3 tools/try.py cosmos cosmos.py 5 77 2>&1 | sed -E 's/"edges".*"labels"/../' | cut -c1-60`, dir)
+  && !escapesWorkspace(`sed -e "s/x/../g" cosmos.py`, dir) && !escapesWorkspace(`perl -pe 's#a#../..#' f`, dir)
+  && escapesWorkspace(`sed 's/a/b/' ../../x`, dir) && escapesWorkspace(`ls 's/../../'`, dir) && escapesWorkspace(`sed 's/a/b/' 's/../../x'`, dir));
 
 await q("DELETE FROM arena.personas WHERE arena_id = $1", [AID]);
 await q("DELETE FROM arena.arenas WHERE id = $1", [AID]);

@@ -398,10 +398,27 @@ function inlinePythonString(cmd, at, tok) {
   return tok === ".." && /\bpython3?\s+(-c\b|-\s*<<)/.test(before) && /(^|[^(,\s])\s*['"]$/.test(before) && /^['"]/.test(cmd.slice(at + 2));
 }
 
+/** A sed or perl substitution's quoted expression (`sed -E 's/"edges".*"labels"/../'`) is a pattern and its replacement,
+ * not a path: blank it. Only the script argument of sed/perl (the first argument after the options, or the one after
+ * -e), so `ls 's/../../'` and file arguments (`sed 's/a/b/' ../x`) still count. */
+const SUBST = /^(['"])[sy]([^\w\s\\'"])(?:\\.|(?!\2)[^\\])*\2(?:\\.|(?!\2)[^\\])*\2[a-zA-Z0-9]*\1$/;
+function stripSubstitutions(cmd) {
+  return cmd.replace(/\b(?:sed|perl)\b[^;&|\n]*/g, (seg) => {
+    let script = true; // the next argument is the script (until the first non-option argument)
+    return seg.replace(/(\s+)('[^']*'|"(?:\\.|[^"\\])*"|[^\s'"]+)/g, (m, sp, tok) => {
+      if (/^-(?:[a-zA-Z]*e|-expression)$/.test(tok)) { script = true; return m; }
+      if (tok.startsWith("-")) return m;
+      const blank = script && SUBST.test(tok) && tok[0] === tok[tok.length - 1];
+      script = false;
+      return blank ? `${sp}''` : m;
+    });
+  });
+}
+
 /** Does any ".." path in a shell command resolve outside the workspace? Paths are tried against the workspace and
  * every directory the command cd's into (all of which must themselves stay inside). */
 export function escapesWorkspace(cmd, dir, start = dir) {
-  cmd = stripDataHeredocs(cmd);
+  cmd = stripSubstitutions(stripDataHeredocs(cmd));
   const bases = [start];
   for (const m of cmd.matchAll(/(?:^|[;&|]\s*|\s)cd\s+([^\s;&|]+)/g)) {
     const target = path.resolve(bases[bases.length - 1], m[1].replace(/^['"]|['"]$/g, ""));
