@@ -8,9 +8,13 @@
 #                                   this version of the bee plays (until its team submits a new bee,
 #                                   or it crashes). `random` is seeded once, freshly, at the start.
 # The code is the program's minified form (vendor/measure.js), so names can't carry data.
-# Protocol: JSON lines on stdin/stdout. First line is the setup {code, ms, game, maxChars}.
+# Protocol: JSON lines on stdin/stdout. First line is the setup {code, ms, limitMs, game, maxChars}.
 # Compute budgets are wall-clock time per call. The engine runs at most one program per CPU core, so
 # wall time is effectively CPU time. (CPU-time timers, ITIMER_PROF, fire late on tickless kernels.)
+# A flower is stopped at its budget, `ms`. A bee's budget is a deadline the engine keeps (a late reply
+# still counts, for the next turn), so the runner only stops a bee call at the hard limit `limitMs`.
+# Bee requests: {"op": "forage", "new": reset seen, "step": [c, r] to append, "tasted": nectar after
+# a feed (then tasted(seen, nectar) runs first, in the same call), "visit": {...}}.
 # NOT a security sandbox: restricted builtins + import whitelist + timeouts + memory cap only.
 import builtins, inspect, io, json, os, random, resource, select, signal, sys
 
@@ -37,6 +41,10 @@ SAFE_BUILTINS["__import__"] = _safe_import
 
 
 class Timeout(BaseException):
+    pass
+
+
+class InTasted(Exception):
     pass
 
 
@@ -165,6 +173,7 @@ def takes_visit(fn):
 
 def run_bee(setup):
     ms = setup["ms"]
+    limit = setup.get("limitMs") or ms  # the hard stop per call
     max_chars = setup.get("maxChars", 20000)
     random.seed()
     ns = fresh_namespace(setup["game"])
@@ -178,12 +187,27 @@ def run_bee(setup):
         captured.truncate()
         return s[:2000]
 
-    def timed(fn, *args, budget=ms):
+    def timed(fn, *args, budget=limit):
         cpu_timer(budget / 1000)
         try:
             return fn(*args)
         finally:
             cpu_timer(0)
+
+    def decide(req):
+        # One call, one time limit: tasted (after a feed) and then forage.
+        if req.get("tasted") is not None:
+            fn = ns.get("tasted")
+            if callable(fn):
+                try:
+                    fn(list(seen), bool(req["tasted"]))
+                except Timeout:
+                    raise
+                except BaseException as e:
+                    raise InTasted("tasted: " + short(e))
+        fn = ns["forage"]
+        args = (list(seen),) + ((dict(req["visit"]),) if takes_visit(fn) else ())
+        return fn(*args)
 
     try:
         timed(lambda: exec(compile(setup["code"], "<bee>", "exec"), ns), budget=ms * 10)
@@ -202,18 +226,18 @@ def run_bee(setup):
                     seen = []
                 if req.get("step") is not None:
                     seen.append(req["step"])
-                fn = ns["forage"]
-                args = (list(seen),) + ((dict(req["visit"]),) if takes_visit(fn) else ())
-                a = timed(fn, *args)
+                a = timed(decide, req)
                 if isinstance(a, tuple):
                     a = list(a)
                 s, err = encode(a, max_chars)
                 reply({"e": "forage returned " + err, "out": take_output()} if err else {"a": json.loads(s), "out": take_output()})
-            elif req["op"] == "tasted":
+            elif req["op"] == "tasted":  # the older protocol: tasted in a call of its own
                 fn = ns.get("tasted")
                 if callable(fn):
                     timed(fn, list(seen), req["nectar"])
                 reply({"ok": True, "out": take_output()})
+        except InTasted as e:
+            reply({"e": str(e)[:300], "out": take_output()})
         except BaseException as e:
             reply({"e": short(e), "out": take_output()})
 

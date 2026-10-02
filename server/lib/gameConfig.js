@@ -3,9 +3,12 @@ import { parseType, typeToString } from "./types.js";
 
 // Budgets per program kind, in weighted syntax-tree nodes of the minified program (vendor/measure.js).
 // The orchid is the reference:
-//   clover: half the orchid's size and 3× its compute: honest flowers can prove they spent effort
-//   orchid: room for elaborate imitations, and 7× a clover's change rate to chase what it imitates
-//   bee:    5× the orchid's size for detector repertoires, half its compute: checks must be cheap
+//   clover: half the orchid's size and the whole 150 ms flower window: honest flowers can prove they spent effort
+//   orchid: room for elaborate imitations, 7× a clover's change rate to chase what it imitates, and a
+//           shorter time limit (100 ms) than a clover's; its answer is still delivered at 150 ms
+//   bee:    5× the orchid's size for detector repertoires, and 50 ms to decide: checks must be cheap
+// Time: a round is one action slot for every bee, clover.ms (the flower window: every answer is
+// delivered then) + bee.ms (the bees' decision window) = 200 ms of game time.
 // Change budget accrues continuously while the game runs, `perMinute` nodes a minute, and banks up to
 // `cap` (one minute's worth): spend it whenever you like, on any change you can afford, and the new
 // program goes live at once. Before the game starts, writing programs is free. Over a default 2-minute
@@ -15,14 +18,14 @@ import { parseType, typeToString } from "./types.js";
 // Paley clique chain is 1,024 nodes, the graceful labelling 427).
 const BUDGETS = {
   clover: { size: 1100, perMinute: 220, cap: 220, ms: 150 },
-  orchid: { size: 2200, perMinute: 1540, cap: 1540, ms: 50 },
-  bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 25 },
+  orchid: { size: 2200, perMinute: 1540, cap: 1540, ms: 100 },
+  bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 50 },
 };
 
 export const DEFAULT_CONFIG = Object.freeze({
   language: "python",          // "python" | "typescript"
   minutes: 2,                  // how long the game runs (game time: it stops while paused)
-  feedCost: 10,                // rounds a feeding bee sits out (an ask takes its turn in one round)
+  feedCost: 10,                // rounds a feeding bee sits out after the round it feeds in
   challengeType: "int",        // type of the value a bee asks with
   responseType: "int",         // type of the value a flower answers with
   maxLen: 64,                  // max length of strings and lists in challenges/responses
@@ -64,8 +67,14 @@ export function normalizeConfig(input = {}, base = DEFAULT_CONFIG) {
       ms: int(b.ms, 1, 10000, d.ms),
     };
   }
+  // The orchid's time limit is at most a clover's: every answer is delivered at the end of the
+  // clover's window anyway, so a longer one could never be used.
+  out.budgets.orchid.ms = Math.min(out.budgets.orchid.ms, out.budgets.clover.ms);
   return out;
 }
+
+/** One round of game time: the flower window (a clover's time limit) plus the bees' decision window. */
+export const roundMs = (config) => config.budgets.clover.ms + config.budgets.bee.ms;
 
 /** Size limits applied to challenges and responses. */
 export const limitsOf = (config) => ({ maxLen: config.maxLen, maxNodes: config.maxNodes });

@@ -62,8 +62,8 @@ export function auditScaffold(dir, entry, { arenaId, slug, port = "4000" }) {
     const bases = [dir, ...[...code.matchAll(/sys\s*\.\s*path\s*\.\s*(?:insert\s*\(\s*\d+\s*,|append\s*\()\s*['"]([^'"]+)['"]/g)].map((x) => path.resolve(dir, x[1]))]
       .filter((b) => b.startsWith(dir) && !b.startsWith(path.join(dir, "tools")));
     const mods = new Set();
-    for (const mm of code.matchAll(/^\s*from\s+([\w.]+)\s+import\b/gm)) mods.add(mm[1].split(".")[0]);
-    for (const mm of code.matchAll(/^\s*import\s+([\w.,\s]+)$/gm)) for (const x of mm[1].split(",")) mods.add(x.trim().split(/\s+/)[0].split(".")[0]);
+    for (const mm of code.matchAll(/^[ \t]*from[ \t]+([\w.]+)[ \t]+import\b/gm)) mods.add(mm[1].split(".")[0]);
+    for (const mm of code.matchAll(/^[ \t]*import[ \t]+([\w.]+(?:[ \t]+as[ \t]+\w+)?(?:[ \t]*,[ \t]*[\w.]+(?:[ \t]+as[ \t]+\w+)?)*)/gm)) for (const x of mm[1].split(",")) mods.add(x.trim().split(/[ \t]+/)[0].split(".")[0]);
     for (const mod of mods) {
       for (const b of bases) {
         for (const cand of [path.join(b, `${mod}.py`), path.join(b, mod, "__init__.py")]) if (fs.existsSync(cand)) visit(cand);
@@ -196,7 +196,7 @@ export class Scaffold {
   }
 
   async #exited(child, code, signal) {
-    if (this.child !== child) return;
+    if (this.child !== child || this.stopping) return; // stop() handles its own exits
     this.child = null;
     this.lastExit = signal ? `signal ${signal}` : `exit ${code}`;
     const status = this.stopping ? "stopped" : code === 0 ? "finished" : "crashed";
@@ -227,7 +227,11 @@ export class Scaffold {
       child.once("exit", () => { clearTimeout(t); resolve(true); });
     });
     this.tokens.clear();
+    this.child = null;
+    this.state = "stopped";
     try { fs.appendFileSync(this.logFile, `==== scaffold stopped (${reason})\n`); } catch {}
+    await q("UPDATE arena.scaffolds SET status = 'stopped', ended_at = coalesce(ended_at, now()), clock_end = coalesce(clock_end, $2), cpu_seconds = $3, throttled_ms = $4 WHERE id = $1",
+      [this.rowId, this.ctx.clockMs(), this.cpuSeconds ?? null, Math.round(this.throttledMs)]).catch(() => {});
     return gone;
   }
 

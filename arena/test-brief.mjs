@@ -16,7 +16,10 @@ const sys = toolSystem(persona, config, "/home/user/arena-ws/a/luna", { apiBase,
 check("system: the tools", ["tools/submit.py", "tools/check.py", "tools/try.py", "tools/status.py", "tools/stream.py"].every((t) => sys.includes(t)));
 check("system: submissions go live at once and cost change budget", /goes live at once/.test(sys) && /pays its change cost/.test(sys));
 check("system: the live stream is a file read with code, and the public API", /stream\/actions\.jsonl/.test(sys) && /never\s+print it whole/.test(sys) && sys.includes(`${apiBase}/events`));
-check("system: scripts may run during the session, and stop with it", /background while your session lasts/.test(sys) && /everything your session started is stopped/.test(sys));
+check("system: session scripts stop with the session; only the scaffold outlives sessions", /stopped\s+when that session ends; only the scaffold outlives sessions/.test(sys));
+check("system: the scaffold: what it's for, how to start it, the garden API, its audit", /SCAFFOLD/.test(sys) && /tools\/scaffold\.py start scaffold\.py/.test(sys) && /lobby, before the game begins/.test(sys)
+  && ["follow()", "status()", "measure(kind, code)", "submit(kind, code)", "wait_for_budget(kind, cost)", "live(kind)"].every((x) => sys.includes(x)) && /audited before every start and restart/.test(sys)
+  && /main way to react/.test(sys));
 check("system: the game is short", /30 seconds/.test(sys));
 check("system: fair play allows reading the public API, nothing else", /except to read \(GET\) the game's public API/.test(sys) && /Do not write to stream\//.test(sys) && /not even \/tmp/.test(sys));
 check("system: RULES.md in full (the continuous rules)", /## The garden never stops/.test(sys) && /## What everyone can see/.test(sys));
@@ -30,6 +33,7 @@ const fresh = lobbyBrief({ config, teamName: "Moonpetal", generation: 1, maxTurn
 check("lobby (first game): write all three from scratch, no starter code", /program files are empty/.test(fresh) && /no starter code/.test(fresh));
 check("lobby: free, check/try, submit all three", /Writing is free in the lobby/.test(fresh) && /submit all three/.test(fresh));
 check("lobby: the game won't wait; prepare what should react", /won't wait for you/.test(fresh) && /must be ready now/.test(fresh) && /220, orchid 1,540 and bee 2,200 nodes a minute/.test(fresh));
+check("lobby: the scaffold can start now and runs through the game", /tools\/scaffold\.py start scaffold\.py/.test(fresh) && /keeps running through the whole game/.test(fresh));
 const carried = lobbyBrief({ config: { ...config, minutes: 2 }, teamName: "Moonpetal", generation: 3, maxTurns: 30, carried: true });
 check("lobby (later game): starts from last game's final programs; previous-games/", /final programs from game 2/.test(carried) && /previous-games\//.test(carried) && /2 minutes/.test(carried));
 const ex = lobbyBrief({ config, teamName: "M", generation: 1, maxTurns: 30, carried: false, examples: ["paley_clover.py", "checkers.py"] });
@@ -43,7 +47,11 @@ const gb = gameBrief({ config: { ...config, minutes: 2 }, teamName: "Moonpetal",
   standing: { fitness: 1.05, rank: 2, of: 3 }, head, drafts: ["orchid"], maxTurns: 30, scripts: ["follow.py"] });
 check("game brief: time played, team, session", /Game 2 is running: 0:12 of 2:00 played\. You are team "Moonpetal"\. Session 1\./.test(gb), gb);
 check("game brief: headline numbers only", /fitness so far: 1\.05 \(#2 of 3/.test(gb) && /1,234 actions/.test(gb) && /clover 44 of 220 \(\+220\/min\)/.test(gb));
-check("game brief: drafts and scripts it might start", /drafts\/orchid\.py/.test(gb) && /follow\.py/.test(gb));
+check("game brief: drafts and the workspace's python files", /drafts\/orchid\.py/.test(gb) && /follow\.py/.test(gb));
+check("game brief: no scaffold yet: how to start one", /no scaffold running/.test(gb));
+const gbs = gameBrief({ config, teamName: "M", generation: 1, sessionNo: 2, status: "running", clockMs: 5000, budgets, standing: null, head: null, maxTurns: 30,
+  scaffold: { file: "scaffold.py", state: "running", restarts: 1 }, automatic: 4 });
+check("game brief: the scaffold's state and its automatic changes", /Your scaffold scaffold\.py: running, 1 restart; it has submitted 4 changes by itself/.test(gbs), gbs);
 check("game brief: submit any time; stopped when the game ends", /goes live at once/.test(gb) && /When the game ends this session is stopped/.test(gb));
 check("game brief: short (no actions, no logs)", gb.length < 2000 && !/"seq"|"atMs"|\{"action"/.test(gb), gb.length);
 const warm = gameBrief({ config, teamName: "M", generation: 1, sessionNo: 1, status: "lobby", clockMs: 0, budgets: null, standing: null, head: null, maxTurns: 30 });

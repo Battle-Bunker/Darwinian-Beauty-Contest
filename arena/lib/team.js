@@ -237,15 +237,15 @@ export function requestHandler(ctx) {
  * scaffold's token). Started before the lobby, stopped (with the scaffold) when the game ends.
  */
 export class TeamDesk {
-  constructor({ arena, gameRow, persona, entry, gPath, dir, stream, log, apiBase, api = Api, scaffoldLimits = null }) {
-    Object.assign(this, { arena, gameRow, persona, entry, gPath, dir, stream, log, apiBase, api });
+  constructor({ arena, gameRow, persona, entry, gPath, dir, stream, log, apiBase, api = Api, scaffoldLimits = null, tok = null }) {
+    Object.assign(this, { arena, gameRow, persona, entry, gPath, dir, stream, log, apiBase, api, tok });
     this.session = null;
     this.port = new URL(apiBase).port || "80";
     this.scaffold = new Scaffold({ arena, gameRow, persona, dir, port: this.port, apiBase, clockMs: () => stream?.clockMs ?? 0, log, limits: scaffoldLimits || arena.settings.scaffold || null });
   }
 
   async start() {
-    this.tok = await login(this.entry.login_name);
+    this.tok ??= await login(this.entry.login_name);
     const view = await this.api.view(this.tok, this.gPath);
     this.config = view.game.config;
     fs.mkdirSync(this.dir, { recursive: true });
