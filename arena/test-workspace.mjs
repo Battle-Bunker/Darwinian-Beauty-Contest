@@ -82,7 +82,9 @@ await stream.poll();
 const lines = fs.readFileSync(path.join(dir, "stream/actions.jsonl"), "utf8").trim().split("\n");
 check("stream: damage through a link is repaired from the master copy", lines.length === 85 && lines.every((l) => JSON.parse(l).seq));
 // Nothing secret, nothing of other teams' code or versions.
-const all = (d) => spawnSync("grep", ["-rIl", "-e", "Bearer", "-e", "postgres://", "-e", "DEV_LOGIN", "-e", "secret", "-e", "SECRET_CODE_OF_T2", d], { encoding: "utf8" }).stdout.trim();
+// Actual credentials: the dev-login secret's value, bearer tokens, database URLs; and another team's code.
+const devSecret = fs.existsSync(new URL("./runs/.dev-secret", import.meta.url)) ? fs.readFileSync(new URL("./runs/.dev-secret", import.meta.url), "utf8").trim() : "no-dev-secret-file";
+const all = (d) => spawnSync("grep", ["-rIlF", "-e", devSecret, "-e", "Bearer ", "-e", "postgres://", "-e", "DEV_LOGIN_SECRET", "-e", "SECRET_CODE_OF_T2", d], { encoding: "utf8" }).stdout.trim();
 check("workspace: no credentials, database URLs or other teams' code", all(dir) === "", all(dir));
 check("workspace: other teams' versions aren't shown during play", !fs.readFileSync(path.join(dir, "history/versions.md"), "utf8").includes("Show Your Work"));
 
