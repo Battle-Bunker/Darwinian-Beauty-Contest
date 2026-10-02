@@ -1,19 +1,23 @@
-// My team's three programs: edit, check, submit and try them.
-import { Fragment, useEffect, useRef, useState } from "react";
+// My team's three programs: write, check, submit and try them. In the lobby writing is free. Once the
+// game runs, a submission pays its change cost (node edits from the version playing now) from a change
+// budget that fills with game time, and goes live at once.
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, errorText } from "../api";
 import { storage } from "../hooks";
-import { KINDS, type CheckResult, type GameView, type Kind, type ProgramInterface, type TryBeeResult, type TryFlowerResult } from "../types";
+import { KINDS, type Bank, type Budget, type CheckResult, type GameStatus, type GameView, type Kind, type ProgramInterface, type ProgramVersion, type Team, type TryBeeResult, type TryFlowerResult } from "../types";
 import { CodeEditor, type EditorStats } from "./CodeEditor";
-import { UNITS } from "../lib/codetools";
 import { Alert, Meter, Spinner } from "./ui";
 import { BeeGlyph, CheckIcon, DropIcon, FlowerHead, FooledIcon } from "./Icons";
-import { timeAgo } from "../lib/format";
-import { isStructured, Value } from "./Value";
+import { fmtClock, fmtNodes, fmtWait, plural, timeAgo } from "../lib/format";
+import { availableAt, waitFor } from "../lib/budget";
+import { useLiveTick, type LiveStore } from "../lib/live";
+import { Value } from "./Value";
+import { FeedRow } from "./Feed";
 
 const BLURB: Record<Kind, string> = {
   clover: "Your honest flower. Bees that feed here get nectar. flower(challenge) runs fresh for every question: it keeps nothing between questions, but it can use randomness and the clock to search for a good answer within its time limit.",
   orchid: "Your trickster. Bees that feed here get nothing, but your patch still earns the visit. It can try to pass for any clover that bees trust: yours or another team's.",
-  bee: "Your bee visits one flower at a time: ask questions, then feed or leave. Top-level variables last the whole round; whatever `keep` holds at the end of a round is saved for later rounds as MEMORY.",
+  bee: "Your bee visits one flower at a time: ask questions, then feed or leave. Its variables last for as long as this version plays; submitting a new bee (or a crash) starts it afresh. What it prints shows up for your team below and in the action feed.",
 };
 
 const SCALARS = ["int", "float", "bool", "str"];
@@ -52,48 +56,43 @@ function parseChallenges(text: string, type: string): unknown[] {
   }
 }
 
-export function ProgramEditors({ view, base }: { view: GameView; base: string }) {
+export const KindIcon = ({ kind, size = 18 }: { kind: Kind; size?: number }) =>
+  kind === "bee" ? <BeeGlyph color="#f2a541" size={size + 2} /> : <FlowerHead color={kind === "clover" ? "#6aa84f" : "#9b5de5"} size={size} />;
+
+export function ProgramEditors({ view, base, store }: { view: GameView; base: string; store: LiveStore }) {
   const team = view.myTeam!;
-  const cfg = view.game.config;
   const g = view.game;
-  const keyBase = `dbc:code:${g.id}:${team.id}:${g.roundsPlayed}:${cfg.language}:${cfg.challengeType}:${cfg.responseType}`;
-  // No starter code: a program starts from your team's draft, else last round's, else nothing.
-  const baseFor = (k: Kind) => team.drafts[k]?.code ?? team.previous[k] ?? "";
+  const cfg = g.config;
+  const mine: Team | undefined = view.teams.find((t) => t.id === team.id);
+  const versionsOf = (k: Kind): ProgramVersion[] => mine?.programs?.[k] ?? [];
+  const playingOf = (k: Kind) => versionsOf(k).at(-1) ?? null;
+  const baseFor = (k: Kind) => playingOf(k)?.code ?? "";
+  const keyBase = `dbc:draft:${g.id}:${team.id}:${cfg.language}:${cfg.challengeType}:${cfg.responseType}`;
+  const live = g.status === "running" || g.status === "paused";
+  const participant = !!view.participants?.includes(team.id);
 
-  const [kind, setKind] = useState<Kind>(() => (storage.get("dbc:tab") as Kind) || "clover");
-  const [code, setCode] = useState<Record<Kind, string>>(() => Object.fromEntries(KINDS.map((k) => [k, initialCode(k)])) as Record<Kind, string>);
-
-  function initialCode(k: Kind): string {
-    const saved = storage.get(`${keyBase}:${k}`);
-    if (saved !== null) return saved;
-    // Unsubmitted edits from before the last round ran carry over to this one.
-    const oldKey = `dbc:code:${g.id}:${team.id}:${g.roundsPlayed - 1}:${cfg.language}:${cfg.challengeType}:${cfg.responseType}:${k}`;
-    const old = g.roundsPlayed > 0 ? storage.get(oldKey) : null;
-    if (old !== null) {
-      storage.set(oldKey, null);
-      if (old !== baseFor(k)) { storage.set(`${keyBase}:${k}`, old); return old; }
-    }
-    return baseFor(k);
-  }
+  const [kind, setKind] = useState<Kind>(() => { const t = storage.get("dbc:tab") as Kind; return KINDS.includes(t) ? t : "clover"; });
+  const [code, setCode] = useState<Record<Kind, string>>(() => Object.fromEntries(KINDS.map((k) => [k, storage.get(`${keyBase}:${k}`) ?? baseFor(k)])) as Record<Kind, string>);
   const [stats, setStats] = useState<Partial<Record<Kind, EditorStats | null>>>({});
   const [result, setResult] = useState<Partial<Record<Kind, { check?: CheckResult; error?: string; action: "check" | "submit" }>>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [showPrev, setShowPrev] = useState(false);
 
-  // When a teammate submits (or the server's version changes) and we have no local edits, follow it.
+  // When a teammate submits and we have no local edits, follow them; otherwise offer their version.
   const lastBase = useRef<Record<Kind, string>>(Object.fromEntries(KINDS.map((k) => [k, baseFor(k)])) as Record<Kind, string>);
-  const [incoming, setIncoming] = useState<Partial<Record<Kind, boolean>>>({});
+  const [incoming, setIncoming] = useState<Partial<Record<Kind, number>>>({});
+  const playingKey = KINDS.map((k) => `${k}:${playingOf(k)?.version ?? 0}`).join(",");
   useEffect(() => {
     for (const k of KINDS) {
       const b = baseFor(k);
       if (b === lastBase.current[k]) continue;
       const untouched = code[k] === lastBase.current[k];
       lastBase.current[k] = b;
-      if (untouched) setCode((c) => ({ ...c, [k]: b }));
-      else if (b !== code[k]) setIncoming((s) => ({ ...s, [k]: true }));
+      if (untouched || code[k] === b) { setCode((c) => ({ ...c, [k]: b })); storage.set(`${keyBase}:${k}`, null); setIncoming((s) => ({ ...s, [k]: undefined })); }
+      else setIncoming((s) => ({ ...s, [k]: playingOf(k)?.version }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [team.drafts, team.previous]);
+  }, [playingKey]);
 
   const edit = (k: Kind, v: string) => {
     setCode((c) => ({ ...c, [k]: v }));
@@ -101,21 +100,16 @@ export function ProgramEditors({ view, base }: { view: GameView; base: string })
     setResult((r) => ({ ...r, [k]: undefined }));
   };
 
-  const previous = team.previous[kind] ?? null;
+  const playing = playingOf(kind);
   const budget = cfg.budgets[kind];
   const s = stats[kind];
-  const draft = team.drafts[kind];
   const current = code[kind];
-  const participant = g.roundsPlayed === 0 || !!view.participants?.includes(team.id);
-  const locked = !!g.runningRound || g.status === "finished" || !participant;
-  // Bees, orchids and clovers take turns to change: a program out of its turn has no change budget.
-  const frozen = g.roundsPlayed > 0 && !g.changeable.includes(kind);
-  const allowance = frozen ? 0 : budget.changes;
-  const unit = UNITS[cfg.complexity];
-  const overSize = !!s && s.size > budget.size;
-  const overChanges = !!s && s.distance !== null && s.distance > allowance;
   const empty = !current.trim();
-  const blocked = empty || (!!s && (s.syntaxError || overSize || overChanges));
+  const overSize = !!s && s.size > budget.size;
+  const unchanged = !!playing && current === playing.code;
+  const cost = live && playing ? (s?.distance ?? null) : 0;
+  const canWrite = g.status === "lobby" || (live && participant);
+  const blocked = empty || unchanged || (!!s && (s.syntaxError || overSize));
 
   const check = async () => {
     setBusy("check");
@@ -134,42 +128,42 @@ export function ProgramEditors({ view, base }: { view: GameView; base: string })
       if (r.submitted) {
         storage.set(`${keyBase}:${kind}`, null);
         lastBase.current[kind] = current;
-        setIncoming((i) => ({ ...i, [kind]: false }));
+        setIncoming((i) => ({ ...i, [kind]: undefined }));
       }
     } catch (e) {
       setResult((x) => ({ ...x, [kind]: { error: errorText(e), action: "submit" } }));
     } finally { setBusy(null); }
   };
-  const revertTo = (which: "draft" | "previous" | "empty") => {
-    const v = which === "draft" ? draft?.code : which === "previous" ? previous : "";
-    if (v == null) return;
+  const revertTo = (which: "playing" | "empty") => {
+    const v = which === "playing" ? baseFor(kind) : "";
     if (current !== v && !confirm("Replace what's in the editor?")) return;
     edit(kind, v);
-    setIncoming((i) => ({ ...i, [kind]: false }));
+    setIncoming((i) => ({ ...i, [kind]: undefined }));
   };
 
   let status: React.ReactNode;
-  if (draft && draft.code === current) status = <span className="ok-text"><CheckIcon size={15} /> Submitted by {draft.submittedBy} {timeAgo(draft.submittedAt)}. This plays in round {g.roundsPlayed + 1}.</span>;
-  else if (draft) status = <span className="warn-text">You have changes that aren't submitted yet. The version {draft.submittedBy} submitted will play unless you submit again.</span>;
-  else if (previous !== null && previous === current) status = <span className="muted">Not changed. Last round's program plays again unless you submit a new one.</span>;
-  else if (previous !== null) status = <span className="warn-text">Unsubmitted changes. Last round's program plays again unless you submit.</span>;
-  else status = <span className="warn-text">Not submitted yet. Your team needs all three programs submitted before round 1 to play.</span>;
+  if (!playing) status = <span className="warn-text">Not written yet. {g.status === "lobby" ? "Your team needs all three programs, saved, to play when the game starts." : ""}</span>;
+  else if (unchanged) status = <span className="ok-text"><CheckIcon size={15} /> {g.status === "lobby" ? `Saved as v${playing.version} by ${playing.submittedBy} ${timeAgo(playing.submittedAt)}. This is what plays when the game starts.` : `This is v${playing.version}, playing now.`}</span>;
+  else status = <span className="warn-text">Unsubmitted changes. {g.status === "lobby" ? `v${playing.version} is what's saved.` : `v${playing.version} keeps playing until you submit.`}</span>;
 
   const r = result[kind];
+  const iface = useMemo(() => <InterfaceBox iface={view.interface} kind={kind} language={cfg.language} />, [view.interface, kind, cfg.language]);
+
   return (
     <div className="editors">
       <div className="tabs" role="tablist" aria-label="Your programs">
         {KINDS.map((k) => {
-          const submitted = !!team.drafts[k];
+          const p = playingOf(k);
           const dirty = code[k] !== baseFor(k);
           return (
             <button key={k} role="tab" aria-selected={kind === k} className={`tab ${kind === k ? "active" : ""}`}
               onClick={() => { setKind(k); storage.set("dbc:tab", k); }}>
-              {k === "bee" ? <BeeGlyph color="#f2a541" size={20} /> : <FlowerHead color={k === "clover" ? "#6aa84f" : "#9b5de5"} size={18} />}
+              <KindIcon kind={k} />
               <span className="tab-name">{k}</span>
-              {submitted && !dirty && <span className="tab-mark ok" title="Submitted"><CheckIcon size={13} /></span>}
+              {p && <span className="tab-version">v{p.version}</span>}
+              {p && !dirty && <span className="tab-mark ok" title={g.status === "lobby" ? "Saved" : "Playing now"}><CheckIcon size={13} /></span>}
               {dirty && <span className="tab-mark dirty" title="Unsubmitted changes">•</span>}
-              {g.roundsPlayed > 0 && !g.changeable.includes(k) && <span className="tab-mark locked" title="Locked this round: bees, orchids and clovers take turns">locked</span>}
+              {p?.problem && <span className="tab-mark bad" title={`Problem: ${p.problem}`}>!</span>}
             </button>
           );
         })}
@@ -177,72 +171,162 @@ export function ProgramEditors({ view, base }: { view: GameView; base: string })
 
       <div className="editor-panel" role="tabpanel">
         <div className="editor-layout">
-        <div className="editor-main">
-        <p className="muted small">{BLURB[kind]}</p>
-        <div className="meters">
-          <Meter label={`Size (${cfg.complexity === "chars" ? "characters after minifying" : "nodes"})`} value={empty ? 0 : s?.size ?? null} max={budget.size} />
-          {previous !== null
-            ? (frozen
-              ? <div className="meter-note muted">Locked this round: bees, orchids and clovers take turns to change.</div>
-              : <Meter label={`Changes since last round (${unit})`} value={s?.distance ?? null} max={allowance} />)
-            : <div className="meter-note muted">Round 1: write anything that fits the size budget. After that, programs take turns to change, one kind per round: bees, then orchids, then clovers, then bees again. In its turn your {kind} may change up to {budget.changes} {unit}.</div>}
-          <div className="meter-note muted">Time limit: {budget.ms} ms per {kind === "bee" ? "call" : "question"}</div>
-        </div>
-        {s?.syntaxError && !empty && <Alert kind="warn">Syntax error: this code doesn't parse yet, so it can't be submitted.</Alert>}
-        {overSize && <Alert kind="error">Too big: {s!.size} {unit}, but the budget is {budget.size}. Make it {s!.size - budget.size} {unit} smaller to submit. {cfg.complexity === "chars" ? "Comments, spacing and long names are free; strings, numbers and keywords count." : "Comments, spacing and name lengths are free; every byte of a string or number counts."}</Alert>}
-        {!empty && s?.minified && <details className="minified"><summary className="muted small">What runs: your program minified ({s.size} {unit})</summary><pre>{s.minified}</pre></details>}
-        {frozen && <Alert kind="info">Your {kind} can't change before round {g.roundsPlayed + 1}: bees, orchids and clovers take turns, and this round it's the {g.changeable[0]}s' turn. You can still try ideas out below.</Alert>}
-        {overChanges && !frozen && <Alert kind="error">Too many changes: {s!.distance} {unit} changed since last round, but the budget is {allowance}. Undo {s!.distance! - allowance} to submit.</Alert>}
-        {incoming[kind] && (
-          <Alert kind="info">
-            A teammate submitted a new {kind}. <button className="link-btn" onClick={() => revertTo(team.drafts[kind] ? "draft" : "previous")}>Load their version</button>
-          </Alert>
-        )}
-
-        <CodeEditor key={`code:${kind}`} value={current} onChange={(v) => edit(kind, v)} language={cfg.language} mode={cfg.complexity} previous={previous}
-          onStats={(st) => setStats((x) => ({ ...x, [kind]: st }))} label={`${kind} program`} showPrevious={showPrev}
-          placeholder={`Write your ${kind} here, from scratch.`} />
-
-        <div className="editor-bar">
-          <div className="editor-buttons">
-            <button className="btn" onClick={submit} disabled={locked || busy !== null || blocked} title={empty ? "Write your program first" : blocked ? "Fix the problems shown above first" : undefined}>
-              {busy === "submit" ? "Submitting…" : `Submit ${kind}`}
-            </button>
-            <button className="btn btn-ghost" onClick={check} disabled={busy !== null}>{busy === "check" ? "Checking…" : "Check"}</button>
-            {previous !== null && (
-              <label className="check"><input type="checkbox" checked={showPrev} onChange={(e) => setShowPrev(e.target.checked)} /> compare with last round</label>
+          <div className="editor-main">
+            <p className="muted small">{BLURB[kind]}</p>
+            {playing && live && (
+              <p className="small playing-line">
+                <b>Playing now: v{playing.version}</b> · {playing.size.toLocaleString()} nodes · {playing.atMs > 0 ? `live since ${fmtClock(playing.atMs)}` : "since the start"} · by {playing.submittedBy}
+              </p>
             )}
-          </div>
-          <label className="revert">
-            <span className="sr-only">Start over from</span>
-            <select value="" onChange={(e) => { revertTo(e.target.value as "draft" | "previous" | "empty"); e.target.value = ""; }}>
-              <option value="" disabled>Start over from…</option>
-              {draft && <option value="draft">the submitted version</option>}
-              {previous !== null && <option value="previous">last round's version</option>}
-              <option value="empty">an empty editor</option>
-            </select>
-          </label>
-        </div>
-        <p className="small">{status}</p>
-        {locked && (
-          <p className="small muted">
-            {g.status === "finished" ? "The game is over." : g.runningRound ? `Round ${g.runningRound} is running. You can submit again when it finishes.` : "Your team isn't playing in this game (it didn't submit all three programs before round 1)."}
-          </p>
-        )}
-        {r?.error && <Alert kind="error">{r.error}</Alert>}
-        {r?.check && (
-          r.check.ok
-            ? <Alert kind="ok">{r.action === "submit" ? "Submitted! " : "Looks good. "}{r.check.size} {r.check.unit}{r.check.distance !== null ? `, ${r.check.distance} changed` : ""}.</Alert>
-            : <Alert kind="error">{r.action === "submit" && <b>Not submitted: </b>}{r.check.errors.join(" · ")}</Alert>
-        )}
+            {playing?.problem && <Alert kind="error"><b>v{playing.version} hit a problem while playing:</b> <span className="mono">{playing.problem}</span></Alert>}
+            <div className="meters">
+              <Meter label="Size (nodes)" value={empty ? 0 : s?.size ?? null} max={budget.size} />
+              {live && participant && mine?.banks?.[kind]
+                ? <BudgetMeter store={store} budget={budget} bank={mine.banks[kind]!} cost={unchanged ? 0 : cost} status={g.status} kind={kind} />
+                : <div className="meter-note muted">{g.status === "lobby" ? <>Writing programs before the game starts is <b>free</b>. Once it starts, every change costs change budget, which fills by {budget.perMinute.toLocaleString()} nodes a minute (up to {budget.cap.toLocaleString()}).</> : null}</div>}
+            </div>
+            <div className="meter-note muted small">Time limit: {budget.ms} ms per {kind === "bee" ? "call" : "question"}.</div>
+            {s?.syntaxError && !empty && <Alert kind="warn">Syntax error: this code doesn't parse yet, so it can't be submitted.</Alert>}
+            {overSize && <Alert kind="error">Too big: {s!.size.toLocaleString()} nodes, but the budget is {budget.size.toLocaleString()}. Make it {(s!.size - budget.size).toLocaleString()} nodes smaller to submit. Comments, spacing and name lengths are free; every byte of a string or number counts.</Alert>}
+            {incoming[kind] !== undefined && (
+              <Alert kind="info">
+                A teammate submitted v{incoming[kind]} of your {kind}, and it's playing now. <button className="link-btn" onClick={() => revertTo("playing")}>Load it</button> (your edits will be replaced)
+              </Alert>
+            )}
 
-        <TryPanel key={`try:${kind}`} kind={kind} code={current} base={base} challengeType={cfg.challengeType}
-          flowers={{ clover: code.clover, orchid: code.orchid }} />
-        </div>
-        <InterfaceBox iface={view.interface} kind={kind} language={cfg.language} />
+            <CodeEditor key={`code:${kind}`} value={current} onChange={(v) => edit(kind, v)} language={cfg.language} previous={live && playing ? playing.code ?? null : null}
+              onStats={(st) => setStats((x) => ({ ...x, [kind]: st }))} label={`${kind} program`} showPrevious={showPrev}
+              previousLabel={playing ? `v${playing.version}, playing now` : "Before"} currentLabel="Your edit"
+              placeholder={`Write your ${kind} here, from scratch.`} />
+            {!empty && s?.minified && <details className="minified"><summary className="muted small">What actually runs: your program minified ({s.size.toLocaleString()} nodes)</summary><pre>{s.minified}</pre></details>}
+
+            <SubmitBar store={store} status={g.status} kind={kind} busy={busy} canWrite={canWrite} blocked={blocked} empty={empty} unchanged={unchanged}
+              cost={cost} budget={budget} bank={mine?.banks?.[kind] ?? null} live={live} onSubmit={submit} onCheck={check}
+              extra={<>
+                {live && playing && <label className="check"><input type="checkbox" checked={showPrev} onChange={(e) => setShowPrev(e.target.checked)} /> side by side with v{playing.version}</label>}
+                <label className="revert">
+                  <span className="sr-only">Start over from</span>
+                  <select value="" onChange={(e) => { revertTo(e.target.value as "playing" | "empty"); e.target.value = ""; }}>
+                    <option value="" disabled>Start over from…</option>
+                    {playing && <option value="playing">{g.status === "lobby" ? `the saved version (v${playing.version})` : `the version playing now (v${playing.version})`}</option>}
+                    <option value="empty">an empty editor</option>
+                  </select>
+                </label>
+              </>} />
+            <p className="small">{status}</p>
+            {!canWrite && (
+              <p className="small muted">
+                {g.status === "finished" ? "The game is over." : "Your team isn't playing in this game: it hadn't written all three programs when the game started. You can still try programs out."}
+              </p>
+            )}
+            {r?.error && <Alert kind="error">{r.error}</Alert>}
+            {r?.check && (
+              r.check.ok
+                ? <Alert kind="ok">
+                    {r.action === "submit"
+                      ? (live ? <><b>v{r.check.version} is live.</b> It cost {plural(r.check.cost, "node")} of change budget; {fmtNodes(r.check.available ?? 0)} left.</> : <><b>Saved as v{r.check.version}.</b> {r.check.size.toLocaleString()} nodes.</>)
+                      : <>Looks good: {r.check.size.toLocaleString()} nodes{live && r.check.distance !== null ? `; this change costs ${r.check.cost} of your ${r.check.available} available` : ""}.</>}
+                  </Alert>
+                : <Alert kind="error">{r.action === "submit" && <b>Not submitted: </b>}{r.check.errors.join(" · ")}</Alert>
+            )}
+
+            {kind === "bee" && live && <BeePrints store={store} teamId={team.id} />}
+            <TryPanel key={`try:${kind}`} kind={kind} code={current} base={base} challengeType={cfg.challengeType}
+              flowers={{ clover: code.clover, orchid: code.orchid }} view={view} />
+          </div>
+          {iface}
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * The change budget for one program, filling in real time with the interpolated game clock, with this
+ * change's cost marked on it.
+ */
+function BudgetMeter({ store, budget, bank, cost, status, kind }: { store: LiveStore; budget: Budget; bank: Bank; cost: number | null; status: GameStatus; kind: Kind }) {
+  useLiveTick(store, 200, status === "running");
+  const exact = availableAt(budget, bank, store.now());
+  const whole = Math.floor(exact);
+  const ratio = budget.cap > 0 ? exact / budget.cap : 0;
+  const costRatio = cost && budget.cap > 0 ? Math.min(1, cost / budget.cap) : 0;
+  const wait = cost !== null ? waitFor(budget, exact, cost) : 0;
+  const affordable = cost !== null && cost <= whole;
+  const full = exact >= budget.cap - 1e-9;
+  return (
+    <div className={`meter budget-meter ${cost && !affordable ? "short" : ""}`}>
+      <div className="meter-label">
+        <span>Change budget</span><b>{fmtNodes(exact)}</b><span className="muted">/ {budget.cap.toLocaleString()}</span>
+        <span className="muted small budget-rate">{full ? "full" : `+${budget.perMinute.toLocaleString()} a minute`}</span>
+      </div>
+      <div className="meter-track budget-track">
+        <div className="meter-fill budget-fill" style={{ transform: `scaleX(${Math.min(1, ratio).toFixed(4)})` }} />
+        {cost !== null && cost > 0 && <div className="budget-cost" style={{ left: `${costRatio * 100}%` }} title={`This change costs ${cost}`} />}
+      </div>
+      <div className="budget-note small">
+        {cost === null ? <span className="muted">Measuring the change…</span>
+          : cost === 0 ? <span className="muted">No change from the version playing now (comments, spacing and renames are free).</span>
+          : affordable ? <span className="ok-text">This change costs <b>{cost.toLocaleString()}</b>: affordable now.</span>
+          : wait === null ? <span className="bad-text">This change costs <b>{cost.toLocaleString()}</b>, more than your {kind} can ever bank ({budget.cap.toLocaleString()}). Make it smaller.</span>
+          : <span className="warn-text">This change costs <b>{cost.toLocaleString()}</b>: affordable in <b>{fmtWait(wait)}</b> of game time{status === "paused" ? " (once the game resumes)" : ""}.</span>}
+      </div>
+    </div>
+  );
+}
+
+/** Submit and check, with the submit button counting down to when the change is affordable. */
+function SubmitBar({ store, status, kind, busy, canWrite, blocked, empty, unchanged, cost, budget, bank, live, onSubmit, onCheck, extra }: {
+  store: LiveStore; status: GameStatus; kind: Kind; busy: string | null; canWrite: boolean; blocked: boolean; empty: boolean; unchanged: boolean;
+  cost: number | null; budget: Budget; bank: Bank | null; live: boolean; onSubmit: () => void; onCheck: () => void; extra: React.ReactNode;
+}) {
+  useLiveTick(store, 250, live && status === "running");
+  const exact = live && bank ? availableAt(budget, bank, store.now()) : Infinity;
+  const wait = live && bank && cost !== null ? waitFor(budget, exact, cost) : 0;
+  const tooDear = live && (cost === null || wait !== 0);
+  const label = busy === "submit" ? "Submitting…"
+    : !live ? `Save ${kind}`
+    : unchanged ? "Nothing to submit"
+    : cost === null ? "Measuring…"
+    : wait === null ? "Too big a change"
+    : wait > 0 ? `Affordable in ${fmtWait(wait)}`
+    : `Submit: goes live now (−${cost})`;
+  return (
+    <div className="editor-bar">
+      <div className="editor-buttons">
+        <button className={`btn ${live && !tooDear && !blocked ? "btn-honey" : ""}`} onClick={onSubmit} disabled={!canWrite || busy !== null || blocked || tooDear}
+          title={empty ? "Write your program first" : blocked && !unchanged ? "Fix the problems shown above first" : undefined}>
+          {label}
+        </button>
+        <button className="btn btn-ghost" onClick={onCheck} disabled={busy !== null || empty}>{busy === "check" ? "Checking…" : "Check"}</button>
+        {extra}
+      </div>
+    </div>
+  );
+}
+
+/** What my bee printed lately (its own team sees this during the game). */
+function BeePrints({ store, teamId }: { store: LiveStore; teamId: string }) {
+  const rev = useLiveTick(store, 500);
+  const prints = useMemo(() => {
+    const out = [];
+    for (let i = store.actions.length - 1; i >= 0 && out.length < 40; i--) {
+      const a = store.actions[i];
+      if (a.bee === teamId && a.log) out.push(a);
+    }
+    return out;
+  }, [store, teamId, rev]); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <details className="prints" open>
+      <summary><b>What your bee printed lately</b> <span className="muted small">({prints.length ? `the last ${prints.length}` : "nothing yet"}; only your team sees this until the game ends)</span></summary>
+      {prints.length > 0 && (
+        <ol className="prints-list">
+          {prints.map((a) => (
+            <li key={a.seq}><span className="mono muted small">{fmtClock(a.atMs, true)} · {a.action}{a.action === "feed" ? (a.nectar ? " (nectar)" : " (fooled)") : ""}</span><pre className="bee-log">{a.log}</pre></li>
+          ))}
+        </ol>
+      )}
+    </details>
   );
 }
 
@@ -264,16 +348,15 @@ function InterfaceBox({ iface, kind, language }: { iface: ProgramInterface; kind
       </dl>
       {t.rules.length > 0 && <ul className="iface-rules">{t.rules.map((r, i) => <li key={i}>{r}</li>)}</ul>}
       <p className="small muted">
-        Programs can also read <code>GAME</code> ({language === "python" ? 'GAME["turns"]' : "GAME.turns"}, feed_cost, challenge_type, response_type, max_len, max_nodes, flowers, and ms: this program's time limit per call).
-        {kind === "bee" && <> Your bee also gets <code>MEMORY</code>: what its top-level <code>keep</code> held at the end of each earlier round.</>}
-        A response of the wrong type, a crash or a timeout reaches the bee as <code>{none}</code>.
+        Programs can also read <code>GAME</code> ({language === "python" ? 'GAME["feed_cost"]' : "GAME.feed_cost"}, challenge_type, response_type, max_len, max_nodes, and ms: this program's time limit per call).
+        {" "}A response of the wrong type, a crash or a timeout reaches the bee as <code>{none}</code>.
       </p>
     </details>
   );
 }
 
-function TryPanel({ kind, code, base, challengeType, flowers }: {
-  kind: Kind; code: string; base: string; challengeType: string; flowers: { clover: string; orchid: string };
+function TryPanel({ kind, code, base, challengeType, flowers, view }: {
+  kind: Kind; code: string; base: string; challengeType: string; flowers: { clover: string; orchid: string }; view: GameView;
 }) {
   const [text, setText] = useState(() => storage.get(`dbc:try:${challengeType}`) ?? "");
   const [busy, setBusy] = useState(false);
@@ -282,6 +365,7 @@ function TryPanel({ kind, code, base, challengeType, flowers }: {
   const [bee, setBee] = useState<TryBeeResult | null>(null);
   const fmt = challengeFormat(challengeType);
   const bothFlowers = !!flowers.clover.trim() && !!flowers.orchid.trim();
+  const teams = useMemo(() => Object.fromEntries(view.teams.map((t) => [t.id, t])), [view.teams]);
 
   const run = async () => {
     setBusy(true);
@@ -307,14 +391,15 @@ function TryPanel({ kind, code, base, challengeType, flowers }: {
     } finally { setBusy(false); }
   };
 
+  const visits = bee ? new Set(bee.actions.map((a) => a.visit)).size : 0;
   return (
     <div className="try">
       <h3>Try it</h3>
       {kind === "bee" ? (
         <p className="small muted">
           {bothFlowers
-            ? "Your bee forages a tiny garden of just your own two flowers, as they are in your clover and orchid editors right now, for a whole round."
-            : "Your bee forages a tiny garden of just your own two flowers for a whole round. Your clover and orchid editors aren't both filled in, so it visits the flowers your team submitted (else last round's)."}
+            ? "Your bee forages a tiny garden of just your own two flowers, as they are in your clover and orchid editors right now, for 300 rounds."
+            : "Your bee forages a tiny garden of just your own two flowers for 300 rounds. Your clover and orchid editors aren't both filled in, so it visits the versions your team saved."}
         </p>
       ) : (
         <label className="field">
@@ -330,12 +415,13 @@ function TryPanel({ kind, code, base, challengeType, flowers }: {
         flower.error ? <Alert kind="error">{flower.error}</Alert> : (
           <div className="table-scroll">
             <table className="data-table try-table">
-              <thead><tr><th className="left">Challenge</th><th className="left">Response</th></tr></thead>
+              <thead><tr><th className="left">Challenge</th><th className="left">Response</th><th>Time</th></tr></thead>
               <tbody>
                 {flower.results.map((x, i) => (
                   <tr key={i}>
                     <td className="left"><Value v={x.c} role="challenge" max={60} /></td>
                     <td className={`left ${x.error ? "bad" : ""}`}>{x.error ? <span className="mono">{`None (${x.error})`}</span> : <Value v={x.r} role="response" max={60} />}</td>
+                    <td className="nowrap">{typeof x.ms === "number" ? `${x.ms} ms` : "–"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -347,65 +433,15 @@ function TryPanel({ kind, code, base, challengeType, flowers }: {
       {kind === "bee" && bee && (
         <div className="try-bee">
           <p>
-            <b>{bee.visits.length}</b> visits{bee.turns ? <> in <b>{bee.turns.toLocaleString()}</b> turns</> : null} · fed <b>{bee.feeds}</b> times · <DropIcon size={14} /> nectar <b>{bee.nectar}</b> · <FooledIcon size={14} /> fooled <b>{bee.feeds - bee.nectar}</b>
+            <b>{plural(visits, "visit")}</b> in <b>{bee.rounds.toLocaleString()}</b> rounds · fed <b>{bee.feeds}</b> times · <DropIcon size={14} /> nectar <b>{bee.nectar}</b> · <FooledIcon size={14} /> fooled <b>{bee.feeds - bee.nectar}</b>
           </p>
-          {bee.memory && (
-            <p className="small muted">
-              It would keep {bee.memory.bytes ? `${(bee.memory.bytes / 1024).toFixed(1)} KB` : "nothing"} for <code>MEMORY</code> in later rounds.{bee.memory.note ? ` ${bee.memory.note}` : ""}
-            </p>
-          )}
-          {(["bee", "clover", "orchid"] as Kind[]).map((k) => bee.problems?.[k] ? <Alert key={k} kind="error"><b>{k}:</b> {bee.problems[k]}</Alert> : null)}
-          <div className="table-scroll tall">
-            <table className="data-table log-table">
-              <thead><tr><th>#</th><th>Turns</th><th className="left">Flower</th><th className="left">Questions → answers</th><th className="left">Result</th></tr></thead>
-              <tbody>
-                {bee.visits.map((v, i) => (
-                  <tr key={i}>
-                    <td>{i + 1}</td>
-                    <td className="nowrap">{v.start}–{v.end}</td>
-                    <td className="left"><span className={`kind-pill ${v.kind}`}>your {v.kind}</span></td>
-                    <td className="left"><Steps steps={v.steps} /></td>
-                    <td className="left"><ActionText action={v.action} nectar={v.nectar} error={v.beeError} note={v.note} />{v.beeLog && <pre className="bee-log">{v.beeLog}</pre>}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {bee.problems.map((p, i) => <Alert key={i} kind="error"><b>{p.kind}:</b> {p.error}</Alert>)}
+          <ol className="feed-list try-list">
+            {bee.actions.slice(0, 300).map((a) => <FeedRow key={a.seq} a={a} teams={teams} myTeamId={null} own />)}
+          </ol>
+          {bee.actions.length > 300 && <p className="small muted">…and {(bee.actions.length - 300).toLocaleString()} more actions.</p>}
         </div>
       )}
     </div>
-  );
-}
-
-export function Steps({ steps }: { steps?: { c: unknown; r: unknown; after?: boolean; challengeError?: string; flowerError?: string }[] }) {
-  if (!steps) return <span className="muted">hidden</span>;
-  if (!steps.length) return <span className="muted">no questions</span>;
-  // Structured values (lists, trees, graphs) get one question per line, each expandable.
-  const structured = steps.some((st) => isStructured(st.c) || isStructured(st.r));
-  return (
-    <span className={`steps ${structured ? "steps-col" : ""}`}>
-      {steps.map((st, i) => (
-        <Fragment key={i}>
-        {st.after && !steps[i - 1]?.after && <span className="step-fed" title="The bee fed here, then kept asking: studying a flower whose truth it now knows">fed, then studied:</span>}
-        <span className={`step ${st.after ? "step-after" : ""} ${st.challengeError || st.flowerError ? "step-err" : ""}`} title={st.challengeError || st.flowerError || undefined}>
-          <Value v={st.c} role="challenge" max={24} /><span className="arrow">→</span><Value v={st.r} role="response" max={24} />
-          {(st.challengeError || st.flowerError) && <span className="step-why">{st.challengeError ? "bad challenge" : "flower crashed"}</span>}
-        </span>
-        </Fragment>
-      ))}
-    </span>
-  );
-}
-
-export function ActionText({ action, nectar, error, note }: { action: string; nectar: boolean | null; error?: string; note?: string }) {
-  return (
-    <span className="action">
-      {action === "feed" && nectar && <span className="ok-text nowrap"><DropIcon size={14} /> fed: nectar</span>}
-      {action === "feed" && !nectar && <span className="bad-text nowrap"><FooledIcon size={14} /> fed: no nectar</span>}
-      {action === "leave" && <span className="muted">left</span>}
-      {action === "error" && <span className="bad-text">mistake</span>}
-      {error && <span className="err-detail mono">{error}</span>}
-      {note && <span className="muted small"> ({note})</span>}
-    </span>
   );
 }

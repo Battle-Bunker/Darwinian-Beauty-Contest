@@ -1,12 +1,14 @@
 import { useState, type FormEvent } from "react";
 import { api, errorText } from "../api";
-import { KINDS, type GameView } from "../types";
+import { KINDS, type GameView, type Team } from "../types";
 import { Alert, CopyButton } from "./ui";
-import { BeeGlyph, CheckIcon, FlowerHead } from "./Icons";
+import { CheckIcon } from "./Icons";
+import { KindIcon } from "./ProgramEditors";
+import { isReady } from "./OwnerPanel";
 
 export function TeamsPanel({ view, base }: { view: GameView; base: string }) {
   const g = view.game;
-  const lobby = g.roundsPlayed === 0 && !g.runningRound;
+  const lobby = g.status === "lobby";
   const mine = view.myTeam;
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
@@ -39,7 +41,7 @@ export function TeamsPanel({ view, base }: { view: GameView; base: string }) {
           </div>
           <div className="share-row"><code className="join-code">{mine.joinCode}</code><CopyButton text={mine.joinCode} /></div>
         </div>
-      ) : (
+      ) : g.status !== "finished" && (
         <div className="team-forms">
           {lobby && (
             <form onSubmit={create} className="inline-form">
@@ -64,34 +66,53 @@ export function TeamsPanel({ view, base }: { view: GameView; base: string }) {
 
       {view.teams.length === 0 ? <p className="muted">No teams yet.</p> : (
         <ul className="team-grid">
-          {view.teams.map((t) => {
-            const ready = KINDS.every((k) => t.submitted[k]);
-            return (
-              <li key={t.id} className={`team-card ${t.id === mine?.id ? "mine" : ""} ${t.participant === false ? "benched" : ""}`} style={{ ["--team" as string]: t.color }}>
-                <div className="team-card-head">
-                  <span className="swatch big" style={{ background: t.color }} />
-                  <b className="team-card-name">{t.name}</b>
-                  {t.id === mine?.id && <span className="you-tag">you</span>}
-                </div>
-                <div className="small muted">{t.members.join(", ") || "no members"}</div>
-                {g.status !== "finished" && (
-                  <div className="submit-ticks" aria-label={`${t.name} submissions for the next round`}>
-                    {KINDS.map((k) => (
-                      <span key={k} className={`tick ${t.submitted[k] ? "on" : ""}`} title={`${k}: ${t.submitted[k] ? "submitted" : "not submitted"} for round ${g.roundsPlayed + 1}`}>
-                        {k === "bee" ? <BeeGlyph color={t.submitted[k] ? "#f2a541" : "#b9b2a3"} size={16} /> : <FlowerHead color={t.submitted[k] ? (k === "clover" ? "#6aa84f" : "#9b5de5") : "#b9b2a3"} size={14} />}
-                        <span>{k}</span>
-                        {t.submitted[k] && <CheckIcon size={12} />}
-                      </span>
-                    ))}
-                  </div>
-                )}
-                {t.participant === false && <div className="small muted">Not playing (missed round 1)</div>}
-                {lobby && <div className={`small ${ready ? "ok-text" : "muted"}`}>{ready ? "Ready for round 1" : "Needs all three programs to play"}</div>}
-              </li>
-            );
-          })}
+          {view.teams.map((t) => <TeamCard key={t.id} view={view} t={t} mine={t.id === mine?.id} />)}
         </ul>
       )}
+      {!lobby && g.status !== "finished" && <p className="small muted">During the game each team sees only its own code changes and change budget. Everyone's are revealed when the game ends.</p>}
     </div>
+  );
+}
+
+function TeamCard({ view, t, mine }: { view: GameView; t: Team; mine: boolean }) {
+  const g = view.game;
+  const lobby = g.status === "lobby";
+  const ready = isReady(t);
+  return (
+    <li className={`team-card ${mine ? "mine" : ""} ${t.participant === false ? "benched" : ""}`} style={{ ["--team" as string]: t.color }}>
+      <div className="team-card-head">
+        <span className="swatch big" style={{ background: t.color }} />
+        <b className="team-card-name">{t.name}</b>
+        {mine && <span className="you-tag">you</span>}
+      </div>
+      <div className="small muted">{t.members.join(", ") || "no members"}</div>
+      {lobby && t.ready && (
+        <div className="submit-ticks" aria-label={`${t.name}: programs written`}>
+          {KINDS.map((k) => (
+            <span key={k} className={`tick ${t.ready![k] ? "on" : ""}`} title={`${k}: ${t.ready![k] ? "written" : "not written yet"}`}>
+              <KindIcon kind={k} size={14} />
+              <span>{k}</span>
+              {t.ready![k] && <CheckIcon size={12} />}
+            </span>
+          ))}
+        </div>
+      )}
+      {lobby && <div className={`small ${ready ? "ok-text" : "muted"}`}>{ready ? "Ready to play" : "Needs all three programs to play"}</div>}
+      {!lobby && t.participant === false && <div className="small muted">Sitting this game out (it wasn't ready at the start)</div>}
+      {!lobby && t.participant && t.programs && (
+        <div className="submit-ticks">
+          {KINDS.map((k) => {
+            const vs = t.programs![k] ?? [];
+            const last = vs.at(-1);
+            return (
+              <span key={k} className={`tick on ${last?.problem ? "tick-bad" : ""}`} title={`${k}: ${vs.length} ${vs.length === 1 ? "version" : "versions"}${last?.problem ? ` · problem: ${last.problem}` : ""}`}>
+                <KindIcon kind={k} size={14} /><span>{k} v{last?.version ?? 0}</span>
+              </span>
+            );
+          })}
+        </div>
+      )}
+      {!lobby && t.participant && !t.programs && <div className="small muted">Playing. Its changes stay secret until the end.</div>}
+    </li>
   );
 }

@@ -4,8 +4,8 @@ import { useLiveTick, type LiveStore } from "../lib/live";
 import { fmtClock } from "../lib/format";
 import { Progress } from "./ui";
 
-/** Short games (a minute or less) show tenths of a second. */
-export const showTenths = (endMs: number) => endMs <= 60_000;
+/** Short games (two minutes or less) show tenths of a second. */
+export const showTenths = (endMs: number) => endMs <= 120_000;
 
 export function GameClock({ store, view }: { store: LiveStore; view: GameView }) {
   const g = view.game;
@@ -19,6 +19,11 @@ export function GameClock({ store, view }: { store: LiveStore; view: GameView })
       <div className="clock-main">
         <span className="clock-now">{fmtClock(now, tenths)}</span>
         <span className="clock-of">/ {fmtClock(g.endMs)}</span>
+        {g.status !== "lobby" && (
+          <span className="clock-round" title="A round is one turn for every bee that isn't feeding">
+            round <b>{Math.max(g.round ?? 0, store.round).toLocaleString()}</b>
+          </span>
+        )}
       </div>
       <Progress value={now / g.endMs} className="clock-bar" label="Game time played" />
       <div className="clock-note small">

@@ -40,7 +40,7 @@ export function Progress({ value, className = "", label }: { value: number; clas
   const v = Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
   return (
     <span className={`progress ${className}`} role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(v * 100)}>
-      <span className="progress-fill" style={{ width: `${(v * 100).toFixed(2)}%` }} />
+      <span className="progress-fill" style={{ transform: `scaleX(${v.toFixed(4)})` }} />
     </span>
   );
 }

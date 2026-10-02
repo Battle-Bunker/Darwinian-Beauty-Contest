@@ -1,5 +1,3 @@
-import type { GameView, Team } from "../types";
-
 /** A value from a program (challenge or response) as a short readable string. */
 export function showValue(v: unknown, max = 40): string {
   let s: string;
@@ -36,10 +34,6 @@ export function fmtWait(ms: number): string {
 
 /** Budget numbers: whole nodes, or one decimal while small and growing. */
 export const fmtNodes = (x: number) => (x < 100 && x % 1 !== 0 ? x.toFixed(1) : Math.floor(x).toLocaleString());
-
-export function teamMap(view: GameView): Record<string, Team> {
-  return Object.fromEntries(view.teams.map((t) => [t.id, t]));
-}
 
 export const plural = (n: number, one: string, many = one + "s") => `${n.toLocaleString()} ${n === 1 ? one : many}`;
 

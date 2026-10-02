@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errorText } from "../api";
 import { Link, navigate } from "../router";
 import { useDocumentTitle, useEventStream } from "../hooks";
-import type { RoomView } from "../types";
-import { Alert, CopyButton, StatusBadge } from "../components/ui";
+import type { RoomGame, RoomView } from "../types";
+import { Alert, CopyButton, Progress, StatusBadge } from "../components/ui";
 import { PlusIcon } from "../components/Icons";
-import { timeAgo } from "../lib/format";
+import { fmtClock, timeAgo } from "../lib/format";
 
 export function RoomPage({ room }: { room: string }) {
   useDocumentTitle(`Room ${room} · Darwinian Beauty Contest`);
@@ -13,9 +13,12 @@ export function RoomPage({ room }: { room: string }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const fetchedAt = useRef(0);
   const load = useCallback(async () => {
     try {
-      setView(await api<RoomView>("GET", `/rooms/${encodeURIComponent(room)}`));
+      const v = await api<RoomView>("GET", `/rooms/${encodeURIComponent(room)}`);
+      fetchedAt.current = performance.now();
+      setView(v);
       setError(null);
     } catch (e) {
       setError(errorText(e));
@@ -25,6 +28,15 @@ export function RoomPage({ room }: { room: string }) {
   useEffect(() => { load(); }, [load]);
   // The stream opens with {room}; every later message names the game that changed.
   useEventStream(view ? `/api/rooms/${encodeURIComponent(room)}/events` : null, (msg: { game?: string }) => { if (msg.game) load(); });
+  // Running games' clocks tick here between updates (and the list refreshes now and then to stay honest).
+  const running = !!view?.games.some((g) => g.status === "running");
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!running) return;
+    const t = setInterval(() => tick((x) => x + 1), 1000);
+    const r = setInterval(() => { if (document.visibilityState === "visible") load(); }, 15000);
+    return () => { clearInterval(t); clearInterval(r); };
+  }, [running, load]);
 
   const newGame = async () => {
     setBusy(true);
@@ -63,16 +75,25 @@ export function RoomPage({ room }: { room: string }) {
         ) : (
           <ul className="list">
             {games.map((g) => (
-              <li key={g.id}>
-                <Link to={g.url} className="list-row">
-                  <span className="list-main"><b>Game {g.shortId}</b><StatusBadge status={g.status} roundsPlayed={g.roundsPlayed} rounds={g.rounds} /></span>
-                  <span className="muted">{g.teamCount} {g.teamCount === 1 ? "team" : "teams"} · {g.roundsPlayed}/{g.rounds} rounds · {timeAgo(g.createdAt)}</span>
-                </Link>
-              </li>
+              <li key={g.id}><GameRow g={g} since={fetchedAt.current} /></li>
             ))}
           </ul>
         )}
       </section>
     </div>
+  );
+}
+
+function GameRow({ g, since }: { g: RoomGame; since: number }) {
+  const clock = g.status === "running" ? Math.min(g.endMs, g.clockMs + (performance.now() - since)) : g.clockMs;
+  return (
+    <Link to={g.url} className="list-row game-row">
+      <span className="list-main"><b>Game {g.shortId}</b><StatusBadge status={g.status} /></span>
+      <span className="game-row-clock">
+        <span className="mono">{g.status === "lobby" ? `${fmtClock(g.endMs)} game` : `${fmtClock(clock)} / ${fmtClock(g.endMs)}`}</span>
+        {g.status !== "lobby" && <Progress value={clock / g.endMs} className={`row-bar bar-${g.status}`} label="Game time played" />}
+      </span>
+      <span className="muted">{g.teamCount} {g.teamCount === 1 ? "team" : "teams"} · created {timeAgo(g.createdAt)}</span>
+    </Link>
   );
 }

@@ -13,7 +13,7 @@ export interface Budget { size: number; perMinute: number; cap: number; ms: numb
 export interface GameConfig {
   language: "python" | "typescript";
   minutes: number;          // game time; the clock stops while paused
-  feedCost: number;         // turns a feed costs (an ask costs 1)
+  feedCost: number;         // rounds a feeding bee sits out of the round robin
   challengeType: string;
   responseType: string;
   maxLen: number;
@@ -81,6 +81,7 @@ export type ActionKind = "ask" | "feed" | "leave" | "error";
 export interface Action {
   seq: number;
   atMs: number;
+  round: number;            // the round it happened in (a round: one turn for every bee that isn't feeding)
   bee: string;
   visit: number;
   patch: string;
@@ -111,7 +112,7 @@ export interface GameView {
   room: { id: string; shortId: string; url: string; isOwner: boolean };
   game: {
     id: string; shortId: string; url: string; status: GameStatus; config: GameConfig;
-    clockMs: number; endMs: number; lastSeq: number; version: number; lastError: string | null;
+    clockMs: number; endMs: number; round: number; lastSeq: number; version: number; lastError: string | null;
     createdAt: string; startedAt: string | null; finishedAt: string | null; revealed: boolean; isOwner: boolean;
   };
   me: { id: string; name: string; teamId: string | null } | null;
@@ -141,5 +142,5 @@ export interface TryFlowerResult { results: { c: unknown; r: unknown; error?: st
 export interface TryBeeResult {
   actions: Action[];
   problems: { team: number; kind: Kind; version: number; error: string }[];
-  feeds: number; nectar: number; cycles: number;
+  feeds: number; nectar: number; rounds: number;
 }

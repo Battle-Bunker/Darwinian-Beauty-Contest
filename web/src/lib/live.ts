@@ -22,8 +22,8 @@ export class LiveStore {
   rev = 0;
   /** Set once the older end of the ring is the very first action of the game. */
   complete = false;
-  /** Actions received per second of real time, smoothed. */
-  rate = 0;
+  /** The latest round seen (from actions, or the game view). */
+  round = 0;
 
   private cap = RING;
   private listeners = new Set<Listener>();
@@ -42,6 +42,7 @@ export class LiveStore {
       if (a.seq <= this.lastSeq) continue;
       this.actions.push(a);
       this.lastSeq = a.seq;
+      if (a.round > this.round) this.round = a.round;
       added++;
     }
     if (!added) return;
@@ -80,8 +81,9 @@ export class LiveStore {
    * A clock reading from the server. While running, the local estimate only moves forward (a reading
    * that arrives late is older than the estimate), unless it's far off.
    */
-  syncClock(ms: number, status?: GameStatus, endMs?: number) {
+  syncClock(ms: number, status?: GameStatus, endMs?: number, round?: number) {
     if (endMs !== undefined) this.endMs = endMs;
+    if (round !== undefined && round > this.round) this.round = round;
     const wasRunning = this.running;
     if (status !== undefined) this.running = status === "running";
     const before = wasRunning ? Math.min(this.endMs, this.base + (performance.now() - this.at)) : this.serverMs;

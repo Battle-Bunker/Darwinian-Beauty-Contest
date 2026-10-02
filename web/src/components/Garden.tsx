@@ -41,10 +41,11 @@ export function Garden({ view, store }: { view: GameView; store: LiveStore }) {
 
   const [frame, setFrame] = useState<Frame>(() => anim.current!.frame(performance.now(), status));
   const visible = useRef(true);
+  const [onScreen, setOnScreen] = useState(true);
   useEffect(() => {
     const el = boxRef.current;
     if (!el || typeof IntersectionObserver === "undefined") return;
-    const io = new IntersectionObserver((e) => { visible.current = e[0].isIntersecting; }, { rootMargin: "100px" });
+    const io = new IntersectionObserver((e) => { visible.current = e[0].isIntersecting; setOnScreen(e[0].isIntersecting); }, { rootMargin: "100px" });
     io.observe(el);
     return () => io.disconnect();
   }, [boxRef]);
@@ -88,7 +89,7 @@ export function Garden({ view, store }: { view: GameView; store: LiveStore }) {
 
   return (
     <div className="garden">
-      <div className="garden-stage" ref={boxRef}>
+      <div className={`garden-stage ${onScreen ? "" : "offscreen"}`} ref={boxRef}>
         <svg className={`garden-svg garden-${status}`} viewBox={`0 0 ${layout.width} ${layout.height}`} style={{ height: svgHeight, ["--fs" as string]: fontScale.toFixed(2) }}
           role="img" aria-label={`The garden: ${order.length} patches and their bees${status === "running" ? ", live" : ""}`}>
           <GardenBackdrop layout={layout} />
@@ -97,18 +98,21 @@ export function Garden({ view, store }: { view: GameView; store: LiveStore }) {
             if (!team || !layout.pos[id]) return null;
             return <Patch key={id} team={team} p={layout.pos[id]} mine={id === myTeamId} dim={status === "lobby" && !ready(team)} maxChars={Math.round(18 / fontScale)} />;
           })}
-          {Object.entries(frame.glow).map(([key, v]) => {
-            const [patch, kind] = key.split(":");
-            const p = layout.pos[patch];
-            if (!p) return null;
-            return <circle key={key} cx={p.x + (kind === "clover" ? -FLOWER_DX : FLOWER_DX)} cy={p.y + FLOWER_Y} r={22 + 6 * (1 - v)} className="ask-glow" opacity={(0.55 * v).toFixed(2)} />;
-          })}
           {order.map((id) => {
             const p = layout.pos[id], c = counts[id];
             if (!p) return null;
             const team = teamsById[id];
             const label = status === "lobby" ? (team && ready(team) ? "ready to play" : "getting ready…") : c ? `${c.fedHere.toLocaleString()} fed here` : "";
             return <text key={id} x={p.x} y={p.y + 68 + 18 * fontScale} className="patch-tally">{label}</text>;
+          })}
+        </svg>
+        <svg className={`garden-svg garden-overlay garden-${status}`} viewBox={`0 0 ${layout.width} ${layout.height}`} style={{ height: svgHeight, ["--fs" as string]: fontScale.toFixed(2) }} aria-hidden>
+          <defs><clipPath id="dbc-bee-body"><ellipse rx="11" ry="7.5" /></clipPath></defs>
+          {Object.entries(frame.glow).map(([key, v]) => {
+            const [patch, kind] = key.split(":");
+            const p = layout.pos[patch];
+            if (!p) return null;
+            return <circle key={key} cx={p.x + (kind === "clover" ? -FLOWER_DX : FLOWER_DX)} cy={p.y + FLOWER_Y} r={22 + 4 * (1 - v)} className="ask-glow" opacity={(0.4 * v).toFixed(2)} />;
           })}
           {frame.fx.map((f) => <FeedFx key={f.id} f={f} u={Math.min(1, Math.max(0, (now - f.t0) / FX_MS))} />)}
           {frame.bees.map((b) => <Bee key={b.team} b={b} team={teamsById[b.team]} mine={b.team === myTeamId} showName={names} paused={status === "paused"} />)}
@@ -153,7 +157,6 @@ const GardenBackdrop = memo(function GardenBackdrop({ layout }: { layout: Layout
           <stop offset="0" style={{ stopColor: "var(--grass-1)" }} />
           <stop offset="1" style={{ stopColor: "var(--grass-2)" }} />
         </linearGradient>
-        <clipPath id="dbc-bee-body"><ellipse rx="11" ry="7.5" /></clipPath>
       </defs>
       <rect x={-w} y={-h} width={3 * w} height={h + TOP_PAD + 30} fill="url(#dbc-sky)" />
       <path d={`M${-w} ${TOP_PAD - 12} Q ${-w / 2} ${TOP_PAD - 40} 0 ${TOP_PAD - 4} Q ${w * 0.18} ${TOP_PAD - 34} ${w * 0.38} ${TOP_PAD - 6} T ${w * 0.75} ${TOP_PAD - 10} T ${w} ${TOP_PAD - 18} T ${2 * w} ${TOP_PAD - 8} V ${2 * h} H ${-w} Z`} className="g-hill" />
@@ -240,8 +243,10 @@ function Bee({ b, team, mine, showName, paused }: { b: BeeSprite; team: Team | u
       <title>{`${poss(team.name)} bee`}</title>
       {mine && <circle r={19} className="bee-halo" />}
       <g transform={`rotate(${b.tilt.toFixed(1)}) scale(${b.flip ? -1 : 1} 1)`}>
-        <ellipse cx="-3" cy="-9" rx="7" ry="5" className="bee-wing" />
-        <ellipse cx="4" cy="-9" rx="6" ry="4.5" className="bee-wing bee-wing-2" />
+        <g transform={b.flap < 1 ? `translate(0 -5) scale(1 ${b.flap.toFixed(2)}) translate(0 5)` : undefined}>
+          <ellipse cx="-3" cy="-9" rx="7" ry="5" className="bee-wing" />
+          <ellipse cx="4" cy="-9" rx="6" ry="4.5" className="bee-wing" />
+        </g>
         <path d="M-11 0 l-5 0 l5 -2.5z" className="bee-sting" />
         <ellipse rx="11" ry="7.5" fill={team.color} className="bee-body" />
         <g clipPath="url(#dbc-bee-body)">
@@ -299,7 +304,7 @@ function FeedFx({ f, u }: { f: Fx; u: number }) {
   );
 }
 
-function GardenLegend() {
+const GardenLegend = memo(function GardenLegend() {
   return (
     <ul className="garden-legend" aria-label="What the garden shows">
       <li><span className="lg-flowers" aria-hidden>✿</span> each patch: its clover (left, pays nectar) and its orchid (right, pays nothing)</li>
@@ -309,10 +314,10 @@ function GardenLegend() {
       <li><span className="lg lg-err">!</span> the bee made a mistake</li>
     </ul>
   );
-}
+});
 
 /** Whole-game tallies per team, kept live between score updates. */
-function BeeTally({ order, teams, counts, scores, myTeamId }: {
+const BeeTally = memo(function BeeTally({ order, teams, counts, scores, myTeamId }: {
   order: string[]; teams: Record<string, Team>; counts: ReturnType<typeof liveCounts>; scores: TeamScore[]; myTeamId: string | null;
 }) {
   const byId = Object.fromEntries(scores.map((s) => [s.teamId, s]));
@@ -351,4 +356,4 @@ function BeeTally({ order, teams, counts, scores, myTeamId }: {
       </table>
     </div>
   );
-}
+});

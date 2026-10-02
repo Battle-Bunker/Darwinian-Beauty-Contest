@@ -136,7 +136,9 @@ export const FeedRow = memo(function FeedRow({ a, teams, myTeamId, tenths = true
   const failed = a.action === "error" || (a.action === "ask" && a.error);
   return (
     <li className={`feed-row feed-${a.action} ${failed ? "feed-failed" : ""}`}>
-      <span className="feed-time mono" title={`Action ${a.seq.toLocaleString()}, at ${fmtClock(a.atMs, true)} of game time`}>{fmtClock(a.atMs, tenths)}</span>
+      <span className="feed-time mono" title={`Action ${a.seq.toLocaleString()}: round ${a.round?.toLocaleString() ?? "?"}, at ${fmtClock(a.atMs, true)} of game time`}>
+        {fmtClock(a.atMs, tenths)}{a.round != null && <span className="feed-round">r{a.round.toLocaleString()}</span>}
+      </span>
       <span className="feed-who">
         {own ? <span className="muted small">your bee</span> : <Chip team={teams[a.bee]} you={a.bee === myTeamId} />}
         <span className="feed-arrow" aria-label="at">→</span>

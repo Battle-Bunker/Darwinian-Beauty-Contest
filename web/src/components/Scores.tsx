@@ -36,7 +36,7 @@ export function Scores({ view }: { view: GameView }) {
   const sorted = [...shown].sort((a, b) => b.fitness - a.fitness);
   const maxFit = Math.max(1.5, ...game.map((s) => s.fitness), ...recent.map((s) => s.fitness));
   const whole = view.recent && view.recent.fromMs === 0;
-  const window = view.recent ? `${fmtClock(view.recent.fromMs)}–${fmtClock(view.recent.toMs)}` : "";
+  const span = view.recent ? `${fmtClock(view.recent.fromMs)}–${fmtClock(view.recent.toMs)}` : "";
   if (!game.length) return <p className="muted">Scores appear once the game starts.</p>;
 
   return (
@@ -45,14 +45,14 @@ export function Scores({ view }: { view: GameView }) {
         <div className="seg" role="group" aria-label="Which scores to break down">
           <button className={pick === "game" ? "active" : ""} aria-pressed={pick === "game"} onClick={() => setMode("game")}>Whole game</button>
           <button className={pick === "recent" ? "active" : ""} aria-pressed={pick === "recent"} onClick={() => setMode("recent")}>
-            Last 5 minutes{whole ? " (so far, the whole game)" : ""}
+            Last 5 minutes
           </button>
         </div>
       )}
       <p className="small muted scores-note">
         {short
           ? `This game is ${fmtClock(g.endMs)} long, so its scores are over the whole game.`
-          : pick === "game" ? "Sorted by whole-game fitness. The breakdown is over the whole game." : `Sorted by fitness over the last five minutes of game time (${window}). The breakdown is over those five minutes.`}
+          : pick === "game" ? "Sorted by whole-game fitness. The breakdown is over the whole game." : `Sorted by fitness over the last five minutes of game time (${span}${whole ? ": so far, the whole game" : ""}). The breakdown is over those five minutes.`}
         {" "}Scores as of {fmtClock(g.clockMs)} of game time{g.status === "running" ? ", updated every few seconds" : ""}.
       </p>
 
@@ -65,10 +65,8 @@ export function Scores({ view }: { view: GameView }) {
               <th className="left">Team</th>
               <th className="left"><span className="th-tip">Fitness{short ? "" : ": game"} <InfoTip>{TERMS.fitness}</InfoTip></span></th>
               {!short && <th className="left"><span className="th-tip">Last 5 min</span></th>}
-              <th><span className="th-tip">Allure share <InfoTip>{TERMS.allureShare}</InfoTip></span></th>
-              <th><span className="th-tip">Forage share <InfoTip>{TERMS.forageShare}</InfoTip></span></th>
-              <th><span className="th-tip">Allure <InfoTip>{TERMS.allure}</InfoTip></span></th>
-              <th><span className="th-tip">Forage <InfoTip>{TERMS.forage}</InfoTip></span></th>
+              <th><span className="th-tip">Allure share <InfoTip>{`${TERMS.allureShare} ${TERMS.allure}`}</InfoTip></span></th>
+              <th><span className="th-tip">Forage share <InfoTip>{`${TERMS.forageShare} ${TERMS.forage}`}</InfoTip></span></th>
               <th><span className="th-tip">Pollinators <InfoTip>{TERMS.pollinators}</InfoTip></span></th>
               <th><span className="th-tip">Nectar sources <InfoTip>{TERMS.nectarSources}</InfoTip></span></th>
               <th title="Feeds your patch received">Fed at patch</th>
@@ -83,10 +81,8 @@ export function Scores({ view }: { view: GameView }) {
                 <th scope="row" className="left"><TeamChip team={teams[s.teamId]} you={s.teamId === myTeamId} short /></th>
                 <td className="left"><FitnessBar value={gameById[s.teamId]?.fitness ?? 0} max={maxFit} strong={pick === "game"} /></td>
                 {!short && <td className="left"><FitnessBar value={recentById[s.teamId]?.fitness ?? 0} max={maxFit} strong={pick === "recent"} recent /></td>}
-                <td title={`par ${pct(1 / n)}`}>{pct(s.allureShare)}</td>
-                <td title={`par ${pct(1 / n)}`}>{pct(s.forageShare)}</td>
-                <td>{fmt2(s.allure)}</td>
-                <td>{fmt2(s.forage)}</td>
+                <td title={`allure ${fmt2(s.allure)} · par ${pct(1 / n)}`}>{pct(s.allureShare)}</td>
+                <td title={`forage ${fmt2(s.forage)} · par ${pct(1 / n)}`}>{pct(s.forageShare)}</td>
                 <td>{s.pollinators} / {n}</td>
                 <td>{s.nectarSources} / {n}</td>
                 <td>{s.feedsReceived.toLocaleString()}</td>
