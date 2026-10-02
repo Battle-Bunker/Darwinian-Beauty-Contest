@@ -95,8 +95,9 @@ ${personaAndSituation(persona, fixed)}
 - Games are short (this one: ${durationText(config.minutes)}), and a session is slow by comparison: a game may well end before
   your session does, and then the session is stopped. What reacts during a game is what you prepared: programs that adapt by
   themselves (a bee learns as it goes), and any script you start in your session, for example one that follows the stream
-  and calls tools/submit.py by itself (README.md shows how). Such a script may run in the background while your session lasts;
-  everything your session started is stopped when it ends.
+  and calls tools/submit.py by itself (README.md shows how). Such a script may run in the background while your session lasts
+  (the Bash tool's run_in_background option, output to a file in your workspace); everything your session started is stopped
+  when it ends.
 - The action stream: every bee action is public the moment it happens, and stream/actions.jsonl holds them all, one JSON
   object per line, growing about once a second (stream/SCHEMA.md). It can get big: read it with code (tools/stream.py), never
   print it whole. The same stream is on the game's public API, which needs no login: ${apiBase}/events (Server-Sent Events) and

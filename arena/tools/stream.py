@@ -4,8 +4,9 @@ Files (see stream/SCHEMA.md):
     stream/actions.jsonl   every action in the game so far, as anyone may see it: one JSON object per line,
                            oldest first. The runner appends new actions about once a second while the game
                            runs, so the file keeps growing. Read it, never write to it.
-    stream/mine.jsonl      the actions of YOUR bee and at YOUR patch, with what only your team sees: your
-                           bee's printouts ("log"), your programs' versions, why the game ended a visit.
+    stream/mine.jsonl      what only your team sees of the actions of YOUR bee and at YOUR patch (same seq as
+                           in actions.jsonl): your bee's printouts ("log"), your programs' versions, why the
+                           game ended your bee's visit.
     stream/teams.json      team ids -> names, and which team is yours.
 
 As a library (from a script in your workspace):
@@ -15,7 +16,7 @@ As a library (from a script in your workspace):
     for a in s.actions(): ...                 # everything so far, oldest first
     for a in s.actions(since_ms=60000): ...   # from game time 1:00 on (jumps there, doesn't read it all)
     for a in s.follow(): ...                  # waits for new actions and yields them as they arrive
-    for a in s.mine(): ...                    # your team's private view of its own actions
+    for m in s.mine(): ...                    # your private details (log, versions), by seq
     s.name(team_id), s.me, s.teams, s.last()  # names, your team id, the latest action
 
 From the shell:
@@ -104,7 +105,7 @@ class Stream:
             yield a
 
     def mine(self):
-        """Actions of your own bee and at your own patch, with your private fields (log, versions)."""
+        """Your private details of your own bee's and patch's actions: {seq, atMs, beeVersion, flowerVersion, log, ...}."""
         return self._lines(self.mine_file)
 
     def last(self):

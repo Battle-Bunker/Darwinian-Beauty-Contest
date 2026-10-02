@@ -6,10 +6,10 @@
 //                                                   stream/actions.jsonl, so it is never copied per team.
 //   <WS_ROOT>/<arena>/.runner/g<gen>/actions.jsonl   the runner's private master copy. If a team damages the shared
 //                                                   file through its link, it is rewritten in place from this one.
-//   <workspace>/stream/mine.jsonl                    per team: the actions involving its own bee or patch as that team
-//                                                   may see them (its bee's printouts, its own versions, the reason
-//                                                   an engine leave ended its bee's visit). Read from the game's
-//                                                   tables with the same visibility rule as the API.
+//   <workspace>/stream/mine.jsonl                    per team: what only that team sees of the actions involving its
+//                                                   bee or patch ({seq, atMs, beeVersion, flowerVersion, log, error
+//                                                   of an engine leave}; join with actions.jsonl on seq). Read from
+//                                                   the game's tables with the same visibility rule as the API.
 //
 // Agents read these files with code at their own cadence (tools/stream.py); nothing from the stream goes into a
 // prompt except a few headline numbers (headline()).
@@ -19,6 +19,17 @@ import { Api } from "./api.js";
 import { all } from "./db.js";
 
 const BUCKET_MS = 5000;
+
+/** What only this team sees of an action during play (the API's actionView with over = false, minus the public
+ * fields, which are in actions.jsonl under the same seq): its bee's version and printout, its flowers' version, and
+ * the reason the game ended its bee's visit. Null if there's nothing private. */
+export function privateView(row, teamId) {
+  const v = teamView(row, teamId);
+  const out = { seq: v.seq, atMs: v.atMs };
+  for (const k of ["beeVersion", "flowerVersion", "log"]) if (v[k] != null) out[k] = v[k];
+  if (row.error_by === "engine" && v.error) Object.assign(out, { error: v.error, by: v.by });
+  return Object.keys(out).length > 2 ? out : null;
+}
 
 /** An action as one team may see it during play (server/games.js actionView with over = false). */
 export function teamView(row, teamId) {
@@ -153,7 +164,8 @@ export class GameStream {
           [this.gameUuid, m.lastSeq, teamId]);
         if (!rows.length) break;
         fs.mkdirSync(path.dirname(m.file), { recursive: true });
-        fs.appendFileSync(m.file, rows.map((r) => JSON.stringify(teamView(r, teamId))).join("\n") + "\n");
+        const lines = rows.map((r) => privateView(r, teamId)).filter(Boolean).map((x) => JSON.stringify(x));
+        if (lines.length) fs.appendFileSync(m.file, lines.join("\n") + "\n");
         m.lastSeq = Number(rows[rows.length - 1].seq);
         if (rows.length < 5000) break;
       }

@@ -51,7 +51,8 @@ export class GameMetrics {
   }
 
   #win(atMs) {
-    const i = Math.floor(atMs / this.windowMs);
+    // The last few actions are stamped just after the clock ran out: they belong to the last window.
+    const i = Math.min(Math.floor(atMs / this.windowMs), Math.max(0, Math.ceil((this.config.minutes * 60000) / this.windowMs) - 1));
     let s = this.w.get(i);
     if (!s) {
       const n = this.ids.length;

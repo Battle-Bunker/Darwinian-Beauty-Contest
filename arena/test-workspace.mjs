@@ -16,7 +16,7 @@ import path from "node:path";
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "arena-ws-test-"));
 process.env.ARENA_WS_ROOT = root;
 const { prepareWorkspace, audit, allowedUrl, escapesWorkspace, wsDir } = await import("./lib/workspace.js");
-const { GameStream, teamView } = await import("./lib/stream.js");
+const { GameStream, privateView } = await import("./lib/stream.js");
 const { migrate, pool, q } = await import("./lib/db.js");
 await migrate();
 let failed = 0;
@@ -86,9 +86,10 @@ check("workspace: other teams' versions aren't shown during play", !fs.readFileS
 
 // mine.jsonl: the private view of one team (same rule as the API).
 const row = { seq: 7, at_ms: 700, round: 7, bee_team: "T1", visit: 2, patch_team: "T2", kind: "clover", action: "leave", bee_version: 3, flower_version: 5, error: "a new bee took over", error_by: "engine", log: "hi" };
-const v1 = teamView(row, "T1"), v2 = teamView(row, "T2");
-check("mine.jsonl view: your bee's version, printout and engine leave", v1.beeVersion === 3 && v1.log === "hi" && v1.error && v1.flowerVersion === undefined);
-check("mine.jsonl view: the patch owner sees its flower version, not the bee's details", v2.flowerVersion === 5 && v2.beeVersion === undefined && v2.log === undefined && v2.error === undefined);
+const v1 = privateView(row, "T1"), v2 = privateView(row, "T2");
+check("mine.jsonl: your bee's version, printout and engine leave, by seq", v1.seq === 7 && v1.beeVersion === 3 && v1.log === "hi" && v1.by === "engine" && v1.flowerVersion === undefined && v1.c === undefined);
+check("mine.jsonl: the patch owner gets its flower version, not the bee's details", v2.flowerVersion === 5 && v2.beeVersion === undefined && v2.log === undefined && v2.error === undefined);
+check("mine.jsonl: nothing for a team the action doesn't involve", privateView(row, "T3") === null);
 
 // tools/stream.py on the workspace's stream.
 const py = (...a) => spawnSync("python3", ["tools/stream.py", ...a], { cwd: dir, encoding: "utf8" });
@@ -111,7 +112,10 @@ const writePy = (content) => ["Write", { file_path: path.join(dir, "follow.py"),
 check("audit: python urllib GET of the public API on localhost is fine", sev(bash(`python3 -c "import urllib.request; print(urllib.request.urlopen('${apiBase}/actions?after=0&limit=10').read()[:200])"`)) === "ok");
 check("audit: a script following the SSE stream is fine", sev(writePy(`import json, urllib.request\nURL = "${apiBase}/events?after=0"\nfor line in urllib.request.urlopen(URL):\n    if line.startswith(b"data: "):\n        print(json.loads(line[6:]))\n`)) === "ok");
 check("audit: a script calling tools/submit.py via subprocess is fine", sev(writePy(`import subprocess\nsubprocess.run(["python3", "tools/submit.py", "orchid"])\n`)) === "ok");
-check("audit: running such a script in the background is fine", sev(bash("python3 follow.py > follow.log 2>&1 &")) === "ok");
+check("audit: running such a script in the background is fine", sev(bash("python3 follow.py > follow.log 2>&1 &")) === "ok" && sev(["Bash", { command: "python3 follow.py > follow.log 2>&1", run_in_background: true }]) === "ok");
+const { taskDir } = await import("./lib/workspace.js");
+check("audit: reading the output file of its own background task is fine", sev(["Read", { file_path: path.join(taskDir(dir), "tasks", "b1.output") }]) === "ok" && sev(bash(`tail ${taskDir(dir)}/tasks/b1.output`)) === "ok");
+check("audit: another session's task output is not", sev(["Read", { file_path: path.join(taskDir(dir2), "tasks", "b1.output") }]) === "violation");
 check("audit: logging in is a violation", sev(bash(`python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:4000/api/auth/dev/login')"`)) === "violation");
 check("audit: a POST to the API is a violation", sev(writePy(`import urllib.request\nurllib.request.urlopen(urllib.request.Request("${apiBase}/programs", data=b"{}", method="POST"))\n`)) === "violation");
 check("audit: credentials in a request are a violation", sev(writePy(`import urllib.request\nreq = urllib.request.Request("${apiBase}", headers={"Authorization": "Bearer x"})\n`)) === "violation");

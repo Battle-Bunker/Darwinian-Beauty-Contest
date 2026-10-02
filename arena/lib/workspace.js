@@ -62,7 +62,9 @@ from stream import Stream           # Stream().actions(since_ms=...), .follow() 
 \`\`\`
 
 A script you start (for example one that follows the stream and submits changes by itself) may run in the background
-while your session lasts; everything your session started is stopped when the session ends.
+while your session lasts: start it with the Bash tool's \`run_in_background\` option and send its output to a file here,
+e.g. \`python3 follow.py > follow.log 2>&1\` (a trailing \`&\` is refused). Everything your session started is stopped
+when the session ends.
 
 ## The live stream over HTTP
 
@@ -94,9 +96,10 @@ The runner appends new actions about once a second while the game runs; a line i
 | nectar | feed: true at a clover, false at an orchid |
 | error, by | what went wrong, and whose fault: bee, challenge or flower |
 
-While the game runs nobody sees which versions of other teams' programs played. \`stream/mine.jsonl\` has the actions of
-your own bee and at your own patch, with your private details: \`beeVersion\` (your bee), \`flowerVersion\` (your flowers),
-\`log\` (what your bee printed), and the error of an engine leave (your bee was replaced or restarted mid-visit).
+While the game runs nobody sees which versions of other teams' programs played. \`stream/mine.jsonl\` adds what only your
+team sees, one line per action of your bee or at your patch, with the same \`seq\` as in actions.jsonl: \`beeVersion\` (your
+bee), \`flowerVersion\` (your flowers), \`log\` (what your bee printed), and \`error\`/\`by\` when the game ended your bee's
+visit (\`by: "engine"\`: your bee was replaced or restarted mid-visit).
 
 \`stream/teams.json\`: \`{"teams": {id: name}, "me": your team id, "participants": [ids]}\`.
 
@@ -276,6 +279,8 @@ export function writeMinified(dir, ext, kind, code) {
 
 /** The team's own Claude Code tool-output spill directory (big tool results are saved there during a session). */
 export const spillDir = (dir) => path.join(process.env.HOME || "/root", ".claude", "projects", dir.replace(/[^A-Za-z0-9]/g, "-"));
+/** Where Claude Code writes the output of the session's background tasks (the Bash tool's run_in_background). */
+export const taskDir = (dir) => path.join("/tmp", `claude-${process.getuid?.() ?? 0}`, dir.replace(/[^A-Za-z0-9]/g, "-"));
 
 /** Bytes on disk under a directory, counting hard-linked files once (seen: a shared Set of inodes). */
 export function diskBytes(root, seen = new Set()) {
@@ -418,8 +423,9 @@ export function audit(transcript, dir, arenaId, slug, opts = {}) {
   const otherWs = new RegExp(`arena-ws/(?!${esc(arenaId)}/${esc(slug)}(?![\\w.-]))`);
   // Claude Code spills oversized tool output to ~/.claude/projects/<escaped cwd>/<session>/tool-results/ and tells the
   // agent the path: reading THAT (its own session's spill) is fine; another team's spill directory is not.
-  const spill = spillDir(dir);
-  const ownSpill = (x) => String(x).replaceAll(spill + "/", "WS/").replaceAll(spill, "WS");
+  // The same goes for the output files of its own background tasks (Claude Code's run_in_background).
+  const spill = spillDir(dir), tasks = taskDir(dir);
+  const ownSpill = (x) => String(x).replaceAll(spill + "/", "WS/").replaceAll(spill, "WS").replaceAll(tasks + "/", "WS/").replaceAll(tasks, "WS");
   let shellCwd = dir; // Claude Code's Bash tool keeps the working directory between calls
   // Commands the CLI refused to run (permission rules, its heredoc/brace heuristics) never changed the directory.
   const refused = new Set();
@@ -467,7 +473,7 @@ export function audit(transcript, dir, arenaId, slug, opts = {}) {
           const p = input[key];
           if (!p) continue;
           const abs = path.resolve(dir, String(p));
-          if (!abs.startsWith(dir) && !abs.startsWith(spill + "/")) add("violation", c.name, `path outside workspace: ${p}`);
+          if (!abs.startsWith(dir) && !abs.startsWith(spill + "/") && !abs.startsWith(tasks + "/")) add("violation", c.name, `path outside workspace: ${p}`);
           if ((c.name === "Write" || c.name === "Edit") && abs.startsWith(path.join(dir, "stream") + "/")) add("violation", c.name, `writing to the shared stream files: ${p}`);
         }
         const pat = String(input.pattern || "");
