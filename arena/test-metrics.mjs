@@ -62,6 +62,13 @@ check("changes: timeline with the session that submitted", r.changes.find((c) =>
 check("final scores from the game's ledgers", r.final.length === 2 && r.final.every((x) => Number.isFinite(x.fitness)));
 const B = r.teams.B;
 check("slots: used (asks + feeds), feeding, missed; too-slow decisions", B.tooSlow === 1 && B.slotsUsed === 4 && B.slotsFeeding === 10 && B.slotsMissed === 33 - 4 - 10, JSON.stringify(B));
+// An arrive opens a visit (public, before the first ask): it neither uses a slot nor changes fed rates.
+const m2 = new GameMetrics({ config, participants: ["A", "B"], names: { A: "Alpha", B: "Beta" }, windowMs: 10000 });
+let q2 = 0;
+const add2 = (atMs, round, action, extra = {}) => m2.add({ seq: ++q2, at_ms: atMs, round, bee_team: "A", visit: 1, patch_team: "B", kind: "cosmos", action, ...extra });
+add2(0, 1, "arrive"); add2(0, 1, "ask", { c: 1, r: 2, ms: 10 }); add2(200, 2, "feed", { nectar: true });
+const r2 = m2.finish({});
+check("arrive: opens the visit without using a slot", r2.teams.A.slotsUsed === 2 && r2.teams.A.rivalCosmosFed === 1 && r2.teams.A.precision === 1, JSON.stringify(r2.teams.A));
 check("windowFor: about 8 windows in round numbers", windowFor(30000) === 10000 && windowFor(120000) === 15000 && windowFor(1800000) === 300000);
 
 console.log(failed ? `${failed} check(s) failed` : "all metrics checks passed");

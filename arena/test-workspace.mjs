@@ -120,6 +120,8 @@ check("audit: running such a script in the background is fine", sev(bash("python
 const { taskDir } = await import("./lib/workspace.js");
 check("audit: reading the output file of its own background task is fine", sev(["Read", { file_path: path.join(taskDir(dir), "tasks", "b1.output") }]) === "ok" && sev(bash(`tail ${taskDir(dir)}/tasks/b1.output`)) === "ok");
 check("audit: another session's task output is not", sev(["Read", { file_path: path.join(taskDir(dir2), "tasks", "b1.output") }]) === "violation");
+check("audit: the game's WebSocket on localhost:4000 is fine, another port's isn't", sev(writePy(`URL = "ws://localhost:4000/api/rooms/R/games/G/ws?after=0"\n`)) === "ok"
+  && sev(writePy(`URL = "ws://localhost:5432/"\n`)) === "violation");
 check("audit: logging in is a violation", sev(bash(`python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:4000/api/auth/dev/login')"`)) === "violation");
 check("audit: a POST to the API is a violation", sev(writePy(`import urllib.request\nurllib.request.urlopen(urllib.request.Request("${apiBase}/programs", data=b"{}", method="POST"))\n`)) === "violation");
 check("audit: credentials in a request are a violation", sev(writePy(`import urllib.request\nreq = urllib.request.Request("${apiBase}", headers={"Authorization": "Bearer x"})\n`)) === "violation");
