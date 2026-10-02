@@ -2,7 +2,7 @@
 // side, with the breakdown for whichever period is picked.
 import { useMemo, useState } from "react";
 import type { GameView, Team, TeamScore } from "../types";
-import { fmt2, fmt3, fmtClock, pct } from "../lib/format";
+import { fmt2, fmt3, fmtClock, pct, poss } from "../lib/format";
 import { InfoTip, TeamChip } from "./ui";
 import { TrophyIcon } from "./Icons";
 
@@ -53,7 +53,7 @@ export function Scores({ view }: { view: GameView }) {
         {short
           ? `This game is ${fmtClock(g.endMs)} long, so its scores are over the whole game.`
           : pick === "game" ? "Sorted by whole-game fitness. The breakdown is over the whole game." : `Sorted by fitness over the last five minutes of game time (${span}${whole ? ": so far, the whole game" : ""}). The breakdown is over those five minutes.`}
-        {" "}Scores as of {fmtClock(g.clockMs)} of game time{g.status === "running" ? ", updated every few seconds" : ""}.
+        {" "}Scores as of {fmtClock(g.clockMs)} of game time{g.status === "running" ? ", updated every second or so" : ""}.
       </p>
 
       <div className="table-scroll">
@@ -94,6 +94,13 @@ export function Scores({ view }: { view: GameView }) {
         </table>
       </div>
 
+      {view.ledgers && view.participants && (
+        <div className="ledgers">
+          <Ledger title="Who fed where" hint="Feeds each bee (row) made at each patch (column), clover or orchid. A column's rootsum is that patch's allure." matrix={view.ledgers.feeds} order={view.participants} teams={teams} myTeamId={myTeamId} tone="feed" verb="fed" />
+          <Ledger title="Who got nectar where" hint="Nectar each bee (row) got from each patch (column): only clovers pay. A row's rootsum is that bee's forage." matrix={view.ledgers.nectar} order={view.participants} teams={teams} myTeamId={myTeamId} tone="nectar" verb="got nectar" />
+        </div>
+      )}
+
       <details className="legend-box">
         <summary>How scoring works</summary>
         <dl>
@@ -106,6 +113,54 @@ export function Scores({ view }: { view: GameView }) {
         <p className="small muted">So you want lots of different bees to feed at your patch (even at your orchid), and your bee to find nectar at lots of different patches. Your own patch and bee count like any other team. The game is won on whole-game fitness; the last five minutes show who's doing well right now.</p>
       </details>
     </div>
+  );
+}
+
+const compact = (v: number) => (v < 10000 ? v.toLocaleString() : v < 1e6 ? `${(v / 1000).toFixed(v < 100000 ? 1 : 0)}k` : `${(v / 1e6).toFixed(1)}M`);
+const shortName = (name?: string) => (!name ? "?" : name.length > 9 ? name.slice(0, 8) + "…" : name);
+
+/** A whole-game ledger as a heatmap: rows are bees, columns are patches. */
+function Ledger({ title, hint, matrix, order, teams, myTeamId, tone, verb }: {
+  title: string; hint: string; matrix: number[][]; order: string[]; teams: Record<string, Team>; myTeamId: string | null; tone: "feed" | "nectar"; verb: string;
+}) {
+  const max = Math.max(1, ...matrix.flat());
+  return (
+    <figure className="ledger">
+      <figcaption><b>{title}</b> <span className="small muted">{hint}</span></figcaption>
+      <div className="table-scroll">
+        <table className={`heat heat-${tone}`}>
+          <thead>
+            <tr>
+              <th className="corner"><span>bee ↓</span><span>patch →</span></th>
+              {order.map((id) => (
+                <th key={id} scope="col" className="heat-col" title={`${poss(teams[id]?.name)} patch`}>
+                  <span className="swatch" style={{ background: teams[id]?.color }} />
+                  <span className="heat-colname">{shortName(teams[id]?.name)}</span>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {order.map((rowId, i) => (
+              <tr key={rowId}>
+                <th scope="row" className="heat-row"><TeamChip team={teams[rowId]} you={rowId === myTeamId} short /></th>
+                {order.map((colId, j) => {
+                  const v = matrix[i]?.[j] ?? 0;
+                  const level = v / max;
+                  return (
+                    <td key={colId} className={`${i === j ? "self" : ""} ${level > 0.55 ? "hi" : ""} ${v === 0 ? "zero" : ""}`}
+                      style={{ ["--lvl" as string]: `${Math.round(8 + level * 92)}%` }}
+                      title={`${poss(teams[rowId]?.name)} bee ${verb} ${v.toLocaleString()} time${v === 1 ? "" : "s"} at ${poss(teams[colId]?.name)} patch${i === j ? " (its own)" : ""}`}>
+                      {compact(v)}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </figure>
   );
 }
 

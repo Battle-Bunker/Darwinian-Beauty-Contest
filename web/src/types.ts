@@ -99,7 +99,7 @@ export interface Action {
   log?: string | null;
 }
 
-export interface ActionsPage { actions: Action[]; lastSeq: number; clockMs: number; status: GameStatus }
+export interface ActionsPage { actions: Action[]; lastSeq: number; clockMs: number; round: number; status: GameStatus }
 
 export interface TeamScore {
   teamId: string; allure: number; forage: number; allureShare: number; forageShare: number; fitness: number;
@@ -107,6 +107,15 @@ export interface TeamScore {
 }
 
 export interface RecentScores { fromMs: number; toMs: number; scores: TeamScore[] }
+
+/** feeds[bee team][patch team] and nectar[bee][patch] over the whole game, in participants order. */
+export interface Ledgers { feeds: number[][]; nectar: number[][] }
+
+/** GET .../scores: the live numbers, cheap enough to poll. Scores, ledgers and lastSeq are from one moment. */
+export interface ScoresView {
+  status: GameStatus; clockMs: number; endMs: number; round: number; lastSeq: number;
+  participants: string[] | null; scores: TeamScore[] | null; recent: RecentScores | null; ledgers: Ledgers | null;
+}
 
 export interface GameView {
   room: { id: string; shortId: string; url: string; isOwner: boolean };
@@ -122,6 +131,7 @@ export interface GameView {
   interface: ProgramInterface;
   scores: TeamScore[] | null;    // whole game, per participant
   recent: RecentScores | null;   // the last five minutes of game time
+  ledgers: Ledgers | null;
 }
 
 /** POST check / programs. size and cost in nodes; available: whole nodes of change budget now (null in the lobby). */

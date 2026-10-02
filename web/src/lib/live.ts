@@ -22,8 +22,10 @@ export class LiveStore {
   rev = 0;
   /** Set once the older end of the ring is the very first action of the game. */
   complete = false;
-  /** The latest round seen (from actions, or the game view). */
+  /** The latest round seen (from actions, the stream, or the game view). */
   round = 0;
+  /** The game's status as last reported (stream, scores or view). */
+  status: GameStatus | null = null;
 
   private cap = RING;
   private listeners = new Set<Listener>();
@@ -85,7 +87,7 @@ export class LiveStore {
     if (endMs !== undefined) this.endMs = endMs;
     if (round !== undefined && round > this.round) this.round = round;
     const wasRunning = this.running;
-    if (status !== undefined) this.running = status === "running";
+    if (status !== undefined) { this.status = status; this.running = status === "running"; }
     const before = wasRunning ? Math.min(this.endMs, this.base + (performance.now() - this.at)) : this.serverMs;
     this.serverMs = Math.max(this.serverMs, ms);
     if (this.running) {
@@ -158,10 +160,12 @@ export function useGameStream(store: LiveStore, base: string | null, onVersion: 
         let msg: any;
         try { msg = JSON.parse(ev.data); } catch { return; }
         if (Array.isArray(msg.actions)) store.ingest(msg.actions);
-        if (typeof msg.clockMs === "number") store.syncClock(msg.clockMs);
-        // {version}: something public changed; {programs: true}: my team submitted (private). Refetch either way.
+        const was = store.status;
+        if (typeof msg.clockMs === "number") store.syncClock(msg.clockMs, msg.status, undefined, msg.round);
+        // {version}: something public changed; {programs: true}: my team submitted (private); a new status
+        // (paused, finished): the page changes shape. Refetch the view for any of them.
         if (typeof msg.version === "number") versionCb.current(msg.version);
-        else if (msg.programs) versionCb.current(-1);
+        else if (msg.programs || (was && msg.status && msg.status !== was)) versionCb.current(-1);
       };
       es.onerror = () => {
         // EventSource would reconnect with the original ?after=, replaying everything since; reopen ourselves.
@@ -173,13 +177,12 @@ export function useGameStream(store: LiveStore, base: string | null, onVersion: 
 
     (async () => {
       try {
-        const head = await api<ActionsPage>("GET", `${base}/actions?limit=1&after=999999999999`);
-        const after = Math.max(0, head.lastSeq - BACKLOG);
-        const page = await api<ActionsPage>("GET", `${base}/actions?after=${after}&limit=${BACKLOG}`);
+        // The latest BACKLOG actions, oldest first.
+        const page = await api<ActionsPage>("GET", `${base}/actions?before=${Number.MAX_SAFE_INTEGER}&limit=${BACKLOG}`);
         if (closed) return;
         store.ingest(page.actions);
-        if (after === 0 && !page.actions.length) store.complete = true;
-        store.syncClock(page.clockMs, page.status);
+        if (page.actions.length < BACKLOG) store.complete = true;
+        store.syncClock(page.clockMs, page.status, undefined, page.round);
       } catch { /* the stream still works without the backlog */ }
       open();
     })();
@@ -196,8 +199,8 @@ export function useGameStream(store: LiveStore, base: string | null, onVersion: 
 export async function loadEarlier(store: LiveStore, base: string, n = 2500): Promise<number> {
   const first = store.actions[0]?.seq;
   if (!first || first <= 1) { store.complete = true; return 0; }
-  const after = Math.max(0, first - 1 - n);
-  const page = await api<ActionsPage>("GET", `${base}/actions?after=${after}&limit=${first - 1 - after}`);
+  const page = await api<ActionsPage>("GET", `${base}/actions?before=${first}&limit=${n}`);
   store.prepend(page.actions);
+  if (page.actions.length < n) store.complete = true;
   return page.actions.length;
 }

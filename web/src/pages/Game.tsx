@@ -1,12 +1,13 @@
 // One page for a game, from the lobby to long after it's over. The view (teams, programs, scores) is
-// refetched whenever the game's version moves, my team's programs change, and every few seconds while
-// it runs (for the scores); the actions stream in over SSE into a bounded ring (lib/live.ts) that the
-// garden, the feed and the clock read at their own pace.
+// refetched whenever the game's version moves, its status changes or my team's programs change; while it
+// runs, the live numbers (scores, ledgers, clock, round) come from the light /scores endpoint every
+// second or so. The actions stream in over SSE into a bounded ring (lib/live.ts) that the garden, the
+// feed and the clock read at their own pace.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errorText, gameBase } from "../api";
 import { Link } from "../router";
 import { useDocumentTitle } from "../hooks";
-import type { GameView, Kind } from "../types";
+import type { GameView, Kind, ScoresView } from "../types";
 import { LiveStore, useGameStream, useLiveTick } from "../lib/live";
 import { Alert, CopyButton, Section, StatusBadge } from "../components/ui";
 import { Garden } from "../components/Garden";
@@ -19,13 +20,14 @@ import { GameClock } from "../components/Clock";
 import { ChangeTimeline, historyTeams, VersionBrowser } from "../components/History";
 import { ValueTypes } from "../components/Value";
 
-const REFRESH_MS = 3000; // scores while running
+const SCORES_MS = 1500; // how often to poll the live numbers while the game runs
 
 export function GamePage({ room, game }: { room: string; game: string }) {
   useDocumentTitle(`Game ${game} · Room ${room} · Darwinian Beauty Contest`);
   const base = gameBase(room, game);
   const store = useMemo(() => new LiveStore(), []);
   const [view, setView] = useState<GameView | null>(null);
+  const [live, setLive] = useState<ScoresView | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const accept = useCallback((v: GameView) => {
@@ -57,17 +59,41 @@ export function GamePage({ room, game }: { room: string; game: string }) {
   versionRef.current = view?.game.version;
   useGameStream(store, view ? base : null, (v) => { if (v === -1 || v !== versionRef.current) load(); });
 
-  // Scores change with every feed but don't move the version: refresh them every few seconds while it runs.
+  // Scores and ledgers change with every feed but don't move the version: poll them while it runs.
   const status = view?.game.status;
   useEffect(() => {
     if (status !== "running") return;
-    const t = setInterval(() => { if (document.visibilityState === "visible") load(); }, REFRESH_MS);
+    let busy = false;
+    const poll = async () => {
+      if (busy || document.visibilityState !== "visible") return;
+      busy = true;
+      try {
+        const s = await api<ScoresView>("GET", `${base}/scores`);
+        store.syncClock(s.clockMs, s.status, s.endMs, s.round);
+        setLive(s);
+        if (s.status !== status) load();
+      } catch { /* the next poll will do */ } finally { busy = false; }
+    };
+    const t = setInterval(poll, SCORES_MS);
     return () => clearInterval(t);
-  }, [status, load]);
+  }, [status, load, base, store]);
+
+  // The view with the newest live numbers folded in (they're consistent among themselves: one moment).
+  const merged = useMemo<GameView | null>(() => {
+    if (!view || !live || live.lastSeq <= view.game.lastSeq || !live.scores) return view;
+    return {
+      ...view,
+      scores: live.scores, recent: live.recent, ledgers: live.ledgers,
+      game: { ...view.game, clockMs: live.clockMs, round: live.round, lastSeq: live.lastSeq },
+    };
+  }, [view, live]);
 
   if (error && !view) return <div className="card narrow"><h1>Game {game}</h1><Alert kind="error">{error}</Alert><Link className="btn" to={`/room/${room}`}>Back to the room</Link></div>;
-  if (!view) return <p className="muted">Loading the garden…</p>;
+  if (!view || !merged) return <p className="muted">Loading the garden…</p>;
+  return <GameBody view={merged} base={base} store={store} />;
+}
 
+function GameBody({ view, base, store }: { view: GameView; base: string; store: LiveStore }) {
   const g = view.game;
   const cfg = g.config;
   const lobby = g.status === "lobby";
