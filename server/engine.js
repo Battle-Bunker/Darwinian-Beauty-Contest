@@ -118,6 +118,10 @@ const shuffle = (a) => {
   return a;
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, Math.max(0, ms)));
+/** Wait until performance.now() reaches t (timers have whole-millisecond resolution and can fire early). */
+async function until(t) {
+  for (let left = t - performance.now(); left > 0; left = t - performance.now()) await sleep(Math.ceil(left));
+}
 const LATE = Symbol("late");
 /** `done`, or LATE if it hasn't settled `ms` after `from` (a performance.now() time). */
 function byDeadline(done, from, ms) {
@@ -269,11 +273,11 @@ export class Garden {
     // The flower window: every ask goes to its flower at once.
     const steps = await Promise.all(acting.map((s) => this.#act(s)));
     for (const s of steps) if (s.rec) this.#record(s.b, s.v, s.rec, start);
-    if (this.paced) await sleep(t0 + this.windowMs - performance.now());
+    if (this.paced) await until(t0 + this.windowMs);
     // The decision window: answers are delivered and every bee that acted decides its next action.
     const decided = await Promise.all(steps.map((s) => this.#decide(s)));
     for (const d of decided) if (d) this.#record(d.b, d.v, d.rec, start + this.windowMs);
-    if (this.paced) await sleep(t0 + this.roundMs - performance.now());
+    if (this.paced) await until(t0 + this.roundMs);
   }
 
   #close() {
