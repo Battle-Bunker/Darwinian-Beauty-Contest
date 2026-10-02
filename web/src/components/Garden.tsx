@@ -1,191 +1,133 @@
-// The garden: one patch per team (two flowers of different varieties: a daisy and a star) and one bee
-// per team, replaying a round's visits on a shared turn clock. Which variety is the clover, and which
-// side it's on, come from a stable hash of (game, team), so the picture carries no information.
-// Public viewers never learn which flower in a patch a bee visited; the patch owner (visit.kind
-// present) and everyone after a reveal see the exact flower and the clover/orchid labels.
+// The garden, live: one patch per team (its clover on the left, its orchid on the right) and one bee per
+// team, flying between flowers as the actions stream in. The animation runs a moment behind the game
+// clock (see gardenModel.ts) and re-renders at most ~30 times a second, only while something moves and
+// the garden is on screen.
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { poss } from "../lib/format";
-import type { GameView, Round, Team } from "../types";
-import { useElementWidth, storage } from "../hooks";
-import {
-  beeFrame, buildModel, layoutGarden, patchLook, slot, tallies, FLOWER_DX, FLOWER_Y, TOP_PAD,
-  type BeeFrame, type Layout, type Model, type PatchLook, type Pt,
-} from "./gardenModel";
-import { DropIcon, FooledIcon, PauseIcon, PlayIcon, ReplayIcon, SkipIcon } from "./Icons";
-import { TeamChip } from "./ui";
+import { poss, fmtClock } from "../lib/format";
+import type { Action, GameView, Team, TeamScore } from "../types";
+import { useElementWidth } from "../hooks";
+import { useLiveTick, type LiveStore } from "../lib/live";
+import { FLOWER_DX, FLOWER_Y, FX_MS, GardenAnimator, layoutGarden, TOP_PAD, type BeeSprite, type Frame, type Fx, type Layout, type Pt } from "./gardenModel";
+import { DropIcon, FooledIcon } from "./Icons";
 
-export type GardenStart = "start" | "end" | "play";
+const FRAME_MS = 33;
 
-// Playback speeds, as multiples of BASE_TPS turns per second. Engine v2 rounds have ~100 turns per
-// flower (1,200 with 6 teams), so the default speed is picked to play a round in about a minute.
-const BASE_TPS = 5;
-const SPEEDS = [0.5, 1, 2, 5, 10, 20, 50];
-const defaultSpeed = (turns: number) => {
-  const want = turns / 60 / BASE_TPS;
-  return SPEEDS.reduce((best, s) => (Math.abs(Math.log(s / want)) < Math.abs(Math.log(best / want)) ? s : best), 1);
-};
+/** Whole-game counts per team, live: the view's scores plus what has streamed in since. */
+function liveCounts(view: GameView, actions: Action[]) {
+  const out: Record<string, { fedHere: number; nectar: number; fooled: number }> = {};
+  for (const s of view.scores ?? []) out[s.teamId] = { fedHere: s.feedsReceived, nectar: s.nectarCollected, fooled: s.feedsGiven - s.nectarCollected };
+  const since = view.game.lastSeq;
+  for (let i = actions.length - 1; i >= 0 && actions[i].seq > since; i--) {
+    const a = actions[i];
+    if (a.action !== "feed") continue;
+    if (out[a.patch]) out[a.patch].fedHere++;
+    if (out[a.bee]) { if (a.nectar) out[a.bee].nectar++; else out[a.bee].fooled++; }
+  }
+  return out;
+}
 
-export function Garden({ view, round, start, rounds, onSelectRound, loading = false }: {
-  view: GameView;
-  round: Round | null;       // with visits
-  start: GardenStart;
-  rounds: number[];
-  onSelectRound: (no: number) => void;
-  loading?: number | false;  // round number whose visits are still loading
-}) {
-  const turns = round?.turns ?? view.game.turns;
-  const endT = turns + 1.6;
+export function Garden({ view, store }: { view: GameView; store: LiveStore }) {
+  const g = view.game;
+  const status = g.status;
   const teamsById = useMemo(() => Object.fromEntries(view.teams.map((t) => [t.id, t])), [view.teams]);
-  const order = useMemo(() => {
-    if (view.participants?.length) return view.participants;
-    return view.teams.map((t) => t.id);
-  }, [view.participants, view.teams]);
+  const order = useMemo(() => view.participants?.length ? view.participants : view.teams.map((t) => t.id), [view.participants, view.teams]);
   const myTeamId = view.me?.teamId ?? null;
 
   const [boxRef, width] = useElementWidth<HTMLDivElement>();
   const layout = useMemo(() => layoutGarden(order, width), [order, width]);
-  const looks = useMemo(() => Object.fromEntries(view.teams.map((t) => [t.id, patchLook(view.game.id, t.id)])), [view.teams, view.game.id]);
-  const model = useMemo(() => buildModel(round?.visits ?? [], round ? order : [], layout.pos, looks), [round, order, layout, looks]);
+  const anim = useRef<GardenAnimator | null>(null);
+  if (!anim.current) anim.current = new GardenAnimator(layout, order);
+  useEffect(() => { anim.current!.setTeams(layout, order); }, [layout, order]);
 
-  // Playback clock, in turns.
-  const [t, setT] = useState(() => (round && start === "end" ? endT : 0));
-  const [playing, setPlaying] = useState(() => !!round && start === "play");
-  const [speed, setSpeed] = useState(() => {
-    const s = Number(storage.get("dbc:speed2"));
-    return SPEEDS.includes(s) ? s : defaultSpeed(turns);
-  });
-  const [namesPick, setNames] = useState<boolean | null>(null);
-  const tRef = useRef(t);
-  tRef.current = t;
-  const rate = BASE_TPS;
-
+  const [frame, setFrame] = useState<Frame>(() => anim.current!.frame(performance.now(), status));
+  const visible = useRef(true);
   useEffect(() => {
-    if (!playing) return;
-    let raf = 0, last = performance.now();
+    const el = boxRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver((e) => { visible.current = e[0].isIntersecting; }, { rootMargin: "100px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [boxRef]);
+
+  // The animation loop: steps the animator every frame, draws at most every FRAME_MS. It stops when
+  // nothing moves (paused, finished, lobby) and starts again when the store or the status changes.
+  const statusRef = useRef(status);
+  statusRef.current = status;
+  const [wake, setWake] = useState(0);
+  useEffect(() => store.subscribe(() => { if (anim.current?.idle) setWake((w) => w + 1); }), [store]);
+  useEffect(() => {
+    let raf = 0, lastDraw = 0;
+    const a = anim.current!;
+    a.idle = false;
     const tick = (now: number) => {
-      const dt = Math.min(0.1, (now - last) / 1000);
-      last = now;
-      const next = tRef.current + dt * rate * speed;
-      if (next >= endT) {
-        tRef.current = endT;
-        setT(endT);
-        setPlaying(false);
-        return;
+      a.step(store, now, store.now(), statusRef.current);
+      if (visible.current && now - lastDraw >= FRAME_MS) {
+        lastDraw = now;
+        setFrame(a.frame(now, statusRef.current));
       }
-      tRef.current = next;
-      setT(next);
+      if (a.idle) { setFrame(a.frame(now, statusRef.current)); return; }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [playing, rate, speed, endT]);
+  }, [store, status, wake, layout]);
 
-  const play = () => {
-    if (!round) return;
-    if (tRef.current >= endT - 0.01) { tRef.current = 0; setT(0); }
-    setPlaying(true);
-  };
-  const replay = () => { tRef.current = 0; setT(0); setPlaying(true); };
-  const skipToEnd = () => { setPlaying(false); tRef.current = endT; setT(endT); };
-  const changeSpeed = (s: number) => { setSpeed(s); storage.set("dbc:speed2", String(s)); };
-  // Feed results stay on screen for about half a second of real time however fast the clock runs,
-  // but never so long that a busy patch piles them up.
-  const fxMin = Math.min(0.5 * rate * speed, 24);
+  // Live whole-game tallies for the patch labels (re-read twice a second).
+  const rev = useLiveTick(store, 500);
+  const counts = useMemo(() => liveCounts(view, store.actions), [view, store, rev]); // eslint-disable-line react-hooks/exhaustive-deps
+  const rate = status === "running" ? store.actionsPerSecond() : 0;
 
-  const n = model.n || order.length;
-  const homes = useMemo(() => Object.fromEntries(order.map((id, i) => [id, layout.pos[id] ? slot(layout.pos[id], i, order.length) : { x: 0, y: 0 }])), [order, layout]);
-  const frames: (BeeFrame & { teamId: string; index: number })[] = round
-    ? model.tracks.map((tr) => ({ ...beeFrame(tr, t, layout.pos, n, homes[tr.teamId], looks), teamId: tr.teamId, index: tr.index }))
-    : order.map((id, i) => ({ ...homes[id], flip: false, mode: "home" as const, pulse: 0, tilt: 0, teamId: id, index: i }));
-  // Busy bees on top.
-  frames.sort((a, b) => Number(a.mode !== "done" && a.mode !== "home") - Number(b.mode !== "done" && b.mode !== "home"));
-  const tally = useMemo(() => tallies(model, t), [model, t]);
-  // Fill the width, but keep the whole garden on screen; the backdrop extends past the viewBox to letterbox.
-  // Never more than 1.3x the drawing's own size, so a 2-team garden doesn't turn into giant flowers.
+  // Fill the width, but keep the whole garden on screen; never more than 1.3× its own size.
   const svgHeight = width ? Math.round(Math.min((width * layout.height) / layout.width, Math.max(340, window.innerHeight * 0.68), layout.height * 1.3)) : undefined;
-  // When the garden is drawn small (phones), make its text relatively bigger and hide bee names unless asked.
   const scale = width && svgHeight ? Math.min(width / layout.width, svgHeight / layout.height) : 1;
   const fontScale = Math.max(1, Math.min(1.5, 0.8 / scale));
+  const [namesPick, setNames] = useState<boolean | null>(null);
   const names = namesPick ?? scale >= 0.72;
-  const shownTurn = Math.min(turns, Math.floor(t));
-  const atEnd = t >= endT - 0.01;
-  const ready = (team: Team) => team.submitted.clover && team.submitted.orchid && team.submitted.bee;
+  const ready = (t: Team) => !!t.ready && t.ready.clover && t.ready.orchid && t.ready.bee;
+  const now = performance.now();
 
   return (
     <div className="garden">
-      {rounds.length > 0 && (
-        <div className="garden-rounds" role="group" aria-label="Choose a round">
-          {rounds.map((no) => (
-            <button key={no} className={`pill ${(round?.no ?? loading) === no ? "active" : ""}`} aria-pressed={(round?.no ?? loading) === no} onClick={() => onSelectRound(no)}>
-              Round {no}
-            </button>
-          ))}
-        </div>
-      )}
-
       <div className="garden-stage" ref={boxRef}>
-        <svg className="garden-svg" viewBox={`0 0 ${layout.width} ${layout.height}`} style={{ height: svgHeight, ["--fs" as string]: fontScale.toFixed(2) }}
-          role="img" aria-label={round ? `Garden, round ${round.no}, turn ${shownTurn} of ${turns}` : "Garden: each team's patch and bee, waiting for round 1"}>
+        <svg className={`garden-svg garden-${status}`} viewBox={`0 0 ${layout.width} ${layout.height}`} style={{ height: svgHeight, ["--fs" as string]: fontScale.toFixed(2) }}
+          role="img" aria-label={`The garden: ${order.length} patches and their bees${status === "running" ? ", live" : ""}`}>
           <GardenBackdrop layout={layout} />
           {order.map((id) => {
             const team = teamsById[id];
             if (!team || !layout.pos[id]) return null;
-            const showKinds = view.game.revealed || id === myTeamId;
-            return <Patch key={id} team={team} look={looks[id]} p={layout.pos[id]} mine={id === myTeamId} showKinds={showKinds} dim={!round && !view.participants && !ready(team)} maxChars={Math.round(18 / fontScale)} />;
+            return <Patch key={id} team={team} p={layout.pos[id]} mine={id === myTeamId} dim={status === "lobby" && !ready(team)} maxChars={Math.round(18 / fontScale)} />;
+          })}
+          {Object.entries(frame.glow).map(([key, v]) => {
+            const [patch, kind] = key.split(":");
+            const p = layout.pos[patch];
+            if (!p) return null;
+            return <circle key={key} cx={p.x + (kind === "clover" ? -FLOWER_DX : FLOWER_DX)} cy={p.y + FLOWER_Y} r={22 + 6 * (1 - v)} className="ask-glow" opacity={(0.55 * v).toFixed(2)} />;
           })}
           {order.map((id) => {
-            const p = layout.pos[id], pt = tally.patches[id];
+            const p = layout.pos[id], c = counts[id];
             if (!p) return null;
             const team = teamsById[id];
-            const label = round ? `${pt?.fedAt ?? 0} fed here · ${pt?.nectarGiven ?? 0} nectar` : view.participants || !team ? "" : ready(team) ? "ready to play" : "getting ready…";
+            const label = status === "lobby" ? (team && ready(team) ? "ready to play" : "getting ready…") : c ? `${c.fedHere.toLocaleString()} fed here` : "";
             return <text key={id} x={p.x} y={p.y + 68 + 18 * fontScale} className="patch-tally">{label}</text>;
           })}
-          {model.effects.map((e, i) => {
-            const span = Math.max(e.span, fxMin);
-            // Fan out results that land on the same spot close together.
-            const at = { x: e.at.x + ((i % 3) - 1) * 9, y: e.at.y - (i % 2) * 6 };
-            return t >= e.t0 && t < e.t0 + span ? <FeedFx key={i} at={at} u={(t - e.t0) / span} nectar={e.nectar} /> : null;
-          })}
-          {frames.map((f) => (
-            <Bee key={f.teamId} f={f} team={teamsById[f.teamId]} mine={f.teamId === myTeamId} showName={names} />
-          ))}
+          {frame.fx.map((f) => <FeedFx key={f.id} f={f} u={Math.min(1, Math.max(0, (now - f.t0) / FX_MS))} />)}
+          {frame.bees.map((b) => <Bee key={b.team} b={b} team={teamsById[b.team]} mine={b.team === myTeamId} showName={names} paused={status === "paused"} />)}
         </svg>
-        {view.game.runningRound && <div className="garden-banner"><span className="pulse-dot" /> Round {view.game.runningRound} is being played…</div>}
-        {loading !== false && !view.game.runningRound && <div className="garden-banner"><span className="pulse-dot" /> Loading round {loading}'s flights…</div>}
-        {round && !playing && (t === 0 || atEnd) && (
-          <button className="garden-play" onClick={atEnd ? replay : play}>
-            {atEnd ? <ReplayIcon /> : <PlayIcon />} {atEnd ? `Replay round ${round.no}` : `Play round ${round.no}`}
-          </button>
-        )}
+        {status === "lobby" && <div className="garden-banner">The bees wait at home until the game starts.</div>}
+        {status === "paused" && <div className="garden-banner garden-banner-paused">Paused</div>}
+        {status === "finished" && <div className="garden-banner garden-banner-done">The game is over. The bees are resting.</div>}
       </div>
-      {!round && loading === false && <p className="garden-note muted">{view.game.status === "lobby" ? "The bees are waiting at home. They'll fly as soon as round 1 is played." : "No rounds yet."}</p>}
-
-      {round && (
-        <div className="garden-controls">
-          <button className="btn btn-round" onClick={playing ? () => setPlaying(false) : play} aria-label={playing ? "Pause" : "Play"}>
-            {playing ? <PauseIcon /> : <PlayIcon />}
-          </button>
-          <button className="btn btn-round btn-ghost" onClick={replay} aria-label="Replay from the start" title="Replay"><ReplayIcon /></button>
-          <button className="btn btn-round btn-ghost" onClick={skipToEnd} aria-label="Skip to the end of the round" title="Skip to the end"><SkipIcon /></button>
-          <label className="scrub">
-            <span className="sr-only">Turn</span>
-            <input type="range" min={0} max={turns} step={Math.max(0.05, turns / 4000)} value={Math.min(t, turns)}
-              onChange={(e) => { const v = Number(e.target.value); tRef.current = v; setT(v); }} />
-          </label>
-          <span className="turn-counter" aria-live="off">Turn <b>{shownTurn}</b> / {turns}</span>
-          <label className="speed">
-            <span className="sr-only">Speed</span>
-            <select value={speed} onChange={(e) => changeSpeed(Number(e.target.value))}>
-              {SPEEDS.map((s) => <option key={s} value={s}>{`${s}× (${s * BASE_TPS} turns/s)`}</option>)}
-            </select>
-          </label>
-          <label className="check"><input type="checkbox" checked={names} onChange={(e) => setNames(e.target.checked)} /> names</label>
-        </div>
-      )}
-
+      <div className="garden-bar">
+        {status === "running" && (
+          <span className="garden-rate" title="Bee actions per second of real time, over the last few seconds">
+            <span className="pulse-dot" /> <b>{Math.round(rate).toLocaleString()}</b> actions/s
+          </span>
+        )}
+        {status !== "lobby" && <span className="muted small">{store.lastSeq.toLocaleString()} actions so far{status === "running" ? ` · showing game time ${fmtClock(Math.max(0, frame.display))}, a second behind live` : ""}</span>}
+        <label className="check small"><input type="checkbox" checked={names} onChange={(e) => setNames(e.target.checked)} /> bee names</label>
+      </div>
       <GardenLegend />
-
-      {round && <TallyTable order={order} teams={teamsById} tally={tally} myTeamId={myTeamId} />}
+      {status !== "lobby" && view.scores && <BeeTally order={order} teams={teamsById} counts={counts} scores={view.scores} myTeamId={myTeamId} />}
     </div>
   );
 }
@@ -232,12 +174,10 @@ const GardenBackdrop = memo(function GardenBackdrop({ layout }: { layout: Layout
   );
 });
 
-type Variety = "daisy" | "star";
-
 const STAR_PETAL = "M0 -3 C 7 -8, 7 -17, 0 -22 C -7 -17, -7 -8, 0 -3 Z";
 
-/** One flower. The two varieties differ in petal shape, petal count and centre, both in the team's colour. */
-function FlowerShape({ x, color, variety }: { x: number; color: string; variety: Variety }) {
+/** One flower: the clover is round-petalled, the orchid star-shaped; both in the team's colour. */
+function FlowerShape({ x, color, kind }: { x: number; color: string; kind: "clover" | "orchid" }) {
   return (
     <g transform={`translate(${x} 0)`}>
       <g className="flower">
@@ -245,7 +185,7 @@ function FlowerShape({ x, color, variety }: { x: number; color: string; variety:
         <ellipse cx="-7" cy="2" rx="8" ry="3.5" transform="rotate(-30 -7 2)" className="leaf" />
         <ellipse cx="7" cy="-8" rx="8" ry="3.5" transform="rotate(30 7 -8)" className="leaf" />
         <g transform={`translate(0 ${FLOWER_Y})`}>
-          {variety === "daisy" ? (
+          {kind === "clover" ? (
             <>
               {Array.from({ length: 12 }, (_, i) => i * 30).map((a) => (
                 <ellipse key={a} cx="0" cy="-11" rx="3.8" ry="10.5" transform={`rotate(${a})`} fill={color} className="petal" />
@@ -275,46 +215,35 @@ function FlowerShape({ x, color, variety }: { x: number; color: string; variety:
   );
 }
 
-const Patch = memo(function Patch({ team, look, p, mine, showKinds, dim, maxChars }: {
-  team: Team; look: PatchLook; p: Pt; mine: boolean; showKinds: boolean; dim: boolean; maxChars: number;
-}) {
+const Patch = memo(function Patch({ team, p, mine, dim, maxChars }: { team: Team; p: Pt; mine: boolean; dim: boolean; maxChars: number }) {
   const name = team.name.length > maxChars ? team.name.slice(0, maxChars - 1) + "…" : team.name;
-  const left: Variety = look.daisyLeft ? "daisy" : "star";
-  const right: Variety = look.daisyLeft ? "star" : "daisy";
-  const cloverX = look.cloverLeft ? -FLOWER_DX : FLOWER_DX;
-  const cloverVariety = look.cloverLeft ? left : right;
   return (
     <g transform={`translate(${p.x} ${p.y})`} className={`patch ${dim ? "dim" : ""}`}>
-      <title>{`${poss(team.name)} patch: one clover and one orchid.${showKinds ? ` The ${cloverVariety} is the clover.` : ""}`}</title>
+      <title>{`${poss(team.name)} patch: its clover (left) and its orchid (right).`}</title>
       {mine && <ellipse cy={-12} rx={112} ry={84} className="patch-mine" />}
       <ellipse cy={24} rx={70} ry={15} className="soil" />
-      <FlowerShape x={-FLOWER_DX} color={team.color} variety={left} />
-      <FlowerShape x={FLOWER_DX} color={team.color} variety={right} />
-      {showKinds && (
-        <>
-          <text x={cloverX} y={30} className="kind-tag">clover</text>
-          <text x={-cloverX} y={30} className="kind-tag">orchid</text>
-        </>
-      )}
+      <FlowerShape x={-FLOWER_DX} color={team.color} kind="clover" />
+      <FlowerShape x={FLOWER_DX} color={team.color} kind="orchid" />
+      <text x={-FLOWER_DX} y={31} className="kind-tag">clover</text>
+      <text x={FLOWER_DX} y={31} className="kind-tag">orchid</text>
       <text y={68} className="patch-label"><tspan fill={team.color} className="patch-label-dot">●</tspan> {name}</text>
     </g>
   );
 });
 
-function Bee({ f, team, mine, showName }: { f: BeeFrame & { teamId: string }; team: Team | undefined; mine: boolean; showName: boolean }) {
+function Bee({ b, team, mine, showName, paused }: { b: BeeSprite; team: Team | undefined; mine: boolean; showName: boolean; paused: boolean }) {
   if (!team) return null;
-  const color = team.color;
-  const resting = f.mode === "done" || f.mode === "home";
+  const resting = b.mode === "rest" || b.mode === "home" || paused;
   const label = team.name.length > 12 ? team.name.slice(0, 11) + "…" : team.name;
   return (
-    <g transform={`translate(${f.x.toFixed(1)} ${f.y.toFixed(1)})`} className={`bee ${resting ? "resting" : ""} ${f.mode === "done" ? "done" : ""}`}>
+    <g transform={`translate(${b.x.toFixed(1)} ${b.y.toFixed(1)})`} className={`bee ${resting ? "resting" : ""} ${b.mode === "rest" ? "done" : ""}`}>
       <title>{`${poss(team.name)} bee`}</title>
       {mine && <circle r={19} className="bee-halo" />}
-      <g transform={`rotate(${f.tilt.toFixed(1)}) scale(${f.flip ? -1 : 1} 1)`}>
+      <g transform={`rotate(${b.tilt.toFixed(1)}) scale(${b.flip ? -1 : 1} 1)`}>
         <ellipse cx="-3" cy="-9" rx="7" ry="5" className="bee-wing" />
         <ellipse cx="4" cy="-9" rx="6" ry="4.5" className="bee-wing bee-wing-2" />
         <path d="M-11 0 l-5 0 l5 -2.5z" className="bee-sting" />
-        <ellipse rx="11" ry="7.5" fill={color} className="bee-body" />
+        <ellipse rx="11" ry="7.5" fill={team.color} className="bee-body" />
         <g clipPath="url(#dbc-bee-body)">
           <rect x="-6" y="-8" width="3.4" height="16" className="bee-stripe" />
           <rect x="0.5" y="-8" width="3.4" height="16" className="bee-stripe" />
@@ -324,54 +253,48 @@ function Bee({ f, team, mine, showName }: { f: BeeFrame & { teamId: string }; te
         <circle cx="13" cy="-2.3" r="1.3" className="bee-eye" />
       </g>
       {showName && <text y={22} className="bee-name">{label}</text>}
-      {f.mode === "ask" && (
-        <g transform={`translate(13 -19) scale(${(0.55 + 0.6 * f.pulse).toFixed(2)})`} opacity={0.35 + 0.65 * f.pulse}>
+      {b.mode === "ask" && (
+        <g transform={`translate(13 -19) scale(${(0.55 + 0.6 * b.pulse).toFixed(2)})`} opacity={(0.35 + 0.65 * b.pulse).toFixed(2)}>
           <circle r="9" className="bubble" />
           <text y="4.5" className="bubble-text">?</text>
         </g>
       )}
-      {f.mode === "study" && (
-        <g transform={`translate(13 -19) scale(${(0.6 + 0.5 * f.pulse).toFixed(2)})`} opacity={0.45 + 0.55 * f.pulse}>
-          <circle r="9.5" className="bubble bubble-study" />
-          <circle cx="-1.5" cy="-1.5" r="4" className="lens" />
-          <path d="M1.4 1.4 L5.2 5.2" className="lens-handle" />
-        </g>
-      )}
-      {f.mode === "error" && (
+      {b.mode === "error" && (
         <g transform="translate(13 -19)">
           <circle r="9" className="bubble bubble-err" />
           <text y="4.5" className="bubble-text bubble-err-text">!</text>
         </g>
       )}
-      {f.mode === "done" && <text x={12} y={-12} className="bee-zzz">z z</text>}
+      {b.mode === "rest" && <text x={12} y={-12} className="bee-zzz">z z</text>}
     </g>
   );
 }
 
-function FeedFx({ at, u, nectar }: { at: Pt; u: number; nectar: boolean }) {
-  const fade = u < 0.15 ? u / 0.15 : 1 - Math.max(0, (u - 0.6) / 0.4);
-  if (nectar) {
-    const rise = 14 + u * 30;
+function FeedFx({ f, u }: { f: Fx; u: number }) {
+  const fade = u < 0.12 ? u / 0.12 : 1 - Math.max(0, (u - 0.6) / 0.4);
+  const n = f.count > 1 ? ` ×${f.count}` : "";
+  if (f.nectar) {
+    const rise = 12 + u * 30;
     return (
-      <g transform={`translate(${at.x.toFixed(1)} ${(at.y - rise).toFixed(1)})`} opacity={fade.toFixed(2)} className="fx">
-        <circle r={20 + u * 10} className="fx-glow" />
+      <g transform={`translate(${f.x.toFixed(1)} ${(f.y - rise).toFixed(1)})`} opacity={fade.toFixed(2)} className="fx">
+        <circle r={18 + u * 10} className="fx-glow" />
         {[0, 1, 2, 3, 4].map((i) => {
           const a = (i / 5) * Math.PI * 2 + u * 3;
-          const r = 14 + u * 14;
+          const r = 13 + u * 13;
           return <path key={i} d="M0 -4 L1.2 -1.2 4 0 1.2 1.2 0 4 -1.2 1.2 -4 0 -1.2 -1.2Z" className="fx-sparkle" transform={`translate(${(Math.cos(a) * r).toFixed(1)} ${(Math.sin(a) * r).toFixed(1)})`} />;
         })}
         <path d="M0 -12 C -4 -6 -7 -2 -7 2 a7 7 0 0 0 14 0 c0 -4 -3 -8 -7 -14z" className="fx-drop" />
         <ellipse cx="-2.6" cy="1" rx="1.6" ry="2.6" fill="#fff" opacity=".75" />
-        <text x={12} y={-4} className="fx-text fx-text-good">+1</text>
+        <text x={11} y={-4} className="fx-text fx-text-good">{`+${f.count}`}</text>
       </g>
     );
   }
   const shake = Math.sin(u * 40) * 3 * (1 - u);
   return (
-    <g transform={`translate(${(at.x + shake).toFixed(1)} ${(at.y - 26).toFixed(1)})`} opacity={fade.toFixed(2)} className="fx">
+    <g transform={`translate(${(f.x + shake).toFixed(1)} ${(f.y - 24).toFixed(1)})`} opacity={fade.toFixed(2)} className="fx">
       <circle r="10" className="fx-fooled" />
       <path d="M-4.5 -4.5 L4.5 4.5 M4.5 -4.5 L-4.5 4.5" className="fx-fooled-x" />
-      <text y={-15} className="fx-text fx-text-bad">fooled!</text>
+      <text y={-15} className="fx-text fx-text-bad">{`fooled${n}`}</text>
     </g>
   );
 }
@@ -379,47 +302,48 @@ function FeedFx({ at, u, nectar }: { at: Pt; u: number; nectar: boolean }) {
 function GardenLegend() {
   return (
     <ul className="garden-legend" aria-label="What the garden shows">
-      <li><span className="lg lg-ask">?</span> the bee asks a question</li>
-      <li><DropIcon size={16} /> fed and got nectar (it was a clover)</li>
-      <li><FooledIcon size={16} /> fed but no nectar: fooled by an orchid</li>
-      <li><span className="lg lg-study"><svg width="12" height="12" viewBox="-6 -6 12 12" aria-hidden><circle cx="-1" cy="-1" r="3.4" fill="none" stroke="currentColor" strokeWidth="1.6" /><path d="M1.4 1.4 L4.4 4.4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg></span> studies a flower after feeding</li>
+      <li><span className="lg-flowers" aria-hidden>✿</span> each patch: its clover (left, pays nectar) and its orchid (right, pays nothing)</li>
+      <li><span className="lg lg-ask">?</span> a bee asks a flower a question</li>
+      <li><DropIcon size={16} /> fed and got nectar</li>
+      <li><FooledIcon size={16} /> fed at an orchid: fooled</li>
       <li><span className="lg lg-err">!</span> the bee made a mistake</li>
     </ul>
   );
 }
 
-function TallyTable({ order, teams, tally, myTeamId }: {
-  order: string[]; teams: Record<string, Team>; tally: ReturnType<typeof tallies>; myTeamId: string | null;
+/** Whole-game tallies per team, kept live between score updates. */
+function BeeTally({ order, teams, counts, scores, myTeamId }: {
+  order: string[]; teams: Record<string, Team>; counts: ReturnType<typeof liveCounts>; scores: TeamScore[]; myTeamId: string | null;
 }) {
+  const byId = Object.fromEntries(scores.map((s) => [s.teamId, s]));
   return (
     <div className="table-scroll">
       <table className="tally-table">
-        <caption className="sr-only">Running tally for this round</caption>
+        <caption className="sr-only">Whole-game tallies</caption>
         <thead>
           <tr>
             <th scope="col" className="left">Team</th>
-            <th scope="col" title="How many flowers this team's bee fed at">Bee fed</th>
-            <th scope="col" title="Feeds that paid off with nectar">Nectar</th>
-            <th scope="col" title="Feeds with no nectar (orchids)">Fooled</th>
-            <th scope="col" title="Questions asked so far">Asks</th>
-            <th scope="col" title="Questions asked after feeding, studying a flower whose truth the bee now knows">Studied</th>
-            <th scope="col" title="Times bees fed at this team's patch">Fed at patch</th>
-            <th scope="col" title="Different bee teams that fed at this patch">Pollinators</th>
+            <th scope="col" title="Feeds bees made at this team's patch (clover or orchid)">Fed at patch</th>
+            <th scope="col" title="Different bees that fed at this patch">Pollinators</th>
+            <th scope="col" title="Nectar this team's bee collected">Bee: nectar</th>
+            <th scope="col" title="Feeds at orchids: no nectar">Bee: fooled</th>
+            <th scope="col" title="Different patches that gave this bee nectar">Nectar sources</th>
           </tr>
         </thead>
         <tbody>
           {order.map((id) => {
-            const b = tally.bees[id], p = tally.patches[id];
+            const c = counts[id], s = byId[id];
+            const t = teams[id];
             return (
               <tr key={id} className={id === myTeamId ? "mine" : ""}>
-                <th scope="row" className="left"><TeamChip team={teams[id]} you={id === myTeamId} short /></th>
-                <td>{b?.feeds ?? 0}</td>
-                <td className="good">{b?.nectar ?? 0}</td>
-                <td className="bad">{(b?.feeds ?? 0) - (b?.nectar ?? 0)}</td>
-                <td>{b?.asks ?? 0}</td>
-                <td>{b?.studied ?? 0}</td>
-                <td>{p?.fedAt ?? 0}</td>
-                <td>{p?.pollinators.size ?? 0}</td>
+                <th scope="row" className="left">
+                  <span className="team-chip" title={t?.name}><span className="swatch" style={{ background: t?.color }} /><span className="team-name">{t?.name}</span>{id === myTeamId && <span className="you-tag">you</span>}</span>
+                </th>
+                <td>{(c?.fedHere ?? 0).toLocaleString()}</td>
+                <td>{s?.pollinators ?? 0}</td>
+                <td className="good">{(c?.nectar ?? 0).toLocaleString()}</td>
+                <td className="bad">{(c?.fooled ?? 0).toLocaleString()}</td>
+                <td>{s?.nectarSources ?? 0}</td>
               </tr>
             );
           })}
@@ -428,5 +352,3 @@ function TallyTable({ order, teams, tally, myTeamId }: {
     </div>
   );
 }
-
-export type { Model };

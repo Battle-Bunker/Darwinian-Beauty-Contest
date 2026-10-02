@@ -1,4 +1,5 @@
-// Postgres access for the arena's own schema (`arena`) in the game's database.
+// Postgres access for the arena's own schema (`arena`) in the game's database (dbc_live; the old `dbc` database holds
+// the round-based experiments and is never touched).
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,8 +10,12 @@ pg.types.setTypeParser(1700, (v) => Number(v));
 
 export const ARENA_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
+export const DB_URL = process.env.ARENA_DATABASE_URL || process.env.DATABASE_URL || "postgres://dbc:dbc@localhost:5432/dbc_live";
+// The old round-based experiments live in `dbc`: never write there.
+if (/\/dbc(\?|$)/.test(DB_URL)) throw new Error(`refusing to use ${DB_URL}: the arena runs on dbc_live (the old dbc database is read-only history)`);
+
 export const pool = new pg.Pool({
-  connectionString: process.env.DATABASE_URL || "postgres://dbc:dbc@localhost:5432/dbc",
+  connectionString: DB_URL,
   max: 8,
 });
 

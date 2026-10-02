@@ -1,9 +1,12 @@
-// Scores for a round (or the game so far): Darwinian fitness and the two ledgers it's built from.
+// Scores: Darwinian fitness over the whole game and over the last five minutes of game time, side by
+// side, with the breakdown for whichever period is picked.
 import { useMemo, useState } from "react";
-import type { GameView, Round, Team, TeamScore } from "../types";
-import { fmt2, fmt3, pct, poss } from "../lib/format";
+import type { GameView, Team, TeamScore } from "../types";
+import { fmt2, fmt3, fmtClock, pct } from "../lib/format";
 import { InfoTip, TeamChip } from "./ui";
 import { TrophyIcon } from "./Icons";
+
+const RECENT_MS = 5 * 60000;
 
 const TERMS: Record<string, string> = {
   fitness: "N² × allure share × forage share. Par is 1.0 however many teams play. Above 1 means you're out-evolving the average team.",
@@ -16,36 +19,42 @@ const TERMS: Record<string, string> = {
   rootsum: "Add up the square root of each entry: rootsum(4, 0, 0, 0) = 2 but rootsum(1, 1, 1, 1) = 4. Earning from many different teams beats earning the same amount from one.",
 };
 
-function addLedgers(rounds: Round[], key: "feeds" | "nectar"): number[][] {
-  const n = rounds[0]?.[key].length ?? 0;
-  const out = Array.from({ length: n }, () => new Array<number>(n).fill(0));
-  for (const r of rounds) r[key].forEach((row, i) => row.forEach((x, j) => { out[i][j] += x; }));
-  return out;
-}
-
-export function Scores({ view, round }: { view: GameView; round: Round }) {
-  const [mode, setMode] = useState<"total" | "round">("total");
+export function Scores({ view }: { view: GameView }) {
+  const g = view.game;
+  // In a game of five minutes or less, "the last five minutes" is always the whole game.
+  const short = g.endMs <= RECENT_MS;
+  const [mode, setMode] = useState<"game" | "recent">("game");
   const teams = useMemo(() => Object.fromEntries(view.teams.map((t) => [t.id, t])), [view.teams]);
-  const order = view.participants ?? [];
   const myTeamId = view.me?.teamId ?? null;
-  const upTo = view.rounds.filter((r) => r.no <= round.no);
-  const scores = mode === "total" ? round.totals : round.scores;
-  const feeds = mode === "total" ? addLedgers(upTo, "feeds") : round.feeds;
-  const nectar = mode === "total" ? addLedgers(upTo, "nectar") : round.nectar;
-  const sorted = [...scores].sort((a, b) => b.fitness - a.fitness);
-  const maxFit = Math.max(1.5, ...scores.map((s) => s.fitness));
-  const n = order.length;
+  const n = view.participants?.length ?? 0;
+  const game = view.scores ?? [];
+  const recent = view.recent?.scores ?? [];
+  const recentById = Object.fromEntries(recent.map((s) => [s.teamId, s]));
+  const gameById = Object.fromEntries(game.map((s) => [s.teamId, s]));
+  const pick = short ? "game" : mode;
+  const shown = pick === "game" ? game : recent;
+  const sorted = [...shown].sort((a, b) => b.fitness - a.fitness);
+  const maxFit = Math.max(1.5, ...game.map((s) => s.fitness), ...recent.map((s) => s.fitness));
+  const whole = view.recent && view.recent.fromMs === 0;
+  const window = view.recent ? `${fmtClock(view.recent.fromMs)}–${fmtClock(view.recent.toMs)}` : "";
+  if (!game.length) return <p className="muted">Scores appear once the game starts.</p>;
 
   return (
     <div className="scores">
-      <div className="seg" role="group" aria-label="Which scores">
-        <button className={mode === "total" ? "active" : ""} aria-pressed={mode === "total"} onClick={() => setMode("total")}>
-          Game total after round {round.no}
-        </button>
-        <button className={mode === "round" ? "active" : ""} aria-pressed={mode === "round"} onClick={() => setMode("round")}>
-          Round {round.no} only
-        </button>
-      </div>
+      {!short && (
+        <div className="seg" role="group" aria-label="Which scores to break down">
+          <button className={pick === "game" ? "active" : ""} aria-pressed={pick === "game"} onClick={() => setMode("game")}>Whole game</button>
+          <button className={pick === "recent" ? "active" : ""} aria-pressed={pick === "recent"} onClick={() => setMode("recent")}>
+            Last 5 minutes{whole ? " (so far, the whole game)" : ""}
+          </button>
+        </div>
+      )}
+      <p className="small muted scores-note">
+        {short
+          ? `This game is ${fmtClock(g.endMs)} long, so its scores are over the whole game.`
+          : pick === "game" ? "Sorted by whole-game fitness. The breakdown is over the whole game." : `Sorted by fitness over the last five minutes of game time (${window}). The breakdown is over those five minutes.`}
+        {" "}Scores as of {fmtClock(g.clockMs)} of game time{g.status === "running" ? ", updated every few seconds" : ""}.
+      </p>
 
       <div className="table-scroll">
         <table className="data-table score-table">
@@ -54,60 +63,59 @@ export function Scores({ view, round }: { view: GameView; round: Round }) {
             <tr>
               <th>#</th>
               <th className="left">Team</th>
-              <th className="left"><span className="th-tip">Fitness <InfoTip>{TERMS.fitness}</InfoTip></span></th>
-              <th><span className="th-tip">Allure <InfoTip>{TERMS.allure}</InfoTip></span></th>
-              <th><span className="th-tip">Forage <InfoTip>{TERMS.forage}</InfoTip></span></th>
+              <th className="left"><span className="th-tip">Fitness{short ? "" : ": game"} <InfoTip>{TERMS.fitness}</InfoTip></span></th>
+              {!short && <th className="left"><span className="th-tip">Last 5 min</span></th>}
               <th><span className="th-tip">Allure share <InfoTip>{TERMS.allureShare}</InfoTip></span></th>
               <th><span className="th-tip">Forage share <InfoTip>{TERMS.forageShare}</InfoTip></span></th>
+              <th><span className="th-tip">Allure <InfoTip>{TERMS.allure}</InfoTip></span></th>
+              <th><span className="th-tip">Forage <InfoTip>{TERMS.forage}</InfoTip></span></th>
               <th><span className="th-tip">Pollinators <InfoTip>{TERMS.pollinators}</InfoTip></span></th>
               <th><span className="th-tip">Nectar sources <InfoTip>{TERMS.nectarSources}</InfoTip></span></th>
               <th title="Feeds your patch received">Fed at patch</th>
               <th title="Nectar your bee collected">Nectar</th>
+              <th title="Feeds your bee made at orchids">Fooled</th>
             </tr>
           </thead>
           <tbody>
             {sorted.map((s, i) => (
               <tr key={s.teamId} className={s.teamId === myTeamId ? "mine" : ""}>
                 <td>{i + 1}</td>
-                <th scope="row" className="left"><TeamChip team={teams[s.teamId]} you={s.teamId === myTeamId} /></th>
-                <td className="left"><FitnessBar value={s.fitness} max={maxFit} /></td>
-                <td>{fmt2(s.allure)}</td>
-                <td>{fmt2(s.forage)}</td>
+                <th scope="row" className="left"><TeamChip team={teams[s.teamId]} you={s.teamId === myTeamId} short /></th>
+                <td className="left"><FitnessBar value={gameById[s.teamId]?.fitness ?? 0} max={maxFit} strong={pick === "game"} /></td>
+                {!short && <td className="left"><FitnessBar value={recentById[s.teamId]?.fitness ?? 0} max={maxFit} strong={pick === "recent"} recent /></td>}
                 <td title={`par ${pct(1 / n)}`}>{pct(s.allureShare)}</td>
                 <td title={`par ${pct(1 / n)}`}>{pct(s.forageShare)}</td>
+                <td>{fmt2(s.allure)}</td>
+                <td>{fmt2(s.forage)}</td>
                 <td>{s.pollinators} / {n}</td>
                 <td>{s.nectarSources} / {n}</td>
-                <td>{s.feedsReceived}</td>
-                <td>{s.nectarCollected}</td>
+                <td>{s.feedsReceived.toLocaleString()}</td>
+                <td>{s.nectarCollected.toLocaleString()}</td>
+                <td>{(s.feedsGiven - s.nectarCollected).toLocaleString()}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
 
-      <div className="ledgers">
-        <Ledger title="Feed ledger" hint="How many times each bee (row) fed at each patch (column), clover or orchid." matrix={feeds} order={order} teams={teams} myTeamId={myTeamId} tone="feed" verb="fed" />
-        <Ledger title="Nectar ledger" hint="How much nectar each bee (row) got from each patch (column). Only clovers pay." matrix={nectar} order={order} teams={teams} myTeamId={myTeamId} tone="nectar" verb="got nectar" />
-      </div>
-
       <details className="legend-box">
         <summary>How scoring works</summary>
         <dl>
           <dt>Rootsum</dt><dd>{TERMS.rootsum}</dd>
-          <dt>Allure</dt><dd>{TERMS.allure} It's the rootsum of your column in the feed ledger.</dd>
-          <dt>Forage</dt><dd>{TERMS.forage} It's the rootsum of your row in the nectar ledger.</dd>
+          <dt>Allure</dt><dd>{TERMS.allure}</dd>
+          <dt>Forage</dt><dd>{TERMS.forage}</dd>
           <dt>Allure share and forage share</dt><dd>Your allure (or forage) as a fraction of everyone's. Par is 1/N with N teams.</dd>
           <dt>Fitness</dt><dd>{TERMS.fitness}</dd>
         </dl>
-        <p className="small muted">So you want lots of different bees to feed at your patch (even at your orchid), and your bee to find nectar at lots of different patches. Your own patch and bee count like any other team. The game score uses all rounds' ledgers added together.</p>
+        <p className="small muted">So you want lots of different bees to feed at your patch (even at your orchid), and your bee to find nectar at lots of different patches. Your own patch and bee count like any other team. The game is won on whole-game fitness; the last five minutes show who's doing well right now.</p>
       </details>
     </div>
   );
 }
 
-function FitnessBar({ value, max }: { value: number; max: number }) {
+function FitnessBar({ value, max, strong, recent = false }: { value: number; max: number; strong: boolean; recent?: boolean }) {
   return (
-    <span className="fit">
+    <span className={`fit ${strong ? "" : "fit-weak"} ${recent ? "fit-recent" : ""}`}>
       <span className="fit-track" aria-hidden>
         <span className="fit-fill" style={{ width: `${Math.min(100, (value / max) * 100)}%` }} />
         <span className="fit-par" style={{ left: `${(1 / max) * 100}%` }} title="par = 1.0" />
@@ -117,54 +125,8 @@ function FitnessBar({ value, max }: { value: number; max: number }) {
   );
 }
 
-function Ledger({ title, hint, matrix, order, teams, myTeamId, tone, verb }: {
-  title: string; hint: string; matrix: number[][]; order: string[]; teams: Record<string, Team>; myTeamId: string | null; tone: "feed" | "nectar"; verb: string;
-}) {
-  const max = Math.max(1, ...matrix.flat());
-  return (
-    <figure className="ledger">
-      <figcaption><b>{title}</b> <span className="small muted">{hint}</span></figcaption>
-      <div className="table-scroll">
-        <table className={`heat heat-${tone}`}>
-          <thead>
-            <tr>
-              <th className="corner"><span>bee ↓</span><span>patch →</span></th>
-              {order.map((id) => (
-                <th key={id} scope="col" className="heat-col" title={`${poss(teams[id]?.name)} patch`}>
-                  <span className="swatch" style={{ background: teams[id]?.color }} />
-                  <span className="heat-colname">{short(teams[id]?.name)}</span>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {order.map((rowId, i) => (
-              <tr key={rowId}>
-                <th scope="row" className="heat-row"><TeamChip team={teams[rowId]} you={rowId === myTeamId} short /></th>
-                {order.map((colId, j) => {
-                  const v = matrix[i]?.[j] ?? 0;
-                  const level = v / max;
-                  return (
-                    <td key={colId} className={`${i === j ? "self" : ""} ${level > 0.55 ? "hi" : ""} ${v === 0 ? "zero" : ""}`}
-                      style={{ ["--lvl" as string]: `${Math.round(8 + level * 92)}%` }}
-                      title={`${poss(teams[rowId]?.name)} bee ${verb} ${v} time${v === 1 ? "" : "s"} at ${poss(teams[colId]?.name)} patch${i === j ? " (its own)" : ""}`}>
-                      {v}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </figure>
-  );
-}
-
-const short = (name?: string) => (!name ? "?" : name.length > 9 ? name.slice(0, 8) + "…" : name);
-
 export function Podium({ view, final }: { view: GameView; final: TeamScore[] }) {
-  const teams = Object.fromEntries(view.teams.map((t) => [t.id, t]));
+  const teams: Record<string, Team> = Object.fromEntries(view.teams.map((t) => [t.id, t]));
   const top = [...final].sort((a, b) => b.fitness - a.fitness).slice(0, 3);
   const places = top.length === 3 ? [top[1], top[0], top[2]] : top;
   return (

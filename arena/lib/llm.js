@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { ARENA_DIR, one, q } from "./db.js";
 
-// No fable anywhere (user instruction for the v2 phase): team personas, judges and breeders use opus, sonnet, haiku.
+// No Fable model anywhere: team personas, judges, breeders and every other call use opus, sonnet or haiku.
 export const MODELS = ["opus", "sonnet", "haiku"];
 
 const EMPTY_CWD = path.join(ARENA_DIR, "runs", "cwd"); // no CLAUDE.md, no repo: nothing leaks into prompts
@@ -203,18 +203,51 @@ export function extractTag(text, tag) {
   return (f ? f[1] : last).replace(/^\n+/, "").replace(/\s+$/, "") + "\n";
 }
 
-// ---------- tool-using sessions (engine v2 phase) ----------
+// ---------- tool-using sessions ----------
 // One `claude -p` agent session with file and shell tools, run inside a team's workspace. Minimal environment
-// (HOME and PATH only): no database URL, no proxy or session tokens, no login secret. The stream-json transcript is
-// saved for auditing. Same limiter, cost ledger and usage-limit pause as callModel.
+// (HOME, PATH, LANG only): no database URL, no proxy or session tokens, no login secret. The stream-json transcript is
+// saved for auditing, and kept in memory (control.lines) so the runner can audit it while the session runs. Same
+// limiter, cost ledger and usage-limit pause as callModel.
 const SESSION_PATH = ["/opt/node22/bin", "/usr/local/bin", "/usr/bin", "/bin"].join(":");
 
-function runSessionCli({ model, cwd, appendSystem, prompt, maxTurns, maxBudgetUsd, transcriptFile, timeoutMs, python = true }) {
+// Per-million-token prices, used only to estimate the cost of a session the runner had to stop before the CLI
+// reported its cost (stream-json reports usage per message). Conservative public list prices.
+const PRICES = {
+  opus: { in: 5, out: 25, read: 0.5, write: 6.25 },
+  sonnet: { in: 3, out: 15, read: 0.3, write: 3.75 },
+  haiku: { in: 1, out: 5, read: 0.1, write: 1.25 },
+};
+/** Estimated cost of a (partial) stream-json transcript: usage summed once per assistant message id. */
+export function estimateCost(lines, model) {
+  const p = PRICES[model] || PRICES.opus;
+  const seen = new Map();
+  for (const line of lines) {
+    let ev; try { ev = JSON.parse(line); } catch { continue; }
+    if (ev.type !== "assistant" || !ev.message?.usage) continue;
+    seen.set(ev.message.id || seen.size, ev.message.usage); // later events of one message carry its final usage
+  }
+  let usd = 0;
+  const tot = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+  for (const u of seen.values()) {
+    for (const k of Object.keys(tot)) tot[k] += Number(u[k] || 0);
+  }
+  usd = (tot.input_tokens * p.in + tot.output_tokens * p.out + tot.cache_read_input_tokens * p.read + tot.cache_creation_input_tokens * p.write) / 1e6;
+  return { usd, usage: tot, turns: seen.size };
+}
+
+/** The model an arena may use: settings.maxModel "sonnet" runs opus calls (judges, breeders) on sonnet. */
+export function capModel(model, maxModel) {
+  if (!maxModel) return model;
+  const order = ["haiku", "sonnet", "opus"];
+  return order.indexOf(model) > order.indexOf(maxModel) ? maxModel : model;
+}
+
+function runSessionCli({ model, cwd, appendSystem, prompt, maxTurns, maxBudgetUsd, transcriptFile, timeoutMs, python = true, control }) {
   return new Promise((resolve) => {
     const args = ["-p", "--model", model, "--tools", "Bash,Read,Write,Edit,Glob,Grep", "--permission-mode", "acceptEdits",
       // The user explicitly approved a Python interpreter for team agents (this container is isolated and
-      // disposable), so they can analyse raw logs and test programs with scripts, not just grep/sort.
-      // `python: false` keeps a game interpreter-free (cohort experiment: switched on for every cohort at the same game).
+      // disposable), so they can analyse the stream and test programs with scripts. The workspace tools
+      // (tools/*.py) run with it too.
       ...(python ? ["--allowedTools", "Bash(python3:*)", "Bash(python:*)"] : []),
       "--max-turns", String(maxTurns), "--output-format", "stream-json", "--verbose", "--no-session-persistence",
       // A full system prompt (not appended): Claude Code's default one advertises an auto-memory directory under
@@ -224,14 +257,28 @@ function runSessionCli({ model, cwd, appendSystem, prompt, maxTurns, maxBudgetUs
     fs.mkdirSync(path.dirname(transcriptFile), { recursive: true });
     const out = fs.createWriteStream(transcriptFile);
     const child = spawn("claude", args, { cwd, stdio: ["pipe", "pipe", "pipe"], env: { HOME: process.env.HOME || "/root", PATH: SESSION_PATH, LANG: "C.UTF-8" } });
-    let buf = "", last = null, err = "", limitText = null;
-    const timer = setTimeout(() => { err += "\n[arena] session timeout"; child.kill("SIGKILL"); }, timeoutMs);
+    const lines = [];
+    let buf = "", last = null, err = "", limitText = null, killed = null, closed = false;
+    if (control) {
+      control.lines = lines;
+      control.child = child;
+      control.kill = (reason) => {
+        if (closed || killed) return;
+        killed = reason;
+        err += `\n[arena] stopped: ${reason}`;
+        child.kill("SIGTERM");
+        setTimeout(() => { if (!closed) child.kill("SIGKILL"); }, 4000).unref();
+      };
+    }
+    const timer = setTimeout(() => { if (control?.kill) control.kill("timeout"); else { killed = "timeout"; child.kill("SIGKILL"); } }, timeoutMs);
     child.stdout.on("data", (d) => {
       out.write(d);
       buf += d;
       let i;
       while ((i = buf.indexOf("\n")) >= 0) {
         const line = buf.slice(0, i); buf = buf.slice(i + 1);
+        if (!line.trim()) continue;
+        lines.push(line);
         try {
           const ev = JSON.parse(line);
           if (ev.type === "result") last = ev;
@@ -241,46 +288,58 @@ function runSessionCli({ model, cwd, appendSystem, prompt, maxTurns, maxBudgetUs
     });
     child.stderr.on("data", (d) => (err += d));
     child.on("error", (e) => (err += String(e)));
-    child.on("close", (code) => { clearTimeout(timer); out.end(); resolve({ code, result: last, err, limitText }); });
+    child.on("close", (code) => { closed = true; clearTimeout(timer); out.end(); resolve({ code, result: last, err, limitText, killed, lines }); });
     child.stdin.on("error", () => {});
     child.stdin.end(prompt);
   });
 }
 
 /**
- * Run one tool-using session. Returns { text, cost, turns, subtype, isError, ms }.
- * Usage-limit failures pause the runner and the session is re-run unchanged after resume (not an attempt).
+ * Run one tool-using session. Returns { text, cost, estimated, turns, subtype, isError, killed, ms }.
+ * `control` (optional, filled in here): { lines, child, kill(reason) } so the caller can audit the live transcript
+ * and stop the session (game over, fair-play violation). A stopped session's cost is estimated from its usage.
+ * Usage-limit failures pause the runner and the session is re-run unchanged after resume (not an attempt), unless
+ * `holdOnLimit` is false (sessions in a running game: the moment has passed, so the caller decides).
  */
-export async function runSession({ model, cwd, appendSystem, prompt, maxTurns = 30, maxBudgetUsd = null, transcriptFile, timeoutMs = 40 * 60_000, python = true, ctx = {} }) {
+export async function runSession({ model, cwd, appendSystem, prompt, maxTurns = 30, maxBudgetUsd = null, transcriptFile, timeoutMs = 40 * 60_000, python = true, ctx = {}, control = null, holdOnLimit = true }) {
   if (!MODELS.includes(model)) throw new Error("unknown model " + model);
   for (let hold = 0; ; hold++) {
     await waitIfPaused();
     await checkBudget(ctx.arenaId);
     await acquire();
     if (isPaused()) { release(); continue; }
+    if (control?.cancelled) { release(); return { text: "", cost: 0, estimated: false, turns: 0, subtype: "cancelled", isError: true, killed: control.cancelled, ms: 0, err: "" }; }
     const t0 = Date.now();
     let r;
     try {
-      r = await runSessionCli({ model, cwd, appendSystem, prompt, maxTurns, maxBudgetUsd, python, transcriptFile: hold ? transcriptFile.replace(/\.jsonl$/, `.hold${hold}.jsonl`) : transcriptFile, timeoutMs });
+      r = await runSessionCli({ model, cwd, appendSystem, prompt, maxTurns, maxBudgetUsd, python, control, transcriptFile: hold ? transcriptFile.replace(/\.jsonl$/, `.hold${hold}.jsonl`) : transcriptFile, timeoutMs });
     } finally {
       release();
     }
     const ms = Date.now() - t0;
     const res = r.result || {};
-    const cost = Number(res.total_cost_usd || 0);
-    const usage = res.usage || {};
+    let cost = Number(res.total_cost_usd || 0), estimated = false;
+    let usage = res.usage || {};
+    if (!r.result) { // stopped (or crashed) before the CLI reported: estimate from the transcript's usage
+      const e = estimateCost(r.lines, model);
+      cost = e.usd; usage = e.usage; estimated = true;
+    }
     const text = typeof res.result === "string" ? res.result : "";
     const limitMsg = [text, r.err, r.limitText, res.api_error_status].filter(Boolean).join(" ");
-    const limit = (res.is_error || !r.result) && USAGE_LIMIT.test(limitMsg);
+    const limit = !r.killed && (res.is_error || !r.result) && USAGE_LIMIT.test(limitMsg);
     const ok = !!r.result && !limit;
     await q(
-      `INSERT INTO arena.llm_calls (model, resolved, purpose, arena_id, game_id, persona_id, cost_usd, input_tokens, output_tokens, cache_read, cache_write, duration_ms, ok, error, turns)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
-      [model, res.modelUsage ? Object.keys(res.modelUsage).join(",") : null, ctx.purpose || "session", ctx.arenaId || null, ctx.gameId || null, ctx.personaId || null, cost,
+      `INSERT INTO arena.llm_calls (model, resolved, purpose, arena_id, game_id, persona_id, cost_usd, estimated, input_tokens, output_tokens, cache_read, cache_write, duration_ms, ok, error, turns)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+      [model, res.modelUsage ? Object.keys(res.modelUsage).join(",") : null, ctx.purpose || "session", ctx.arenaId || null, ctx.gameId || null, ctx.personaId || null, cost, estimated,
         usage.input_tokens ?? null, usage.output_tokens ?? null, usage.cache_read_input_tokens ?? null, usage.cache_creation_input_tokens ?? null,
-        ms, ok, limit ? `[held: usage limit] ${limitMsg.slice(0, 400)}` : ok ? (res.subtype !== "success" ? res.subtype : null) : (r.err || "no result").slice(0, 500), res.num_turns ?? null])
+        ms, ok, limit ? `[held: usage limit] ${limitMsg.slice(0, 400)}` : r.killed ? `[stopped: ${r.killed}]` : ok ? (res.subtype !== "success" ? res.subtype : null) : (r.err || "no result").slice(0, 500), res.num_turns ?? null])
       .catch((e) => console.error("ledger insert failed", e.message));
-    if (limit) { pause(limitMsg); continue; }
-    return { text, cost, turns: res.num_turns ?? null, subtype: res.subtype ?? null, isError: !!res.is_error || !r.result, ms, err: r.err };
+    if (limit) {
+      pause(limitMsg);
+      if (holdOnLimit) continue;
+    }
+    return { text, cost, estimated, turns: res.num_turns ?? null, subtype: r.killed ? `killed:${r.killed}` : limit ? "usage-limit" : res.subtype ?? null,
+      isError: !!res.is_error || !r.result, killed: r.killed, limit, ms, err: r.err };
   }
 }
