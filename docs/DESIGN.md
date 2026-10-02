@@ -104,6 +104,16 @@ that one visit's flower. But a bee never knows whose patch it is in, so the publ
 it a ready-made label ("this answer is Bo's cosmos's") to match against. A team has to teach its bee
 signals that work without knowing which patch, or which flower, it is looking at.
 
+### Flowers are drawn at random, not dealt
+
+Every new visit is at a flower picked uniformly at random from the whole garden, independently of the
+last. An earlier version dealt each bee its flowers from a shuffled deck, every flower once per lap.
+That was fair, but it leaked: visit numbers are public, so the two visits a bee made to a patch within a
+lap were known to be one cosmos and one orchid, and a single feed's nectar labelled the other visit too.
+And bees used the deck as a clock: counting visits told a bee where it was in the lap and so what it
+still had to meet (once it had recognised every cosmos in a lap, the rest had to be orchids). A
+random draw has no laps to count. Over a game every flower still comes up about equally often.
+
 ### Each round, in the engine
 
 | Game time | What happens |
@@ -147,8 +157,9 @@ entries count like any other source: a team can always earn from itself, but onl
 
 ## Should a bee ever skip its own cosmos?
 
-No. A bee meets its own flowers only as often as the shuffled deck deals them (2 of every 2N visits), so
-self-dealing is capped by the deck, and it earns one rootsum term on each side, with diminishing returns.
+No. A bee meets its own flowers only as often as the random draw picks them (2 in 2N visits on average,
+like any other patch), so self-dealing is capped by the draw, and it earns one rootsum term on each side,
+with diminishing returns.
 
 What it does leak now is its question. Everything is public, so a bee that recognises its own cosmos by
 asking a secret question shows that question to everyone, along with the answer its patch gave. The answer to

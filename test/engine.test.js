@@ -16,6 +16,13 @@ const tooSlow = (a) => a.action === "error" && /too slow/.test(a.error);
 const busy = (ms) => `t = time.perf_counter()\n        while time.perf_counter() - t < ${ms / 1000}:\n            pass\n`;
 const flowers = { cosmos: `def flower(c):\n    return c + 1\n`, orchid: `def flower(c):\n    return c + 2\n` };
 const tsFlowers = { cosmos: `function flower(c: number) { return c + 1; }`, orchid: `function flower(c: number) { return c + 2; }` };
+// Flowers are picked at random, so a test that needs both kinds plays until it has them: a `during` hook
+// that stops the garden once done(actions so far) holds (or the garden runs out of rounds).
+const stopWhen = (done) => async (garden) => {
+  while (!garden.closed && !done(garden.out)) await new Promise((r) => setTimeout(r, 5));
+  await garden.stop();
+};
+const askedBoth = (acts) => ["cosmos", "orchid"].every((k) => acts.some((a) => a.kind === k && a.action === "ask"));
 
 test("defaults: 150 ms flower window, an orchid limit below it, 50 ms bee decisions, 200 ms rounds", () => {
   const { cosmos, orchid, bee } = DEFAULT_CONFIG.budgets;
@@ -50,9 +57,6 @@ for (const language of ["python", "typescript"]) {
         expect = a.round + 1 + (a.action === "feed" ? config.feedCost : 0);
         if (a.action === "feed") assert.equal(a.nectar, a.kind === "cosmos");
       }
-      // A shuffled deck: every flower comes up once before any comes up again.
-      const firstLap = [...new Map(mine.map((a) => [a.visit, `${a.patch}:${a.kind}`])).values()].slice(0, 8);
-      assert.equal(new Set(firstLap).size, 8);
     }
     // Slot actions happen at the round's start; leaves are decided at the end of the flower window.
     for (const a of out.actions) assert.equal(a.atMs, (a.round - 1) * 200 + (SLOT.has(a.action) ? 0 : 150), JSON.stringify(a));
@@ -65,6 +69,26 @@ for (const language of ["python", "typescript"]) {
   });
 }
 
+test("every new visit is at a flower picked at random: every flower comes up, in roughly equal shares", async () => {
+  // Three patches, six flowers; each bee moves on after every ask, so every round is a new visit.
+  const bee = `def forage(seen, visit):\n    return ["leave", 1]\n`;
+  const out = await play(normalizeConfig({}), [0, 1, 2].map(() => ({ ...flowers, bee })), 300);
+  const asks = out.actions.filter((a) => a.action === "ask");
+  assert.equal(asks.length, 900);
+  const counts = new Map();
+  for (const a of asks) counts.set(`${a.patch}:${a.kind}`, (counts.get(`${a.patch}:${a.kind}`) || 0) + 1);
+  assert.equal(counts.size, 6, "every flower comes up");
+  // 150 expected each, standard deviation about 11: far outside ±50 only if the draw isn't uniform.
+  for (const [flower, n] of counts) assert.ok(n > 100 && n < 200, `${flower}: ${n} of 900 visits`);
+  for (let b = 0; b < 3; b++) {
+    const mine = slots(asks, b).map((a) => `${a.patch}:${a.kind}`);
+    assert.ok(mine.some((f, i) => i > 0 && f === mine[i - 1]), "no laps: the same flower can come up twice in a row");
+    // In each stretch of 6 visits, a deck would have dealt all 6 flowers; a random draw rarely does.
+    const full = mine.slice(0, 294).filter((_, i) => i % 6 === 0).map((_, j) => new Set(mine.slice(6 * j, 6 * j + 6)).size === 6);
+    assert.ok(full.filter(Boolean).length < full.length / 2, `bee ${b}: ${full.filter(Boolean).length} of ${full.length} laps`);
+  }
+});
+
 test("a bee can keep asking after it feeds; feeding again just moves on", async () => {
   const bee = `def forage(seen, visit):
     if not visit["fed"]:
@@ -74,7 +98,11 @@ test("a bee can keep asking after it feeds; feeding again just moves on", async 
     return "feed" if visit["nectar"] is False else "leave"
 `;
   const config = normalizeConfig({ feedCost: 5 });
-  const out = await play(config, [{ ...flowers, bee }], 40);
+  const fedAndLeft = (acts, kind) => {
+    const f = acts.find((a) => a.kind === kind && a.action === "feed");
+    return f && acts.some((a) => a.visit === f.visit && a.action === "leave");
+  };
+  const out = await play(config, [{ ...flowers, bee }], 2000, stopWhen((acts) => fedAndLeft(acts, "cosmos") && fedAndLeft(acts, "orchid")));
   for (const kind of ["cosmos", "orchid"]) {
     const visit = out.actions.find((a) => a.kind === kind && a.action === "feed").visit;
     const steps = out.actions.filter((a) => a.visit === visit);
@@ -122,7 +150,7 @@ test("a plain \"leave\" loses a slot unless the re-request answers in time (pace
 test("flowers get their own time limits: an orchid over 100 ms gets null, a cosmos taking 120 ms answers", async () => {
   const slowFlower = `import time\ndef flower(c):\n    ${busy(120)}    return c * 2\n`;
   const bee = `def forage(seen, visit):\n    return ["leave", 3]\n`;
-  const out = await play(normalizeConfig({}), [{ cosmos: slowFlower, orchid: slowFlower, bee }], 4);
+  const out = await play(normalizeConfig({}), [{ cosmos: slowFlower, orchid: slowFlower, bee }], 200, stopWhen(askedBoth));
   const asks = out.actions.filter((a) => a.action === "ask");
   const cosmos = asks.filter((a) => a.kind === "cosmos"), orchid = asks.filter((a) => a.kind === "orchid");
   assert.ok(cosmos.length && orchid.length);
@@ -145,9 +173,9 @@ for (const language of ["python", "typescript"]) {
     const p = language === "python"
       ? { flower: `def flower(c):\n    return GAME["ms"] * 1000 + GAME["round_ms"]\n`, bee: `def forage(seen, visit):\n    return ["leave", GAME["ms"] * 1000 + GAME["round_ms"]]\n` }
       : { flower: `function flower(c: number) { return GAME.ms * 1000 + GAME.round_ms; }`, bee: `function forage(seen: any[]) { return ["leave", GAME.ms * 1000 + GAME.round_ms]; }` };
-    const out = await play(config, [{ cosmos: p.flower, orchid: p.flower, bee: p.bee }], 4);
+    const out = await play(config, [{ cosmos: p.flower, orchid: p.flower, bee: p.bee }], 200, stopWhen(askedBoth));
     const asks = out.actions.filter((a) => a.action === "ask");
-    assert.ok(asks.length === 4 && asks.every((a) => a.c === 50200));
+    assert.ok(askedBoth(asks) && asks.every((a) => a.c === 50200));
     for (const a of asks) assert.equal(a.r, a.kind === "cosmos" ? 150200 : 100200);
   });
 }
@@ -165,14 +193,19 @@ def forage(seen, visit):
     last = time.perf_counter()
     return ["leave", 1]
 `;
-  const out = await play(normalizeConfig({}), [{ cosmos: slowCosmos, orchid: `def flower(c):\n    return c\n`, bee }], 16, null, { paced: true });
+  const gapsOf = (acts) => {
+    const gaps = { cosmos: [], orchid: [] };
+    // (The first gap runs from the bee's first call, while it loaded, so it doesn't count.)
+    for (const a of acts.filter((x) => x.action === "leave" && x.log).slice(1)) gaps[a.kind].push(Number(a.log));
+    return gaps;
+  };
+  const enough = (acts) => { const g = gapsOf(acts); return g.cosmos.length >= 4 && g.orchid.length >= 4; };
+  const out = await play(normalizeConfig({}), [{ cosmos: slowCosmos, orchid: `def flower(c):\n    return c\n`, bee }], 80, stopWhen(enough), { paced: true });
   const asks = out.actions.filter((a) => a.action === "ask");
   const mean = (xs) => xs.reduce((s, x) => s + x, 0) / xs.length;
   assert.ok(mean(asks.filter((a) => a.kind === "cosmos").map((a) => a.ms)) > 110);
   assert.ok(mean(asks.filter((a) => a.kind === "orchid").map((a) => a.ms)) < 30);
-  const gaps = { cosmos: [], orchid: [] };
-  // (The first gap runs from the bee's first call, while it loaded, so it doesn't count.)
-  for (const a of out.actions.filter((x) => x.action === "leave" && x.log).slice(1)) gaps[a.kind].push(Number(a.log));
+  const gaps = gapsOf(out.actions);
   assert.ok(gaps.cosmos.length >= 3 && gaps.orchid.length >= 3, JSON.stringify(gaps));
   for (const g of [...gaps.cosmos, ...gaps.orchid]) assert.ok(g > 185 && g < 225, `${g} ms between decisions`);
   assert.ok(Math.abs(mean(gaps.cosmos) - mean(gaps.orchid)) < 15, JSON.stringify(gaps));
@@ -292,7 +325,9 @@ for (const language of ["python", "typescript"]) {
       bee: `function forage(seen: any[]) { return seen.length < 3 ? ["ask", 7] : "leave"; }\n`,
     };
     const p = language === "python" ? py : ts;
-    const out = await play(config, [{ cosmos: p.counter, orchid: p.anytime, bee: p.bee }], 24);
+    const asksAt = (acts, kind) => acts.filter((a) => a.kind === kind && a.action === "ask").length;
+    const out = await play(config, [{ cosmos: p.counter, orchid: p.anytime, bee: p.bee }], 1000,
+      stopWhen((acts) => asksAt(acts, "orchid") >= 6 && asksAt(acts, "cosmos") >= 3));
     const asks = out.actions.filter((a) => a.action === "ask");
     for (const a of asks) assert.equal(a.error, null, a.error);
     for (const a of asks.filter((a) => a.kind === "cosmos")) assert.equal(a.r, 1001, "nothing survives between calls");
@@ -324,7 +359,7 @@ test("compute budgets are per program: a cosmos can be given far more compute th
   const busyFlower = `import time\ndef flower(c):\n    t = time.perf_counter()\n    x = 0\n    while time.perf_counter() - t < 0.12:\n        x = (x + c) % 1000003\n    return x\n`;
   const bee = `def forage(seen):\n    return "leave" if seen else ["ask", 3]\n`;
   const config = normalizeConfig({ budgets: { cosmos: { ms: 400 }, orchid: { ms: 50 } } });
-  const out = await play(config, [{ cosmos: busyFlower, orchid: busyFlower, bee }], 2);
+  const out = await play(config, [{ cosmos: busyFlower, orchid: busyFlower, bee }], 200, stopWhen(askedBoth));
   const byKind = Object.fromEntries(out.actions.filter((a) => a.action === "ask").map((a) => [a.kind, a]));
   assert.equal(typeof byKind.cosmos.r, "number", JSON.stringify(byKind.cosmos));
   assert.match(String(byKind.orchid.error), /Timeout/, JSON.stringify(out.actions));

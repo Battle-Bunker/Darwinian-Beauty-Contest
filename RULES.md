@@ -35,8 +35,10 @@ clock is rounds × 200 ms (a 2-minute game is 600 rounds), and it is played in r
 at least 200 ms on the wall clock too (longer if the server is short of CPU cores, which changes
 nothing in the game: every program still gets its full time on a core of its own).
 
-Each bee is shown one flower at a time, from its own shuffled deck of every flower in the garden. Your
-own two flowers are in the deck too, and every flower comes up once before any comes up again.
+Each bee is shown one flower at a time. Every time it moves on, its next flower is picked at random
+from every flower in the garden, your own two included, each as likely as any other, whatever came
+before. There's no order to it: a bee can meet the same flower twice in a row, and over a game every
+flower comes up about equally often. `visit["flowers"]` says how many flowers there are.
 
 **What a bee does next is always decided a round ahead.** Your bee's `forage` returns its *next* action,
 which is **queued** for its next round:

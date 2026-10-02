@@ -73,6 +73,9 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
   At `cosmos.ms` the answers are delivered (null if a flower wasn't done within its own `ms`), and each
   bee that acted has `bee.ms` to return its next action, queued for its next slot. RULES.md has the
   details: queued challenges, late replies and re-requests, `["leave", c]`.
+- **Visits.** Every new visit is at a flower picked uniformly at random among all the flowers in the
+  garden, independently for each visit: no deck, no laps, and the same flower can come up twice in a
+  row. An action's `visit` is the bee's visit count.
 - `feedCost`: a bee that feeds has no slot for the next `feedCost` rounds.
 - `budgets.<kind>.size`: size budget in weighted nodes (vendor/measure.js; RULES.md explains it to players).
 - `budgets.<kind>.perMinute`, `cap`: change budget earned per minute of game time, and the most that can

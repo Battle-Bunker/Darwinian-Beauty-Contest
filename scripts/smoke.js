@@ -34,7 +34,9 @@ const game = await api(owner, "POST", `/rooms/${room.shortId}/games`);
 console.log("game", game.url);
 const g = `/rooms/${room.shortId}/games/${game.shortId}`;
 // Half a minute of game time; cosmos flowers earn change budget fast so the test needn't wait.
-await api(owner, "PATCH", `${g}/config`, { config: { minutes: 0.5, budgets: { cosmos: { perMinute: 600, cap: 100 } } } });
+// Feeding costs 2 rounds rather than 10, so bees visit often: flowers are drawn at random, and the checks
+// below wait for visits to particular patches and flowers.
+await api(owner, "PATCH", `${g}/config`, { config: { minutes: 0.5, feedCost: 2, budgets: { cosmos: { perMinute: 600, cap: 100 } } } });
 
 const players = [];
 for (const name of ["Ada", "Bo", "Cy", "Di"]) {
@@ -97,7 +99,8 @@ assert.equal(lateTeam.status, 409, "teams can't join a running game");
 // whose patch, but not which of the patch's two flowers it was.
 const seen = await until("actions", async () => {
   const a = await api(players[1].token, "GET", `${g}/actions`);
-  return a.actions.filter((x) => x.action === "feed").length >= 6 && a;
+  return a.actions.filter((x) => x.action === "feed").length >= 6 && a.actions.some((x) => x.patch === players[1].team.id)
+    && a.actions.some((x) => x.patch !== players[1].team.id) && a;
 });
 const adaAsk = seen.actions.find((a) => a.bee === players[0].team.id && a.action === "ask");
 assert.equal(adaAsk.c, 42, "Bo sees Ada's bee's question");

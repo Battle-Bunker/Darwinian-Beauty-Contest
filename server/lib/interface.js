@@ -104,6 +104,7 @@ export function programInterface(config) {
         `  ["ask", ${C}] | "feed" | ["leave", ${C}] | "leave"\n` +
         `// ["ask", c]: ask c here next round. "feed": once per visit, after asking; then sit out GAME.feed_cost rounds.\n` +
         `// ["leave", c]: move on, and ask c first at the next flower next round. "leave": move on.\n` +
+        `// Each next flower is any flower in the garden (visit.flowers of them), picked at random: it may be the same one again.\n` +
         `function tasted(seen: [${C}, ${R} | null][], nectar: boolean): void   // optional: after a feed, called just before forage\n${beeNotes(true, config)}`,
     };
   }
@@ -112,6 +113,7 @@ export function programInterface(config) {
     flower: `def flower(challenge):    # challenge: ${c}  ->  return a ${r}\n${flowerNotes(false, config)}`,
     bee: `def forage(seen, visit):   # seen: [[challenge, response], ...] at this flower (response None if it failed)\n` +
       `    # visit = {"fed": bool, "nectar": bool or None, "flowers": flowers in the garden}\n` +
+      `    # each next flower is any of visit["flowers"] in the garden, picked at random: it may be the same one again\n` +
       `    # return ["ask", challenge]   ask it here next round\n` +
       `    #     or "feed"               once per visit, after asking; then sit out GAME["feed_cost"] rounds\n` +
       `    #     or ["leave", challenge] move on, and ask it first at the next flower next round\n` +

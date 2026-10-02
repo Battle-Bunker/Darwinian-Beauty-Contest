@@ -1,9 +1,10 @@
 // The garden: one continuous stream of bee actions. Pure with respect to the database: programs go in
 // (and can be replaced at any moment), actions come out.
 //
-// Every team owns a patch of two flowers (cosmos = rewarding, orchid = deceptive) and one bee. A bee is
-// shown flowers from its own shuffled deck of every flower in the garden (each comes up once before any
-// comes up again). At a flower it asks challenges, may feed once (nectar only at cosmos flowers), and leaves.
+// Every team owns a patch of two flowers (cosmos = rewarding, orchid = deceptive) and one bee. Every new
+// visit is at a flower picked uniformly at random among all the flowers in the garden, independently of
+// the last (no laps: a bee can meet the same flower twice in a row). At a flower a bee asks challenges,
+// may feed once (nectar only at cosmos flowers), and leaves.
 //
 // Time runs in rounds, in lockstep: a round is one action slot for every bee and lasts exactly
 // roundMs (cosmos.ms + bee.ms = 150 + 50 = 200 ms) of game time; game time is rounds × roundMs. A live
@@ -113,10 +114,6 @@ class FlowerPool {
 }
 
 const RETIRE_MS = 5000; // a replaced flower finishes the asks it's already answering, then goes
-const shuffle = (a) => {
-  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
-  return a;
-};
 const sleep = (ms) => new Promise((r) => setTimeout(r, Math.max(0, ms)));
 /** Wait until performance.now() reaches t (timers have whole-millisecond resolution and can fire early). */
 async function until(t) {
@@ -165,7 +162,7 @@ export class Garden {
     this.flowers = [];                // { team, kind, version, pool }
     this.bees = Array.from({ length: teams }, (_, ti) => ({
       ti, version: null, code: null, pending: null, proc: null, gen: 0, broken: false,
-      sitOut: 0, deck: [], visit: null, visits: 0,
+      sitOut: 0, visit: null, visits: 0,
       queued: null,      // the action for the bee's next slot: { act: "ask", c, fresh, beeMs, log } | { act: "feed", beeMs, log }
       busy: false,       // a call is in flight (or the bee is acting this round): no other request goes to it
       asking: null,      // a request outside the round flow (loading, a first challenge): { inTime }
@@ -426,13 +423,13 @@ export class Garden {
     if (!res.dead) this.#askFirst(b);
   }
 
-  #draw(b) {
-    while (b.deck.length) {
-      const slot = b.deck.pop();
-      if (this.flowers.includes(slot)) return slot;
-    }
-    b.deck = shuffle([...this.flowers]);
-    return b.deck.pop() ?? null;
+  /**
+   * The flower for a bee's next visit: any flower in the garden, uniformly at random, every time. (A deck
+   * that dealt each flower once per lap told viewers that a bee's two visits to a patch in a lap were one
+   * of each kind, and gave bees a clock: where they were in the lap, and so what was left to meet.)
+   */
+  #draw() {
+    return this.flowers.length ? this.flowers[Math.floor(Math.random() * this.flowers.length)] : null;
   }
 
   /** The flower's answer, labelled with the version that gave it (the flower may be replaced meanwhile). */
@@ -451,7 +448,7 @@ export class Garden {
   async #act({ b, q, gen }) {
     if (q.act === "ask") {
       if (q.fresh || !b.visit) {
-        const slot = this.#draw(b);
+        const slot = this.#draw();
         b.visit = slot && { slot, no: ++b.visits, asks: 0, fed: false, nectar: null };
       }
       const v = b.visit;
