@@ -14,6 +14,7 @@ The key findings below are from phase 1 (engine v1, summarised logs). Phase 2 is
 - §16 corrects §15: most bee discrimination comes from fingerprinting, not certificate checks.
 - §17 compares hidden and public logs under engine v3; §18 gives every team two example signature flowers.
 - §19 asks why orchid change rounds don't wipe out fingerprinting bees.
+- §20 is the first pilot of the continuous garden (branch `claude/continuous-garden`): games of 30 s, 1 and 2 minutes.
 
 ## Key findings
 
@@ -1314,6 +1315,47 @@ copies from are stale.
   the style of an answer that is costly to reproduce.
 - **The alternative is delayed tasting.** Nectar would arrive in `MEMORY` after the round, with no `tasted` during it.
   That removes in-round learning entirely and changes the bee game much more.
+
+## 20. Continuous garden pilot: 30 s, 1 and 2 minute games
+
+**What changed.** Rounds of code changes are gone (docs/DESIGN.md "One continuous garden"):
+- One game is one stream: bees take turns round robin, as fast as the programs run. A feed takes a bee out
+  of the round robin for 10 rounds.
+- Every action is public at once. Code, bee printouts, code changes and change budgets stay private until
+  the game ends.
+- Each program earns change budget per minute (clover 220, orchid 1,540, bee 2,200 nodes; cap one
+  minute's worth). Anything affordable goes live at once.
+- Agents run back-to-back sessions during the game. They read the stream with code from a shared JSONL,
+  not from their prompt, and submit through workspace tools.
+
+**Pilot as run** (`cont-pilot`, room /room/E on the arena server):
+- 3 teams on int→int: Luna and Tess on sonnet, Grace on haiku. After game 2, Grace was retired and the
+  Moss breeder created Biko (haiku).
+- Games of 0.5, 1 and 2 minutes.
+- $2.90 in all, 56 sessions, no fair-play violations.
+- One game per duration, so nothing below is more than an anecdote.
+
+| minutes | actions/s | rounds/s | bee precision | rival clover − orchid fed gap | sessions per team in play | in-game versions | final fitness |
+|---|---|---|---|---|---|---|---|
+| 0.5 | 864 | 403 | 0.96 | 0.30 | 2.3 | 2 (one free) | Moonpetal 1.57, Show Your Work Hive 1.56, Steady State 0.24 |
+| 1 | 356 | 180 | 0.64 | 0.21 | 4.7 | 0 | Moonpetal 2.59, Show Your Work Hive 1.84, Steady State 0.00 |
+| 2 | 813 | 499 | 0.66 | 0.14 | 8.7 | 2 | Moonpetal 1.41, Show Your Work Hive 1.07, Secret Handshake 0.50 |
+
+- **The lobby decides short games.** In 30 s and 1 min almost nothing changed in play. Sessions take
+  seconds to minutes, and the teams in front had no reason to change.
+- **The winners rested.** Sonnet sessions mostly read `tools/status.py`, saw they were first and ended in
+  about 7 s ("Moon song keeps winning; resting to the end"). That's why a 2-minute game had 13 sessions
+  per sonnet team.
+- **One team adapted mid-game, as intended.** Biko (haiku, game 3) read the stream with code and saw that
+  Moonpetal's orchid answers exactly like its clover. He rewrote his orchid (230 nodes) at 1:18 and his
+  bee (397 nodes) at 1:20. From 1:15 the rival clover feed rate rose from 27% to 61%, and the orchid rate
+  from 15% to 45%.
+- **Copying was slow.** In the 2-minute game, 28 rival-orchid answers matched a clover answer through an
+  orchid version that went live after that answer first appeared (median 61 s). Most other matches are
+  rules that converged, not copies.
+- **Nobody used compute.** Flowers used 1–4% of their compute budget, so int→int games so far are
+  rule-guessing, not effort signalling. Trivial programs also make the stream huge: 360–860 actions a
+  second, about 15 MB of database per 2-minute 3-team game.
 
 ## Most interesting games
 
