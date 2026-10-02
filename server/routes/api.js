@@ -25,7 +25,7 @@ export function apiRouter() {
   // Games: one view for everyone, filtered to what this viewer may know.
   const base = "/rooms/:room/games/:game";
   r.get(base, wrap(async (req, res) => res.json(await G.viewGame(req.room, req.game, req.user))));
-  r.get(`${base}/actions`, wrap(async (req, res) => res.json(await G.viewActions(req.game, req.user, { after: req.query.after, before: req.query.before, limit: req.query.limit }))));
+  r.get(`${base}/actions`, wrap(async (req, res) => res.json(await G.viewActions(req.game, req.user, { after: req.query.after, before: req.query.before, limit: req.query.limit, mine: req.query.mine }))));
   r.get(`${base}/scores`, wrap(async (req, res) => res.json(await G.viewScores(req.game))));
   r.get(`${base}/events`, wrap(async (req, res) => gameStream(req, res, {
     gameId: req.game.id, teamId: await G.myTeamId(req.game, req.user), version: req.game.version,

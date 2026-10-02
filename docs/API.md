@@ -34,7 +34,7 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 | Method | Path | Who | Body | Returns |
 |---|---|---|---|---|
 | GET | `base` | anyone | | the **game view** (below), filtered for the viewer |
-| GET | `base/actions` | anyone | `?after=<seq>&limit=<n ≤ 5000>` or `?before=<seq>&limit=<n>` | `{ actions: [action], lastSeq, clockMs, round, status }`: the actions after `after`, oldest first; or the last `limit` before `before`, oldest first (`before = lastSeq + 1` gives the latest) |
+| GET | `base/actions` | anyone | `?after=<seq>&limit=<n ≤ 5000>` or `?before=<seq>&limit=<n>`; add `&mine=1` (team members) for only your bee's actions and those at your patch | `{ actions: [action], lastSeq, clockMs, round, status }`: the actions after `after`, oldest first; or the last `limit` before `before`, oldest first (`before = lastSeq + 1` gives the latest) |
 | GET | `base/scores` | anyone | | `{ status, clockMs, endMs, round, lastSeq, participants, scores, recent, ledgers }`: the live numbers, cheap enough to poll every second |
 | GET | `base/events` | anyone | `?after=<seq>` | Server-Sent Events: `{version}` when the view should be refetched; `{programs: true}` when your own team's programs changed (refetch too); `{actions, lastSeq, clockMs, round, status}` as the garden writes them (from `after`, in order, page after page until caught up); `{lastSeq, clockMs, round, status}` when there is nothing new |
 | PATCH | `base/config` | owner, in the lobby | `{ config: {...partial} }` | `{ config, clearedPrograms }` (changing the language or types, or shrinking a size budget, clears the programs written so far) |
@@ -42,8 +42,8 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 | POST | `base/status` | owner | `{ action: "pause" \| "resume" \| "finish" }` | `{ status }`. The clock and change budgets stand still while paused; `finish` ends the game early |
 | POST | `base/teams` | user, in the lobby | `{ name }` | `{ id, name, joinCode }` |
 | POST | `base/teams/join` | user | `{ joinCode }` | `{ id, name }` |
-| POST | `base/check` | team member | `{ kind, code }` | `{ ok, kind, size, minified, budget, distance, cost, available, errors[] }`. Validates without saving. `size` is weighted nodes of the minified program; `minified` is the text the game runs. Once the game runs, `distance` is the node edits from the version playing now (renames, comments and formatting are free), `cost` what the change would spend and `available` the change budget now (floored) |
-| POST | `base/programs` | team member | `{ kind, code }` | same as check plus `submitted: true, version`, and `available` after paying; the new version goes live at once. **422** with `errors` if it's too big or can't be afforded yet (the error says how long until it can) |
+| POST | `base/check` | team member | `{ kind, code }` | `{ ok, kind, size, minified, budget, distance, cost, available, errors[] }`. Validates without saving: syntax, the entry point (`flower`, or `forage` for a bee, defined at the top level), size, and the change budget. `size` is weighted nodes of the minified program; `minified` is the text the game runs. Once the game runs, `distance` is the node edits from the version playing now (renames, comments and formatting are free), `cost` what the change would spend and `available` the change budget now (floored) |
+| POST | `base/programs` | team member | `{ kind, code }` | same as check plus `submitted: true, version, atMs` (the game time it went live; 0 in the lobby), and `available` after paying; the new version goes live at once. **422** with `errors` if it's too big or can't be afforded yet (the error says how long until it can) |
 | POST | `base/try` | team member | `{ kind, code, challenges?, flowers?: {clover, orchid} }` | flower: `{ results: [{c, r, error?, ms}] }`. bee: 300 rounds in a garden of just your own two flowers (the `flowers` you pass, else your latest): `{ actions, problems, feeds, nectar, rounds }` |
 
 `kind` is `clover`, `orchid` or `bee`.
@@ -130,6 +130,7 @@ nectarCollected, pollinators, nectarSources }`.
   "action": "ask|feed|leave|error",
   "beeVersion", "flowerVersion", // which versions played: your own programs' during play, all once it's over
   "c", "r", "ms", "after",       // ask: challenge, response (null if it failed), the flower's time, asked after feeding
+  "beeMs",                       // how long the bee took to decide (a feed: plus tasted)
   "nectar",                      // feed: true at a clover
   "error", "by",                 // what went wrong, and whose fault: bee | challenge | flower | engine
                                  // (engine: shown to the bee's team during play, to all once it's over)
@@ -139,3 +140,6 @@ nectarCollected, pollinators, nectarSources }`.
 An `engine` leave ends a visit the bee didn't finish because its team replaced it (or it crashed and
 restarted). Submissions don't bump the public `game.version`, so other teams can't tell when a team
 changes its code.
+
+Every server process connected to the same database runs whichever running games nobody else is running
+(see docs/DESIGN.md), so test servers and arena servers that share a database share their games.

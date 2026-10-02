@@ -110,14 +110,14 @@ async function flush(run) {
     const ids = run.participants;
     try {
       await tx(async (c) => {
-        const cols = ["game_id", "seq", "at_ms", "round", "bee_team", "visit", "patch_team", "kind", "action", "c", "r", "after", "nectar", "ms", "error", "error_by", "log", "bee_version", "flower_version"];
+        const cols = ["game_id", "seq", "at_ms", "round", "bee_team", "visit", "patch_team", "kind", "action", "c", "r", "after", "nectar", "ms", "bee_ms", "error", "error_by", "log", "bee_version", "flower_version"];
         for (let i = 0; i < d.actions.length; i += 400) {
           const chunk = d.actions.slice(i, i + 400), params = [], rows = [];
           chunk.forEach((a, j) => {
             rows.push(`(${cols.map((_, k) => `$${j * cols.length + k + 1}`).join(",")})`);
             params.push(run.id, a.seq, a.atMs, a.round, ids[a.bee], a.visit, ids[a.patch], a.kind, a.action,
               a.c === null || a.c === undefined ? null : JSON.stringify(a.c), a.r === null || a.r === undefined ? null : JSON.stringify(a.r),
-              a.after, a.nectar, a.ms, a.error, a.by, a.log, a.beeVersion, a.flowerVersion);
+              a.after, a.nectar, a.ms, a.beeMs, a.error, a.by, a.log, a.beeVersion, a.flowerVersion);
           });
           await c.query(`INSERT INTO actions (${cols.join(",")}) VALUES ${rows.join(",")}`, params);
         }

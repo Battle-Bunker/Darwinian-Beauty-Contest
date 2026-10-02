@@ -219,7 +219,7 @@ export class Garden {
     this.out.push({
       seq: ++this.seq, atMs: Math.round(this.clockMs()), round: this.round, bee: b.ti, visit: v.no, patch: v.slot.team, kind: v.slot.kind,
       beeVersion: b.version, flowerVersion: v.slot.version,
-      c: null, r: null, after: false, nectar: null, ms: null, error: null, by: null, log: null, ...fields,
+      c: null, r: null, after: false, nectar: null, ms: null, beeMs: null, error: null, by: null, log: null, ...fields,
     });
   }
 
@@ -265,7 +265,12 @@ export class Garden {
       this.#problem(b.ti, "bee", b.version, load.e);
       return;
     }
-    const call = (obj) => withCpu(() => b.proc.call(obj));
+    // How long the bee took to decide (not counting the wait for a free core).
+    const call = (obj) => withCpu(async () => {
+      const t0 = performance.now();
+      const res = await b.proc.call(obj);
+      return { ...res, ms: performance.now() - t0 };
+    });
     for (let step = 0; step < 4 && !this.stopped; step++) {
       if (!b.visit) {
         const slot = this.#draw(b);
@@ -274,6 +279,7 @@ export class Garden {
       }
       const v = b.visit;
       const res = await call({ op: "forage", new: v.first, step: v.last, visit: { fed: v.fed, nectar: v.nectar, flowers: this.flowers.length } });
+      const beeMs = res.ms;
       v.first = false;
       v.last = null;
       const log = res.out ? res.out.slice(0, MAX_LOG) : null;
@@ -284,7 +290,7 @@ export class Garden {
       }
       if (err) { // a mistake costs a turn and ends the visit
         this.#problem(b.ti, "bee", b.version, err);
-        this.#record(b, v, { action: "error", error: String(err).slice(0, 300), by: "bee", log });
+        this.#record(b, v, { action: "error", error: String(err).slice(0, 300), by: "bee", log, beeMs });
         b.visit = null;
         return;
       }
@@ -292,7 +298,7 @@ export class Garden {
         const c = res.a[1];
         const bad = checkValue(this.cType, c, this.limits, "challenge");
         const answer = bad ? { r: null, error: String(bad).slice(0, 300), by: "challenge" } : await this.#ask(v.slot, c);
-        this.#record(b, v, { action: "ask", c, after: v.fed, log, ...answer });
+        this.#record(b, v, { action: "ask", c, after: v.fed, log, beeMs, ...answer });
         v.asks++;
         v.last = [c, answer.r];
         return;
@@ -309,13 +315,13 @@ export class Garden {
         if (v.nectar) this.nectar[b.ti][v.slot.team]++;
         const t = await call({ op: "tasted", nectar: v.nectar });
         const logs = [log, t.out].filter(Boolean).join("").slice(0, MAX_LOG) || null;
-        this.#record(b, v, { action: "feed", nectar: v.nectar, log: logs, ...(t.e ? { error: ("tasted: " + t.e).slice(0, 300), by: "bee" } : {}) });
+        this.#record(b, v, { action: "feed", nectar: v.nectar, log: logs, beeMs: beeMs + t.ms, ...(t.e ? { error: ("tasted: " + t.e).slice(0, 300), by: "bee" } : {}) });
         if (this.config.feedCost === 0) continue;
         b.sitOut = this.config.feedCost; // feeding: out of the round robin for the next feedCost rounds
         return;
       }
       // leave (or a second feed, which also moves on): free once the bee has asked here
-      this.#record(b, v, { action: "leave", log });
+      this.#record(b, v, { action: "leave", log, beeMs });
       b.visit = null;
       if (!v.asks) return;
     }

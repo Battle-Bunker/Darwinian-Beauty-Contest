@@ -231,6 +231,9 @@ async function measure(client, g, team, kind, code) {
   const errors = [];
   const { size: measured, minified, syntaxError } = await size(g.config.language, code);
   if (syntaxError) errors.push("Syntax error");
+  else if (!definesEntry(g.config.language, kind, minified)) {
+    errors.push(kind === "bee" ? "A bee must define forage(seen, visit)" : `Your ${kind} must define flower(challenge)`);
+  }
   if (measured > budget.size) {
     errors.push(`Too big: ${measured} nodes > budget ${budget.size} (comments, spacing, types and name lengths don't count; every byte of a string or number does)`);
   }
@@ -259,6 +262,14 @@ async function measure(client, g, team, kind, code) {
   return { ok: errors.length === 0, ...out, errors };
 }
 const shown = ({ exact, ...check }) => check;
+
+/** Does the (minified) program define its entry point at the top level? The game looks it up by name. */
+function definesEntry(language, kind, minified) {
+  const name = kind === "bee" ? "forage" : "flower";
+  return language === "typescript"
+    ? new RegExp(`(^|[;}\\s])(function\\s*\\*?\\s*${name}\\s*\\(|(const|let|var)\\s+${name}\\s*=)`).test(minified)
+    : new RegExp(`^(def ${name}\\(|${name}\\s*=)`, "m").test(minified);
+}
 
 /** Check a program without submitting it: its size, and what it would cost now. */
 export async function checkProgram(game, user, kind, code) {
@@ -289,7 +300,7 @@ export async function submitProgram(game, user, kind, code) {
         [g.id, team.id, kind, check.exact - check.cost, g.clock_ms]);
       await touchPrograms(c, g.id, team.id);
     } else await touch(c, g.id); // the lobby shows who has written what
-    return { ...shown(check), submitted: true, version, available: live ? Math.floor(check.exact - check.cost) : null };
+    return { ...shown(check), submitted: true, version, atMs: live ? g.clock_ms : 0, available: live ? Math.floor(check.exact - check.cost) : null };
   });
 }
 
@@ -409,14 +420,19 @@ async function recentScores(g, participants) {
  * game is over, anything that gives away a code change: which program versions played (your own only)
  * and why the engine ended a bee's visit (a new bee took over, or it restarted).
  */
-export async function viewActions(game, user, { after = 0, before = null, limit = 1000 } = {}) {
+export async function viewActions(game, user, { after = 0, before = null, limit = 1000, mine: onlyMine = false } = {}) {
   const g = (await query("SELECT status, config, last_seq, clock_ms, round FROM games WHERE id = $1", [game.id])).rows[0];
   const mine = await myTeam(game.id, user?.id);
   const over = g.status === "finished", revealed = over && g.config.revealOnFinish;
   const n = Math.max(1, Math.min(5000, Number(limit) || 1000));
+  // mine: only actions of your team's bee or at your team's patch
+  const only = onlyMine && onlyMine !== "0" && onlyMine !== "false" ? (mine?.id ?? null) : undefined;
+  if (only === null) fail(403, "Join a team first");
+  const where = only ? "game_id = $1 AND (bee_team = $4 OR patch_team = $4)" : "game_id = $1";
+  const params = (x) => (only ? [game.id, x, n, only] : [game.id, x, n]);
   const { rows } = before !== null && before !== undefined && before !== ""
-    ? await query("SELECT * FROM (SELECT * FROM actions WHERE game_id = $1 AND seq < $2 ORDER BY seq DESC LIMIT $3) t ORDER BY seq", [game.id, Number(before) || 0, n])
-    : await query("SELECT * FROM actions WHERE game_id = $1 AND seq > $2 ORDER BY seq LIMIT $3", [game.id, Math.max(0, Number(after) || 0), n]);
+    ? await query(`SELECT * FROM (SELECT * FROM actions WHERE ${where} AND seq < $2 ORDER BY seq DESC LIMIT $3) t ORDER BY seq`, params(Number(before) || 0))
+    : await query(`SELECT * FROM actions WHERE ${where} AND seq > $2 ORDER BY seq LIMIT $3`, params(Math.max(0, Number(after) || 0)));
   return { actions: rows.map((a) => actionView(a, mine?.id, over, revealed)), lastSeq: g.last_seq, clockMs: g.clock_ms, round: g.round, status: g.status };
 }
 
@@ -424,6 +440,7 @@ export function actionView(a, myTeamId, over, revealed) {
   const out = { seq: a.seq, atMs: a.at_ms, round: a.round, bee: a.bee_team, visit: a.visit, patch: a.patch_team, kind: a.kind, action: a.action };
   if (over || a.bee_team === myTeamId) out.beeVersion = a.bee_version;
   if (over || a.patch_team === myTeamId) out.flowerVersion = a.flower_version;
+  if (a.bee_ms !== null && a.bee_ms !== undefined) out.beeMs = a.bee_ms;
   if (a.action === "ask") Object.assign(out, { c: a.c, r: a.r, ms: a.ms, ...(a.after ? { after: true } : {}) });
   if (a.action === "feed") out.nectar = a.nectar;
   if (a.error && (a.error_by !== "engine" || over || a.bee_team === myTeamId)) Object.assign(out, { error: a.error, by: a.error_by });

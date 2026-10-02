@@ -64,6 +64,13 @@ for (const [i, p] of players.slice(0, 3).entries()) {
 }
 // Di writes only a clover, so Di's team sits the game out.
 await api(players[3].token, "POST", `${g}/programs`, { kind: "clover", code: clover(1, 1) });
+for (const [kind, code] of [["clover", "x = 1\n"], ["bee", "def flower(c):\n    return c\n"], ["orchid", ""]]) {
+  const r = await api(players[0].token, "POST", `${g}/check`, { kind, code });
+  assert.equal(r.ok, false, `${kind} without its entry point`);
+  assert.match(r.errors.join(), kind === "bee" ? /must define forage/ : /must define flower/);
+}
+const lambdaClover = await api(players[0].token, "POST", `${g}/check`, { kind: "clover", code: "flower = lambda c: c\n" });
+assert.ok(lambdaClover.ok, lambdaClover.errors);
 const big = await api(players[0].token, "POST", `${g}/check`, { kind: "clover", code: "def flower(c):\n" + "    c = c + 1\n".repeat(400) + "    return c\n" });
 assert.equal(big.ok, false);
 assert.match(big.errors[0], /Too big: \d+ nodes/);
@@ -94,6 +101,9 @@ assert.equal(adaFeed((await api(players[1].token, "GET", `${g}/actions`)).action
 assert.match(adaFeed((await api(players[0].token, "GET", `${g}/actions`)).actions).log, /tasted/);
 const spectator = await api(null, "GET", `${g}/actions?limit=5`);
 assert.equal(spectator.actions.length, 5);
+assert.ok(seen.actions.some((a) => typeof a.beeMs === "number"), "bee decision time is recorded");
+const mineOnly = await api(players[0].token, "GET", `${g}/actions?mine=1&limit=500`);
+assert.ok(mineOnly.actions.length && mineOnly.actions.every((a) => a.bee === players[0].team.id || a.patch === players[0].team.id));
 
 // Changes cost change budget, which accrues with game time; a change goes live at once. During play a
 // team sees only its own versions and budgets.
@@ -116,6 +126,7 @@ const r1 = await until("clover budget", async () => {
 });
 assert.equal(r1.cost, 1);
 assert.equal(r1.version, 2);
+assert.ok(r1.atMs > 0, "the reply says when it went live");
 const free = await api(players[0].token, "POST", `${g}/programs`, { kind: "clover", code: "# same thing, explained\n" + small.replace("challenge", "question").replaceAll("challenge", "question") });
 assert.ok(free.ok && free.cost === 0, "comments, formatting and renames are free");
 assert.equal((await api(players[1].token, "GET", g)).game.version, versionBefore, "a submission doesn't announce itself");
