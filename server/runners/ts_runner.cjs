@@ -2,11 +2,11 @@
 //   node ts_runner.cjs flower — stateless: every call runs the program in a brand-new context, with
 //                               the context's own (unseeded) Math.random and Date.now(), so a flower
 //                               can run an anytime search until its budget (GAME.ms) is nearly spent.
-//   node ts_runner.cjs bee    — stateful for one round: one context reused between calls. At the end
-//                               of the round the top-level variable `keep` is saved; later rounds read
-//                               those values, read-only, as MEMORY
+//   node ts_runner.cjs bee    — stateful: one context reused between calls for as long as this
+//                               version of the bee plays (until its team submits a new bee, or it
+//                               crashes), with the context's own unseeded Math.random.
 // The code is the program's minified form (vendor/measure.js), so names can't carry data.
-// Protocol: JSON lines on stdin/stdout. First line is the setup {code, ms, seed, game, maxChars, memory}.
+// Protocol: JSON lines on stdin/stdout. First line is the setup {code, ms, game, maxChars}.
 // Values cross the context boundary only as JSON strings, so no host objects leak in.
 // NOT a security sandbox: fresh contexts + timeouts + heap cap only.
 "use strict";
@@ -17,43 +17,14 @@ const { stripTypeScriptTypes } = require("node:module");
 const out = (o) => process.stdout.write(JSON.stringify(o) + "\n");
 const short = (e) => String((e && e.message) || e).slice(0, 300);
 
-// Runs inside each context before the program: for bees a Math.random seeded once per round (flowers
-// keep the context's own), captured console, and (for bees) MEMORY rebuilt from earlier rounds'
-// snapshots as deeply read-only values.
-const PRELUDE = (seed, game, memory) => `
+// Runs inside each context before the program: captured console and GAME.
+const PRELUDE = (game) => `
 (() => {
-  let s = ${seed === null ? 0 : seed >>> 0};
-  if (${seed !== null}) Math.random = () => { s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
   const buf = [];
   globalThis.__out = buf;
   const log = (...a) => { if (buf.join("").length < 2000) buf.push(a.map((x) => typeof x === "string" ? x : JSON.stringify(x)).join(" ") + "\\n"); };
   globalThis.console = { log, error: log, warn: log, info: log };
   globalThis.GAME = Object.freeze(${JSON.stringify(game)});
-  const readOnly = () => { throw new TypeError("MEMORY is read-only: copy it first, e.g. new Map(m), [...a] or {...o}"); };
-  class FrozenMap extends Map {}
-  FrozenMap.prototype.set = FrozenMap.prototype.delete = FrozenMap.prototype.clear = readOnly;
-  class FrozenSet extends Set {}
-  FrozenSet.prototype.add = FrozenSet.prototype.delete = FrozenSet.prototype.clear = readOnly;
-  const thaw = (v) => {
-    if (Array.isArray(v)) return Object.freeze(v.map(thaw));
-    if (v && typeof v === "object") {
-      if ("__dbc_map__" in v) { const m = new Map(v.__dbc_map__.map(([k, x]) => [thaw(k), thaw(x)])); Object.setPrototypeOf(m, FrozenMap.prototype); return Object.freeze(m); }
-      if ("__dbc_set__" in v) { const m = new Set(v.__dbc_set__.map(thaw)); Object.setPrototypeOf(m, FrozenSet.prototype); return Object.freeze(m); }
-      const o = {};
-      for (const k of Object.keys(v)) o[k] = thaw(v[k]);
-      return Object.freeze(o);
-    }
-    return v;
-  };
-  globalThis.MEMORY = Object.freeze(${JSON.stringify(memory || [])}.map((s) => (s === null ? null : thaw(JSON.parse(s)))));
-  globalThis.__replacer = (k, v) => {
-    if (v instanceof Map) return { __dbc_map__: [...v.entries()] };
-    if (v instanceof Set) return { __dbc_set__: [...v] };
-    if (typeof v === "function" || typeof v === "symbol") return undefined;
-    if (typeof v === "bigint") return undefined;
-    return v;
-  };
 })();`;
 
 const EXPORTS = `;globalThis.__fns = { flower: typeof flower === "function" ? flower : undefined,
@@ -87,10 +58,10 @@ lines.on("line", (line) => {
     if (process.argv[2] === "bee" && !loadError) {
       try {
         ctx = newContext();
-        vm.runInContext(PRELUDE(setup.seed || 0, setup.game, setup.memory), ctx);
+        vm.runInContext(PRELUDE(setup.game), ctx);
         vm.runInContext("globalThis.__seen = [];", ctx);
         script.runInContext(ctx, { timeout: setup.ms * 10 });
-        if (vm.runInContext("typeof __fns.forage", ctx) !== "function") throw new Error("program must define function forage(seen, turnsLeft)");
+        if (vm.runInContext("typeof __fns.forage", ctx) !== "function") throw new Error("program must define function forage(seen, visit)");
       } catch (e) {
         loadError = short(e);
       }
@@ -102,7 +73,7 @@ lines.on("line", (line) => {
   try {
     if (process.argv[2] === "flower") {
       const c = newContext();
-      vm.runInContext(PRELUDE(null, setup.game, []), c);
+      vm.runInContext(PRELUDE(setup.game), c);
       script.runInContext(c, { timeout: setup.ms });
       if (vm.runInContext("typeof __fns.flower", c) !== "function") throw new Error("program must define function flower(challenge)");
       // The remaining budget isn't tracked separately: module setup + call each get the full budget.
@@ -113,7 +84,7 @@ lines.on("line", (line) => {
     if (req.op === "forage") {
       // `seen` lives inside the context and grows one step at a time; forage gets a copy.
       vm.runInContext(`(() => { if (${!!req.new}) __seen = []; const st = ${req.step == null ? "null" : jsonArgs(req.step)}; if (st) __seen.push(st); })()`, ctx);
-      const args = `[__seen.slice(), ${JSON.stringify(req.turns)}, ...(__fns.forage.length >= 3 ? [${jsonArgs(req.visit)}] : [])]`;
+      const args = `[__seen.slice(), ${jsonArgs(req.visit)}]`;
       const r = JSON.parse(vm.runInContext(encodeCall("forage", args), ctx, { timeout: setup.ms }));
       if (r.s && r.s.length > maxChars()) throw new Error("forage returned something too large");
       return out({ a: JSON.parse(r.s), out: r.o });
@@ -122,11 +93,6 @@ lines.on("line", (line) => {
       if (vm.runInContext("typeof __fns.tasted", ctx) !== "function") return out({ ok: true, out: "" });
       const r = JSON.parse(vm.runInContext(encodeCall("tasted", `[__seen.slice(), ${JSON.stringify(!!req.nectar)}]`), ctx, { timeout: setup.ms }));
       return out({ ok: true, out: r.o });
-    }
-    if (req.op === "snapshot") {
-      const snap = vm.runInContext(`(() => { try { return typeof keep === "undefined" ? null : JSON.stringify(keep, __replacer) ?? null; } catch (e) { return null; } })()`, ctx, { timeout: 5000 });
-      if (snap !== null && snap.length > req.maxBytes) return out({ snap: null, note: `keep is over ${Math.floor(req.maxBytes / 1024)} KB, so nothing was kept this round` });
-      return out({ snap, note: null });
     }
   } catch (e) {
     const msg = /timed out/i.test(short(e)) ? "Timeout: took too long" : short(e);

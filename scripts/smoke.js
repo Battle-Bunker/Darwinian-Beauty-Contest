@@ -1,19 +1,30 @@
-// End-to-end check of the API: plays a short game with three teams and verifies what each viewer can see.
+// End-to-end check of the API: plays two short continuous games and verifies the rules and what each
+// viewer can see.
 //   BASE=http://localhost:3000 node scripts/smoke.js
 import assert from "node:assert/strict";
 
 const BASE = process.env.BASE || "http://localhost:3000";
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function api(token, method, path, body) {
+async function api(token, method, path, body, { allow = [422] } = {}) {
   const res = await fetch(BASE + "/api" + path, {
     method, headers: { "content-type": "application/json", ...(token ? { authorization: "Bearer " + token } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
   const json = await res.json().catch(() => ({}));
-  if (!res.ok && res.status !== 422) throw new Error(`${method} ${path} -> ${res.status} ${json.error || ""}`);
-  return json;
+  if (!res.ok && !allow.includes(res.status)) throw new Error(`${method} ${path} -> ${res.status} ${json.error || ""}`);
+  return { status: res.status, ...json };
 }
 const login = async (name) => (await api(null, "POST", "/auth/dev/login", { name })).token;
+async function until(what, fn, ms = 15000) {
+  const t0 = Date.now();
+  for (;;) {
+    const v = await fn();
+    if (v) return v;
+    if (Date.now() - t0 > ms) throw new Error("timed out waiting for " + what);
+    await sleep(200);
+  }
+}
 
 const stamp = Date.now().toString(36);
 const owner = await login("Owner " + stamp);
@@ -22,145 +33,129 @@ console.log("room", room.url);
 const game = await api(owner, "POST", `/rooms/${room.shortId}/games`);
 console.log("game", game.url);
 const g = `/rooms/${room.shortId}/games/${game.shortId}`;
-await api(owner, "PATCH", `${g}/config`, { config: { rounds: 4, turnsPerFlower: 10, budgets: { bee: { changes: 200 } } } });
+// Half a minute of game time; clovers earn change budget fast so the test needn't wait.
+await api(owner, "PATCH", `${g}/config`, { config: { minutes: 0.5, budgets: { clover: { perMinute: 600, cap: 100 } } } });
 
 const players = [];
-for (const name of ["Ada", "Bo", "Cy"]) {
+for (const name of ["Ada", "Bo", "Cy", "Di"]) {
   const token = await login(`${name} ${stamp}`);
   const team = await api(token, "POST", `${g}/teams`, { name: `${name}'s hive` });
   players.push({ name, token, team });
 }
-// A teammate joins Ada's team with the join code.
 const mate = await login("Mate " + stamp);
 await api(mate, "POST", `${g}/teams/join`, { joinCode: players[0].team.joinCode });
 
 const view0 = await api(players[0].token, "GET", g);
-assert.ok(!("starters" in view0), "no starter code: teams start from the interface only");
 assert.match(view0.interface.flower, /def flower\(challenge\)/);
+assert.match(view0.interface.bee, /def forage\(seen, visit\)/);
 const clover = (a, b) => `def flower(challenge):\n    return (challenge * ${a} + ${b}) % 1000\n`;
-const bee = (q) => `tally = {}\ndef forage(seen, turns_left):\n    if not seen:\n        return ["ask", ${q}]\n    fed, got = tally.get(seen[0][1], [0, 0])\n    return "feed" if fed < 2 or got * 2 >= fed else "leave"\ndef tasted(seen, nectar):\n    fed, got = tally.get(seen[0][1], [0, 0])\n    tally[seen[0][1]] = [fed + 1, got + nectar]\n`;
+const bee = (q) => `tally = {}\ndef forage(seen):\n    if not seen:\n        return ["ask", ${q}]\n    fed, got = tally.get(seen[0][1], [0, 0])\n    return "feed" if fed < 2 or got * 2 >= fed else "leave"\ndef tasted(seen, nectar):\n    print("tasted", nectar)\n    fed, got = tally.get(seen[0][1], [0, 0])\n    tally[seen[0][1]] = [fed + 1, got + nectar]\n`;
 const variants = [
   { clover: clover(3, 1), orchid: clover(5, 2), bee: bee(42) },  // orchid imitates Bo's clover
   { clover: clover(5, 2), orchid: clover(9, 4), bee: bee(500) },
   { clover: clover(7, 3), orchid: clover(7, 3), bee: bee(7) },   // orchid is a twin of its own clover
 ];
-for (const [i, p] of players.entries()) {
+for (const [i, p] of players.slice(0, 3).entries()) {
   for (const kind of ["clover", "orchid", "bee"]) {
     const r = await api(p.token, "POST", `${g}/programs`, { kind, code: variants[i][kind] });
     assert.ok(r.ok, `${p.name} ${kind}: ${r.errors}`);
+    assert.equal(r.cost, 0, "writing programs before the start is free");
   }
 }
-// Budget enforcement: an over-complex program is rejected.
+// Di writes only a clover, so Di's team sits the game out.
+await api(players[3].token, "POST", `${g}/programs`, { kind: "clover", code: clover(1, 1) });
 const big = await api(players[0].token, "POST", `${g}/check`, { kind: "clover", code: "def flower(c):\n" + "    c = c + 1\n".repeat(400) + "    return c\n" });
 assert.equal(big.ok, false);
-console.log("complexity budget rejects:", big.errors[0]);
-// Try tools.
+assert.match(big.errors[0], /Too big: \d+ nodes/);
 const tf = await api(players[0].token, "POST", `${g}/try`, { kind: "orchid", code: variants[0].orchid, challenges: [1, 2, 500] });
-console.log("try orchid:", JSON.stringify(tf.results));
+assert.deepEqual(tf.results.map((x) => x.r), [7, 12, 502]);
 const tb = await api(players[0].token, "POST", `${g}/try`, { kind: "bee", code: variants[0].bee });
-console.log("try bee:", tb.visits.length, "visits, nectar", tb.nectar);
-// Only the owner can run rounds.
-await assert.rejects(api(players[1].token, "POST", `${g}/rounds?wait=1`), /403/);
+assert.ok(tb.actions.length > 10 && tb.actions.every((a) => a.bee === players[0].team.id));
 
-for (let round = 1; round <= 4; round++) {
-  if (round === 2) {
-    // Programs take turns: before round 2 only bees may change.
-    assert.deepEqual((await api(players[1].token, "GET", g)).game.changeable, ["bee"]);
-    const lockedClover = await api(players[1].token, "POST", `${g}/programs`, { kind: "clover", code: variants[1].clover.replace("% 1000", "% 997") });
-    assert.equal(lockedClover.ok, false);
-    console.log("locked clover rejects:", lockedClover.errors[0]);
-    const comments = await api(players[1].token, "POST", `${g}/programs`, { kind: "clover", code: "# same clover, explained\n" + variants[1].clover });
-    assert.ok(comments.ok && comments.distance === 0, "a locked program may still change comments");
-    const beeTweak = await api(players[1].token, "POST", `${g}/programs`, { kind: "bee", code: variants[1].bee.replace("500", "501") });
-    assert.ok(beeTweak.ok, beeTweak.errors?.join());
-  }
-  if (round === 3) {
-    // Then the orchids' turn.
-    assert.deepEqual((await api(players[1].token, "GET", g)).game.changeable, ["orchid"]);
-    const orchidTweak = await api(players[1].token, "POST", `${g}/programs`, { kind: "orchid", code: variants[1].orchid.replace("% 1000", "% 997") });
-    assert.ok(orchidTweak.ok, orchidTweak.errors?.join());
-    console.log("orchid tweak accepted, distance", orchidTweak.distance);
-    const lockedBee = await api(players[1].token, "POST", `${g}/programs`, { kind: "bee", code: variants[1].bee.replace("500", "502") });
-    assert.equal(lockedBee.ok, false);
-    console.log("locked bee rejects:", lockedBee.errors[0]);
-  }
-  if (round === 4) {
-    // Then the clovers', within their change budget.
-    assert.deepEqual((await api(players[1].token, "GET", g)).game.changeable, ["clover"]);
-    const rewrite = await api(players[1].token, "POST", `${g}/programs`, { kind: "clover", code: "def flower(challenge):\n    x = challenge\n" + "    x = (x * 31 + 7) % 9973\n".repeat(40) + "    return x\n" });
-    assert.equal(rewrite.ok, false);
-    console.log("change budget rejects:", rewrite.errors[0]);
-    const tweak = await api(players[1].token, "POST", `${g}/programs`, { kind: "clover", code: variants[1].clover.replace("% 1000", "% 997") });
-    assert.ok(tweak.ok, tweak.errors?.join());
-  }
-  const t0 = Date.now();
-  const r = await api(owner, "POST", `${g}/rounds?wait=1`);
-  console.log(`round ${r.round} ran in ${Date.now() - t0}ms`);
-}
+// Only the owner starts it; the clock and the change budgets start with it.
+assert.equal((await api(players[0].token, "POST", `${g}/start`, null, { allow: [403] })).status, 403);
+const started = await api(owner, "POST", `${g}/start`);
+assert.equal(started.participants.length, 3);
+const lateTeam = await api(await login("Late " + stamp), "POST", `${g}/teams`, { name: "Late" }, { allow: [409] });
+assert.equal(lateTeam.status, 409, "teams can't join a running game");
 
-// Views.
-const pub = await api(null, "GET", g);
-const ada = await api(players[0].token, "GET", g);
-const bo = await api(players[1].token, "GET", g);
-assert.equal(pub.game.status, "finished");
-assert.equal(pub.rounds.length, 4);
-const names = Object.fromEntries(pub.teams.map((t) => [t.id, t.name]));
-console.log("final fitness:", pub.final.map((s) => `${names[s.teamId]}=${s.fitness.toFixed(3)} (allure ${s.allure.toFixed(2)}, forage ${s.forage.toFixed(2)})`).join("  "));
-const sumFit = pub.final.reduce((a, s) => a + s.fitness, 0);
-console.log("mean fitness", (sumFit / pub.final.length).toFixed(3));
-// After the game (revealOnFinish) everything is public.
-assert.ok(pub.rounds[0].visits.every((v) => "kind" in v && v.steps));
-assert.ok(pub.rounds[0].programs[players[0].team.id].bee.code);
+// Everything is public as soon as it happens: everyone sees every ask, answer and feed.
+const seen = await until("actions", async () => {
+  const a = await api(players[1].token, "GET", `${g}/actions`);
+  return a.actions.filter((x) => x.action === "feed").length >= 6 && a;
+});
+const adaAsk = seen.actions.find((a) => a.bee === players[0].team.id && a.action === "ask");
+assert.equal(adaAsk.c, 42, "Bo sees Ada's bee's question");
+assert.equal(typeof adaAsk.r, "number");
+assert.ok(seen.actions.every((a) => a.kind === "clover" || a.kind === "orchid"));
+const adaFeed = (acts) => acts.find((a) => a.bee === players[0].team.id && a.action === "feed");
+await until("Ada's bee to feed", async () => adaFeed((await api(players[1].token, "GET", `${g}/actions`)).actions));
+assert.equal(adaFeed((await api(players[1].token, "GET", `${g}/actions`)).actions).log, undefined, "what a bee prints stays with its team");
+assert.match(adaFeed((await api(players[0].token, "GET", `${g}/actions`)).actions).log, /tasted/);
+const spectator = await api(null, "GET", `${g}/actions?limit=5`);
+assert.equal(spectator.actions.length, 5);
 
-// Same checks on a game that is still running: private things stay private.
-const game2 = await api(owner, "POST", `/rooms/${room.shortId}/games`);
-const g2 = `/rooms/${room.shortId}/games/${game2.shortId}`;
-const p2 = [];
-for (const p of players.slice(0, 2)) {
-  await api(p.token, "POST", `${g2}/teams`, { name: p.name });
-  for (const kind of ["clover", "orchid", "bee"]) await api(p.token, "POST", `${g2}/programs`, { kind, code: variants[p2.length][kind] });
-  p2.push(p);
-}
-await api(owner, "POST", `${g2}/rounds?wait=1`);
-const pubLive = await api(null, "GET", g2);
-const adaLive = await api(players[0].token, "GET", g2);
-const myId = adaLive.me.teamId;
-const leaks = pubLive.rounds[0].visits.filter((v) => "kind" in v || "steps" in v);
-assert.equal(leaks.length, 0, "public view leaks private visit data");
-assert.ok(Object.values(pubLive.rounds[0].programs).every((p) => !p.bee.code), "public view leaks code");
-for (const v of adaLive.rounds[0].visits) {
-  if (v.bee === myId) assert.ok(v.steps, "own bee visit missing steps");
-  if (v.patch === myId) assert.ok(v.kind, "own patch visit missing flower kind");
-  if (v.bee !== myId && v.patch !== myId) assert.ok(!v.steps && !v.kind, "sees another team's private visit");
-  if (v.bee === myId && v.patch !== myId) assert.ok(!v.kind, "bee learns flower kind without being the owner");
-}
-assert.ok(adaLive.rounds[0].programs[myId].bee.code && !Object.entries(adaLive.rounds[0].programs).some(([t, p]) => t !== myId && p.bee.code));
-assert.ok(adaLive.rounds[0].programs[myId].clover.compute?.budgetMs, "own flowers' compute use is in the view");
-assert.ok(Object.entries(pubLive.rounds[0].programs).every(([, p]) => p.clover.compute === undefined), "public view leaks compute use");
-console.log("visibility checks passed;", pubLive.rounds[0].visits.length, "visits in live game");
+// Changes cost change budget, which accrues with game time; a change goes live at once.
+const view1 = await api(players[1].token, "GET", g);
+const ada = view1.teams.find((t) => t.id === players[0].team.id);
+assert.equal(ada.programs.clover.length, 1);
+assert.equal(ada.programs.clover[0].code, undefined, "code is private");
+assert.ok(ada.banks.clover && "bank" in ada.banks.clover, "budgets are public");
+const rewrite = await api(players[0].token, "POST", `${g}/programs`, { kind: "orchid", code: "import random\ndef flower(c):\n    return random.randrange(1000) + c * 17 % 9 + len(str(c))\n" });
+assert.equal(rewrite.ok, false);
+assert.match(rewrite.errors.join(), /Not enough change budget: this change costs \d+ nodes/);
+const small = clover(3, 9); // one byte changed: costs 1 node
+const r1 = await until("clover budget", async () => {
+  const r = await api(players[0].token, "POST", `${g}/programs`, { kind: "clover", code: small });
+  return r.ok && r;
+});
+assert.equal(r1.cost, 1);
+assert.equal(r1.version, 2);
+const free = await api(players[0].token, "POST", `${g}/programs`, { kind: "clover", code: "# same thing, explained\n" + small.replace("challenge", "question").replaceAll("challenge", "question") });
+assert.ok(free.ok && free.cost === 0, "comments, formatting and renames are free");
+await until("the new clover to answer", async () => {
+  const a = await api(players[2].token, "GET", `${g}/actions?after=${seen.lastSeq}&limit=5000`);
+  return a.actions.some((x) => x.patch === players[0].team.id && x.kind === "clover" && x.flowerVersion >= 2 && x.action === "ask" && x.r === (x.c * 3 + 9) % 1000);
+});
 
-// Public logs: after each round everyone sees every visit's challenges, responses and flower, but not
-// other teams' code, bee logs or compute.
-const game3 = await api(owner, "POST", `/rooms/${room.shortId}/games`);
-const g3 = `/rooms/${room.shortId}/games/${game3.shortId}`;
-// This game also measures size in nodes: switching the measure switches to its default budgets.
-const cfg3 = (await api(owner, "PATCH", `${g3}/config`, { config: { rounds: 2, turnsPerFlower: 10, publicLogs: true, complexity: "nodes" } })).config;
-assert.equal(cfg3.complexity, "nodes");
-assert.equal(cfg3.budgets.clover.size, 1100);
+// A live stream of actions over SSE.
+const stream = await fetch(BASE + `/api${g}/events?after=0`);
+const reader = stream.body.getReader();
+let text = "";
+while (!/"actions":\[/.test(text)) text += new TextDecoder().decode((await reader.read()).value);
+reader.cancel();
+
+// The owner pauses: the clock stops. Resumes, then finishes early: code and prints are revealed.
+assert.equal((await api(players[0].token, "POST", `${g}/status`, { action: "pause" }, { allow: [403] })).status, 403);
+await api(owner, "POST", `${g}/status`, { action: "pause" });
+await sleep(800);
+const p1 = (await api(owner, "GET", g)).game.clockMs;
+await sleep(800);
+const p2 = (await api(owner, "GET", g)).game;
+assert.equal(p2.status, "paused");
+assert.equal(p2.clockMs, p1, "the clock stands still while paused");
+await api(owner, "POST", `${g}/status`, { action: "resume" });
+await until("the clock to move", async () => (await api(owner, "GET", g)).game.clockMs > p1);
+await api(owner, "POST", `${g}/status`, { action: "finish" });
+const done = await until("finish", async () => { const v = await api(players[1].token, "GET", g); return v.game.status === "finished" && v; });
+assert.ok(done.game.revealed);
+assert.equal(done.teams.find((t) => t.id === players[0].team.id).programs.clover[2].code.startsWith("# same thing"), true);
+assert.ok(done.scores.length === 3 && done.scores.every((s) => Number.isFinite(s.fitness)));
+assert.match(adaFeed((await api(players[1].token, "GET", `${g}/actions`)).actions).log, /tasted/, "revealed after the game");
+const settled = (await api(owner, "GET", g)).game.lastSeq;
+await sleep(600);
+assert.equal((await api(owner, "GET", g)).game.lastSeq, settled, "nothing happens after the end");
+console.log("game 1:", done.scores.map((s) => `${done.teams.find((t) => t.id === s.teamId).name} ${s.fitness.toFixed(2)}`).join(", "));
+
+// A second game runs out its clock by itself.
+const g2r = await api(owner, "POST", `/rooms/${room.shortId}/games`, { config: { minutes: 0.1 } });
+const g2 = `/rooms/${room.shortId}/games/${g2r.shortId}`;
 for (const [i, p] of players.slice(0, 2).entries()) {
-  await api(p.token, "POST", `${g3}/teams`, { name: p.name });
-  for (const kind of ["clover", "orchid", "bee"]) await api(p.token, "POST", `${g3}/programs`, { kind, code: variants[i][kind] });
+  await api(p.token, "POST", `${g2}/teams`, { name: p.name });
+  for (const kind of ["clover", "orchid", "bee"]) await api(p.token, "POST", `${g2}/programs`, { kind, code: variants[i][kind] });
 }
-const nodeCheck = await api(players[0].token, "POST", `${g3}/check`, { kind: "clover", code: variants[0].clover });
-assert.ok(nodeCheck.ok && nodeCheck.unit === "nodes" && nodeCheck.size > 0, JSON.stringify(nodeCheck));
-await api(owner, "POST", `${g3}/rounds?wait=1`);
-const open = await api(null, "GET", g3);
-assert.ok(open.rounds[0].visits.length && open.rounds[0].visits.every((v) => v.kind && v.steps && !("beeLog" in v)), "public logs show every visit");
-assert.ok(Object.values(open.rounds[0].programs).every((p) => !p.bee.code && p.clover.compute === undefined), "public logs leak code or compute");
-console.log("public logs checks passed;", open.rounds[0].visits.length, "visits visible to everyone");
-
-// Short ids: the full 26-char code resolves too, case-insensitively.
-const roomFull = await api(null, "GET", `/rooms/${room.shortId}`);
-assert.equal(roomFull.games.length, 3);
-console.log("room games:", roomFull.games.map((x) => x.url).join(" "));
-console.log("SMOKE OK", BASE + game.url);
+await api(owner, "POST", `${g2}/start`);
+const end2 = await until("game 2 to end", async () => { const v = await api(owner, "GET", g2); return v.game.status === "finished" && v; }, 20000);
+assert.ok(end2.game.clockMs >= 6000 && end2.game.clockMs < 7000, `ended at ${end2.game.clockMs} ms`);
+console.log(`game 2 ran ${end2.game.lastSeq} actions in ${end2.game.clockMs} ms of game time`);
+console.log("smoke ok");

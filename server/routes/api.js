@@ -1,7 +1,7 @@
 import express from "express";
 import { authRouter, provider, requireUser } from "../auth/index.js";
 import * as G from "../games.js";
-import { sse } from "../realtime.js";
+import { gameStream, roomStream } from "../realtime.js";
 
 const wrap = (fn) => (req, res, next, ...rest) => Promise.resolve(fn(req, res, next, ...rest)).catch(next);
 
@@ -19,38 +19,28 @@ export function apiRouter() {
   r.param("room", wrap(async (req, _res, next, id) => { req.room = await G.findRoom(id); next(); }));
   r.param("game", wrap(async (req, _res, next, id) => { req.game = await G.findGame(req.room, id); next(); }));
   r.get("/rooms/:room", wrap(async (req, res) => res.json(await G.viewRoom(req.room, req.user))));
-  r.get("/rooms/:room/events", (req, res) => sse(req, res, { room: req.room.id }, { room: req.room.id }));
+  r.get("/rooms/:room/events", (req, res) => roomStream(req, res, req.room.id));
   r.post("/rooms/:room/games", requireUser, wrap(async (req, res) => res.status(201).json(await G.createGame(req.room, req.user, req.body?.config))));
 
   // Games: one view for everyone, filtered to what this viewer may know.
   const base = "/rooms/:room/games/:game";
-  r.get(base, wrap(async (req, res) => res.json(await G.viewGame(req.room, req.game, req.user, { visits: req.query.visits }))));
-  r.get(`${base}/rounds/:no`, wrap(async (req, res) => res.json(await G.roundView(req.room, req.game, req.user, Number(req.params.no)))));
-  r.get(`${base}/memory/:no`, requireUser, wrap(async (req, res) => res.json(await G.beeMemory(req.game, req.user, Number(req.params.no), req.query.team))));
-  r.get(`${base}/version`, (req, res) => res.json({ version: req.game.version, status: req.game.status, runningRound: req.game.running_round, roundsPlayed: req.game.rounds_played }));
-  r.get(`${base}/events`, (req, res) => sse(req, res, { game: req.game.id }, { game: req.game.id, version: req.game.version }));
+  r.get(base, wrap(async (req, res) => res.json(await G.viewGame(req.room, req.game, req.user))));
+  r.get(`${base}/actions`, wrap(async (req, res) => res.json(await G.viewActions(req.game, req.user, { after: req.query.after, limit: req.query.limit }))));
+  r.get(`${base}/events`, (req, res) => gameStream(req, res, {
+    gameId: req.game.id, version: req.game.version, after: Number(req.query.after ?? req.game.last_seq) || 0,
+    fetchActions: (after) => G.viewActions(req.game, req.user, { after, limit: 1000 }),
+  }));
   r.patch(`${base}/config`, requireUser, wrap(async (req, res) => res.json(await G.updateConfig(req.room, req.game, req.user, req.body?.config ?? req.body))));
+  r.post(`${base}/start`, requireUser, wrap(async (req, res) => res.json(await G.startGame(req.room, req.game, req.user))));
+  r.post(`${base}/status`, requireUser, wrap(async (req, res) => res.json(await G.setStatus(req.room, req.game, req.user, req.body?.action))));
   r.post(`${base}/teams`, requireUser, wrap(async (req, res) => res.status(201).json(await G.createTeam(req.game, req.user, req.body?.name))));
   r.post(`${base}/teams/join`, requireUser, wrap(async (req, res) => res.json(await G.joinTeam(req.game, req.user, req.body?.joinCode))));
-  r.post(`${base}/check`, requireUser, wrap(async (req, res) => {
-    const view = await G.viewGame(req.room, req.game, req.user, { visits: "none" });
-    if (!view.myTeam) return res.status(403).json({ error: "Join a team first" });
-    res.json(await G.checkProgram(req.game, view.myTeam, req.body?.kind, req.body?.code));
-  }));
+  r.post(`${base}/check`, requireUser, wrap(async (req, res) => res.json(await G.checkProgram(req.game, req.user, req.body?.kind, req.body?.code))));
   r.post(`${base}/programs`, requireUser, wrap(async (req, res) => {
     const out = await G.submitProgram(req.game, req.user, req.body?.kind, req.body?.code);
     res.status(out.ok ? 200 : 422).json(out);
   }));
   r.post(`${base}/try`, requireUser, wrap(async (req, res) => res.json(await G.tryProgram(req.game, req.user, req.body?.kind, req.body?.code, req.body?.challenges, req.body?.flowers))));
-  r.post(`${base}/rounds`, requireUser, wrap(async (req, res) => {
-    const { round, done } = await G.startRound(req.room, req.game, req.user, { seed: req.body?.seed });
-    if (req.query.wait) {
-      try { await done; } catch (e) { return res.status(500).json({ error: `Round ${round} failed: ${e.message}` }); }
-      return res.json({ round, finished: true });
-    }
-    done.catch(() => {});
-    res.status(202).json({ round, finished: false });
-  }));
 
   r.use((err, _req, res, _next) => {
     if (!(err instanceof G.HttpError)) console.error(err);

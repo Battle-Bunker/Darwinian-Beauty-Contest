@@ -1,14 +1,13 @@
-// Rooms, games, teams, programs and rounds: everything the API does, backed by Postgres.
+// Rooms, games, teams and programs: everything the API does, backed by Postgres. The gardens themselves
+// run in live.js; this module writes what they should run and reads what they did.
 import crypto from "node:crypto";
 import { query, tx } from "./db/pool.js";
-import { env } from "./config.js";
 import { allocatePrefixLen, normalizeCode, shortId, uuidToCode } from "./lib/shortid.js";
-import { DEFAULT_CONFIG, normalizeConfig, turnsFor } from "./lib/gameConfig.js";
-import { UNITS, changes, size } from "./lib/measure.js";
-import { changeable, nextChangeRound } from "./lib/schedule.js";
-import { addLedgers, score, zeroLedger } from "./lib/scoring.js";
+import { DEFAULT_CONFIG, available, normalizeConfig } from "./lib/gameConfig.js";
+import { changes, size } from "./lib/measure.js";
+import { score, zeroLedger } from "./lib/scoring.js";
 import { programInterface } from "./lib/interface.js";
-import { KINDS, simulateRound, tryFlower } from "./engine.js";
+import { KINDS, tryBee, tryFlower } from "./engine.js";
 import { exampleValue, parseType } from "./lib/types.js";
 
 export class HttpError extends Error {
@@ -20,7 +19,9 @@ const fail = (status, message) => { throw new HttpError(status, message); };
 const TEAM_COLORS = ["#D55E00", "#0072B2", "#E69F00", "#009E73", "#CC79A7", "#56B4E9", "#882255", "#117733",
   "#332288", "#DDCC77", "#44AA99", "#AA4499", "#999933", "#CC6677", "#88CCEE", "#6B4226"];
 
-// ---------- realtime: every change bumps games.version and notifies listeners ----------
+const RECENT_MS = 5 * 60000; // the "last five minutes" scores
+
+// ---------- realtime: every change but an action bumps games.version and notifies listeners ----------
 
 async function touch(client, gameId) {
   const { rows } = await client.query("UPDATE games SET version = version + 1 WHERE id = $1 RETURNING version, room_id", [gameId]);
@@ -61,7 +62,7 @@ export async function viewRoom(room, user) {
     ownerName: owner?.name,
     games: rows.map((g) => ({
       id: g.id, shortId: shortId(g), url: `/room/${shortId(room)}/game/${shortId(g)}`, status: g.status,
-      roundsPlayed: g.rounds_played, rounds: g.config.rounds, teamCount: g.team_count, createdAt: g.created_at,
+      clockMs: g.clock_ms, endMs: Math.round(g.config.minutes * 60000), teamCount: g.team_count, createdAt: g.created_at,
     })),
   };
 }
@@ -86,7 +87,8 @@ export async function myRooms(user) {
 
 export async function createGame(room, user, config) {
   if (room.owner_id !== user.id) fail(403, "Only the room owner can create games");
-  const cfg = normalizeConfig(config || {});
+  let cfg;
+  try { cfg = normalizeConfig(config || {}); } catch (e) { fail(400, e.message); }
   return tx(async (c) => {
     await c.query("SELECT pg_advisory_xact_lock(hashtext('dbc:games:' || $1))", [room.id]);
     const id = crypto.randomUUID(), code = uuidToCode(id);
@@ -108,16 +110,53 @@ export async function updateConfig(room, game, user, config) {
   if (room.owner_id !== user.id) fail(403, "Only the room owner can change settings");
   return tx(async (c) => {
     const g = (await c.query("SELECT * FROM games WHERE id = $1 FOR UPDATE", [game.id])).rows[0];
-    if (g.rounds_played > 0 || g.running_round) fail(409, "Settings lock once round 1 has run");
+    if (g.status !== "lobby") fail(409, "Settings lock once the game starts");
     let cfg;
     try { cfg = normalizeConfig(config, g.config); } catch (e) { fail(400, e.message); }
-    // Pending programs were checked against the old budgets/language; make teams re-submit.
+    // Programs were checked against the old budgets/language; make teams write them again.
     const changed = ["language", "challengeType", "responseType"].some((k) => cfg[k] !== g.config[k])
-      || cfg.complexity !== g.config.complexity || KINDS.some((k) => cfg.budgets[k].size < g.config.budgets[k].size);
-    if (changed) await c.query("DELETE FROM submissions WHERE game_id = $1", [g.id]);
+      || KINDS.some((k) => cfg.budgets[k].size < g.config.budgets[k].size);
+    if (changed) await c.query("DELETE FROM programs WHERE game_id = $1", [g.id]);
     await c.query("UPDATE games SET config = $2 WHERE id = $1", [g.id, cfg]);
     await touch(c, g.id);
-    return { config: cfg, clearedSubmissions: changed };
+    return { config: cfg, clearedPrograms: changed };
+  });
+}
+
+/** The owner starts the garden: teams with all three programs play; the clock and change budgets start. */
+export async function startGame(room, game, user) {
+  if (room.owner_id !== user.id) fail(403, "Only the room owner can start the game");
+  return tx(async (c) => {
+    const g = (await c.query("SELECT * FROM games WHERE id = $1 FOR UPDATE", [game.id])).rows[0];
+    if (g.status !== "lobby") fail(409, "The game has already started");
+    const teams = (await c.query("SELECT id FROM teams WHERE game_id = $1 ORDER BY created_at, id", [g.id])).rows;
+    const have = (await c.query("SELECT DISTINCT team_id, kind FROM programs WHERE game_id = $1", [g.id])).rows;
+    const participants = teams.map((t) => t.id).filter((id) => KINDS.every((k) => have.some((p) => p.team_id === id && p.kind === k)));
+    if (participants.length < 2) fail(409, "Need at least 2 teams that have written all three programs (clover, orchid, bee)");
+    const zero = JSON.stringify(zeroLedger(participants.length));
+    await c.query(
+      `UPDATE games SET status = 'running', participants = $2, feeds = $3, nectar = $3, clock_ms = 0, started_at = now(), last_error = NULL
+        WHERE id = $1`, [g.id, participants, zero]);
+    for (const teamId of participants) for (const kind of KINDS) {
+      await c.query("INSERT INTO banks (game_id, team_id, kind, bank, at_ms) VALUES ($1, $2, $3, 0, 0)", [g.id, teamId, kind]);
+    }
+    await touch(c, g.id);
+    return { status: "running", participants };
+  });
+}
+
+/** Pause, resume or finish a game early (the owner). The garden's clock and change budgets stop while paused. */
+export async function setStatus(room, game, user, action) {
+  if (room.owner_id !== user.id) fail(403, "Only the room owner can do that");
+  const to = { pause: "paused", resume: "running", finish: "finished" }[action];
+  if (!to) fail(400, "action must be pause, resume or finish");
+  return tx(async (c) => {
+    const g = (await c.query("SELECT status FROM games WHERE id = $1 FOR UPDATE", [game.id])).rows[0];
+    const from = { pause: ["running"], resume: ["paused"], finish: ["running", "paused"] }[action];
+    if (!from.includes(g.status)) fail(409, `Can't ${action} a game that is ${g.status}`);
+    await c.query(`UPDATE games SET status = $2, finished_at = CASE WHEN $2 = 'finished' THEN now() ELSE finished_at END WHERE id = $1`, [game.id, to]);
+    await touch(c, game.id);
+    return { status: to };
   });
 }
 
@@ -135,7 +174,7 @@ export async function createTeam(game, user, name) {
   if (!teamName) fail(400, "Team name required");
   return tx(async (c) => {
     const g = (await c.query("SELECT * FROM games WHERE id = $1 FOR UPDATE", [game.id])).rows[0];
-    if (g.rounds_played > 0 || g.running_round) fail(409, "This game has started; new teams can't join");
+    if (g.status !== "lobby") fail(409, "This game has started; new teams can't join");
     if (await myTeam(g.id, user.id, c)) fail(409, "You are already on a team in this game");
     if ((await c.query("SELECT 1 FROM teams WHERE game_id = $1 AND lower(name) = lower($2)", [g.id, teamName])).rowCount) fail(409, "That team name is taken");
     const count = (await c.query("SELECT count(*)::int AS n FROM teams WHERE game_id = $1", [g.id])).rows[0].n;
@@ -162,76 +201,85 @@ export async function joinTeam(game, user, joinCode) {
 
 // ---------- programs ----------
 
-async function previousPrograms(gameId, teamId, roundNo, client = { query }) {
-  const { rows } = await client.query("SELECT kind, code FROM round_programs WHERE game_id = $1 AND team_id = $2 AND round_no = $3", [gameId, teamId, roundNo]);
-  return Object.fromEntries(rows.map((r) => [r.kind, r.code]));
+async function latestProgram(client, gameId, teamId, kind) {
+  const { rows } = await client.query(
+    "SELECT * FROM programs WHERE game_id = $1 AND team_id = $2 AND kind = $3 ORDER BY version DESC LIMIT 1", [gameId, teamId, kind]);
+  return rows[0] || null;
 }
 
 /**
- * Measure a program against its size budget and (after round 1) its change budget, in the game's
- * complexity mode (characters of the minified program, or weighted nodes). `minified` is the text the
- * game runs; distance is the change since last round (renaming is free). A program that may not change
- * this round (see schedule.js) has no
- * change budget at all.
+ * Measure a program against its size budget and, once the game is running, its change budget. Size is
+ * weighted nodes of the minified program; the cost of a change is the node edits from the program now
+ * playing (renaming is free). In the lobby, writing programs is free.
  */
-export async function checkProgram(game, team, kind, code) {
+async function measure(client, g, team, kind, code) {
   if (!KINDS.includes(kind)) fail(400, "kind must be clover, orchid or bee");
   if (typeof code !== "string") fail(400, "code must be a string");
   if (code.length > 100_000) fail(400, "Program is too long");
-  const budget = game.config.budgets[kind];
+  const budget = g.config.budgets[kind];
   const errors = [];
-  const mode = game.config.complexity, unit = UNITS[mode];
-  const { size: measured, minified, syntaxError } = await size(game.config.language, code, mode);
+  const { size: measured, minified, syntaxError } = await size(g.config.language, code);
   if (syntaxError) errors.push("Syntax error");
   if (measured > budget.size) {
-    errors.push(`Too big: ${measured} ${unit} > budget ${budget.size} ` + (mode === "nodes"
-      ? "(comments, spacing and name lengths don't count; every byte of a string or number does)"
-      : "(comments, spacing and name lengths don't count; strings, numbers and keywords do)"));
+    errors.push(`Too big: ${measured} nodes > budget ${budget.size} (comments, spacing, types and name lengths don't count; every byte of a string or number does)`);
   }
-  let distance = null, previous = null;
-  if (game.rounds_played > 0) {
-    previous = (await previousPrograms(game.id, team.id, game.rounds_played))[kind] ?? null;
-    if (previous === null) errors.push("Your team isn't playing in this game (no programs in round 1)");
-    else if (measured <= budget.size * 4) {
-      distance = await changes(game.config.language, previous, code, mode);
-      const next = game.rounds_played + 1;
-      if (!changeable(next).includes(kind)) {
-        if (distance > 0) {
-          errors.push(`Your ${kind} is locked before round ${next}: bees, orchids and clovers take turns to change, ` +
-            `and this round it's the ${changeable(next)[0]}s' turn. Your ${kind} can change again before round ${nextChangeRound(kind, next)}.`);
+  const out = { kind, size: measured, minified, budget, distance: null, cost: 0, available: null };
+  if (g.status === "finished") errors.push("Game over");
+  else if (g.status !== "lobby") {
+    if (!(g.participants || []).includes(team.id)) errors.push("Your team isn't playing in this game (it hadn't written all three programs when the game started)");
+    else {
+      const current = await latestProgram(client, g.id, team.id, kind);
+      const bank = (await client.query("SELECT bank, at_ms FROM banks WHERE game_id = $1 AND team_id = $2 AND kind = $3", [g.id, team.id, kind])).rows[0];
+      out.exact = available(budget, { bank: bank.bank, atMs: bank.at_ms }, g.clock_ms);
+      out.available = Math.floor(out.exact);
+      if (measured > budget.size * 4) errors.push("Too long to compare with the program playing now");
+      else {
+        out.distance = await changes(g.config.language, current?.code ?? "", code);
+        out.cost = out.distance;
+        if (out.cost > out.available) {
+          const wait = budget.perMinute > 0 && out.cost <= budget.cap ? Math.ceil(((out.cost - out.available) * 60) / budget.perMinute) : null;
+          errors.push(`Not enough change budget: this change costs ${out.cost} nodes and your ${kind} has ${out.available} ` +
+            `(it earns ${budget.perMinute} a minute, banking up to ${budget.cap}). ` +
+            (wait !== null ? `Enough in about ${wait} s of game time.` : "It can never afford a change this big: make it smaller."));
         }
-      } else if (distance > budget.changes) {
-        errors.push(`Too many changes: ${distance} ${unit} changed > budget ${budget.changes}`);
       }
-    } else errors.push("Too long to compare with last round");
+    }
   }
-  return { ok: errors.length === 0, kind, size: measured, unit, minified, distance, errors, budget };
+  return { ok: errors.length === 0, ...out, errors };
+}
+const shown = ({ exact, ...check }) => check;
+
+/** Check a program without submitting it: its size, and what it would cost now. */
+export async function checkProgram(game, user, kind, code) {
+  const team = await myTeam(game.id, user.id);
+  if (!team) fail(403, "Join a team first");
+  const g = (await query("SELECT * FROM games WHERE id = $1", [game.id])).rows[0];
+  return shown(await measure({ query }, g, team, kind, code));
 }
 
+/** Submit a program. Once the game runs, it pays for its change and goes live at once. */
 export async function submitProgram(game, user, kind, code) {
   const team = await myTeam(game.id, user.id);
   if (!team) fail(403, "Join a team first");
-  if (game.status === "finished") fail(409, "Game over");
-  const check = await checkProgram(game, team, kind, code);
-  if (!check.ok) return check;
-  await tx(async (c) => {
-    const g = (await c.query("SELECT rounds_played, running_round, status FROM games WHERE id = $1 FOR UPDATE", [game.id])).rows[0];
-    if (g.running_round) fail(409, `Round ${g.running_round} is running; submit again when it finishes`);
-    if (g.rounds_played !== game.rounds_played) fail(409, "A round just ran; check your program again");
-    if (g.status === "finished") fail(409, "Game over");
+  return tx(async (c) => {
+    // Lock the game row so the clock read and the bank update see one consistent moment.
+    const g = (await c.query("SELECT * FROM games WHERE id = $1 FOR UPDATE", [game.id])).rows[0];
+    const check = await measure(c, g, team, kind, code);
+    if (!check.ok) return shown(check);
+    const prev = await latestProgram(c, g.id, team.id, kind);
+    const version = (prev?.version ?? 0) + 1;
+    const live = g.status !== "lobby";
     await c.query(
-      `INSERT INTO submissions (game_id, team_id, kind, code, size, distance, submitted_by) VALUES ($1, $2, $3, $4, $5, $6, $7)
-       ON CONFLICT (game_id, team_id, kind) DO UPDATE SET code = $4, size = $5, distance = $6, submitted_by = $7, submitted_at = now()`,
-      [game.id, team.id, kind, code, check.size, check.distance, user.id]);
-    await touch(c, game.id);
+      `INSERT INTO programs (game_id, team_id, kind, version, code, size, distance, cost, at_ms, submitted_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [g.id, team.id, kind, version, code, check.size, check.distance, check.cost, live ? g.clock_ms : 0, user.id]);
+    if (live) {
+      await c.query("UPDATE banks SET bank = $4, at_ms = $5 WHERE game_id = $1 AND team_id = $2 AND kind = $3",
+        [g.id, team.id, kind, check.exact - check.cost, g.clock_ms]);
+    }
+    await touch(c, g.id);
+    return { ...shown(check), submitted: true, version, available: live ? Math.floor(check.exact - check.cost) : null };
   });
-  return { ...check, submitted: true };
-}
-
-/** A team's bee memories for rounds 1..beforeRound-1, in order (null where nothing was kept). */
-async function memoriesOf(gameId, teamId, beforeRound, client = { query }) {
-  const { rows } = await client.query("SELECT round_no, snapshot FROM bee_memories WHERE game_id = $1 AND team_id = $2 AND round_no < $3", [gameId, teamId, beforeRound]);
-  return Array.from({ length: Math.max(0, beforeRound - 1) }, (_, i) => rows.find((r) => r.round_no === i + 1)?.snapshot ?? null);
 }
 
 /** Try a program without submitting it. Flowers: answer challenges. Bee: forage your own patch. */
@@ -244,191 +292,46 @@ export async function tryProgram(game, user, kind, code, challenges, flowers = {
     const list = Array.isArray(challenges) && challenges.length ? challenges : [exampleValue(parseType(cfg.challengeType))];
     return tryFlower({ config: cfg, code, kind, challenges: list });
   }
-  // The bee forages a garden of just your own two flowers: the ones passed in, else your latest
-  // submissions, else last round's.
-  const subs = (await query("SELECT kind, code FROM submissions WHERE game_id = $1 AND team_id = $2", [game.id, team.id])).rows;
-  const prev = game.rounds_played ? await previousPrograms(game.id, team.id, game.rounds_played) : {};
-  const pick = (k) => (typeof flowers?.[k] === "string" ? flowers[k] : null) ?? subs.find((s) => s.kind === k)?.code ?? prev[k];
-  const clover = pick("clover"), orchid = pick("orchid");
-  if (!clover || !orchid) fail(409, "Your bee needs flowers to visit: submit a clover and an orchid first (or pass them as flowers.clover / flowers.orchid)");
-  // With your bee's real MEMORY from the rounds played so far. (A garden of 2 flowers is small, so the
-  // try gets as many turns as one patch would get in the real game.)
-  const memory = await memoriesOf(game.id, team.id, game.rounds_played + 1);
-  const result = await simulateRound({ config: cfg, teams: [{ id: team.id, programs: { clover, orchid, bee: code }, memory }], seed: 1 });
-  // Same shape as the game view: team ids, plus which of your flowers it was.
-  const visits = result.visits.map((v) => ({ ...v, bee: team.id, patch: team.id, asks: v.steps.length, asksBeforeFeed: v.steps.filter((x) => !x.after).length }));
-  return { visits, problems: result.problems[0], feeds: result.feeds[0][0], nectar: result.nectar[0][0], turns: result.turns, memory: result.memories[0] };
+  // The bee forages a garden of just your own two flowers: the ones passed in, else your latest.
+  const pick = async (k) => (typeof flowers?.[k] === "string" ? flowers[k] : (await latestProgram({ query }, game.id, team.id, k))?.code);
+  const clover = await pick("clover"), orchid = await pick("orchid");
+  if (!clover || !orchid) fail(409, "Your bee needs flowers to visit: write a clover and an orchid first (or pass them as flowers.clover / flowers.orchid)");
+  const result = await tryBee({ config: cfg, programs: { clover, orchid, bee: code } });
+  return { ...result, actions: result.actions.map((a) => ({ ...a, bee: team.id, patch: team.id })) };
 }
 
-// ---------- rounds ----------
+// ---------- the views: everything a given viewer may see, live or later ----------
 
-let running = 0;
-const waiting = [];
-async function slot() {
-  if (running < env.maxConcurrentRounds) { running++; return; }
-  await new Promise((r) => waiting.push(r));
-}
-function release() {
-  const next = waiting.shift();
-  if (next) next(); else running--;
-}
-
-/** Locks in programs for the next round, then simulates it in the background. Returns { round, done }. */
-/**
- * opts.seed: the owner may fix the round's seed (deck order, bee randomness), e.g. to replay the same
- * games with two cohorts of teams in a controlled experiment. Otherwise it's random.
- */
-export async function startRound(room, game, user, opts = {}) {
-  if (room.owner_id !== user.id) fail(403, "Only the room owner can run rounds");
-  let fixedSeed = null;
-  if (opts.seed !== undefined && opts.seed !== null) {
-    fixedSeed = Number(opts.seed);
-    if (!Number.isInteger(fixedSeed) || fixedSeed < 0 || fixedSeed >= 2 ** 31) fail(400, "seed must be an integer from 0 to 2^31-1");
-  }
-  const plan = await tx(async (c) => {
-    const g = (await c.query("SELECT * FROM games WHERE id = $1 FOR UPDATE", [game.id])).rows[0];
-    if (g.status === "finished") fail(409, "Game over");
-    if (g.running_round) fail(409, `Round ${g.running_round} is already running`);
-    const roundNo = g.rounds_played + 1;
-    const subs = (await c.query("SELECT * FROM submissions WHERE game_id = $1", [g.id])).rows;
-    let participants = g.participants;
-    if (roundNo === 1) {
-      const teams = (await c.query("SELECT id FROM teams WHERE game_id = $1 ORDER BY created_at, id", [g.id])).rows;
-      participants = teams.map((t) => t.id).filter((id) => KINDS.every((k) => subs.some((s) => s.team_id === id && s.kind === k)));
-      if (participants.length < 2) fail(409, "Need at least 2 teams that have submitted all three programs (clover, orchid, bee)");
-    }
-    const prev = roundNo > 1 ? (await c.query("SELECT * FROM round_programs WHERE game_id = $1 AND round_no = $2", [g.id, roundNo - 1])).rows : [];
-    const programs = {};
-    for (const teamId of participants) {
-      programs[teamId] = {};
-      for (const kind of KINDS) {
-        const s = subs.find((x) => x.team_id === teamId && x.kind === kind);
-        const p = prev.find((x) => x.team_id === teamId && x.kind === kind);
-        const prog = s
-          ? { code: s.code, distance: s.distance, carriedOver: false }
-          : { code: p.code, distance: 0, carriedOver: true };
-        // Measured again so stored sizes follow the current complexity rule, even for a program
-        // checked or carried over from before a rule change (it still plays: budgets apply when submitting).
-        programs[teamId][kind] = { ...prog, size: (await size(g.config.language, prog.code, g.config.complexity)).size };
-      }
-    }
-    await c.query("UPDATE games SET running_round = $2, participants = $3, status = 'running', last_error = NULL WHERE id = $1", [g.id, roundNo, participants]);
-    await touch(c, g.id);
-    return { roundNo, participants, programs, config: g.config, seed: fixedSeed ?? crypto.randomInt(0, 2 ** 31) };
-  });
-  const done = executeRound(game.id, plan).catch(async (e) => {
-    console.error("round failed", game.id, e);
-    await tx(async (c) => {
-      await c.query("UPDATE games SET running_round = NULL, last_error = $2, status = CASE WHEN rounds_played = 0 THEN 'lobby' ELSE status END WHERE id = $1", [game.id, String(e.message || e)]);
-      await touch(c, game.id);
-    });
-    throw e;
-  });
-  return { round: plan.roundNo, done };
-}
-
-async function executeRound(gameId, { roundNo, participants, programs, config, seed }) {
-  const startedAt = new Date();
-  await slot();
-  let sim;
-  try {
-    const memory = await Promise.all(participants.map((id) => memoriesOf(gameId, id, roundNo)));
-    sim = await simulateRound({ config, seed, teams: participants.map((id, i) => ({ id, programs: Object.fromEntries(KINDS.map((k) => [k, programs[id][k].code])), memory: memory[i] })) });
-  } finally {
-    release();
-  }
-  const ids = participants;
-  await tx(async (c) => {
-    // Cumulative ledgers: sum of every round so far.
-    const cumulative = (await c.query("SELECT feeds, nectar FROM rounds WHERE game_id = $1", [gameId])).rows
-      .reduce((acc, r) => ({ feeds: addLedgers(acc.feeds, r.feeds), nectar: addLedgers(acc.nectar, r.nectar) }), { feeds: zeroLedger(ids.length), nectar: zeroLedger(ids.length) });
-    const totFeeds = addLedgers(cumulative.feeds, sim.feeds), totNectar = addLedgers(cumulative.nectar, sim.nectar);
-    await c.query(
-      "INSERT INTO rounds (game_id, round_no, seed, feeds, nectar, scores, totals, started_at, turns) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-      [gameId, roundNo, seed, JSON.stringify(sim.feeds), JSON.stringify(sim.nectar), JSON.stringify(score(ids, sim.feeds, sim.nectar)), JSON.stringify(score(ids, totFeeds, totNectar)), startedAt, sim.turns]);
-    for (const [ti, teamId] of ids.entries()) {
-      const m = sim.memories[ti];
-      await c.query("INSERT INTO bee_memories (game_id, round_no, team_id, snapshot, bytes, note) VALUES ($1, $2, $3, $4, $5, $6)",
-        [gameId, roundNo, teamId, m.snapshot, m.bytes, m.note]);
-    }
-    for (const [ti, teamId] of ids.entries()) {
-      for (const kind of KINDS) {
-        const p = programs[teamId][kind];
-        await c.query(
-          "INSERT INTO round_programs (game_id, round_no, team_id, kind, code, size, distance, carried_over, problem, compute) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
-          [gameId, roundNo, teamId, kind, p.code, p.size, p.distance, p.carriedOver, sim.problems[ti][kind], kind === "bee" ? null : sim.compute[ti][kind]]);
-      }
-    }
-    // Bulk insert visits in chunks.
-    const cols = ["game_id", "round_no", "bee_team", "seq", "patch_team", "kind", "turn_start", "turn_end", "action", "nectar", "steps", "bee_error", "bee_log", "note"];
-    for (let i = 0; i < sim.visits.length; i += 500) {
-      const chunk = sim.visits.slice(i, i + 500);
-      const params = [], rows = [];
-      chunk.forEach((v, j) => {
-        rows.push(`(${cols.map((_, k) => `$${j * cols.length + k + 1}`).join(",")})`);
-        params.push(gameId, roundNo, ids[v.bee], v.seq, ids[v.patch], v.kind, v.start, v.end, v.action, v.nectar, JSON.stringify(v.steps), v.beeError ?? null, v.beeLog ?? null, v.note ?? null);
-      });
-      await c.query(`INSERT INTO visits (${cols.join(",")}) VALUES ${rows.join(",")}`, params);
-    }
-    await c.query("DELETE FROM submissions WHERE game_id = $1", [gameId]);
-    await c.query(
-      `UPDATE games SET rounds_played = $2, running_round = NULL,
-         status = CASE WHEN $2 >= (config->>'rounds')::int THEN 'finished' ELSE 'running' END,
-         finished_at = CASE WHEN $2 >= (config->>'rounds')::int THEN now() ELSE NULL END
-       WHERE id = $1`, [gameId, roundNo]);
-    await touch(c, gameId);
-  });
-  return { round: roundNo };
-}
-
-/** A server restart mid-round leaves running_round set; clear it so the owner can run it again. */
-export async function recoverInterruptedRounds() {
-  const { rows } = await query(
-    `UPDATE games SET running_round = NULL, last_error = 'The server restarted while this round was running; run it again.',
-       status = CASE WHEN rounds_played = 0 THEN 'lobby' ELSE status END
-     WHERE running_round IS NOT NULL RETURNING id`);
-  return rows.length;
-}
-
-// ---------- the view: everything a given viewer may see, live or later, identically ----------
-
-/**
- * opts.visits: "all" (default) includes every round's visits; "last" only the latest round's; "none"
- * none (fetch rounds one at a time with roundView). Games now have thousands of visits per round.
- */
-export async function viewGame(room, game, user, opts = {}) {
+/** Everything about a game but its actions. All of it is public except code (and bees' print output). */
+export async function viewGame(room, game, user) {
   const g = (await query("SELECT * FROM games WHERE id = $1", [game.id])).rows[0];
   const cfg = g.config;
   const mine = await myTeam(g.id, user?.id);
   const isOwner = !!user && user.id === room.owner_id;
   const revealed = g.status === "finished" && cfg.revealOnFinish;
   const teams = (await query("SELECT * FROM teams WHERE game_id = $1 ORDER BY created_at, id", [g.id])).rows;
-  const members = (await query("SELECT m.team_id, u.id, u.name FROM team_members m JOIN users u ON u.id = m.user_id WHERE m.game_id = $1 ORDER BY m.joined_at", [g.id])).rows;
-  const subs = (await query("SELECT s.*, u.name AS submitted_by_name FROM submissions s JOIN users u ON u.id = s.submitted_by WHERE s.game_id = $1", [g.id])).rows;
-  const rounds = (await query("SELECT * FROM rounds WHERE game_id = $1 ORDER BY round_no", [g.id])).rows;
-  const progs = (await query("SELECT * FROM round_programs WHERE game_id = $1 ORDER BY round_no", [g.id])).rows;
-  const which = opts.visits || "all";
-  const visitRounds = which === "none" ? [] : which === "last" ? rounds.slice(-1).map((r) => r.round_no) : rounds.map((r) => r.round_no);
-  const visits = visitRounds.length
-    ? (await query("SELECT * FROM visits WHERE game_id = $1 AND round_no = ANY($2) ORDER BY round_no, bee_team, seq", [g.id, visitRounds])).rows
-    : [];
-  const mems = (await query("SELECT round_no, team_id, bytes, note FROM bee_memories WHERE game_id = $1", [g.id])).rows;
+  const members = (await query("SELECT m.team_id, u.name FROM team_members m JOIN users u ON u.id = m.user_id WHERE m.game_id = $1 ORDER BY m.joined_at", [g.id])).rows;
+  const progs = (await query(
+    `SELECT p.*, u.name AS submitted_by_name FROM programs p JOIN users u ON u.id = p.submitted_by
+      WHERE p.game_id = $1 ORDER BY p.team_id, p.kind, p.version`, [g.id])).rows;
+  const banks = (await query("SELECT * FROM banks WHERE game_id = $1", [g.id])).rows;
   const participants = g.participants || null;
-  const ctx = { cfg, mine, revealed, participants, progs, mems };
+  const canSee = (teamId) => revealed || mine?.id === teamId;
 
-  const latestProg = {};
-  for (const p of progs) (latestProg[p.team_id] ||= {})[p.kind] = p;
+  const versionView = (p) => ({
+    version: p.version, size: p.size, distance: p.distance, cost: p.cost, atMs: p.at_ms,
+    submittedAt: p.submitted_at, submittedBy: p.submitted_by_name, problem: p.problem,
+    ...(canSee(p.team_id) ? { code: p.code } : {}),
+  });
+  const programsOf = (teamId) => Object.fromEntries(KINDS.map((k) => [k, progs.filter((p) => p.team_id === teamId && p.kind === k).map(versionView)]));
+  const banksOf = (teamId) => Object.fromEntries(banks.filter((b) => b.team_id === teamId).map((b) => [b.kind, { bank: b.bank, atMs: b.at_ms }]));
 
   return {
     room: { id: room.id, shortId: shortId(room), url: `/room/${shortId(room)}`, isOwner },
     game: {
       id: g.id, shortId: shortId(g), url: `/room/${shortId(room)}/game/${shortId(g)}`, status: g.status, config: cfg,
-      roundsPlayed: g.rounds_played, runningRound: g.running_round, lastError: g.last_error, version: g.version,
-      createdAt: g.created_at, finishedAt: g.finished_at, revealed, isOwner,
-      // Turns per bee in the next round (depends on how many teams play).
-      turns: turnsFor(cfg, participants ? participants.length : teams.length),
-      // Programs teams may change for the next round (bees, orchids and clovers take turns).
-      changeable: changeable(g.rounds_played + 1),
+      clockMs: g.clock_ms, endMs: Math.round(cfg.minutes * 60000), lastSeq: g.last_seq, version: g.version, lastError: g.last_error,
+      createdAt: g.created_at, startedAt: g.started_at, finishedAt: g.finished_at, revealed, isOwner,
     },
     me: user ? { id: user.id, name: user.name, teamId: mine?.id ?? null } : null,
     participants,
@@ -436,92 +339,55 @@ export async function viewGame(room, game, user, opts = {}) {
       id: t.id, name: t.name, color: t.color,
       members: members.filter((m) => m.team_id === t.id).map((m) => m.name),
       participant: participants ? participants.includes(t.id) : null,
-      // Which programs are pending for the next round (no code: just whether they've submitted).
-      submitted: Object.fromEntries(KINDS.map((k) => [k, subs.some((s) => s.team_id === t.id && s.kind === k)])),
+      programs: programsOf(t.id),       // every version, oldest first (code only where you may see it)
+      banks: banksOf(t.id),             // change budget: bank as of game time atMs (see config budgets)
     })),
-    myTeam: mine ? {
-      id: mine.id, name: mine.name, joinCode: mine.join_code,
-      drafts: Object.fromEntries(subs.filter((s) => s.team_id === mine.id).map((s) => [s.kind, {
-        code: s.code, size: s.size, distance: s.distance, submittedAt: s.submitted_at, submittedBy: s.submitted_by_name,
-      }])),
-      previous: Object.fromEntries(KINDS.filter((k) => latestProg[mine.id]?.[k]).map((k) => [k, latestProg[mine.id][k].code])),
-    } : null,
+    myTeam: mine ? { id: mine.id, name: mine.name, joinCode: mine.join_code } : null,
     interface: programInterface(cfg),
-    rounds: rounds.map((r) => roundViewOf(r, visits.filter((v) => v.round_no === r.round_no), ctx, visitRounds.includes(r.round_no))),
-    final: g.status === "finished" && rounds.length ? rounds[rounds.length - 1].totals : null,
+    scores: participants ? score(participants, g.feeds, g.nectar) : null,
+    recent: participants ? await recentScores(g, participants) : null,
   };
 }
 
-function roundViewOf(r, visits, { cfg, mine, revealed, participants, progs, mems }, withVisits = true) {
-  const canSeeTeam = (teamId) => revealed || (mine && mine.id === teamId);
-  return {
-    no: r.round_no, startedAt: r.started_at, finishedAt: r.finished_at,
-    turns: r.turns,
-    feeds: r.feeds, nectar: r.nectar, scores: r.scores, totals: r.totals,
-    programs: Object.fromEntries((participants || []).map((teamId) => [teamId, Object.fromEntries(KINDS.map((kind) => {
-      const p = progs.find((x) => x.round_no === r.round_no && x.team_id === teamId && x.kind === kind);
-      if (!p) return [kind, null];
-      const own = canSeeTeam(teamId);
-      return [kind, { size: p.size, distance: p.distance, carriedOver: p.carried_over, ...(own ? { code: p.code, problem: p.problem, compute: p.compute } : {}) }];
-    }))])),
-    // Size of what each bee kept for later rounds (your own team's, or everyone's once revealed).
-    memory: Object.fromEntries(mems.filter((m) => m.round_no === r.round_no && canSeeTeam(m.team_id)).map((m) => [m.team_id, { bytes: m.bytes, note: m.note }])),
-    ...(withVisits ? { visits: visits.map((v) => visitView(v, mine?.id, revealed, cfg)) } : {}),
-  };
-}
-
-/** One round, with its visits, filtered for this viewer. */
-export async function roundView(room, game, user, roundNo) {
-  const g = (await query("SELECT * FROM games WHERE id = $1", [game.id])).rows[0];
-  const r = (await query("SELECT * FROM rounds WHERE game_id = $1 AND round_no = $2", [g.id, roundNo])).rows[0];
-  if (!r) fail(404, "No such round");
-  const mine = await myTeam(g.id, user?.id);
-  const progs = (await query("SELECT * FROM round_programs WHERE game_id = $1 AND round_no = $2", [g.id, roundNo])).rows;
-  const visits = (await query("SELECT * FROM visits WHERE game_id = $1 AND round_no = $2 ORDER BY bee_team, seq", [g.id, roundNo])).rows;
-  const mems = (await query("SELECT round_no, team_id, bytes, note FROM bee_memories WHERE game_id = $1 AND round_no = $2", [g.id, roundNo])).rows;
-  const revealed = g.status === "finished" && g.config.revealOnFinish;
-  return roundViewOf(r, visits, { cfg: g.config, mine, revealed, participants: g.participants || [], progs, mems });
-}
-
-/** What a team's bee kept at the end of a round (the serialised MEMORY entry). Own team, or revealed games. */
-export async function beeMemory(game, user, roundNo, teamId) {
-  const g = (await query("SELECT * FROM games WHERE id = $1", [game.id])).rows[0];
-  const mine = await myTeam(g.id, user?.id);
-  const revealed = g.status === "finished" && g.config.revealOnFinish;
-  const team = teamId || mine?.id;
-  if (!team) fail(403, "Join a team first");
-  if (!revealed && team !== mine?.id) fail(403, "You can only see your own bee's memory until the game is revealed");
-  const m = (await query("SELECT * FROM bee_memories WHERE game_id = $1 AND round_no = $2 AND team_id = $3", [g.id, roundNo, team])).rows[0];
-  if (!m) fail(404, "No memory for that round");
-  return { round: roundNo, teamId: team, language: g.config.language, snapshot: m.snapshot, bytes: m.bytes, note: m.note };
+/** Scores over the last five minutes of game time. */
+async function recentScores(g, participants) {
+  const from = Math.max(0, g.clock_ms - RECENT_MS);
+  const idx = new Map(participants.map((id, i) => [id, i]));
+  const feeds = zeroLedger(participants.length), nectar = zeroLedger(participants.length);
+  const { rows } = await query(
+    `SELECT bee_team, patch_team, count(*)::int AS feeds, count(*) FILTER (WHERE nectar)::int AS nectar
+       FROM actions WHERE game_id = $1 AND at_ms >= $2 AND action = 'feed' GROUP BY 1, 2`, [g.id, from]);
+  for (const r of rows) {
+    const s = idx.get(r.bee_team), o = idx.get(r.patch_team);
+    if (s === undefined || o === undefined) continue;
+    feeds[s][o] = r.feeds;
+    nectar[s][o] = r.nectar;
+  }
+  return { fromMs: from, toMs: g.clock_ms, scores: score(participants, feeds, nectar) };
 }
 
 /**
- * One visit as a viewer may see it. Everyone sees who visited whom and what happened. A team's own bee's
- * visits show their challenges and responses; a patch's owner sees which of its flowers was visited and
- * (with flowerLogs) what was asked. With publicLogs everyone sees every visit's challenges, responses and
- * flower; bee logs and flower errors stay with their owners. A finished, revealed game shows everything.
+ * Actions after `after` (a seq), oldest first, at most `limit`. Everything is public as soon as it
+ * happens, except what a bee printed: its own team's, or everyone's once a finished game is revealed.
  */
-function visitView(v, myTeamId, revealed, { flowerLogs, publicLogs }) {
-  const asksBeforeFeed = v.action === "feed" ? v.steps.filter((s) => !s.after).length : v.steps.length;
+export async function viewActions(game, user, { after = 0, limit = 1000 } = {}) {
+  const g = (await query("SELECT status, config, last_seq, clock_ms FROM games WHERE id = $1", [game.id])).rows[0];
+  const mine = await myTeam(game.id, user?.id);
+  const revealed = g.status === "finished" && g.config.revealOnFinish;
+  const n = Math.max(1, Math.min(5000, Number(limit) || 1000));
+  const { rows } = await query("SELECT * FROM actions WHERE game_id = $1 AND seq > $2 ORDER BY seq LIMIT $3", [game.id, Math.max(0, Number(after) || 0), n]);
+  return { actions: rows.map((a) => actionView(a, mine?.id, revealed)), lastSeq: g.last_seq, clockMs: g.clock_ms, status: g.status };
+}
+
+export function actionView(a, myTeamId, revealed) {
   const out = {
-    bee: v.bee_team, patch: v.patch_team, seq: v.seq, start: v.turn_start, end: v.turn_end,
-    asks: v.steps.length, asksBeforeFeed, action: v.action, nectar: v.nectar,
+    seq: a.seq, atMs: a.at_ms, bee: a.bee_team, visit: a.visit, patch: a.patch_team, kind: a.kind, action: a.action,
+    beeVersion: a.bee_version, flowerVersion: a.flower_version,
   };
-  const isBee = revealed || v.bee_team === myTeamId;
-  const isPatch = revealed || v.patch_team === myTeamId;
-  const keep = (s) => (s.after ? { after: true } : {});
-  if (isPatch || publicLogs) out.kind = v.kind;
-  if (isBee) {
-    // Your bee saw challenges and responses, but not why another team's flower failed.
-    out.steps = v.steps.map((s) => (revealed ? s : { c: s.c, r: s.r, ...keep(s), ...(s.challengeError ? { challengeError: s.challengeError } : {}) }));
-    if (v.bee_error) out.beeError = v.bee_error;
-    if (v.bee_log) out.beeLog = v.bee_log;
-    if (v.note) out.note = v.note;
-  } else if ((isPatch && flowerLogs) || publicLogs) {
-    out.steps = v.steps.map((s) => ({ c: s.c, r: s.r, ...keep(s), ...(isPatch && s.flowerError ? { flowerError: s.flowerError } : {}) }));
-  }
-  if (isPatch && !isBee && v.steps.some((s) => s.flowerError)) out.flowerError = v.steps.find((s) => s.flowerError).flowerError;
+  if (a.action === "ask") Object.assign(out, { c: a.c, r: a.r, ms: a.ms, ...(a.after ? { after: true } : {}) });
+  if (a.action === "feed") out.nectar = a.nectar;
+  if (a.error) Object.assign(out, { error: a.error, by: a.error_by });
+  if (a.log && (revealed || a.bee_team === myTeamId)) out.log = a.log;
   return out;
 }
 

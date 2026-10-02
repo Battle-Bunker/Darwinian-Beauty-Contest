@@ -1,6 +1,6 @@
-// Program size = characters of the automatically minified program; change = edit distance between two
-// versions' minified forms with names lined up (vendor/measure.js). Comments, spacing and name lengths
-// don't count; strings, numbers, keywords and attribute names do.
+// Program size = weighted syntax-tree nodes of the automatically minified program, literals one node per
+// byte; change = weighted tree edits between two versions with names lined up, literals diffed byte by
+// byte (vendor/measure.js). Comments, spacing, types and name lengths don't count.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -8,7 +8,6 @@ import vm from "node:vm";
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { changes, size } from "../server/lib/measure.js";
-import { changeable } from "../server/lib/schedule.js";
 
 const require = createRequire(import.meta.url);
 const Parser = require("web-tree-sitter");
@@ -64,7 +63,7 @@ function flower(challenge: number): Ring {
   assert.equal(a.minified, b.minified);
 });
 
-test("strings and numbers count character by character", async () => {
+test("strings and numbers count byte by byte", async () => {
   const short = await py(`T = "ab"\ndef flower(c):\n    return T\n`);
   const long = await py(`T = "${"x".repeat(50_000)}"\ndef flower(c):\n    return T\n`);
   assert.equal(long.size - short.size, 50_000 - 2);
@@ -77,7 +76,7 @@ test("strings and numbers count character by character", async () => {
   // Docstrings are strings; comments are not.
   const doc = await py(`def flower(c):\n    """Answer."""\n    return c\n`);
   const com = await py(`def flower(c):\n    # Answer.\n    return c\n`);
-  assert.equal(doc.size - com.size, `"""Answer."""`.length + 2); // + its own line and indent
+  assert.equal(doc.size - com.size, "Answer.".length + 1); // + its own statement
   // Embedded expressions are minified like any other code.
   const f1 = await py(`def flower(c):\n    value = c\n    return f"<{value:>{value}}>"\n`);
   assert.match(f1.minified, /f"<\{\w:>\{\w\}\}>"/);
@@ -89,8 +88,8 @@ test("attribute and keyword-argument names count as written; GAME and the entry 
   const a = await py(`def flower(c):\n    return dict(nodes=1, edges=[], labels=[c.real])\n`);
   assert.match(a.minified, /dict\(nodes=1,edges=\[\],labels=\[\w\.real\]\)/);
   assert.match(a.minified, /^def flower\(/);
-  const b = await ts(`function forage(seen: any[], left: number) { return GAME.turns > left ? "leave" : ["ask", seen.length]; }`);
-  assert.match(b.minified, /^function forage\(\w,\w\)\{return GAME\.turns>\w\?"leave":\["ask",\w\.length\];\}$/);
+  const b = await ts(`function forage(seen: any[], visit: any) { return GAME.feed_cost > visit.left ? "leave" : ["ask", seen.length]; }`);
+  assert.match(b.minified, /^function forage\(\w,\w\)\{return GAME\.feed_cost>\w\.left\?"leave":\["ask",\w\.length\];\}$/);
 });
 
 test("the minified programs are valid code", async () => {
@@ -113,24 +112,24 @@ test("the minified programs are valid code", async () => {
   }
 });
 
-test("change: renames, comments and formatting are free; edits cost the characters they change", async () => {
+test("change: renames, comments and formatting are free; edits cost the nodes they change", async () => {
   const pc = (a, b) => changes("python", a, b);
   assert.equal(await pc(TERSE_PY, READABLE_PY), 0, "the same program, written readably");
   const base = `def flower(challenge):\n    size = 5\n    return size * challenge\n`;
-  assert.equal(await pc(base, base.replace("size", "ring_size").replace("size *", "ring_size *")), 0, "a rename");
-  assert.equal(await pc(base, base.replace("5", "7")), 1, "a constant");
-  assert.equal(await pc(base, base.replace("5", "1234")), 4);
+  assert.equal(await pc(base, base.replace(/size/g, "ring_size")), 0, "a rename");
+  assert.equal(await pc(base, base.replace("5", "7")), 1, "a constant, byte by byte");
+  assert.equal(await pc(base, base.replace("5", "12345")), 4);
+  assert.equal(await pc(base, base.replace("*", "+")), 1, "an operator relabels one node");
+  assert.equal(await pc(base, base.replace("    return", "    size += 1\n    return")), 4, "a new statement: its nodes");
+  assert.equal(await pc(`def flower(c):\n    return "hello world"\n`, `def flower(c):\n    return "hello wurld!"\n`), 2);
   // A new variable that becomes the most used doesn't reshuffle every other name's cost.
   const more = `def flower(challenge):\n    size = 5\n    k = 3\n    return size * challenge + k + k + k\n`;
-  assert.equal(await pc(base, more), (await pc(base, more.replace(/\bk\b/g, "q"))));
-  assert.ok(await pc(base, more) <= " k=3\n".length + "+k+k+k".length, `${await pc(base, more)}`);
+  assert.equal(await pc(base, more), await pc(base, more.replace(/\bk\b/g, "q")));
+  assert.ok(await pc(base, more) <= 12, `${await pc(base, more)}`);
   const tc = (a, b) => changes("typescript", a, b);
   assert.equal(await tc("function flower(c: number) { return c * 2 }", "// doubled\nfunction flower(challenge: number): number {\n  return challenge * 2;\n}\n"), 0);
-});
-
-test("programs take turns to change, one kind per round: all, bee, orchid, clover, bee, orchid", () => {
-  assert.deepEqual([1, 2, 3, 4, 5, 6].map((r) => changeable(r)),
-    [["clover", "orchid", "bee"], ["bee"], ["orchid"], ["clover"], ["bee"], ["orchid"]]);
+  // Writing a program from nothing costs its whole size.
+  assert.equal(await pc("", base), (await py(base)).size);
 });
 
 test("renaming never changes what a program does", async () => {
@@ -147,7 +146,7 @@ def flower(challenge):
     return [Box().area(scale=2), helper(size=challenge), len([1]), keep]
 `;
   const { minified } = await py(code);
-  for (const kept of ["width", "area", "scale", "size", "max", "collections.abc", "keep", "len"]) assert.ok(minified.includes(kept), kept);
+  for (const kept of ["width", "area", "scale", "size", "max", "collections.abc", "len"]) assert.ok(minified.includes(kept), kept);
   const run = (src) => execFileSync("python3", ["-c", src + "\nprint(flower(5))"]).toString();
   assert.equal(run(minified), run(code));
 });
@@ -170,33 +169,19 @@ test("the browser loads the same rules as a plain script", async () => {
     await changes("python", READABLE_PY, TERSE_PY.replace("1000", "999")));
   const one = p.parse("x = 'abcdef'\n"), two = p.parse("x = 'abXdef'\n");
   const m = ctx.DbcMeasure.marks(one.rootNode, "x = 'abcdef'\n", two.rootNode, "x = 'abXdef'\n", "python");
-  assert.deepEqual(JSON.parse(JSON.stringify(m)), { old: [[7, 8, "del"]], new: [[7, 8, "ins"]] });
-  const mn = ctx.DbcMeasure.marks(one.rootNode, "x = 'abcdef'\n", two.rootNode, "x = 'abXdef'\n", "python", "nodes");
-  assert.deepEqual(JSON.parse(JSON.stringify(mn)), { old: [[7, 8, "del"]], new: [[7, 8, "ins"]] }, "a literal is diffed byte by byte");
+  assert.deepEqual(JSON.parse(JSON.stringify(m)), { old: [[7, 8, "del"]], new: [[7, 8, "ins"]] }, "a literal is diffed byte by byte");
 });
 
-test("nodes mode: syntax-tree nodes, literals one per byte; names and comments free", async () => {
-  const pn = (code) => size("python", code, "nodes");
+test("nodes: literals one per byte; names, comments and types free; kept names pay beyond 20 bytes", async () => {
   const base = `def flower(challenge):\n    size = 5\n    return size * challenge  # comment\n`;
-  const b = (await pn(base)).size;
-  assert.equal((await pn(base.replace(/size/g, "a_very_long_descriptive_name"))).size, b, "names are free");
-  assert.equal((await pn(`T = "${"x".repeat(50)}"\n` + base)).size - b, 50 + 3, "a string is a node per byte (plus the assignment)");
-  assert.equal((await pn(`T = ${"9".repeat(500)}\n` + base)).size - b, 500 + 3, "so is a number");
+  const b = (await py(base)).size;
+  assert.equal((await py(base.replace(/size/g, "a_very_long_descriptive_name"))).size, b, "names are free");
+  assert.equal((await py(`T = "${"x".repeat(50)}"\n` + base)).size - b, 50 + 3, "a string is a node per byte (plus the assignment)");
+  assert.equal((await py(`T = ${"9".repeat(500)}\n` + base)).size - b, 500 + 3, "so is a number");
+  assert.equal((await py(`T = "${"é".repeat(10)}"\n` + base)).size - b, 20 + 3, "bytes, not characters");
   // A name that minifying must keep (here a keyword-argument name) exists at runtime, so long ones pay.
-  const kw = async (n) => (await pn(`def flower(c):\n    return dict(${"k".repeat(n)}=1)\n`)).size;
+  const kw = async (n) => (await py(`def flower(c):\n    return dict(${"k".repeat(n)}=1)\n`)).size;
   assert.equal(await kw(120) - await kw(1), 100);
-  const tn = (code) => size("typescript", code, "nodes");
-  assert.equal((await tn("function flower(c: number): number { const k: number = 3; return c * k; }")).size,
-    (await tn("function flower(c) { const k = 3; return c * k; }")).size, "TypeScript types are free");
-});
-
-test("nodes mode: change is a tree diff in nodes; renames free, literals diffed byte by byte", async () => {
-  const pc = (a, b) => changes("python", a, b, "nodes");
-  const base = `def flower(challenge):\n    size = 5\n    return size * challenge\n`;
-  assert.equal(await pc(base, base.replace(/size/g, "ring_size")), 0);
-  assert.equal(await pc(base, base.replace("5", "7")), 1);
-  assert.equal(await pc(base, base.replace("5", "12345")), 4);
-  assert.equal(await pc(base, base.replace("*", "+")), 1, "an operator relabels one node");
-  assert.equal(await pc(base, base.replace("    return", "    size += 1\n    return")), 4, "a new statement: its nodes");
-  assert.equal(await pc(`def flower(c):\n    return "hello world"\n`, `def flower(c):\n    return "hello wurld!"\n`), 2);
+  assert.equal((await ts("function flower(c: number): number { const k: number = 3; return c * k; }")).size,
+    (await ts("function flower(c) { const k = 3; return c * k; }")).size, "TypeScript types are free");
 });

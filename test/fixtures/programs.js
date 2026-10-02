@@ -74,11 +74,11 @@ def flower(challenge):
     return ${pyFromHex(rT)}
 `;
   const bee = `# Bee: visits one flower at a time. Variables at the top level
-# last for the whole round, so your bee can learn as it goes.
+# last for as long as this version of the bee plays, so it can learn as it goes.
 QUESTION = ${q}
 tally = {}   # answer to QUESTION -> [times fed, times got nectar]
 
-def forage(seen, turns_left):
+def forage(seen):
     # seen = [[challenge, response], ...] for the flower in front of you
     if not seen:
         return ["ask", QUESTION]    # costs 1 turn
@@ -140,14 +140,14 @@ function flower(challenge: ${C}): ${R} {
 }
 `;
   const bee = `// Bee: visits one flower at a time. Variables at the top level
-// last for the whole round, so your bee can learn as it goes.
+// last for as long as this version of the bee plays, so it can learn as it goes.
 type Challenge = ${C};
 type Seen = [Challenge, ${R} | null][];
 
 const QUESTION: Challenge = ${q};
 const tally = new Map<string, [number, number]>(); // answer to QUESTION -> [times fed, times got nectar]
 
-function forage(seen: Seen, turnsLeft: number): ["ask", Challenge] | "feed" | "leave" {
+function forage(seen: Seen): ["ask", Challenge] | "feed" | "leave" {
   if (seen.length === 0) return ["ask", QUESTION]; // costs 1 turn
   const [fed, got] = tally.get(JSON.stringify(seen[0][1])) ?? [0, 0];
   if (fed < 2 || got / fed >= 0.5) return "feed"; // taste each new answer twice; costs GAME.feed_cost turns

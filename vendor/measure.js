@@ -3,29 +3,35 @@
 // to the browser, so the editor (web/src/lib/codetools.ts) and the server (server/lib/measure.js) load
 // this same file and always agree. Everything works on web-tree-sitter syntax trees.
 //
-// size(root, source, language) → { chars, text }
-//   A program's size is the length of its automatically minified form, and the minified form is what
-//   the game runs. So readable code costs nothing, and names can't carry hidden data:
+// size(root, source, language) → { size, text }
+//   A program's size is the weighted number of syntax-tree nodes in its automatically minified form,
+//   and the minified form is what the game runs. So readable code costs nothing, and names can't carry
+//   hidden data:
 //   - comments, blank lines and spacing are dropped (Python keeps one newline per statement and one
 //     space per indentation level; TypeScript gets one ";" per statement)
 //   - every name the program binds (variables, functions, parameters, imports) is renamed to the
 //     shortest free name, most-used first. Renaming must never change what the program does, so a few
 //     names keep their spelling: names bound in a class body (they're attributes), parameters that are
 //     also passed by keyword somewhere, names that shadow a builtin, the first part of a dotted import,
-//     and the names the game looks up (flower, forage, tasted, keep, GAME, MEMORY)
+//     and the names the game looks up (flower, forage, tasted, GAME)
 //   - TypeScript types are removed, as they are before the program runs
-//   Everything else stays as written: strings and numbers character by character, keywords, operators,
-//   attribute and keyword-argument names, and names the program uses but doesn't bind.
+//   Every node counts 1, except:
+//   - a literal (string, number, regex, template text) counts one per byte of its text, at least 1,
+//     so data can't hide in constants either; expressions embedded in a string count as nodes
+//   - a name kept verbatim counts 1, plus one per byte beyond 20
+//   - comments, types and parentheses count nothing
 //
 // changes(oldRoot, oldSource, newRoot, newSource, language) → number
-//   How much a program changed between rounds: the edit distance (characters inserted, deleted or
-//   replaced) between the two minified forms. The new version's names are first matched to the old
-//   version's by where they occur, so renaming a variable costs nothing.
+//   How much a program changed: the weighted tree edit distance between the two minified versions.
+//   Inserting or deleting a node costs its weight; changing a literal costs the byte-level edit
+//   distance between the two texts. The new version's names are first matched to the old version's
+//   by where they occur, so renaming a variable costs nothing.
 //
-// marks(oldSource, newSource) → { old, new }
-//   Character ranges [start, end, "del" | "ins"] that differ between two sources, for the editor.
+// marks(oldRoot, oldSource, newRoot, newSource, language) → { old, new }
+//   The tree edit's operations as source ranges [start, end, "del" | "ins" | "rel"], for the editor;
+//   a changed literal is marked byte by byte where it differs.
 var DbcMeasure = (() => {
-  const KEEP = new Set(["flower", "forage", "tasted", "keep", "GAME", "MEMORY"]); // looked up by name
+  const KEEP = new Set(["flower", "forage", "tasted", "GAME"]); // looked up by name
   const BUILTINS = {
     python: new Set("ArithmeticError AssertionError AttributeError BaseException BaseExceptionGroup BlockingIOError BrokenPipeError BufferError BytesWarning ChildProcessError ConnectionAbortedError ConnectionError ConnectionRefusedError ConnectionResetError DeprecationWarning EOFError Ellipsis EncodingWarning EnvironmentError Exception ExceptionGroup False FileExistsError FileNotFoundError FloatingPointError FutureWarning GeneratorExit IOError ImportError ImportWarning IndentationError IndexError InterruptedError IsADirectoryError KeyError KeyboardInterrupt LookupError MemoryError ModuleNotFoundError NameError None NotADirectoryError NotImplemented NotImplementedError OSError OverflowError PendingDeprecationWarning PermissionError ProcessLookupError RecursionError ReferenceError ResourceWarning RuntimeError RuntimeWarning StopAsyncIteration StopIteration SyntaxError SyntaxWarning SystemError SystemExit TabError TimeoutError True TypeError UnboundLocalError UnicodeDecodeError UnicodeEncodeError UnicodeError UnicodeTranslateError UnicodeWarning UserWarning ValueError Warning ZeroDivisionError abs aiter all anext any ascii bin bool breakpoint bytearray bytes callable chr classmethod compile complex copyright credits delattr dict dir divmod enumerate eval exec exit filter float format frozenset getattr globals hasattr hash help hex id input int isinstance issubclass iter len license list locals map max memoryview min next object oct open ord pow print property quit range repr reversed round set setattr slice sorted staticmethod str sum super tuple type vars zip".split(" ")),
     typescript: new Set(("Infinity NaN undefined globalThis Object Function Array Number parseFloat parseInt Boolean String " +
@@ -52,7 +58,6 @@ var DbcMeasure = (() => {
     for (let i = 0; i < n.childCount; i++) out.push([n.child(i), n.fieldNameForChild ? n.fieldNameForChild(i) : null]);
     return out;
   };
-  const codePoints = (s) => { let k = 0; for (const _ of s) k++; return k; };
   const isComment = (n) => n.type === "comment" || n.type === "line_continuation" || n.type === "hash_bang_line";
 
   // ---------------------------------------------------------------- which names the program binds
@@ -509,14 +514,9 @@ var DbcMeasure = (() => {
   }
 
   // ---------------------------------------------------------------- the measures
-  // mode "chars": size in characters of the minified program; change in characters of edit between
-  //               the minified versions
-  // mode "nodes": size in weighted nodes; change in weighted node edits (tree edit distance), with a
-  //               literal's change costing its byte-level edit distance
-  function size(root, source, language, mode = "chars") {
+  function size(root, source, language) {
     const m = minify(root, source, language);
-    const n = mode === "nodes" ? weight(nodeTree(root, source, language, m.names)) : codePoints(m.text);
-    return { size: n, text: m.text };
+    return { size: weight(nodeTree(root, source, language, m.names)), text: m.text };
   }
 
   const MARK = "\u0001"; // stands for every renamed name when lining two versions up
@@ -554,19 +554,13 @@ var DbcMeasure = (() => {
     return { before, after };
   }
 
-  function changes(oldRoot, oldSource, newRoot, newSource, language, mode = "chars") {
+  function changes(oldRoot, oldSource, newRoot, newSource, language) {
     const { before, after } = alignNames(oldRoot, oldSource, newRoot, newSource, language);
-    if (mode !== "nodes") return levenshtein([...before.text], [...after.text]);
     return treeDiff(nodeTree(oldRoot, oldSource, language, before.names), nodeTree(newRoot, newSource, language, after.names)).distance;
   }
 
-  /**
-   * What changed, as marks on each source: [start, end, "del" | "ins" | "rel"]. In chars mode, a text
-   * diff of the sources; in nodes mode, the tree diff's operations (a changed literal is marked byte by
-   * byte where it differs).
-   */
-  function marks(oldRoot, oldSource, newRoot, newSource, language, mode = "chars") {
-    if (mode !== "nodes") return textMarks(oldSource, newSource);
+  /** What changed: the tree diff's operations as marks on each source (literals byte by byte). */
+  function marks(oldRoot, oldSource, newRoot, newSource, language) {
     const { before, after } = alignNames(oldRoot, oldSource, newRoot, newSource, language);
     const { mapping } = treeDiff(nodeTree(oldRoot, oldSource, language, before.names), nodeTree(newRoot, newSource, language, after.names));
     const out = { old: [], new: [] };
@@ -589,7 +583,7 @@ var DbcMeasure = (() => {
     return out;
   }
 
-  /** Character ranges that differ between two texts. */
+  /** Character ranges that differ between two texts (inside a changed literal). */
   function textMarks(oldSource, newSource) {
     const runs = equalRuns(oldSource, newSource, MAX_ALIGN);
     const out = { old: [], new: [] };
@@ -674,7 +668,7 @@ var DbcMeasure = (() => {
     return prev[m];
   }
 
-  return { size, changes, marks, MODES: ["chars", "nodes"] };
+  return { size, changes, marks };
 })();
 
 if (typeof module !== "undefined") module.exports = DbcMeasure;

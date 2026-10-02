@@ -11,7 +11,6 @@
     "dev": "node --watch server/index.js",
     "dev:web": "npm --prefix web run dev",
     "migrate": "node server/db/migrate.js",
-    "remeasure": "node scripts/remeasure.js",
     "test": "node --test --test-concurrency=1 test/*.test.js",
     "smoke": "node scripts/smoke.js",
     "demo": "node scripts/demo.js"
