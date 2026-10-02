@@ -39,9 +39,10 @@ tastes each flower's answer to it once, and remembers which answers paid. The or
 too late every time (REPORT.md §19).
 
 So this design drops rounds altogether:
-- **One stream.** Bees take turns round robin, as fast as the programs run, for the whole game (2 minutes
-  by default). A **round** is one turn for every bee; a bee that feeds is out of the round robin for the
-  next 10 rounds. A bee is one long-running program; it keeps its state until its team replaces it.
+- **One stream.** The bees forage for the whole game (2 minutes by default) in lockstep rounds of 200 ms
+  of game time, one action slot per bee per round (see "Lockstep rounds" below); a bee that feeds has no
+  slot for the next 10 rounds. A bee is one long-running program; it keeps its state until its team
+  replaces it.
 - **Behaviour public at once, changes private.** Every ask, answer, feed and error is public the moment it
   happens. Code, what bees print, and each team's code changes and change budgets stay secret during
   play; once the game is over the replay shows every change and budget (and the code, unless the owner
@@ -61,27 +62,70 @@ What this changes, and what it doesn't:
   code change. What it can't hide any more is the question itself (it's public as soon as it's asked) or
   the answers it learned to trust. Whether that's enough for orchids to catch up depends on how fast they
   can react, which is what the games will show.
-- Clovers still have their costly signal: 3× an orchid's compute on every answer.
+- Clovers still have their costly signal: the whole 150 ms flower window on every answer, against an
+  orchid's 100 ms.
+
+### Lockstep rounds: why timing is equalised
+
+An earlier version let the bees take turns as fast as the programs ran, and recorded every flower's answer
+time in the public stream. That made time itself a detector: an orchid has less compute than a clover, so
+an orchid that saves time answers sooner, and a bee (or a team reading the stream) could tell the kinds
+apart by the clock rather than by the answers. The game is meant to be about what flowers *say*, so the
+timing is now equalised:
+- **Rounds are fixed 200 ms slots, every bee in step**: a 150 ms flower window (a clover's whole time
+  limit) and a 50 ms decision window. Game time is rounds × 200 ms, so it's the same for every bee
+  however busy the machine is; live games pace rounds to real time.
+- **Every answer is delivered at 150 ms.** A clover gets the whole window; an orchid has a shorter limit
+  (100 ms by default, public, so an orchid can time an anytime search to finish just before it), but its
+  answer still reaches the bee at 150 ms. The bee is only called in the decision window, after every
+  flower in the round is done, so the clock inside a bee can't tell a fast answer from a slow one.
+- **Measured times are private during play.** Each answer's `ms` and each decision's `beeMs` are their
+  own team's until the game is over, so the public stream doesn't leak what the bee can't see.
+- **Queued challenges are secret.** A bee's next action is decided a round ahead and queued; nothing about
+  a queued challenge is recorded or shown until it is asked. In particular `["leave", c]` (move on and ask
+  `c` first at the next flower) publishes the leave at once but not `c`, so nobody can prepare for a
+  question before it reaches a flower.
+- **A late bee loses a slot, not its say.** 50 ms is a deadline, not an interruption: the call runs on (up
+  to 2 s), the round moves on, the bee loses its next slot and its visit ends. A late `["leave", c]` still
+  queues `c`; any other late reply (an ask or a feed for the abandoned visit, a plain leave, an error)
+  doesn't give a next challenge, so the engine asks again at once, outside the round flow, for the first
+  challenge at the next flower. Any reply that gives no next challenge is handled the same way. The 50 ms
+  are counted from when the call gets a core of its own, and a late bee keeps its core until it replies, so
+  the machine is never oversubscribed and every flower's limit stays fair; slowness only stretches wall
+  time.
+
+Each round, in the engine:
+
+| Game time | What happens |
+|---|---|
+| 0 ms | Round boundary: a new bee takes over (its visit ends, its queued action is dropped, and it's asked for its first challenge at once); a crashed one starts afresh. Then every bee with an action queued and not feeding acts: asks go to their flowers (a fresh process run per ask), feeds go in the ledgers. A bee with nothing queued loses the slot. |
+| 150 ms | Answers are delivered. Each bee that acted is called: `forage(seen, visit)`, after a feed `tasted` then `forage` in the same call. Leaves and errors are recorded at this time. |
+| 200 ms | Each reply is in, or its deadline has passed. The next round starts. |
+
+At most one ask or feed per bee per round: with 6 teams, at most 30 actions a second.
 
 ### How it runs
 
-- `server/engine.js`: a `Garden` runs one game's loop. Each round every bee that isn't feeding takes one
-  turn, all at once (a feed takes a bee out of the round robin for the next `feedCost` rounds). Programs can be swapped at any moment: a
-  flower's next ask uses the new code; a bee swaps at its next turn, abandoning its visit. Answers are
-  labelled with the version that gave them.
+- `server/engine.js`: a `Garden` runs one game's rounds (above). Per bee it keeps the action queued for its
+  next slot, whether a call is in flight, which visit the runner's `seen` belongs to (a request with
+  `new: true` empties it; the first decision at a new flower only empties it if the bee got there by
+  `["leave", c]`), and a generation number so replies from a replaced or restarted process are ignored.
+  Re-requests are throttled: at most one in flight per bee, and at most one new one a round. Programs can
+  be swapped at any moment: a flower's next ask uses the new code; a bee swaps at the next round boundary.
+  Answers are labelled with the version that gave them. `paced: false` runs rounds back to back (tests
+  and the "try a bee" tool); a request outside the round flow then makes the next round if it answers
+  within the bee's 50 ms.
 - `server/live.js`: each running game's garden runs in exactly one server process, whichever holds the
   game's Postgres advisory lock; every process adopts running games nobody holds, so a game survives its
-  process dying (its bees start afresh). Four times a second it writes the new actions, the clock and the
-  ledgers, and notifies listeners. Submissions, pauses and finishes are written by whichever process got
-  the request; the notification brings them to the garden.
+  process dying (its bees start afresh, from the stored round). Four times a second it writes the new
+  actions, the round, the clock and the ledgers, and notifies listeners. Submissions, pauses and finishes
+  are written by whichever process got the request; the notification brings them to the garden. A pause
+  takes effect at the end of the round in progress.
 - `server/games.js`: the clock lives in the database (`games.clock_ms`, game time, which stops while
   paused). A team's budget for a program is `min(cap, bank + perMinute × (clock − atMs))`; a submission
   pays its node-edit distance from the version playing now, inside the same transaction that writes the
   version, so two submissions can't spend the same budget.
 - Viewers get the actions over Server-Sent Events, or page through them with `GET .../actions`.
-
-How fast the garden runs depends on the programs: with trivial programs it does over a thousand actions a
-second; flowers that use their compute budget slow every round down to their pace.
 
 ## Why rootsum
 
@@ -105,21 +149,22 @@ team can see which questions the bee keeps asking and which answers it feeds on.
 
 | Budget (orchid = reference) | Why |
 |---|---|
-| **clover**: ½ size, 3× compute, a seventh of the orchid's change rate | **Costly signalling**: a clover can spend effort an orchid can't afford on every answer, such as a bigger, harder instance of its pattern. It changes slowly, so it can't simply out-run imitators. |
+| **clover**: ½ size, the whole 150 ms flower window (1.5× an orchid's time), a seventh of the orchid's change rate | **Costly signalling**: a clover can spend effort an orchid can't afford on every answer, such as a bigger, harder instance of its pattern. It changes slowly, so it can't simply out-run imitators. |
 | **orchid**: the reference; 7× a clover's change rate | Orchids answer with more code and faster adaptation: more efficient generators, shallower look-alikes, re-aimed at whatever bees trust. |
-| **bee**: 5× size, ½ compute | Room for detector repertoires but little time per decision, so the winning signals are *hard to make, easy to check*. |
+| **bee**: 5× size, 50 ms per decision | Room for detector repertoires but little time per decision, so the winning signals are *hard to make, easy to check*. |
 
 **Fair compute**: the engine runs at most one program per CPU core, across every game in the process, and
 keeps a small pool of processes per flower. When compute is the signal, a busy machine mustn't make a
 clover time out. Wall-clock limits with one program per core behave like CPU limits (CPU-time interval
-timers fire late on tickless kernels).
+timers fire late on tickless kernels). Since game time is counted in rounds, a machine with fewer cores
+than a round needs only makes rounds take longer in wall time; every program still gets its full time.
 
 ## Flowers are stateless, not pure
 
 A flower runs fresh for every call, so nothing carries over between questions. But each call gets fresh
 randomness and the clock (`time`, `Date.now()`) and can read its own budget as `GAME.ms`. A clover can run
 an anytime search, such as a local search for a big clique, and answer with the best result it found
-within 150 ms; an orchid has 50 ms to fake one. Bees can then judge how good an answer is, not just whether
+within 150 ms; an orchid has 100 ms to fake one. Bees can then judge how good an answer is, not just whether
 they have seen it before. The engine never caches answers, so every ask runs the flower again.
 
 Nothing forces a flower to use randomness: a deterministic clover can still be fingerprinted by repeating

@@ -44,7 +44,7 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 | POST | `base/teams/join` | user | `{ joinCode }` | `{ id, name }` |
 | POST | `base/check` | team member | `{ kind, code }` | `{ ok, kind, size, minified, budget, distance, cost, available, errors[] }`. Validates without saving: syntax, the entry point (`flower`, or `forage` for a bee, defined at the top level), size, and the change budget. `size` is weighted nodes of the minified program; `minified` is the text the game runs. Once the game runs, `distance` is the node edits from the version playing now (renames, comments and formatting are free), `cost` what the change would spend and `available` the change budget now (floored) |
 | POST | `base/programs` | team member | `{ kind, code }` | same as check plus `submitted: true, version, atMs` (the game time it went live; 0 in the lobby), and `available` after paying; the new version goes live at once. **422** with `errors` if it's too big or can't be afforded yet (the error says how long until it can) |
-| POST | `base/try` | team member | `{ kind, code, challenges?, flowers?: {clover, orchid} }` | flower: `{ results: [{c, r, error?, ms}] }`. bee: 300 rounds in a garden of just your own two flowers (the `flowers` you pass, else your latest): `{ actions, problems, feeds, nectar, rounds }` |
+| POST | `base/try` | team member | `{ kind, code, challenges?, flowers?: {clover, orchid} }` | flower: `{ results: [{c, r, error?, ms}] }`. bee: 300 rounds in a garden of just your own two flowers (the `flowers` you pass, else your latest), run back to back rather than in real time: `{ actions, problems, feeds, nectar, rounds }` |
 
 `kind` is `clover`, `orchid` or `bee`.
 
@@ -58,21 +58,36 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
   "revealOnFinish": true,
   "budgets": {
     "clover": { "size": 1100,  "perMinute": 220,  "cap": 220,  "ms": 150 },
-    "orchid": { "size": 2200,  "perMinute": 1540, "cap": 1540, "ms": 50 },
-    "bee":    { "size": 11000, "perMinute": 2200, "cap": 2200, "ms": 25 }
+    "orchid": { "size": 2200,  "perMinute": 1540, "cap": 1540, "ms": 100 },
+    "bee":    { "size": 11000, "perMinute": 2200, "cap": 2200, "ms": 50 }
   }
 }
 ```
 
 - `minutes`: game time the garden runs for (it stops while paused). Fractions are fine (`0.5` = 30 s).
-- `feedCost`: a **round** is one turn for every bee that isn't feeding; a bee that feeds sits out the
-  next `feedCost` rounds.
+- **Rounds.** The garden runs in lockstep rounds of `round_ms = clover.ms + bee.ms` (150 + 50 = 200 ms)
+  of game time, one action slot per bee: game time is rounds × `round_ms`, and a 2-minute game is 600
+  rounds. Live games pace rounds to real time (at least `round_ms` of wall time each, longer if the
+  server is short of cores; game time stays rounds × `round_ms`). As a round starts, each bee's queued
+  action runs (an ask goes to its flower, or the bee feeds); a bee with nothing queued loses the slot.
+  At `clover.ms` the answers are delivered (null if a flower wasn't done within its own `ms`), and each
+  bee that acted has `bee.ms` to return its next action, queued for its next slot. RULES.md has the
+  details: queued challenges, late replies and re-requests, `["leave", c]`.
+- `feedCost`: a bee that feeds has no slot for the next `feedCost` rounds.
 - `budgets.<kind>.size`: size budget in weighted nodes (vendor/measure.js; RULES.md explains it to players).
 - `budgets.<kind>.perMinute`, `cap`: change budget earned per minute of game time, and the most that can
   be banked. A team's budget for a program at game time `t` is `min(cap, bank + perMinute × (t − atMs) / 60000)`,
   with `bank` and `atMs` from the view's `teams[i].banks[kind]`. Writing programs in the lobby is free.
 - `ms`: wall-clock time per call. The engine runs at most one program per CPU core, so this is
-  effectively CPU time. Every program can read `GAME.ms`.
+  effectively CPU time. Every program can read its own as `GAME.ms`, and the round length as
+  `GAME.round_ms`.
+  - `clover.ms` is also the flower window: every answer is delivered this long into the round, however
+    fast it came.
+  - `orchid.ms` is the orchid's own, shorter limit (100 by default), clamped to at most `clover.ms`.
+  - `bee.ms` is the bees' decision window. It is a deadline, not a cut-off: a bee that misses it loses
+    its next slot and its visit, but its call runs on (up to a hard limit of 2 s) and a late
+    `["leave", c]` still queues `c`. Any other late reply, and any reply that gives no next challenge,
+    gets the bee asked again at once for the first challenge at its next flower.
 - `maxLen` bounds strings and lists. `maxNodes` bounds trees and graphs (graphs: ≤ 4 × maxNodes edges).
 - `revealOnFinish`: when the game ends, everyone can see all code and every bee's print output.
 
@@ -85,9 +100,10 @@ Types: `int`, `float`, `bool`, `str`, `any` (any plain JSON), `list[T]`, `tree[T
 
 There is no separate replay mode. The view plus the actions *are* the game: loading them at any time
 returns everything that has happened so far, filtered to what this viewer is allowed to know:
-- What the bees do is public as it happens.
-- A team's code changes (versions, their size, cost and timing, which version played each action) and
-  its change budgets are its own until the game is over, then everyone's.
+- What the bees do is public as it happens, and so is the config (every time limit included).
+- A team's code changes (versions, their size, cost and timing, which version played each action), its
+  change budgets, and how long its programs actually took (`ms`, `beeMs` on actions) are its own until
+  the game is over, then everyone's.
 - Code, and what bees print, is your own team's, or everyone's once a finished game is revealed
   (`revealOnFinish`).
 
@@ -95,9 +111,9 @@ returns everything that has happened so far, filtered to what this viewer is all
 {
   "room": { "shortId", "url", "isOwner" },
   "game": { "shortId", "url", "status": "lobby|running|paused|finished", "config",
-            "clockMs",        // game time played so far (updated a few times a second while running)
+            "clockMs",        // game time played so far: round × round_ms (updated a few times a second while running)
             "endMs",          // config.minutes in ms: the game ends when clockMs reaches it
-            "round",          // rounds played so far
+            "round",          // rounds played so far (counting the one in progress)
             "lastSeq",        // the latest action's seq
             "version", "lastError", "startedAt", "finishedAt", "revealed", "isOwner" },
   "me": { "id", "name", "teamId" } | null,
@@ -120,26 +136,36 @@ returns everything that has happened so far, filtered to what this viewer is all
 `teamScore`: `{ teamId, allure, forage, allureShare, forageShare, fitness, feedsReceived, feedsGiven,
 nectarCollected, pollinators, nectarSources }`.
 
-`action`: one turn's worth of what a bee did, public the moment it happens:
+`action`: one thing a bee did, public the moment it happens:
 
 ```jsonc
-{ "seq", "atMs", "round",        // order, game time, and the round it happened in
+{ "seq", "atMs", "round",        // order, game time, and the round it happened in. An ask or a feed happens
+                                 // as its round starts (atMs = (round - 1) × round_ms); a leave or an error
+                                 // when the bee decided, clover.ms later
   "bee", "patch",                // team ids: whose bee, at whose patch
   "visit",                       // the bee's visit number: one visit is several actions
   "kind": "clover|orchid",       // which flower of the patch
   "action": "ask|feed|leave|error",
   "beeVersion", "flowerVersion", // which versions played: your own programs' during play, all once it's over
-  "c", "r", "ms", "after",       // ask: challenge, response (null if it failed), the flower's time, asked after feeding
-  "beeMs",                       // how long the bee took to decide (a feed: plus tasted)
+  "c", "r", "after",             // ask: challenge, response (null if it failed), asked after feeding
+  "ms",                          // ask: how long the flower took. Your own patch's during play, all once it's over
+  "beeMs",                       // how long the bee took to decide this action (after a feed, tasted is part of
+                                 // the same call). Your own bee's during play, all once it's over
   "nectar",                      // feed: true at a clover
   "error", "by",                 // what went wrong, and whose fault: bee | challenge | flower | engine
                                  // (engine: shown to the bee's team during play, to all once it's over)
   "log" }                        // what the bee printed: its own team, or everyone once revealed
 ```
 
-An `engine` leave ends a visit the bee didn't finish because its team replaced it (or it crashed and
-restarted). Submissions don't bump the public `game.version`, so other teams can't tell when a team
-changes its code.
+A queued challenge appears only when it is asked: a leave never shows the challenge the bee queued for
+its next flower. A bee that missed its decision deadline gets an `error` with `by: "bee"` ("too slow:
+no reply within 50 ms"), which ends its visit. An `engine` leave ends a visit the bee didn't finish
+because its team replaced it (or it crashed and restarted). Submissions don't bump the public
+`game.version`, so other teams can't tell when a team changes its code.
+
+The measured times (`ms`, `beeMs`) are private during play because every answer reaches the bee at the
+end of the flower window precisely so that timing can't tell flowers apart; a public stream of answer
+times would give that away to every team reading it.
 
 Every server process connected to the same database runs whichever running games nobody else is running
 (see docs/DESIGN.md), so test servers and arena servers that share a database share their games.

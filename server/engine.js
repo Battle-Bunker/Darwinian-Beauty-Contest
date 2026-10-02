@@ -129,6 +129,8 @@ function byDeadline(done, from, ms) {
   const late = new Promise((r) => { timer = setTimeout(() => r(LATE), Math.max(0, from + ms - performance.now())); });
   return Promise.race([done, late]).finally(() => clearTimeout(timer));
 }
+// Replies handled outside the round flow must never become unhandled rejections (they'd take the server down).
+const logged = (p) => p.catch((e) => console.error("garden:", e));
 const isPair = (a, verb) => Array.isArray(a) && a.length === 2 && a[0] === verb;
 const shapeError = (a) => `forage must return ["ask", challenge], "feed", ["leave", challenge] or "leave" (got ${JSON.stringify(a)?.slice(0, 60)})`;
 const validShape = (a) => isPair(a, "ask") || isPair(a, "leave") || a === "feed" || a === "leave";
@@ -177,6 +179,7 @@ export class Garden {
     this.problems = [];               // { team, kind, version, error }: the first error of each program version
     this.seenProblem = new Set();
     this.stopped = false;
+    this.halt = new Promise((resolve) => { this.halted = resolve; }); // settles on stop(): pacing waits end early
     this.closed = false;
     this.paused = false;
     this.gate = null;
@@ -219,9 +222,10 @@ export class Garden {
     this.gate?.();
   }
 
-  /** Stop the loop (after the round in progress) and every program. */
+  /** Stop the loop and every program (the round in progress finishes its asks, without waiting out its time). */
   async stop() {
     this.stopped = true;
+    this.halted();
     this.gate?.();
     await this.running;
   }
@@ -273,11 +277,11 @@ export class Garden {
     // The flower window: every ask goes to its flower at once.
     const steps = await Promise.all(acting.map((s) => this.#act(s)));
     for (const s of steps) if (s.rec) this.#record(s.b, s.v, s.rec, start);
-    if (this.paced) await until(t0 + this.windowMs);
+    if (this.paced) await Promise.race([until(t0 + this.windowMs), this.halt]);
     // The decision window: answers are delivered and every bee that acted decides its next action.
     const decided = await Promise.all(steps.map((s) => this.#decide(s)));
     for (const d of decided) if (d) this.#record(d.b, d.v, d.rec, start + this.windowMs);
-    if (this.paced) await until(t0 + this.roundMs);
+    if (this.paced) await Promise.race([until(t0 + this.roundMs), this.halt]);
   }
 
   #close() {
@@ -342,7 +346,7 @@ export class Garden {
     const gen = b.gen;
     // Loading counts as a call in flight. Then the new bee is asked for its first challenge at once.
     b.busy = true;
-    const loaded = proc.ready.then((load) => {
+    const loaded = logged(proc.ready.then((load) => {
       if (gen !== b.gen || this.closed) return;
       b.busy = false;
       b.asking = null;
@@ -352,7 +356,7 @@ export class Garden {
         return;
       }
       this.#askFirst(b, true);
-    });
+    }));
     b.asking = { inTime: loaded };
   }
 
@@ -385,12 +389,12 @@ export class Garden {
     b.seen = FRESH;
     const call = this.#call(b, { op: "forage", new: true, step: null, visit: { fed: false, nectar: null, flowers: this.flowers.length } });
     const asking = {};
-    const handled = call.done.then(({ res, ms }) => {
+    const handled = logged(call.done.then(({ res, ms }) => {
       if (call.gen !== b.gen || this.closed) return;
       b.busy = false;
       if (b.asking === asking) b.asking = null;
       this.#onFirst(b, res, ms);
-    });
+    }));
     // An unpaced garden waits for it before the next round, as long as it answers within the bee's time.
     asking.inTime = call.started.then((t) => byDeadline(handled, t, this.beeMs));
     b.asking = asking;
@@ -487,11 +491,11 @@ export class Garden {
     // Too slow: the bee loses its next slot and the visit ends, but the engine keeps listening.
     b.visit = null;
     this.#problem(b.ti, "bee", b.version, `too slow: no reply within ${this.beeMs} ms`);
-    call.done.then(({ res: late, ms }) => {
+    logged(call.done.then(({ res: late, ms }) => {
       if (call.gen !== b.gen || this.closed) return;
       b.busy = false;
       this.#onLate(b, late, ms);
-    });
+    }));
     return { b, v, rec: { action: "error", error: `too slow: no reply within ${this.beeMs} ms`, by: "bee" } };
   }
 

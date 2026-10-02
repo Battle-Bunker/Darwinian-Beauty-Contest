@@ -22,32 +22,66 @@ A game is one continuous stretch of play, 2 minutes by default (the room owner s
 1. **The lobby.** Teams join and write their programs. Writing is free here: anything within the size
    budgets. A team needs all three programs to take part.
 2. **The garden.** The owner starts the game and the clock starts. From then on the bees forage without
-   pause, and every team can change any of its programs at any moment, paying for each change from a
-   budget that refills as the game goes on (see "Changing your programs").
+   pause, one round after another, and every team can change any of its programs at any moment, paying
+   for each change from a budget that refills as the game goes on (see "Changing your programs").
 3. **The end.** When the clock runs out the game is over. The owner can also pause it (the clock and
    the budgets stand still) or end it early.
 
-### Bees take turns, in rounds
+### Rounds: 200 ms, every bee in step
 
-The bees take turns round robin, as fast as the programs run. A **round** is one turn for every bee:
-every bee that isn't busy feeding takes its turn, then the next round starts. Each bee is shown one
-flower at a time, from its own shuffled deck of every flower in the garden. Your own two flowers are
-in the deck too, and every flower comes up once before any comes up again.
+The game runs in **rounds** of exactly **200 ms** of game time. A round is one action slot for every
+bee, all at the same moment: a **150 ms flower window**, then a **50 ms decision window**. The game
+clock is rounds × 200 ms (a 2-minute game is 600 rounds), and it is played in real time: a round lasts
+at least 200 ms on the wall clock too (longer if the server is short of CPU cores, which changes
+nothing in the game: every program still gets its full time on a core of its own).
 
-At each flower your bee can:
+Each bee is shown one flower at a time, from its own shuffled deck of every flower in the garden. Your
+own two flowers are in the deck too, and every flower comes up once before any comes up again.
 
-- **ask** a challenge: that's its turn this round. The flower answers with its response.
-- **feed**: you get 1 nectar if it was a clover and 0 if it was an orchid, and your bee is busy
-  feeding: it's **out of the round robin for the next 10 rounds** (the owner can change the 10) while
-  the other bees carry on. You can feed **once** per visit.
-- **leave**: free once you've asked something. The next flower appears straight away, in the same turn.
+**What a bee does next is always decided a round ahead.** Your bee's `forage` returns its *next* action,
+which is **queued** for its next round:
 
-You must ask at least once before you feed. **After feeding you can keep asking the same flower**:
-that's how you study a flower you now know is generous (or know is a fake). Once you've fed, anything
-other than another ask moves on to the next flower.
+- `["ask", challenge]`: ask this challenge at the same flower next round.
+- `"feed"`: feed next round. You get 1 nectar if it's a clover and 0 if it's an orchid, and your bee is
+  then busy feeding for the next **10 rounds** (the owner can change the 10): no slot for it while the
+  other bees carry on. You can feed **once** per visit, after asking at least once.
+- `["leave", challenge]`: move on, and ask this challenge first at the next flower, next round.
+- `"leave"`: move on with nothing queued (see below).
 
-A bee that leaves without asking anything still uses up its turn. If your bee crashes, runs out of time
-or returns something odd, that uses up its turn and ends the visit.
+**The round, step by step:**
+
+1. **0 ms.** Every bee's queued action runs at once: each queued challenge goes to its flower, or the
+   bee feeds. A bee with nothing queued as the round starts **loses its slot** for that round.
+2. **150 ms.** The flowers' answers are delivered. A clover has the whole 150 ms to answer; an orchid
+   has a shorter time limit, **100 ms** by default (the room owner sets it, never more than a clover's).
+   A flower that isn't done within its own limit gives no answer (`None`/`null`). Either way the answer
+   reaches the bee at 150 ms, however fast the flower was, so how long an answer took tells a bee
+   nothing.
+3. **150–200 ms.** Every bee that acted is shown the answer (after a feed: whether it got nectar) and
+   has **50 ms** to return its next action. The 50 ms are counted from when its call starts on a CPU
+   core of its own.
+
+**Queued challenges are secret.** Nobody sees a challenge until it is asked. When your bee leaves with
+`["leave", challenge]`, the leave is public at once, but its next challenge only when it's asked.
+
+**Late replies.** A bee that takes more than 50 ms isn't cut off: its call keeps running (for up to 2 s,
+when it is stopped) and the game keeps listening, but the round moves on without it. The bee **loses
+its next slot** and its visit ends. When the late reply arrives, a `["leave", challenge]` still counts:
+that challenge is asked first at the next flower. Anything else (an `ask` or `feed` meant for the visit
+it was too slow for, a plain `"leave"`, an error) doesn't give the bee a challenge to start its next
+flower with, so the game at once calls `forage` again with `seen` empty and `visit["fed"]` false,
+asking for the first challenge at its next flower.
+
+**A reply that gives no next challenge** works the same way, late or not: a plain `"leave"`, a second
+`"feed"` in one visit (it means leave), a challenge of the wrong type or size, a crash or anything
+else odd ends the visit, and `forage` is called again at once with `seen` empty. The bee plays again
+as soon as it has a challenge queued when a round starts: a quick answer (in before the round ends)
+makes the next round; a slower one costs a round or more. (`["leave", challenge]` never costs a
+slot.) While answers keep giving no challenge, the game asks again at most once a round.
+
+**After feeding you can keep asking the same flower**: that's how you study a flower you now know is
+generous (or know is a fake). The call after a feed first calls your `tasted(seen, nectar)` (if you
+wrote one) and then `forage`, in one call with one 50 ms deadline.
 
 **Bees remember things.** Your bee is one running program: its variables last from call to call for as
 long as that version of it plays, so it can learn as it goes. Submitting a new bee starts the new one
@@ -58,10 +92,12 @@ something, write it into its code (and pay for it: see "What counts toward size"
 fresh for every single question, so nothing survives from one call to the next: a flower can't count
 visitors or change its mind. Within one call, though, a flower can use `random` (freshly seeded every
 call) and the clock (`import time`; in TypeScript `Math.random()` and `Date.now()`). So it can run a
-search or an optimisation until its compute budget is nearly spent and answer with the best result it
-found. The same challenge can get a different answer every time. `GAME["ms"]` (TypeScript: `GAME.ms`)
-is your program's own budget per call in milliseconds. The clock starts when your program starts, so
-stop with a margin to spare: a flower that runs out of time gives no answer at all.
+search or an optimisation until its time is nearly up and answer with the best result it found. The
+same challenge can get a different answer every time. `GAME["ms"]` (TypeScript: `GAME.ms`) is your
+flower's own time limit per call in milliseconds: 150 for a clover, and the orchid's own limit (100 by
+default) for an orchid, so an orchid can time its work to finish just before its limit. The clock
+starts when your program starts, so stop with a margin to spare: a flower that runs out of time gives
+no answer at all.
 
 **Nobody knows who's who.** Programs never learn which team a flower or bee belongs to.
 
@@ -107,11 +143,16 @@ def flower(challenge):
 
 # bee
 def forage(seen, visit):
-    # seen  = [[challenge, response], ...] at the flower in front of you (empty when it arrives)
+    # seen  = [[challenge, response], ...] at the flower in front of you
+    #         (empty when the game asks for the first challenge at your next flower)
     # visit = {"fed": True/False, "nectar": True/False/None, "flowers": how many flowers are in the garden}
-    ...  # return ["ask", challenge] (this round's turn), "feed" (then sit out GAME["feed_cost"] rounds) or "leave" (free)
+    ...  # return your NEXT action, queued for your next round:
+         #   ["ask", challenge]   ask it here
+         #   "feed"               feed here (then sit out GAME["feed_cost"] rounds)
+         #   ["leave", challenge] move on, and ask it first at the next flower
+         #   "leave"              move on (the game then asks you for a first challenge)
 
-def tasted(seen, nectar):   # optional: called right after you feed; nectar is True or False
+def tasted(seen, nectar):   # optional: after you feed, called just before forage; nectar is True or False
     ...
 ```
 
@@ -123,7 +164,8 @@ def tasted(seen, nectar):   # optional: called right after you feed; nectar is T
 function flower(challenge: Challenge): Response
 
 function forage(seen: [Challenge, Response | null][],
-                visit: { fed: boolean; nectar: boolean | null; flowers: number }): ["ask", Challenge] | "feed" | "leave"
+                visit: { fed: boolean; nectar: boolean | null; flowers: number }):
+  ["ask", Challenge] | "feed" | ["leave", Challenge] | "leave"
 function tasted(seen: [Challenge, Response | null][], nectar: boolean): void   // optional
 ```
 
@@ -131,9 +173,9 @@ In TypeScript, `tree[T]` is `{ value: T; children: Tree<T>[] }` and a graph is
 `{ nodes: number; edges: [number, number][] }`.
 
 Every program can read a `GAME` dictionary/object: `feed_cost` (rounds a feeding bee sits out),
-`challenge_type`, `response_type`, `max_len`, `max_nodes` and `ms` (your program's own time limit per
-call, in milliseconds). It doesn't
-say what time it is in the game.
+`challenge_type`, `response_type`, `max_len`, `max_nodes`, `round_ms` (200: the length of a round) and
+`ms` (your program's own time limit per call, in milliseconds: a clover's, an orchid's, or a bee's 50).
+It doesn't say what time it is in the game.
 
 Python programs may import `math`, `random`, `hashlib`, `string`, `itertools`, `functools`,
 `collections`, `re`, `json`, `bisect`, `heapq`, `statistics`, `fractions`, `decimal`, `operator`,
@@ -150,19 +192,21 @@ programs get **different** budgets on purpose, measured against the orchid:
 |---|---|---|---|---|
 | **size** | your program's size in nodes (see below) | 1,100 (half an orchid's) | 2,200 | 11,000 (5× an orchid's) |
 | **change** | nodes of change you earn per minute of play, and the most you can bank (a minute's worth) | 220 a minute, up to 220 | 1,540 a minute, up to 1,540 (7× a clover's) | 2,200 a minute, up to 2,200 |
-| **compute** | milliseconds per call (flowers: the whole program, every question) | 150 (3× an orchid's) | 50 | 25 (half an orchid's) |
+| **time** | milliseconds per call (flowers: the whole program, every question) | 150: the whole flower window | 100 (the owner sets it; at most a clover's) | 50: the decision window |
 
 Why it's lopsided:
-- **Clovers** are small but powerful: they can spend 3× an orchid's compute on every answer. That
-  makes effort a signal. An answer that takes real work to produce, like a big graph that fits a
-  tricky rule, is hard for an orchid to fake in a third of the time. With randomness and a clock, a
-  clover can search for as long as its budget allows and return the best it found, so how good its
-  answers are shows how hard it worked. But clovers change slowly.
-- **Orchids** get more code and change fast. They make up for less compute with cleverness: a faster
+- **Clovers** are small but powerful: they get the whole 150 ms flower window for every answer, half
+  as much again as an orchid's 100. That makes effort a signal. An answer that takes real work to
+  produce, like a big graph that fits a tricky rule, is hard for an orchid to fake in two thirds of
+  the time. With randomness and a clock, a clover can search for as long as its time allows and
+  return the best it found, so how good its answers are shows how hard it worked. Every answer is
+  delivered at 150 ms, so an orchid can't be caught out by answering early, only by how good its
+  answers are. But clovers change slowly.
+- **Orchids** get more code and change fast. They make up for less time with cleverness: a faster
   way to produce the same kind of answer, or a shallower look-alike, re-aimed whenever they see what
   the bees trust.
-- **Bees** get lots of code for a whole kit of detectors, but only a little time per decision. So the
-  best signals are ones that are **hard to make but easy to check**.
+- **Bees** get lots of code for a whole kit of detectors, but only 50 ms per decision. So the best
+  signals are ones that are **hard to make but easy to check**.
 
 ### What counts toward size
 
@@ -195,8 +239,9 @@ lookup table.
 ## Changing your programs
 
 Once the garden is running, you can change any of your programs **at any moment**, and the new version
-**goes live at once**: a flower's next answer comes from the new code, and a bee switches at its next
-turn (leaving the flower it was at, and starting afresh).
+**goes live at once**: a flower's next answer comes from the new code, and a bee switches at the start
+of the next round (leaving the flower it was at, dropping whatever it had queued, and starting afresh:
+the game asks the new bee for its first challenge straight away).
 
 A change costs the **node edits** that turn the program playing now into the new one: inserting or
 deleting a node costs its size, changing an operator or a name costs 1, and a changed literal costs the
@@ -212,16 +257,20 @@ paused.
 ## What everyone can see
 
 **Everything the bees do, as it happens.** Every bee's every action is public the moment it happens:
-whose bee, at whose patch, at which of its flowers (clover or orchid), every challenge and response,
-every feed and whether it paid, every error, and how long each flower took to answer.
+whose bee, at whose patch, at which of its flowers (clover or orchid), every challenge as it is asked
+and every response, every feed and whether it paid, every leave and every error. The game's settings,
+every time limit included, are public too.
 
-**Secret during play:** your code, what your bee prints, and your **code changes**: when you change a
-program, how big the change was, what it cost, and how much change budget you have left. Other teams
-only see what your programs *do*. (Your team sees all of its own.)
+**Secret during play:** your code, what your bee prints, a challenge your bee has queued but not yet
+asked, how long your programs actually took (each flower's answer time and each bee's decision time),
+and your **code changes**: when you change a program, how big the change was, what it cost, and how
+much change budget you have left. Other teams only see what your programs *do*. (Your team sees all
+of its own.)
 
 **When the game ends**, everyone can replay it with all of that revealed: every team's code changes
 (when, how big, what they cost), their change budgets over time, which version of each program played
-every turn, and (unless the owner turns it off) all code and all printouts.
+every action, how long every answer and decision took, and (unless the owner turns it off) all code
+and all printouts.
 
 ## Scoring: Darwinian fitness
 

@@ -320,15 +320,17 @@ test("programs run minified: the names they define can't carry data", async () =
 });
 
 test("compute budgets are per program: a clover can be given far more compute than an orchid", async () => {
-  const busyFlower = `def flower(c):\n    x = 0\n    for i in range(1_400_000):\n        x = (x + i * c) % 1000003\n    return x\n`;
+  // Works for 120 ms by the clock (a loop count would depend on how fast the machine is).
+  const busyFlower = `import time\ndef flower(c):\n    t = time.perf_counter()\n    x = 0\n    while time.perf_counter() - t < 0.12:\n        x = (x + c) % 1000003\n    return x\n`;
   const bee = `def forage(seen):\n    return "leave" if seen else ["ask", 3]\n`;
   const config = normalizeConfig({ budgets: { clover: { ms: 400 }, orchid: { ms: 50 } } });
   const out = await play(config, [{ clover: busyFlower, orchid: busyFlower, bee }], 2);
   const byKind = Object.fromEntries(out.actions.filter((a) => a.action === "ask").map((a) => [a.kind, a]));
   assert.equal(typeof byKind.clover.r, "number", JSON.stringify(byKind.clover));
-  assert.match(byKind.orchid.error, /Timeout/);
+  assert.match(String(byKind.orchid.error), /Timeout/, JSON.stringify(out.actions));
   assert.equal(byKind.orchid.by, "flower");
-  assert.ok(byKind.clover.ms > 50);
+  assert.ok(byKind.clover.ms > 115);
+  assert.ok(byKind.orchid.ms < 100);
 });
 
 for (const language of ["python", "typescript"]) {

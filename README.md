@@ -41,7 +41,7 @@ To work on the web app with hot reload, run the server and then `API=http://loca
 |---|---|
 | `server/index.js` | Express app: JSON API under `/api`, the web app from `web/dist`, `vendor/` for the browser |
 | `server/games.js` | rooms, games, teams, programs and change budgets, start/pause/finish, and the **viewer-filtered views** |
-| `server/engine.js` | the garden: bees take turns round robin; programs can be swapped at any moment; actions and ledgers out |
+| `server/engine.js` | the garden: lockstep 200 ms rounds, one action slot per bee; queued challenges, answers delivered at 150 ms, 50 ms bee decisions with late replies; programs can be swapped at any moment; actions and ledgers out |
 | `server/live.js` | runs each running game's garden in one server process (advisory lock), writing actions, clock and ledgers 4× a second |
 | `server/runners/` | program runners. Python flowers fork per call (stateless); a bee is one process for as long as its version plays. TypeScript uses fresh `vm` contexts |
 | `server/lib/scoring.js` | rootsum → allure / forage → shares → fitness |
@@ -83,5 +83,5 @@ nsjail, or a WASM interpreter).
 | `PORT` | `3000` |
 | `AUTH_PROVIDER` | `dev` |
 | `COOKIE_SECURE` | unset (set `1` behind https) |
-| `CPU_SLOTS` | CPU cores: at most this many programs run at once in a server process, so compute limits stay fair |
+| `CPU_SLOTS` | CPU cores: at most this many programs run at once in a server process, so time limits stay fair (rounds take longer in wall time if a round needs more) |
 | `DEV_LOGIN_SECRET` | unset. When set, the dev name login also requires `{"secret"}` (for arena servers where AI teams must not sign in as each other) |

@@ -1,7 +1,9 @@
 // Runs the gardens of running games. Each game's garden runs in exactly one server process, whichever
 // holds the game's advisory lock; every process adopts running games nobody holds (on boot, on any change
-// to the game, and every few seconds), so a game survives its process dying (its bees start afresh).
-// Every FLUSH_MS the garden's new actions, clock and ledgers are written and announced. Submissions,
+// to the game, and every few seconds), so a game survives its process dying (its bees start afresh, and
+// the rounds carry on from the stored round and clock). Live gardens are paced: a round lasts at least
+// its 200 ms of game time on the wall clock.
+// Every FLUSH_MS the garden's new actions, round, clock and ledgers are written and announced. Submissions,
 // pauses and finishes are written to the database by whichever process got the request; the change
 // notification brings them here, and new programs go live at once.
 import pg from "pg";
@@ -77,7 +79,7 @@ function adopt(g) {
   const index = new Map(g.participants.map((id, i) => [id, i]));
   const garden = new Garden({
     config: g.config, teams: g.participants.length, clockMs: Number(g.clock_ms), round: Number(g.round), lastSeq: Number(g.last_seq),
-    ledgers: { feeds: g.feeds, nectar: g.nectar },
+    ledgers: { feeds: g.feeds, nectar: g.nectar }, paced: true,
   });
   if (g.status === "paused") garden.pause();
   const run = { id: g.id, room: g.room_id, participants: g.participants, index, garden, versions: new Map(), flushing: null, abandoned: false };

@@ -418,7 +418,10 @@ async function recentScores(g, participants) {
  * as they happen, except:
  * what a bee printed (its own team's, or everyone's once a finished game is revealed), and, until the
  * game is over, anything that gives away a code change: which program versions played (your own only)
- * and why the engine ended a bee's visit (a new bee took over, or it restarted).
+ * and why the engine ended a bee's visit (a new bee took over, or it restarted); and how long programs
+ * actually took (a flower's answer time `ms` and a bee's decision time `beeMs`, your own only). Every
+ * answer reaches the bee at the end of the flower window, so that bees can't tell flowers apart by
+ * timing; the times would undo that if everyone could read them during play.
  */
 export async function viewActions(game, user, { after = 0, before = null, limit = 1000, mine: onlyMine = false } = {}) {
   const g = (await query("SELECT status, config, last_seq, clock_ms, round FROM games WHERE id = $1", [game.id])).rows[0];
@@ -438,10 +441,11 @@ export async function viewActions(game, user, { after = 0, before = null, limit 
 
 export function actionView(a, myTeamId, over, revealed) {
   const out = { seq: a.seq, atMs: a.at_ms, round: a.round, bee: a.bee_team, visit: a.visit, patch: a.patch_team, kind: a.kind, action: a.action };
-  if (over || a.bee_team === myTeamId) out.beeVersion = a.bee_version;
-  if (over || a.patch_team === myTeamId) out.flowerVersion = a.flower_version;
-  if (a.bee_ms !== null && a.bee_ms !== undefined) out.beeMs = a.bee_ms;
-  if (a.action === "ask") Object.assign(out, { c: a.c, r: a.r, ms: a.ms, ...(a.after ? { after: true } : {}) });
+  const myBee = over || a.bee_team === myTeamId, myPatch = over || a.patch_team === myTeamId;
+  if (myBee) out.beeVersion = a.bee_version;
+  if (myPatch) out.flowerVersion = a.flower_version;
+  if (myBee && a.bee_ms !== null && a.bee_ms !== undefined) out.beeMs = a.bee_ms;
+  if (a.action === "ask") Object.assign(out, { c: a.c, r: a.r, ...(myPatch ? { ms: a.ms } : {}), ...(a.after ? { after: true } : {}) });
   if (a.action === "feed") out.nectar = a.nectar;
   if (a.error && (a.error_by !== "engine" || over || a.bee_team === myTeamId)) Object.assign(out, { error: a.error, by: a.error_by });
   if (a.log && (revealed || a.bee_team === myTeamId)) out.log = a.log;
