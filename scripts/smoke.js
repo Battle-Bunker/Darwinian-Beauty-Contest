@@ -125,9 +125,18 @@ for (const a of seen.actions) {
     assert.ok(!slots.has(`${a.bee}:${a.round}`), "one slot per bee per round");
     slots.add(`${a.bee}:${a.round}`);
     assert.equal(a.atMs, (a.round - 1) * 200);
-  } else assert.equal(a.atMs, (a.round - 1) * 200 + 150);
+  } else if (a.action === "arrive") assert.equal(a.atMs, (a.round - 1) * 200);
+  else assert.equal(a.atMs, (a.round - 1) * 200 + 150);
   if (a.action === "leave") assert.equal(a.c, undefined);
 }
+// Every assignment of a bee to a flower is public as it happens: each visit opens with an arrival there.
+const visits = new Map();
+for (const a of seen.actions) { const k = `${a.bee}:${a.visit}`; if (!visits.has(k)) visits.set(k, []); visits.get(k).push(a); }
+for (const acts of visits.values()) { // (this page starts at the first action, so every visit's start is in it)
+  assert.equal(acts[0].action, "arrive");
+  assert.ok(acts.every((a) => a.patch === acts[0].patch && a.kind === acts[0].kind));
+}
+assert.ok([...visits.values()].some((acts) => acts[0].action === "arrive" && acts[1]?.action === "ask"));
 assert.ok(seen.actions.some((a) => a.bee === ada && a.action === "leave") && seen.actions.some((a) => a.bee === bo && a.action === "leave"));
 // How long programs took is their own team's during play: Bo sees only his own.
 assert.ok(seen.actions.some((a) => typeof a.beeMs === "number"), "bee decision time is recorded");
@@ -176,6 +185,7 @@ const reader = stream.body.getReader();
 let text = "";
 while (!/"actions":\[/.test(text)) text += new TextDecoder().decode((await reader.read()).value);
 reader.cancel();
+assert.match(text, /"action":"arrive"/, "arrivals come over the stream");
 
 // The owner pauses: the clock stops. Resumes, then finishes early: code and prints are revealed.
 assert.equal((await api(players[0].token, "POST", `${g}/status`, { action: "pause" }, { allow: [403] })).status, 403);

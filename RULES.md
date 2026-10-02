@@ -38,7 +38,9 @@ nothing in the game: every program still gets its full time on a core of its own
 Each bee is shown one flower at a time. Every time it moves on, its next flower is picked at random
 from every flower in the garden, your own two included, each as likely as any other, whatever came
 before. There's no order to it: a bee can meet the same flower twice in a row, and over a game every
-flower comes up about equally often. `visit["flowers"]` says how many flowers there are.
+flower comes up about equally often. `visit["flowers"]` says how many flowers there are. The bee is
+assigned its next flower as the next round starts (once it has finished feeding), and everyone sees
+the **arrival** at once: which bee, at which flower of whose patch.
 
 **What a bee does next is always decided a round ahead.** Your bee's `forage` returns its *next* action,
 which is **queued** for its next round:
@@ -52,8 +54,10 @@ which is **queued** for its next round:
 
 **The round, step by step:**
 
-1. **0 ms.** Every bee's queued action runs at once: each queued challenge goes to its flower, or the
-   bee feeds. A bee with nothing queued as the round starts **loses its slot** for that round.
+1. **0 ms.** Every bee that has moved on arrives at its next flower. Then every bee's queued action
+   runs at once: each queued challenge goes to its flower, or the bee feeds. A bee with nothing queued
+   as the round starts **loses its slot** for that round (it still arrives, and asks there once it has
+   a challenge).
 2. **150 ms.** The flowers' answers are delivered. A cosmos has the whole 150 ms to answer; an orchid
    has a shorter time limit, **100 ms** by default (the room owner sets it, never more than a cosmos's).
    A flower that isn't done within its own limit gives no answer (`None`/`null`). Either way the answer
@@ -241,9 +245,17 @@ lookup table.
 ## Changing your programs
 
 Once the garden is running, you can change any of your programs **at any moment**, and the new version
-**goes live at once**: a flower's next answer comes from the new code, and a bee switches at the start
-of the next round (leaving the flower it was at, dropping whatever it had queued, and starting afresh:
-the game asks the new bee for its first challenge straight away).
+**goes live at once**, but **a visit keeps the versions it started with**. Once a bee has arrived at a
+flower, that visit runs to its end with the bee's code and the flower's code as they were at the
+arrival:
+- a **new flower** answers the visits that start after it went live; a bee already at the flower keeps
+  getting answers from the old version until it leaves.
+- a **new bee** takes over when the old one's visit ends: the old bee finishes the visit, whatever it
+  queued for its next flower is dropped, and the new bee starts afresh (the game asks it for its first
+  challenge straight away). A bee that is between visits switches at once.
+
+So you can't change what a bee does at a flower it has already arrived at, even after seeing where it
+went. A bee that stays at one flower a long time keeps its old code that long.
 
 A change costs the **node edits** that turn the program playing now into the new one: inserting or
 deleting a node costs its size, changing an operator or a name costs 1, and a changed literal costs the
@@ -258,9 +270,10 @@ paused.
 
 ## What everyone can see
 
-**Public, as it happens: everything the bees do.** For every action of every bee: whose bee, at
-whose patch, at which flower (cosmos or orchid), in which round, the challenge and the response, every
-feed and whether it paid, every leave and every error. The game's settings, every time limit
+**Public, as it happens: everything the bees do.** Every assignment of a bee to a flower, the moment
+it arrives. For every action of every bee: whose bee, at whose patch, at which flower (cosmos or
+orchid), in which round, the challenge and the response, every feed and whether it paid, every leave
+and every error. The game's settings, every time limit
 included, are public too. People and programs watching the game get exactly the same information:
 the web page shows what the API streams.
 

@@ -75,7 +75,13 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
   details: queued challenges, late replies and re-requests, `["leave", c]`.
 - **Visits.** Every new visit is at a flower picked uniformly at random among all the flowers in the
   garden, independently for each visit: no deck, no laps, and the same flower can come up twice in a
-  row. An action's `visit` is the bee's visit count.
+  row. A bee between visits (loaded, not feeding) is assigned its next flower as a round starts, which
+  is recorded as an `arrive` action and written to the stream at once; its first ask there comes in
+  the same round if it has a challenge queued. An action's `visit` is the bee's visit count.
+- **Versions are pinned per visit.** A visit keeps the bee's and the flower's program versions from its
+  arrival to its end. A new flower version answers visits that start after it went live (the old
+  version keeps answering the visits already at it, then goes). A new bee takes over when the bee's
+  current visit ends, dropping the old bee's queued challenge; a bee between visits switches at once.
 - `feedCost`: a bee that feeds has no slot for the next `feedCost` rounds.
 - `budgets.<kind>.size`: size budget in weighted nodes (vendor/measure.js; RULES.md explains it to players).
 - `budgets.<kind>.perMinute`, `cap`: change budget earned per minute of game time, and the most that can
@@ -144,14 +150,15 @@ nectarCollected, pollinators, nectarSources }`.
 `action`: one thing a bee did, public the moment it happens:
 
 ```jsonc
-{ "seq", "atMs", "round",        // order, game time, and the round it happened in. An ask or a feed happens
-                                 // as its round starts (atMs = (round - 1) × round_ms); a leave or an error
-                                 // when the bee decided, cosmos.ms later
+{ "seq", "atMs", "round",        // order, game time, and the round it happened in. An arrival, an ask or a feed
+                                 // happens as its round starts (atMs = (round - 1) × round_ms); a leave or an
+                                 // error when the bee decided, cosmos.ms later
   "bee", "patch",                // team ids: whose bee, at whose patch
   "visit",                       // the bee's visit number: one visit is several actions
   "kind": "cosmos|orchid",       // which flower of the patch (public)
-  "action": "ask|feed|leave|error",
-  "beeVersion", "flowerVersion", // which versions played: your own programs' during play, all once it's over
+  "action": "arrive|ask|feed|leave|error", // arrive: the bee was assigned this flower; every visit opens with one
+  "beeVersion", "flowerVersion", // which versions played (the ones in effect when the visit began): your own
+                                 // programs' during play, all once it's over
   "c", "r", "after",             // ask: challenge, response (null if it failed), asked after feeding
   "ms",                          // ask: how long the flower took. Your own patch's during play, all once it's over
   "beeMs",                       // how long the bee took to decide this action (after a feed, tasted is part of
@@ -165,7 +172,7 @@ nectarCollected, pollinators, nectarSources }`.
 A queued challenge appears only when it is asked: a leave never shows the challenge the bee queued for
 its next flower. A bee that missed its decision deadline gets an `error` with `by: "bee"` ("too slow:
 no reply within 50 ms"), which ends its visit. An `engine` leave ends a visit the bee didn't finish
-because its team replaced it (or it crashed and restarted). Submissions don't bump the public
+because it crashed and restarted (with new code, if its team sent some meanwhile). Submissions don't bump the public
 `game.version`, so other teams can't tell when a team changes its code.
 
 Every way of reading actions (pages, `before=`, `mine=1`, the event stream) applies the same rules, so

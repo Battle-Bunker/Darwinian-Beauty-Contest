@@ -58,8 +58,18 @@ for (const language of ["python", "typescript"]) {
         if (a.action === "feed") assert.equal(a.nectar, a.kind === "cosmos");
       }
     }
-    // Slot actions happen at the round's start; leaves are decided at the end of the flower window.
-    for (const a of out.actions) assert.equal(a.atMs, (a.round - 1) * 200 + (SLOT.has(a.action) ? 0 : 150), JSON.stringify(a));
+    // Arrivals and slot actions happen at the round's start; leaves are decided at the end of the flower window.
+    for (const a of out.actions) assert.equal(a.atMs, (a.round - 1) * 200 + (SLOT.has(a.action) || a.action === "arrive" ? 0 : 150), JSON.stringify(a));
+    // Every visit starts with the bee's arrival, and its first ask comes right after, in the same round.
+    for (let b = 0; b < 4; b++) {
+      const visits = new Map();
+      for (const a of byBee(out.actions, b)) (visits.get(a.visit) || visits.set(a.visit, []).get(a.visit)).push(a);
+      for (const [no, acts] of visits) {
+        assert.equal(acts[0].action, "arrive", `bee ${b} visit ${no}`);
+        assert.equal(acts.filter((a) => a.action === "arrive").length, 1);
+        if (acts[1]) assert.ok(acts[1].action === "ask" && acts[1].round === acts[0].round && acts[1].kind === acts[0].kind && acts[1].patch === acts[0].patch);
+      }
+    }
     assert.ok(out.actions.every((a, i) => i === 0 || a.atMs >= out.actions[i - 1].atMs));
     const seqs = out.actions.map((a) => a.seq);
     assert.deepEqual(seqs, seqs.map((_, i) => i + 1), "actions are numbered in order");
@@ -107,10 +117,10 @@ test("a bee can keep asking after it feeds; feeding again just moves on", async 
     const visit = out.actions.find((a) => a.kind === kind && a.action === "feed").visit;
     const steps = out.actions.filter((a) => a.visit === visit);
     assert.deepEqual(steps.map((a) => [a.action, a.c ?? null, !!a.after]),
-      [["ask", 1, false], ["feed", null, false], ["ask", 11, true], ["ask", 12, true], ["leave", null, false]]);
-    assert.equal(steps[1].nectar, kind === "cosmos");
-    assert.equal(steps[1].round, steps[0].round + 1);
-    assert.equal(steps[2].round, steps[1].round + 1 + config.feedCost, "after feeding, the bee sits out feedCost rounds");
+      [["arrive", null, false], ["ask", 1, false], ["feed", null, false], ["ask", 11, true], ["ask", 12, true], ["leave", null, false]]);
+    assert.equal(steps[2].nectar, kind === "cosmos");
+    assert.equal(steps[2].round, steps[1].round + 1);
+    assert.equal(steps[3].round, steps[2].round + 1 + config.feedCost, "after feeding, the bee sits out feedCost rounds");
   }
 });
 
@@ -247,8 +257,11 @@ def forage(seen, visit):
   assert.deepEqual(asks.map((a) => a.c).slice(0, 5), [1, 2, 3, 777, 5]);
   const a777 = asks.find((a) => a.c === 777);
   assert.equal(late.round, asks.find((a) => a.c === 3).round, "too slow deciding after asking 3");
-  assert.ok(!mine.some((a) => a.round === late.round + 1), "the round after: no slot");
+  // The round after: it is assigned its next flower, but has nothing queued, so it loses the slot.
+  const next = mine.filter((a) => a.round === late.round + 1);
+  assert.deepEqual(next.map((a) => a.action), ["arrive"], "the round after: an arrival, no slot");
   assert.equal(a777.round, late.round + 2);
+  assert.equal(a777.visit, next[0].visit, "asked at the flower it was assigned");
   assert.ok(a777.visit > late.visit, "at the next flower");
   assert.equal(mine.filter((a) => a.action === "leave").length, asks.length - 1, "every decision but the late one is a leave");
 });
@@ -291,7 +304,7 @@ for (const language of ["python", "typescript"]) {
     const mine = byBee(out.actions, 0);
     const late = mine.find(tooSlow);
     assert.ok(late, JSON.stringify(mine));
-    const after = mine.filter((a) => a.round > late.round);
+    const after = mine.filter((a) => a.round > late.round && a.action !== "arrive");
     assert.ok(after.length && after[0].action === "ask" && after[0].c === 4, JSON.stringify(after[0]));
     assert.ok(after[0].round >= late.round + 9 && after[0].round <= late.round + 13, `back in round ${after[0].round} (late in ${late.round})`);
     assert.ok(out.problems.some((p) => p.team === 0 && p.kind === "bee"), "the first problem is kept");
@@ -415,6 +428,66 @@ for (const language of ["python", "typescript"]) {
   });
 }
 
+test("a flower swap reaches only visits that start after it: a bee at the flower keeps its version", async () => {
+  // The bee stays 30 asks at every flower. The cosmos is replaced while the bee is a few asks into a visit there.
+  const bee = `def forage(seen, visit):\n    return ["ask", len(seen)] if len(seen) < 30 else ["leave", 0]\n`;
+  let swapSeq = null, retiredDuring = null, retiredAfter = null;
+  const atCosmos = (acts) => {
+    const last = acts.at(-1);
+    return last && last.kind === "cosmos" && last.action === "ask" && last.c >= 2 && last.c <= 5;
+  };
+  const out = await play(normalizeConfig({}), [{ cosmos: `def flower(c):\n    return 1\n`, orchid: `def flower(c):\n    return 2\n`, bee }], 2000, async (garden) => {
+    while (!garden.closed && !atCosmos(garden.out)) await new Promise((r) => setTimeout(r, 1));
+    await garden.setProgram(0, "cosmos", `def flower(c):\n    return 3\n`, 2);
+    swapSeq = garden.seq;
+    retiredDuring = garden.retiring.size; // the old version, still answering the bee that's there
+    // Then play on until the bee has visited the cosmos again.
+    while (!garden.closed && !garden.out.some((a) => a.seq > swapSeq && a.kind === "cosmos" && a.action === "arrive")) await new Promise((r) => setTimeout(r, 5));
+    while (!garden.closed && !garden.out.some((a) => a.seq > swapSeq && a.kind === "cosmos" && a.action === "ask" && a.flowerVersion === 2)) await new Promise((r) => setTimeout(r, 5));
+    retiredAfter = garden.retiring.size;
+    await garden.stop();
+  });
+  const cosmos = out.actions.filter((a) => a.kind === "cosmos");
+  const pinned = cosmos.find((a) => a.action === "ask" && a.seq > swapSeq).visit; // the visit in progress at the swap
+  const spanning = cosmos.filter((a) => a.visit === pinned && a.action === "ask");
+  assert.ok(spanning.some((a) => a.seq < swapSeq) && spanning.some((a) => a.seq > swapSeq), "a visit spanned the swap");
+  assert.ok(spanning.every((a) => a.flowerVersion === 1 && a.r === 1), "the visit kept the version it started with");
+  const later = cosmos.filter((a) => a.visit > pinned);
+  assert.ok(later.length && later.every((a) => a.flowerVersion === 2), "visits that start later get the new version");
+  assert.ok(later.filter((a) => a.action === "ask").every((a) => a.r === 3));
+  assert.equal(retiredDuring, 1, "the old version stays up while a visit is pinned to it");
+  assert.equal(retiredAfter, 0, "and goes once no visit uses it");
+  for (const a of cosmos.filter((x) => x.action === "arrive")) {
+    assert.ok(cosmos.filter((x) => x.visit === a.visit).every((x) => x.flowerVersion === a.flowerVersion), "one version per visit");
+  }
+});
+
+test("a bee swap during a visit takes effect when the visit ends; its queued challenge is dropped", async () => {
+  // Version 1 asks 8 times at each flower and leaves with ["leave", 999]; version 2 opens with 5000.
+  const v1 = `def forage(seen, visit):\n    if not seen:\n        return ["ask", 100]\n    return ["ask", 100 + len(seen)] if len(seen) < 8 else ["leave", 999]\n`;
+  const v2 = `def forage(seen, visit):\n    return ["ask", 5000 + len(seen)] if len(seen) < 3 else ["leave", 5000]\n`;
+  let swapSeq = null;
+  const midVisit = (acts) => { const l = acts.at(-1); return l && l.action === "ask" && l.c >= 101 && l.c <= 104; };
+  const out = await play(normalizeConfig({}), [{ ...flowers, bee: v1 }], 2000, async (garden) => {
+    while (!garden.closed && !midVisit(garden.out)) await new Promise((r) => setTimeout(r, 1));
+    await garden.setProgram(0, "bee", v2, 2);
+    swapSeq = garden.seq;
+    while (!garden.closed && garden.out.filter((a) => a.beeVersion === 2 && a.action === "ask").length < 4) await new Promise((r) => setTimeout(r, 5));
+    await garden.stop();
+  });
+  const visit = out.actions.find((a) => a.seq > swapSeq && a.action === "ask").visit; // the visit in progress at the swap
+  const spanning = out.actions.filter((a) => a.visit === visit);
+  assert.ok(spanning.some((a) => a.seq > swapSeq && a.action === "ask"), "the old bee kept asking after the swap");
+  assert.ok(spanning.every((a) => a.beeVersion === 1), "the old bee finished its visit");
+  assert.equal(spanning.at(-1).action, "leave");
+  assert.equal(spanning.filter((a) => a.action === "ask").length, 8, "all of it: its first ask and 7 more");
+  assert.ok(!out.actions.some((a) => a.by === "engine"), "no visit was cut short");
+  const later = out.actions.filter((a) => a.visit > visit);
+  assert.ok(later.every((a) => a.beeVersion === 2), "the new bee from the next visit on");
+  assert.ok(!out.actions.some((a) => a.c === 999 && a.action === "ask" && a.seq > swapSeq), "the old bee's queued challenge was dropped");
+  assert.equal(later.find((a) => a.action === "ask").c, 5000, "the new bee opened with its own first challenge");
+});
+
 test("a broken bee: mistakes end the visit and the bee is asked again; a bee that can't load sits out", async () => {
   const config = normalizeConfig({});
   // n counts flowers: the mistakes come at the 3rd, 6th and 9th.
@@ -480,7 +553,7 @@ test("adoption: a garden carries on from the stored round and clock", async () =
   assert.equal(d.round, 45);
   assert.equal(d.clockMs, 9000);
   assert.equal(d.actions[0].seq, 78);
-  assert.ok(d.actions.every((a) => a.round > 40 && a.atMs >= 8000 && a.atMs === 8000 + (a.round - 41) * 200 + (SLOT.has(a.action) ? 0 : 150)));
+  assert.ok(d.actions.every((a) => a.round > 40 && a.atMs >= 8000 && a.atMs === 8000 + (a.round - 41) * 200 + (SLOT.has(a.action) || a.action === "arrive" ? 0 : 150)));
 });
 
 test("change budgets accrue per minute of game time up to a cap", () => {

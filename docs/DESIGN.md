@@ -109,6 +109,16 @@ paid from the bee's change budget. Full transparency gives every team the most p
 reverse-engineer what a cosmos's signal is and how to fake it, which is what makes honest signalling
 hard: a cosmos's signal survives only if it stays costly to produce even once everyone understands it.
 
+### Assignments are public, and versions are pinned per visit
+
+Which flower each bee is at is public the moment it is assigned: every visit opens with an `arrive`
+action, written to the stream at once. That makes it tempting to react: a team watching its bee arrive
+at an orchid it knows could swap in a bee that knows it too. So a visit keeps the program versions in
+effect at its arrival, the bee's and the flower's, until it ends; a change reaches a bee at its next
+visit. A team can't steer its bee at a flower it can already see it's at, and a flower team can't
+re-aim its flower at a bee that has just arrived. What a team learns still reaches its bee, but only
+for flowers it hasn't been assigned yet, which it can't know in advance.
+
 ### Flowers are drawn at random, not dealt
 
 Every new visit is at a flower picked uniformly at random from the whole garden, independently of the
@@ -123,8 +133,8 @@ random draw has no laps to count. Over a game every flower still comes up about 
 
 | Game time | What happens |
 |---|---|
-| 0 ms | Round boundary: a new bee takes over (its visit ends, its queued action is dropped, and it's asked for its first challenge at once); a crashed one starts afresh. Then every bee with an action queued and not feeding acts: asks go to their flowers (a fresh process run per ask), feeds go in the ledgers. A bee with nothing queued loses the slot. |
-| 150 ms | Answers are delivered. Each bee that acted is called: `forage(seen, visit)`, after a feed `tasted` then `forage` in the same call. Leaves and errors are recorded at this time. |
+| 0 ms | Round boundary: a crashed bee starts afresh; new code for a bee between visits takes over (asked for its first challenge at once). Every bee between visits and not feeding is assigned a random flower (`arrive`, flushed at once), pinning the versions for that visit. Then every bee with an action queued and not feeding acts: asks go to their flowers (a fresh process run per ask, of the pinned version), feeds go in the ledgers. A bee with nothing queued loses the slot. |
+| 150 ms | Answers are delivered. Each bee that acted is called: `forage(seen, visit)`, after a feed `tasted` then `forage` in the same call. Leaves and errors are recorded at this time; a visit that ends lets new code for the bee take over. |
 | 200 ms | Each reply is in, or its deadline has passed. The next round starts. |
 
 At most one ask or feed per bee per round: with 6 teams, at most 30 actions a second.
@@ -136,8 +146,9 @@ At most one ask or feed per bee per round: with 6 teams, at most 30 actions a se
   `new: true` empties it; the first decision at a new flower only empties it if the bee got there by
   `["leave", c]`), and a generation number so replies from a replaced or restarted process are ignored.
   Re-requests are throttled: at most one in flight per bee, and at most one new one a round. Programs can
-  be swapped at any moment: a flower's next ask uses the new code; a bee swaps at the next round boundary.
-  Answers are labelled with the version that gave them. `paced: false` runs rounds back to back (tests
+  be swapped at any moment, but each visit pins the versions it began with: a replaced flower version is
+  kept (reference-counted) until no visit uses it; a bee swaps when its visit ends. Answers are labelled
+  with the version that gave them. `paced: false` runs rounds back to back (tests
   and the "try a bee" tool); a request outside the round flow then makes the next round if it answers
   within the bee's 50 ms.
 - `server/live.js`: each running game's garden runs in exactly one server process, whichever holds the

@@ -10,8 +10,9 @@
 // roundMs (cosmos.ms + bee.ms = 150 + 50 = 200 ms) of game time; game time is rounds × roundMs. A live
 // game paces rounds to real time (each lasts at least roundMs of wall time, longer if the machine is
 // short of cores: game time stays virtual, so that's still fair).
-//   0 ms   Each bee's QUEUED action runs: an ask goes to its flower, or the bee feeds. A bee with nothing
-//          queued as the round starts loses the slot. Queued challenges are secret until asked.
+//   0 ms   A bee between visits arrives at its next flower (a public `arrive`). Each bee's QUEUED action
+//          runs: an ask goes to its flower, or the bee feeds. A bee with nothing queued as the round
+//          starts loses the slot. Queued challenges are secret until asked.
 //   150 ms The flowers' answers are delivered (null if a flower wasn't done within its own time limit:
 //          a cosmos gets the whole 150 ms, an orchid its own, shorter limit), so when an answer arrives
 //          says nothing about which flower gave it. Each bee that acted is asked for its next action:
@@ -530,6 +531,7 @@ export class Garden {
       if (call.gen !== b.gen) return null;
       b.busy = false;
       const out = this.#onReply(b, v, res.res, res.ms);
+      if (out) out.rec.beeVersion = b.version; // the version that decided it, whatever takes over next
       if (b.pending && !b.visit) this.#swapIn(b); // the visit is over: new code takes over now
       return out;
     }
@@ -541,8 +543,9 @@ export class Garden {
       b.busy = false;
       this.#onLate(b, late, ms);
     }));
+    const rec = { action: "error", error: `too slow: no reply within ${this.beeMs} ms`, by: "bee", beeVersion: b.version };
     if (b.pending) this.#swapIn(b); // its late reply goes with the old bee
-    return { b, v, rec: { action: "error", error: `too slow: no reply within ${this.beeMs} ms`, by: "bee" } };
+    return { b, v, rec };
   }
 
   /** A reply in time. Queues the next action, or ends the visit (and asks again if it gave no challenge). */
