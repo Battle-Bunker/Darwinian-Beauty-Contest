@@ -71,8 +71,6 @@ when the session ends.
 The game's public API needs no login, and you may read it (GET only) at ${apiBase}:
 - \`GET ${apiBase}/events?after=<seq>\`: Server-Sent Events, lines \`data: {...}\` with \`{actions, lastSeq, clockMs}\` as they
   happen (a few times a second), \`{clockMs, lastSeq}\` when nothing is new, \`{version}\` when the game's public state changed
-- \`${apiBase.replace(/^http/, "ws")}/ws?after=<seq>\`: the same messages over a WebSocket (\`garden.follow_live(transport="ws")\`;
-  your own code may not open raw sockets, so use garden.py for it)
 - \`GET ${apiBase}/actions?after=<seq>&limit=<n ≤ 5000>\`: a page of actions, \`{actions, lastSeq, clockMs, status}\`
 - \`GET ${apiBase}/scores\`: just the live numbers, cheap to poll: clock, round, scores (whole game and last 5 minutes),
   and the feed and nectar ledgers (who fed where, who got nectar where)

@@ -39,6 +39,7 @@ export const PRESETS = {
     limits: { lobby: { opus: { turns: 40, usd: 2.0 }, sonnet: { turns: 40, usd: 1.0 } }, game: { opus: { turns: 20, usd: 0.5 }, sonnet: { turns: 20, usd: 0.3 } } },
     scaffold: { cpuShare: 0.15 },
     reserveUsd: 4,
+    noEvolution: true, // the same four teams in every game, so durations compare like with like
   },
   "graphs-examples": {
     description: "python, int→graph[any], 6 teams, 2-minute games, every team gets the example flowers (arena/examples/v3)",

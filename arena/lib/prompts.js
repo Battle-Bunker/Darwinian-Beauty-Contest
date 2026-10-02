@@ -146,8 +146,8 @@ ${personaAndSituation(persona, fixed)}
   the stream reaches your bee only through code you change (paid from your change budget), in a session or by your scaffold.
 - The action stream: stream/actions.jsonl holds every action, one JSON object per line, growing about once a second
   (stream/SCHEMA.md); stream/mine.jsonl adds what only your team sees of its own bee and patch. It can get big: read it with code (tools/stream.py), never
-  print it whole. The same stream is on the game's public API, which needs no login: ${apiBase}/events (Server-Sent Events),
-  ${apiBase.replace(/^http/, "ws")}/ws (WebSocket, through garden.follow_live) and ${apiBase}/actions?after=<seq>.
+  print it whole. The same stream is on the game's public API, which needs no login: ${apiBase}/events (Server-Sent Events;
+  garden.follow_live reads it) and ${apiBase}/actions?after=<seq>. There is no WebSocket.
 - ${sizeText()} So write readable code, and keep prose in comments (docstrings are strings).
 - Every program's time limit is public (config.json): use your compute right up to your own limit if it helps; the
   actual time each call took is private to its own team during play.

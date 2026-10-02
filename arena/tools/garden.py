@@ -22,11 +22,8 @@ Actions are dicts (stream/SCHEMA.md): seq, atMs, round, bee, patch, kind (cosmos
 dealt, before its first ask. Your team sees all of it; your bee sees none of it unless
 you put it into its code. Team ids: garden.ME is yours, garden.TEAMS maps ids to names.
 """
-import base64
 import json
 import os
-import socket
-import struct
 import sys
 import time
 import urllib.request
@@ -88,76 +85,15 @@ def _sse_messages(after):
                 yield json.loads(raw[6:])
 
 
-def _ws_messages(after):
-    """The game's WebSocket (the same messages as the event stream), with nothing but the standard library."""
-    url = "%s/ws?after=%d" % (API.replace("http", "ws", 1), after)
-    hostport, path = url.split("://", 1)[1].split("/", 1)
-    host, _, port = hostport.partition(":")
-    sock = socket.create_connection((host, int(port or 80)), timeout=60)
-    try:
-        key = base64.b64encode(os.urandom(16)).decode()
-        sock.sendall(("GET /%s HTTP/1.1\r\nHost: %s\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
-                      "Sec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\n\r\n" % (path, hostport, key)).encode())
-        buf = b""
-        while b"\r\n\r\n" not in buf:
-            chunk = sock.recv(4096)
-            if not chunk:
-                raise ConnectionError("no handshake")
-            buf += chunk
-        head, buf = buf.split(b"\r\n\r\n", 1)
-        if b" 101" not in head.split(b"\r\n")[0]:
-            raise ConnectionError(head.split(b"\r\n")[0].decode(errors="replace"))
-
-        def read(n):
-            nonlocal buf
-            while len(buf) < n:
-                chunk = sock.recv(65536)
-                if not chunk:
-                    raise ConnectionError("closed")
-                buf += chunk
-            out, buf = buf[:n], buf[n:]
-            return out
-
-        def send(op, data=b""):  # client frames are masked
-            mask = os.urandom(4)
-            sock.sendall(bytes([0x80 | op, 0x80 | len(data)]) + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(data)))
-
-        message = b""
-        while True:
-            b1, b2 = read(2)
-            n = b2 & 0x7F
-            if n == 126:
-                n = struct.unpack(">H", read(2))[0]
-            elif n == 127:
-                n = struct.unpack(">Q", read(8))[0]
-            mask = read(4) if b2 & 0x80 else None
-            data = read(n)
-            if mask:
-                data = bytes(b ^ mask[i % 4] for i, b in enumerate(data))
-            op = b1 & 0x0F
-            if op == 8:
-                return
-            if op == 9:
-                send(0xA, data[:125])
-            elif op in (0, 1, 2):
-                message += data
-                if b1 & 0x80:
-                    yield json.loads(message)
-                    message = b""
-    finally:
-        sock.close()
-
-
-def follow_live(after=None, transport="sse"):
-    """Like follow(), but straight from the game's public API: lower latency than the file (a few times a second).
-    transport: "sse" (Server-Sent Events) or "ws" (the WebSocket). Reconnects if the connection drops."""
+def follow_live(after=None):
+    """Like follow(), but straight from the game's public API (Server-Sent Events): lower latency than the file (a few
+    times a second). Reconnects if the connection drops."""
     if after is None:
         a = _s.last()
         after = a["seq"] if a else 0
-    messages = _ws_messages if transport == "ws" else _sse_messages
     while True:
         try:
-            for msg in messages(after):
+            for msg in _sse_messages(after):
                 for a in msg.get("actions") or []:
                     if a["seq"] > after:
                         after = a["seq"]
