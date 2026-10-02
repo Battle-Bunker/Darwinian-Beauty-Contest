@@ -16,7 +16,8 @@ import { TeamsPanel } from "../components/Teams";
 import { ProgramEditors } from "../components/ProgramEditors";
 import { Podium, Scores } from "../components/Scores";
 import { Feed } from "../components/Feed";
-import { GameClock } from "../components/Clock";
+import { GameClock, roundLine } from "../components/Clock";
+import { TimingTable } from "../components/Timing";
 import { ChangeTimeline, historyTeams, VersionBrowser } from "../components/History";
 import { ValueTypes } from "../components/Value";
 
@@ -121,7 +122,7 @@ function GameBody({ view, base, store }: { view: GameView; base: string; store: 
     node: <Section id="feed" title={over ? "Every action" : "Live actions"}><Feed view={view} store={store} base={base} /></Section>,
   } : null;
   const changes = live && playing ? { id: "changes", label: "Your changes", node: <Section id="changes" title="Your team's changes"><MyChanges view={view} store={store} /></Section> } : null;
-  const replay = over && historyTeams(view).length ? { id: "replay", label: "Changes", node: <Section id="replay" title="Who changed what, when"><Replay view={view} /></Section> } : null;
+  const replay = over && historyTeams(view).length ? { id: "replay", label: "Changes", node: <Section id="replay" title="Who changed what, when"><Replay view={view} store={store} /></Section> } : null;
 
   if (lobby) sections.push(teams, ...(programs ? [programs] : []), garden);
   else if (live) sections.push(garden, ...[programs, scores, feed, changes, teams].filter((x): x is NonNullable<typeof x> => !!x));
@@ -142,6 +143,7 @@ function GameBody({ view, base, store }: { view: GameView; base: string; store: 
               {view.myTeam ? ` You're on ${view.myTeam.name}${live && !playing ? ", which is sitting this game out" : ""}.` : lobby ? " Start or join a team below to play." : " You're watching."}
             </p>
             <div className="share-row"><code className="share-link">{link}</code><CopyButton text={link} label="Copy link" /></div>
+            <p className="small muted round-line">{roundLine(view)}</p>
             {!(g.isOwner && lobby) && (
               <details className="settings-details">
                 <summary>Game settings</summary>
@@ -196,7 +198,8 @@ function MyChanges({ view, store }: { view: GameView; store: LiveStore }) {
 }
 
 /** After the game: every team's changes over the game, and their code if revealed. */
-function Replay({ view }: { view: GameView }) {
+function Replay({ view, store }: { view: GameView; store: LiveStore }) {
+  useLiveTick(store, 1000);
   const teams = historyTeams(view);
   const [picked, setPicked] = useState<{ team: string; kind: Kind; version: number } | null>(null);
   return (
@@ -204,6 +207,9 @@ function Replay({ view }: { view: GameView }) {
       <ChangeTimeline view={view} teams={teams} endMs={view.game.clockMs} picked={picked} onPick={(team, kind, version) => { setPicked({ team, kind, version }); document.getElementById("versions")?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }} />
       <h3 id="versions">{view.game.revealed ? "Code, version by version" : "Versions"}</h3>
       <VersionBrowser view={view} teams={teams} picked={picked} onPick={setPicked} />
+      <h3>How long programs took</h3>
+      <p className="small muted">Typical time / the slowest 10%, against each limit, and how often each missed it (⏱), over the {store.actions.length.toLocaleString()} actions loaded{store.complete ? " (the whole game)" : " (load earlier actions below for more)"}. Secret during play; everyone's now.</p>
+      <TimingTable view={view} actions={store.actions} />
     </div>
   );
 }

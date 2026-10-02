@@ -13,6 +13,7 @@ import { availableAt, waitFor } from "../lib/budget";
 import { useLiveTick, type LiveStore } from "../lib/live";
 import { Value } from "./Value";
 import { FeedRow } from "./Feed";
+import { beeTiming, flowerTiming, TimingPanel } from "./Timing";
 
 const BLURB: Record<Kind, string> = {
   cosmos: "Your honest flower. Bees that feed here get nectar. flower(challenge) runs fresh for every question: it keeps nothing between questions, but it can use randomness and the clock to search for a good answer within its time limit.",
@@ -231,6 +232,7 @@ export function ProgramEditors({ view, base, store }: { view: GameView; base: st
                 : <Alert kind="error">{r.action === "submit" && <b>Not submitted: </b>}{r.check.errors.join(" · ")}</Alert>
             )}
 
+            {live && participant && <LiveTiming store={store} teamId={team.id} kind={kind} limit={budget.ms} />}
             {kind === "bee" && live && <BeePrints store={store} teamId={team.id} />}
             <TryPanel key={`try:${kind}`} kind={kind} code={current} base={base} challengeType={cfg.challengeType}
               flowers={{ cosmos: code.cosmos, orchid: code.orchid }} view={view} />
@@ -306,6 +308,19 @@ function SubmitBar({ store, status, kind, busy, canWrite, blocked, empty, unchan
   );
 }
 
+/** How long my program has been taking in this game, from the actions held (only my team sees these). */
+function LiveTiming({ store, teamId, kind, limit }: { store: LiveStore; teamId: string; kind: Kind; limit: number }) {
+  const rev = useLiveTick(store, 1000);
+  const data = useMemo(() => (kind === "bee" ? beeTiming(store.actions, teamId) : flowerTiming(store.actions, teamId, kind)),
+    [store, teamId, kind, rev]); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <TimingPanel data={data} limit={limit}
+      title={kind === "bee" ? "Your bee's decision times" : `Your ${kind}'s answer times`}
+      unit={kind === "bee" ? "recent decisions" : "recent questions"}
+      missLabel={kind === "bee" ? "too slow (lost a round)" : "no answer in time"} />
+  );
+}
+
 /** What my bee printed lately (its own team sees this during the game). */
 function BeePrints({ store, teamId }: { store: LiveStore; teamId: string }) {
   const rev = useLiveTick(store, 500);
@@ -349,7 +364,7 @@ function InterfaceBox({ iface, kind, language }: { iface: ProgramInterface; kind
       </dl>
       {t.rules.length > 0 && <ul className="iface-rules">{t.rules.map((r, i) => <li key={i}>{r}</li>)}</ul>}
       <p className="small muted">
-        Programs can also read <code>GAME</code> ({language === "python" ? 'GAME["feed_cost"]' : "GAME.feed_cost"}, challenge_type, response_type, max_len, max_nodes, and ms: this program's time limit per call).
+        Programs can also read <code>GAME</code> ({language === "python" ? 'GAME["feed_cost"]' : "GAME.feed_cost"}, challenge_type, response_type, max_len, max_nodes, round_ms, and ms: this program's time limit per call).
         {" "}A response of the wrong type, a crash or a timeout reaches the bee as <code>{none}</code>.
       </p>
     </details>
@@ -399,8 +414,8 @@ function TryPanel({ kind, code, base, challengeType, flowers, view }: {
       {kind === "bee" ? (
         <p className="small muted">
           {bothFlowers
-            ? "Your bee forages a tiny garden of just your own two flowers, as they are in your cosmos and orchid editors right now, for 300 rounds."
-            : "Your bee forages a tiny garden of just your own two flowers for 300 rounds. Your cosmos and orchid editors aren't both filled in, so it visits the versions your team saved."}
+            ? "Your bee forages a tiny garden of just your own two flowers, as they are in your cosmos and orchid editors right now, for 300 rounds, run back to back (not in real time), with the real time limits."
+            : "Your bee forages a tiny garden of just your own two flowers for 300 rounds, run back to back with the real time limits. Your cosmos and orchid editors aren't both filled in, so it visits the versions your team saved."}
         </p>
       ) : (
         <label className="field">
@@ -412,6 +427,10 @@ function TryPanel({ kind, code, base, challengeType, flowers, view }: {
       <button className="btn btn-ghost" onClick={run} disabled={busy}>{busy ? <Spinner label="Running…" /> : kind === "bee" ? "Try my bee" : `Ask my ${kind}`}</button>
       {error && <Alert kind={error.soft ? "info" : "error"}>{error.text}</Alert>}
 
+      {kind !== "bee" && flower && !flower.error && flower.results.length > 0 && (
+        <TimingPanel data={{ values: flower.results.filter((x) => !x.error && typeof x.ms === "number").map((x) => x.ms!), misses: flower.results.filter((x) => x.error).length }}
+          limit={view.game.config.budgets[kind].ms} title={`How long your ${kind} took`} unit="questions" missLabel="no answer" />
+      )}
       {kind !== "bee" && flower && (
         flower.error ? <Alert kind="error">{flower.error}</Alert> : (
           <div className="table-scroll">
@@ -437,8 +456,9 @@ function TryPanel({ kind, code, base, challengeType, flowers, view }: {
             <b>{plural(visits, "visit")}</b> in <b>{bee.rounds.toLocaleString()}</b> rounds · fed <b>{bee.feeds}</b> times · <DropIcon size={14} /> nectar <b>{bee.nectar}</b> · <FooledIcon size={14} /> fooled <b>{bee.feeds - bee.nectar}</b>
           </p>
           {bee.problems.map((p, i) => <Alert key={i} kind="error"><b>{p.kind}:</b> {p.error}</Alert>)}
+          <TimingPanel data={beeTiming(bee.actions, null)} limit={view.game.config.budgets.bee.ms} title="Your bee's decision times" unit="decisions" missLabel="too slow" />
           <ol className="feed-list try-list">
-            {bee.actions.slice(0, 300).map((a) => <FeedRow key={a.seq} a={a} teams={teams} myTeamId={null} own />)}
+            {bee.actions.slice(0, 300).map((a) => <FeedRow key={a.seq} a={a} teams={teams} myTeamId={null} own budgets={view.game.config.budgets} />)}
           </ol>
           {bee.actions.length > 300 && <p className="small muted">…and {(bee.actions.length - 300).toLocaleString()} more actions.</p>}
         </div>

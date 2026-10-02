@@ -1,8 +1,11 @@
 // The live action feed: every bee action as it happens, newest first, filterable by bee team, patch
 // team, flower and action. Reads the page's ring of recent actions a few times a second (or holds
 // still while frozen, so a row can be read while the game races on).
+// During play some fields are only there for your own programs: which flower (`kind`, at your own
+// patch), how long a flower took (`ms`, your flowers) and how long a bee took to decide (`beeMs`, your
+// bee); once the game is over, everyone's. The feed shows what's there and never infers the rest.
 import { memo, useMemo, useState } from "react";
-import type { Action, GameView, Team } from "../types";
+import type { Action, Budget, GameView, Kind, Team } from "../types";
 import { loadEarlier, useLiveTick, type LiveStore } from "../lib/live";
 import { errorText } from "../api";
 import { fmtClock } from "../lib/format";
@@ -10,11 +13,15 @@ import { Value } from "./Value";
 import { DropIcon, FooledIcon, PauseIcon, PlayIcon } from "./Icons";
 import { Alert } from "./ui";
 
-type ActionFilter = "" | "ask" | "feed" | "nectar" | "fooled" | "leave" | "error" | "after";
+type ActionFilter = "" | "ask" | "feed" | "nectar" | "fooled" | "leave" | "error" | "slow" | "after";
 const ACTION_FILTERS: [ActionFilter, string][] = [
   ["", "every action"], ["ask", "questions"], ["after", "questions after feeding"], ["feed", "feeds"],
   ["nectar", "feeds: nectar"], ["fooled", "feeds: fooled"], ["leave", "leaves"], ["error", "mistakes and failures"],
+  ["slow", "too slow (missed the deadline)"],
 ];
+
+/** A bee that didn't decide within its time: the engine records an error and moves on without it. */
+export const isTooSlow = (a: Action) => a.action === "error" && a.by === "bee" && /^too slow/i.test(a.error ?? "");
 
 interface Filters { bee: string; patch: string; kind: "" | "cosmos" | "orchid"; action: ActionFilter; prints: boolean }
 const NONE: Filters = { bee: "", patch: "", kind: "", action: "", prints: false };
@@ -33,6 +40,7 @@ function matches(a: Action, f: Filters): boolean {
     case "fooled": return a.action === "feed" && !a.nectar;
     case "leave": return a.action === "leave";
     case "error": return a.action === "error" || !!a.error;
+    case "slow": return isTooSlow(a);
   }
 }
 
@@ -44,6 +52,8 @@ export function Feed({ view, store, base, initial }: { view: GameView; store: Li
   const order = view.participants ?? [];
   const myTeamId = view.me?.teamId ?? null;
   const printsVisible = g.revealed || !!(myTeamId && order.includes(myTeamId));
+  // Which flower is known only at your own patch during play (at every patch once it's over).
+  const kindsVisible = g.status === "finished" || !!(myTeamId && order.includes(myTeamId));
 
   const [f, setF] = useState<Filters>({ ...NONE, ...initial });
   const [frozen, setFrozen] = useState<Action[] | null>(null);
@@ -84,11 +94,16 @@ export function Feed({ view, store, base, initial }: { view: GameView; store: Li
       <div className="feed-filters">
         <label className="feed-filter"><span>Bee</span>{teamSelect(f.bee, (v) => set({ bee: v }), "every bee", "Bee team")}</label>
         <label className="feed-filter"><span>at</span>{teamSelect(f.patch, (v) => set({ patch: v }), "every patch", "Patch team")}</label>
-        <label className="feed-filter"><span>flower</span>
-          <select value={f.kind} onChange={(e) => set({ kind: e.target.value as Filters["kind"] })} aria-label="Flower">
-            <option value="">both</option><option value="cosmos">cosmos</option><option value="orchid">orchid</option>
-          </select>
-        </label>
+        {kindsVisible && (
+          <label className="feed-filter" title={g.status === "finished" ? undefined : "Which flower a bee is at is known only at your own patch until the game ends"}>
+            <span>flower</span>
+            <select value={f.kind} onChange={(e) => set({ kind: e.target.value as Filters["kind"], ...(e.target.value && g.status !== "finished" && myTeamId ? { patch: myTeamId } : {}) })} aria-label="Flower">
+              <option value="">{g.status === "finished" ? "both" : "any"}</option>
+              <option value="cosmos">{g.status === "finished" ? "cosmos" : "my cosmos"}</option>
+              <option value="orchid">{g.status === "finished" ? "orchid" : "my orchid"}</option>
+            </select>
+          </label>
+        )}
         <label className="feed-filter"><span>doing</span>
           <select value={f.action} onChange={(e) => set({ action: e.target.value as ActionFilter })} aria-label="Action">
             {ACTION_FILTERS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
@@ -110,7 +125,7 @@ export function Feed({ view, store, base, initial }: { view: GameView; store: Li
         <p className="muted feed-empty">{g.status === "lobby" ? "Nothing yet: the bees fly once the game starts." : source.length ? "No actions match these filters." : "No actions yet."}</p>
       ) : (
         <ol className="feed-list" aria-label="Bee actions, newest first">
-          {rows.out.map((a) => <FeedRow key={a.seq} a={a} teams={teams} myTeamId={myTeamId} />)}
+          {rows.out.map((a) => <FeedRow key={a.seq} a={a} teams={teams} myTeamId={myTeamId} budgets={g.config.budgets} />)}
         </ol>
       )}
       <div className="row">
@@ -130,19 +145,32 @@ const Chip = ({ team, you }: { team: Team | undefined; you?: boolean }) => (
   </span>
 );
 
-export const FeedRow = memo(function FeedRow({ a, teams, myTeamId, tenths = true, own = false }: {
-  a: Action; teams: Record<string, Team>; myTeamId: string | null; tenths?: boolean; own?: boolean;
-}) {
-  const failed = a.action === "error" || (a.action === "ask" && a.error);
+/** A measured time against its limit: plain while comfortable, amber when close, red when over. */
+function Took({ ms, limit, what }: { ms: number; limit: number; what: string }) {
+  const tone = ms > limit ? "over" : ms > limit * 0.8 ? "near" : "";
   return (
-    <li className={`feed-row feed-${a.action} ${failed ? "feed-failed" : ""}`}>
+    <span className={`feed-took ${tone}`} title={`${what} took ${ms.toFixed(1)} ms (limit ${limit} ms)`}>
+      {what} {ms < 10 ? ms.toFixed(1) : Math.round(ms)}<span className="muted">/{limit} ms</span>
+    </span>
+  );
+}
+
+export const FeedRow = memo(function FeedRow({ a, teams, myTeamId, tenths = true, own = false, budgets }: {
+  a: Action; teams: Record<string, Team>; myTeamId: string | null; tenths?: boolean; own?: boolean; budgets?: Record<Kind, Budget>;
+}) {
+  const slow = isTooSlow(a);
+  const failed = a.action === "error" || (a.action === "ask" && a.error);
+  const flowerLimit = a.kind && budgets ? budgets[a.kind].ms : null;
+  return (
+    <li className={`feed-row feed-${a.action} ${failed ? "feed-failed" : ""} ${slow ? "feed-slow" : ""}`}>
       <span className="feed-time mono" title={`Action ${a.seq.toLocaleString()}: round ${a.round?.toLocaleString() ?? "?"}, at ${fmtClock(a.atMs, true)} of game time`}>
         {fmtClock(a.atMs, tenths)}{a.round != null && <span className="feed-round">r{a.round.toLocaleString()}</span>}
       </span>
       <span className="feed-who">
         {own ? <span className="muted small">your bee</span> : <Chip team={teams[a.bee]} you={a.bee === myTeamId} />}
         <span className="feed-arrow" aria-label="at">→</span>
-        {own ? <span className={`kind-pill ${a.kind}`}>your {a.kind}</span> : <><Chip team={teams[a.patch]} you={a.patch === myTeamId} /><span className={`kind-pill ${a.kind}`}>{a.kind}</span></>}
+        {own ? (a.kind ? <span className={`kind-pill ${a.kind}`}>your {a.kind}</span> : <span className="muted small">your patch</span>)
+          : <><Chip team={teams[a.patch]} you={a.patch === myTeamId} />{a.kind && <span className={`kind-pill ${a.kind}`}>{a.kind}</span>}</>}
       </span>
       <span className="feed-what">
         {a.action === "ask" && (
@@ -150,18 +178,20 @@ export const FeedRow = memo(function FeedRow({ a, teams, myTeamId, tenths = true
             {a.after && <span className="step-fed" title="Asked after feeding here: studying a flower whose truth the bee now knows">after feeding</span>}
             <Value v={a.c} role="challenge" max={28} /><span className="arrow">→</span>
             {a.error ? <span className="bad-text mono" title={a.error}>None</span> : <Value v={a.r} role="response" max={28} />}
-            {typeof a.ms === "number" && <span className="feed-ms" title="How long the flower took to answer">{a.ms < 10 ? a.ms.toFixed(1) : Math.round(a.ms)} ms</span>}
+            {typeof a.ms === "number" && (flowerLimit ? <Took ms={a.ms} limit={flowerLimit} what={a.kind ?? "flower"} /> : <span className="feed-ms" title="How long the flower took to answer">{a.ms < 10 ? a.ms.toFixed(1) : Math.round(a.ms)} ms</span>)}
           </span>
         )}
         {a.action === "feed" && (a.nectar
           ? <span className="ok-text nowrap"><DropIcon size={15} /> fed: <b>nectar</b></span>
           : <span className="bad-text nowrap"><FooledIcon size={15} /> fed: no nectar</span>)}
         {a.action === "leave" && <span className="muted">left{a.error ? `: ${a.error}` : ""}</span>}
-        {a.action === "error" && <span className="bad-text">mistake</span>}
+        {slow ? <span className="slow-badge" title={a.error ?? undefined}><span aria-hidden>⏱</span> too slow</span>
+          : a.action === "error" && <span className="bad-text">mistake</span>}
         {a.error && a.action !== "leave" && <span className="err-detail mono">{a.by && a.by !== "bee" ? `${a.by}: ` : ""}{a.error}</span>}
+        {typeof a.beeMs === "number" && budgets && <Took ms={a.beeMs} limit={budgets.bee.ms} what="bee" />}
         {(a.beeVersion != null || a.flowerVersion != null) && (
           <span className="feed-versions muted" title="Which versions of the programs played">
-            {a.beeVersion != null ? `bee v${a.beeVersion}` : ""}{a.beeVersion != null && a.flowerVersion != null ? " · " : ""}{a.flowerVersion != null ? `${a.kind} v${a.flowerVersion}` : ""}
+            {a.beeVersion != null ? `bee v${a.beeVersion}` : ""}{a.beeVersion != null && a.flowerVersion != null ? " · " : ""}{a.flowerVersion != null ? `${a.kind ?? "flower"} v${a.flowerVersion}` : ""}
           </span>
         )}
       </span>

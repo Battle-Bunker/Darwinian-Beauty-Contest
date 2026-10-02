@@ -601,6 +601,7 @@ input[type="range"] { accent-color: var(--honey); }
 .garden-legend li { display: inline-flex; align-items: center; gap: 6px; }
 .lg { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font: 800 12px var(--font-head); border: 1.5px solid #2b2418; background: #fff; color: #2b2418; }
 .lg-err { background: #ffd8a8; border-color: #b0302a; color: #b0302a; }
+.lg-mid { background: var(--surface-2); border-color: var(--ink-soft); color: var(--ink-soft); font-size: 11px; }
 
 /* svg parts */
 .g-hill { fill: var(--hill); }
@@ -715,6 +716,31 @@ input[type="range"] { accent-color: var(--honey); }
 .feed-log { grid-column: 2 / -1; margin: 2px 0 2px; max-width: 100%; }
 .try-list { max-height: 420px; }
 
+.feed-took { font-size: 11.5px; white-space: nowrap; padding: 0 6px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.feed-took.near { border-color: color-mix(in srgb, var(--warn) 55%, var(--line)); color: var(--warn); }
+.feed-took.over { border-color: color-mix(in srgb, var(--danger) 55%, var(--line)); color: var(--danger); font-weight: 800; }
+.slow-badge { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 999px; background: var(--danger-soft); color: var(--danger); font-weight: 800; font-size: 12.5px; border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent); }
+.feed-slow { background: color-mix(in srgb, var(--danger-soft) 55%, transparent) !important; }
+.round-line { margin: 0; }
+
+/* timings: figures plus a small histogram against the limit */
+.timing { display: grid; gap: 6px; margin-top: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.timing-title { font-size: 15px; }
+.timing-stats { display: flex; flex-wrap: wrap; gap: 6px 22px; }
+.timing-stat { display: grid; font-variant-numeric: tabular-nums; }
+.timing-stat b { font-family: var(--font-head); font-size: 20px; font-weight: 600; line-height: 1.1; }
+.timing-label { font-size: 12.5px; color: var(--muted); font-weight: 700; }
+.timing-bad .timing-label { color: var(--danger); }
+.timing-hist { max-width: 420px; }
+.timing-bars { display: flex; align-items: flex-end; gap: 2px; height: 64px; border-bottom: 1px solid var(--line); }
+.timing-col { flex: 1 1 0; max-width: 24px; height: 100%; display: flex; align-items: flex-end; justify-content: center; }
+.timing-bar { display: block; width: 100%; background: var(--accent); border-radius: 4px 4px 0 0; }
+.timing-bar-late { background: var(--danger); }
+.timing-limit { position: relative; width: 2px; align-self: stretch; margin: 0 4px; background: var(--ink-soft); opacity: .7; }
+.timing-limit span { position: absolute; top: -2px; left: 4px; font-size: 11px; font-weight: 700; color: var(--ink-soft); white-space: nowrap; }
+.timing-axis { display: grid; grid-template-columns: 1fr 1fr auto 36px; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.timing-axis span:nth-child(2) { text-align: center; }
+.timing-axis-late { text-align: right; color: var(--danger); }
 .scores-note { margin: 0; }
 .fit-weak { opacity: .6; }
 .fit-recent .fit-fill { background: var(--honey); }

@@ -85,13 +85,14 @@ export interface Action {
   bee: string;
   visit: number;
   patch: string;
-  kind: FlowerKind;
+  kind?: FlowerKind;        // which of the patch's flowers: your own patch's during play, every one once finished
   action: ActionKind;
   beeVersion?: number | null;
   flowerVersion?: number | null;
   c?: unknown;
   r?: unknown;
-  ms?: number | null;
+  ms?: number | null;       // ask: how long the flower took (your own flowers' during play, all once finished)
+  beeMs?: number | null;    // how long the bee took to decide this action (your own bee's during play, all once finished)
   after?: boolean;          // an ask after feeding at this flower
   nectar?: boolean | null;
   error?: string | null;

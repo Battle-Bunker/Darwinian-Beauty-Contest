@@ -99,6 +99,7 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
     </select>
   );
   const seconds = Math.round(draft.minutes * 60);
+  const roundMs = draft.budgets.cosmos.ms + draft.budgets.bee.ms;
 
   return (
     <form className="settings" onSubmit={save}>
@@ -117,8 +118,10 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
         <label className="field"><span>Max tree/graph nodes</span>{num(draft.maxNodes, (v) => set("maxNodes", v), 1, 4096, "Max tree or graph nodes")}</label>
       </div>
       <p className="small muted settings-hint">
-        {Number.isFinite(seconds) ? <>The game runs for <b>{fmtClock(seconds * 1000)}</b> of game time (the clock stops while paused). </> : null}
-        A round is one turn for every bee that isn't feeding; a bee that feeds sits out the next <b>{Number.isFinite(draft.feedCost) ? draft.feedCost : "?"}</b> rounds.
+        {Number.isFinite(seconds) && Number.isFinite(roundMs) && roundMs > 0
+          ? <>The game runs for <b>{fmtClock(seconds * 1000)}</b> of game time: <b>{Math.round((seconds * 1000) / roundMs).toLocaleString()}</b> rounds of <b>{roundMs} ms</b> (the clock stops while paused). </> : null}
+        In a round every bee acts at once: flowers have <b>{draft.budgets.cosmos.ms} ms</b> to answer (a cosmos the whole window, an orchid <b>{Math.min(draft.budgets.orchid.ms, draft.budgets.cosmos.ms)} ms</b>; every answer reaches the bee at {draft.budgets.cosmos.ms} ms), then bees have <b>{draft.budgets.bee.ms} ms</b> to decide.
+        A bee that feeds sits out the next <b>{Number.isFinite(draft.feedCost) ? draft.feedCost : "?"}</b> rounds.
       </p>
       <div className="settings-checks">
         <label className="check"><input type="checkbox" checked={draft.revealOnFinish} onChange={(e) => set("revealOnFinish", e.target.checked)} /> Reveal all code and every bee's prints when the game ends</label>
@@ -132,7 +135,7 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
               The budgets are lopsided on purpose: the cosmos is small but has strong compute, the orchid changes fast, the bee carries a big kit with little time per decision.
             </span>
           </caption>
-          <thead><tr><th className="left">Program</th><th>Size (nodes)</th><th>Change per minute</th><th>Change cap</th><th>Time (ms per call)</th></tr></thead>
+          <thead><tr><th className="left">Program</th><th>Size (nodes)</th><th>Change per minute</th><th>Change cap</th><th title="Cosmos: the flower window (every answer is delivered at its end). Orchid: its own limit, at most the cosmos's. Bee: the decision window.">Time limit (ms)</th></tr></thead>
           <tbody>
             {KINDS.map((k) => (
               <tr key={k}>
@@ -161,6 +164,8 @@ export function SettingsSummary({ cfg }: { cfg: GameConfig }) {
       <div className="chips">
         <span className="chip">{cfg.language === "python" ? "Python" : "TypeScript"}</span>
         <span className="chip">{fmtClock(cfg.minutes * 60000)} of game time</span>
+        <span className="chip" title={`Every bee acts at once each round: flowers answer within ${cfg.budgets.cosmos.ms} ms, then bees decide within ${cfg.budgets.bee.ms} ms`}>rounds of {cfg.budgets.cosmos.ms + cfg.budgets.bee.ms} ms</span>
+        <span className="chip">cosmos {cfg.budgets.cosmos.ms} ms · orchid {cfg.budgets.orchid.ms} ms · bee {cfg.budgets.bee.ms} ms</span>
         <span className="chip">feeding sits out {cfg.feedCost} rounds</span>
         <span className="chip mono">{cfg.challengeType} → {cfg.responseType}</span>
         {[cfg.challengeType, cfg.responseType].some((t) => /str|list|any/i.test(t)) && <span className="chip">max length {cfg.maxLen}</span>}
@@ -174,7 +179,7 @@ export function SettingsSummary({ cfg }: { cfg: GameConfig }) {
             <tr><th scope="row" className="left">size (nodes)</th>{KINDS.map((k) => <td key={k}>{cfg.budgets[k].size.toLocaleString()}</td>)}</tr>
             <tr><th scope="row" className="left">change per minute</th>{KINDS.map((k) => <td key={k}>{cfg.budgets[k].perMinute.toLocaleString()}</td>)}</tr>
             <tr><th scope="row" className="left">change cap</th>{KINDS.map((k) => <td key={k}>{cfg.budgets[k].cap.toLocaleString()}</td>)}</tr>
-            <tr><th scope="row" className="left">time (ms per call)</th>{KINDS.map((k) => <td key={k}>{cfg.budgets[k].ms}</td>)}</tr>
+            <tr><th scope="row" className="left">time limit (ms)</th>{KINDS.map((k) => <td key={k}>{cfg.budgets[k].ms}</td>)}</tr>
           </tbody>
         </table>
       </div>

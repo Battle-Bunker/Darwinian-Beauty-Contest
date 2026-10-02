@@ -1,14 +1,15 @@
 // Geometry and the live animation for the garden. The garden plays the action stream a moment behind
 // the game clock (DELAY), so actions that arrive in bursts (the server flushes a few times a second)
-// play out smoothly at the game times they happened, and a bee can be seen flying to a flower before
-// its first question there. Everything is driven by real time (performance.now()) once scheduled.
-// Bees can visit dozens of flowers a second; a drawn bee can't. When visits come faster than a bee can
-// fly and linger, it skips ahead to its latest visit (the flowers it skipped still light up and show
-// their feeds), so it hops at a readable pace without falling behind.
+// play out at the game times they happened. The game runs in lockstep rounds (200 ms by default): each
+// bee acts at most once a round, so a bee can be shown doing every single thing it does. A bee flies to
+// its next patch right after the last action of its previous visit, arriving as its first question
+// there is asked; when it feeds it sits on the patch for the rounds it's out of play.
 //
-// Each team's patch has its cosmos on the left and its orchid on the right (which flower is which is
-// public: every action says which one a bee visited). Each bee has its own slot on an arc above every
-// patch, so bees visiting the same patch never sit on top of each other.
+// Which of a patch's two flowers a bee is at is secret during play (actions carry `kind` only at your own
+// patch, and for everyone once the game is over). Without it, a bee hovers over the middle of the patch
+// and lands between its two flowers, the same spot whichever flower it is; with it, at the flower
+// itself. Each team's patch has its cosmos on the left and its orchid on the right, and each bee has its
+// own slot on an arc above every patch, so bees visiting the same patch never sit on top of each other.
 import type { Action, FlowerKind } from "../types";
 import type { LiveStore } from "../lib/live";
 
@@ -22,16 +23,14 @@ export const FLOWER_Y = -30;
 /** How far behind the game clock the garden plays (ms of game time). */
 export const DELAY = 1100;
 /** How far ahead of what it shows the garden looks, to start flights in time. */
-const LOOKAHEAD = 380;
-const MIN_FLY = 110;
-const HOP_MS = 210;    // a flight when skipping ahead
-const DWELL_MS = 160;  // the least time a bee lingers at a flower before hopping on
-const ASK_MS = 420;
-const FEED_MS = 650;
+const LOOKAHEAD = 450;
+const FLY_MS = 200;    // a flight between patches, ideally
+const MIN_FLY = 160;   // never shorter than this
+const ASK_MS = 600;    // the question bubble stays up this long after a question (it pops at each new one)
 const ERR_MS = 700;
 export const FX_MS = 1100;
 const MAX_FX = 48;
-const MERGE_MS = 700;  // feeds at the same flower within this share one effect, with a count
+const MERGE_MS = 400;  // feeds at the same spot within this share one effect, with a count
 
 export interface Pt { x: number; y: number }
 
@@ -78,21 +77,26 @@ export function slot(p: Pt, b: number, n: number): Pt {
   return { x: p.x + 94 * Math.cos(a), y: p.y + FLOWER_Y - 6 + 58 * Math.sin(a) };
 }
 
-/** x offset of a flower within its patch: the cosmos on the left, the orchid on the right. */
-export const flowerX = (kind: FlowerKind) => (kind === "cosmos" ? -FLOWER_DX : FLOWER_DX);
+/** x offset of a flower within its patch: the cosmos on the left, the orchid on the right; 0 (the middle
+ *  of the patch) when which flower it is isn't known. */
+export const flowerX = (kind: FlowerKind | undefined) => (kind === "cosmos" ? -FLOWER_DX : kind === "orchid" ? FLOWER_DX : 0);
 
-/** Where a bee hovers while it questions a flower: its slot, pulled toward that flower. */
-export function hoverAt(p: Pt, kind: FlowerKind, b: number, n: number): Pt {
+/** Where a bee hovers while it questions a flower (or, kind unknown, the patch): its slot, pulled toward it. */
+export function hoverAt(p: Pt, kind: FlowerKind | undefined, b: number, n: number): Pt {
   const s = slot(p, b, n);
   const fx = p.x + flowerX(kind), fy = p.y + FLOWER_Y;
   return { x: s.x + (fx - s.x) * 0.38, y: s.y + (fy - s.y) * 0.3 };
 }
 
-/** Where a feeding bee sits: on the flower head, nudged a little per bee. */
-export function landing(p: Pt, kind: FlowerKind, b: number, n: number): Pt {
+/** Where a feeding bee sits: on the flower head (kind unknown: between the two flowers), nudged a little per bee. */
+export function landing(p: Pt, kind: FlowerKind | undefined, b: number, n: number): Pt {
   const s = slot({ x: 0, y: 0 }, b, n);
-  return { x: p.x + flowerX(kind) + s.x * 0.12, y: p.y + FLOWER_Y - 6 + (s.y - FLOWER_Y + 6) * 0.1 };
+  const mid = kind === undefined;
+  return { x: p.x + flowerX(kind) + s.x * (mid ? 0.16 : 0.12), y: p.y + FLOWER_Y - (mid ? 14 : 6) + (s.y - FLOWER_Y + 6) * 0.1 };
 }
+
+/** The key of the spot an action happened at: the flower if known, else the patch. */
+export const spotKey = (patch: string, kind: FlowerKind | undefined) => `${patch}:${kind ?? ""}`;
 
 /** A bee's home: its slot over its own patch. */
 export const homeOf = (layout: Layout, team: string, b: number, n: number): Pt => (layout.pos[team] ? slot(layout.pos[team], b, n) : { x: 0, y: 0 });
@@ -104,24 +108,26 @@ export interface BeeSprite {
   x: number; y: number;
   flip: boolean;      // facing left
   mode: Mode;
-  pulse: number;      // 0..1 within an ask
+  pulse: number;      // 0..1: the question bubble's pop
   tilt: number;       // degrees
   flap: number;       // wing stroke, 0.35..1 (1: wings still)
 }
 
 export interface Fx { id: number; x: number; y: number; t0: number; nectar: boolean; count: number; key: string }
 
-/** Where a bee is headed: a flower, or home. */
-type Anchor = { patch: string; kind: FlowerKind } | null;
+/** Where a bee is headed: a flower (or a patch, when which flower isn't known), or home. */
+type Anchor = { patch: string; kind: FlowerKind | undefined } | null;
+
+/** Something a bee does at real time t: an action, or setting off for its next visit. */
+type Event = { t: number; a: Action } | { t: number; fly: { anchor: Anchor; arrive: number } };
 
 interface BeeState {
   team: string; index: number;
   anchor: Anchor;
   visit: number | null;     // the latest visit scheduled
-  shown: number | null;     // the visit the drawn bee is at (or flying to)
-  pending: { anchor: Anchor; visit: number; when: number } | null; // a newer visit to hop to
+  lastT: number;            // real time of the last event scheduled
   from: Pt; t0: number; t1: number; // the flight in progress (real time)
-  queue: { t: number; a: Action }[];
+  queue: Event[];
   askAt: number; feedAt: number; errorAt: number;
   last: Pt; // where it was drawn last
 }
@@ -157,6 +163,7 @@ export class GardenAnimator {
   private cursor = 0;     // the last seq scheduled
   private lastReal = 0;
   private fxId = 0;
+  private feedHold = 2000; // how long a feeding bee sits on its flower: the rounds it's out of play
   /** Set when the garden has nothing left to animate (lets the page stop its animation loop). */
   idle = false;
 
@@ -164,6 +171,11 @@ export class GardenAnimator {
     this.layout = layout;
     this.order = order;
     this.setTeams(layout, order);
+  }
+
+  /** Round length and how many rounds a feeding bee sits out (the game's config). */
+  setTiming(roundMs: number, feedRounds: number) {
+    this.feedHold = Math.max(500, Math.min(6000, roundMs * Math.max(1, feedRounds)));
   }
 
   setTeams(layout: Layout, order: string[]) {
@@ -174,7 +186,7 @@ export class GardenAnimator {
       const b = this.bees.get(team);
       if (b) { b.index = index; return; }
       const home = homeOf(layout, team, index, n);
-      this.bees.set(team, { team, index, anchor: null, visit: null, shown: null, pending: null, from: home, t0: 0, t1: 0, queue: [], askAt: -1e9, feedAt: -1e9, errorAt: -1e9, last: home });
+      this.bees.set(team, { team, index, anchor: null, visit: null, lastT: 0, from: home, t0: 0, t1: 0, queue: [], askAt: -1e9, feedAt: -1e9, errorAt: -1e9, last: home });
     });
   }
 
@@ -199,13 +211,14 @@ export class GardenAnimator {
       const a = acts[i], b = this.bees.get(a.bee);
       this.cursor = a.seq;
       if (!b) continue;
-      b.visit = b.shown = a.visit;
+      b.visit = a.visit;
       b.anchor = { patch: a.patch, kind: a.kind };
     }
     for (const b of this.bees.values()) {
       b.queue = [];
-      b.pending = null;
+      b.lastT = 0;
       b.t0 = b.t1 = 0;
+      b.feedAt = -1e9;
       b.last = this.anchorPt(b);
     }
     this.fx = [];
@@ -228,11 +241,11 @@ export class GardenAnimator {
     } else if (this.display < target - 4000) {
       this.jump(store, target - 200); // fell far behind (a hidden tab): skip ahead
     }
-    // Real-time playback, never past the target.
-    this.display = Math.min(target, this.display + dt);
-    if (this.display < target && status !== "running") this.display = Math.min(target, this.display + dt); // catch up a little faster
+    // Real-time playback, never past the target (a stopped game catches up a little faster).
+    this.display = Math.min(target, this.display + dt * (status === "running" ? 1 : 2));
 
-    // Schedule what happens up to a little ahead of what's shown.
+    // Schedule what happens up to a little ahead of what's shown. A new visit starts with a flight that
+    // sets off once the previous visit's last action has played, and lands as the first one here happens.
     const acts = store.actions;
     if (acts.length && this.cursor < acts[0].seq - 1) this.cursor = acts[0].seq - 1; // ring moved on
     for (let i = indexAfter(acts, this.cursor); i < acts.length && acts[i].atMs <= this.display + LOOKAHEAD; i++) {
@@ -243,36 +256,28 @@ export class GardenAnimator {
       const when = now + Math.max(0, a.atMs - this.display);
       if (a.visit !== b.visit) {
         b.visit = a.visit;
-        const anchor = { patch: a.patch, kind: a.kind };
-        if (now >= b.t1 + DWELL_MS) { b.shown = a.visit; b.pending = null; this.fly(b, anchor, now, when); }
-        else b.pending = { anchor, visit: a.visit, when };
+        const start = Math.min(when, Math.max(b.lastT, when - FLY_MS, now));
+        b.queue.push({ t: start, fly: { anchor: { patch: a.patch, kind: a.kind }, arrive: Math.max(start + MIN_FLY, when) } });
       }
       b.queue.push({ t: when, a });
+      b.lastT = when;
       if (b.queue.length > 64) b.queue.splice(0, b.queue.length - 64);
     }
 
-    // Hop on to the latest visit once a bee has lingered long enough where it is.
-    for (const b of this.bees.values()) {
-      if (b.pending && now >= b.t1 + DWELL_MS) {
-        b.shown = b.pending.visit;
-        this.fly(b, b.pending.anchor, now, Math.max(now + HOP_MS, b.pending.when));
-        b.pending = null;
-      }
-    }
-
-    // Fire what's due. The flower lights up and shows its feeds whatever the drawn bee is doing; the
-    // bee itself asks and sips only at the flower it's drawn at.
+    // Fire what's due, in order, bee by bee.
     const n = this.order.length;
     for (const b of this.bees.values()) {
       while (b.queue.length && b.queue[0].t <= now) {
-        const { t, a } = b.queue.shift()!;
-        const here = a.visit === b.shown;
-        if (a.action === "ask") { if (here) b.askAt = t; this.glow.set(`${a.patch}:${a.kind}`, t); }
+        const e = b.queue.shift()!;
+        if ("fly" in e) { b.feedAt = -1e9; this.fly(b, e.fly.anchor, now, e.fly.arrive); continue; }
+        const { t, a } = e;
+        if (a.action === "ask") { b.askAt = t; b.feedAt = -1e9; this.glow.set(spotKey(a.patch, a.kind), t); }
         else if (a.action === "feed") {
-          if (here) b.feedAt = t;
+          b.feedAt = t;
           const p = this.layout.pos[a.patch];
-          if (p) this.spawn(landing(p, a.kind, b.index, n), `${a.patch}:${a.kind}`, !!a.nectar, now);
-        } else if (a.action === "error") b.errorAt = t;
+          if (p) this.spawn(landing(p, a.kind, b.index, n), spotKey(a.patch, a.kind), !!a.nectar, now);
+        } else if (a.action === "error") { b.errorAt = t; b.feedAt = -1e9; }
+        else b.feedAt = -1e9; // leave
       }
     }
 
@@ -283,12 +288,12 @@ export class GardenAnimator {
       }
     }
     this.fx = this.fx.filter((f) => now - f.t0 < FX_MS);
-    const busy = this.fx.length > 0 || [...this.bees.values()].some((b) => b.queue.length || b.pending || now < b.t1 + 50 || now - b.feedAt < FEED_MS || now - b.askAt < ASK_MS || now - b.errorAt < ERR_MS);
+    const busy = this.fx.length > 0 || [...this.bees.values()].some((b) => b.queue.length || now < b.t1 + 50 || now - b.feedAt < this.feedHold || now - b.askAt < ASK_MS || now - b.errorAt < ERR_MS);
     this.idle = status !== "running" && this.display >= target && !busy;
   }
 
   private spawn(at: Pt, key: string, nectar: boolean, now: number) {
-    // Feeds that land on the same flower close together share one effect with a count.
+    // Feeds that land on the same spot close together share one effect with a count.
     const same = this.fx.find((f) => f.key === key && f.nectar === nectar && now - f.t0 < MERGE_MS);
     if (same) { same.count++; return; }
     this.fx.push({ id: ++this.fxId, x: at.x, y: at.y, t0: now, nectar, count: 1, key });
@@ -303,31 +308,32 @@ export class GardenAnimator {
       const home = homeOf(this.layout, b.team, b.index, n);
       const target = this.anchorPt(b);
       const bob = Math.sin(now / 160 + b.index * 1.7) * 1.4;
-      const face = (p: Pt) => (b.anchor && this.layout.pos[b.anchor.patch] ? p.x > this.layout.pos[b.anchor.patch].x + flowerX(b.anchor.kind) : p.x > (this.layout.pos[b.team]?.x ?? 0));
+      const patchPt = b.anchor ? this.layout.pos[b.anchor.patch] : undefined;
+      const face = (p: Pt) => (b.anchor && patchPt ? p.x > patchPt.x + flowerX(b.anchor.kind) : p.x > (this.layout.pos[b.team]?.x ?? 0));
       let s: BeeSprite;
       if (now < b.t1) {
         const u = ease(Math.max(0, Math.min(1, (now - b.t0) / Math.max(1, b.t1 - b.t0))));
         const p = bezier(b.from, target, u);
         const dx = target.x - b.from.x;
         s = { team: b.team, index: b.index, x: p.x, y: p.y, flip: Math.abs(dx) > 1 ? dx < 0 : face(p), mode: "fly", pulse: 0, tilt: Math.max(-16, Math.min(16, (target.y - b.from.y) * 0.08)) * (dx < 0 ? -1 : 1), flap: 1 };
-      } else if (!b.anchor || !this.layout.pos[b.anchor.patch]) {
+      } else if (!b.anchor || !patchPt) {
         const resting = status === "finished" || status === "lobby";
         s = { team: b.team, index: b.index, x: home.x, y: home.y + (resting ? 0 : bob), flip: face(home), mode: resting ? (status === "finished" ? "rest" : "home") : "idle", pulse: 0, tilt: 0, flap: 1 };
       } else {
         const sinceFeed = now - b.feedAt, sinceAsk = now - b.askAt, sinceErr = now - b.errorAt;
         let p = target, mode: Mode = "idle", pulse = 0, tilt = 0;
-        if (sinceFeed >= 0 && sinceFeed < FEED_MS) {
-          // Drop onto the flower, sip, lift off again.
-          const q = sinceFeed / FEED_MS;
-          const land = landing(this.layout.pos[b.anchor.patch], b.anchor.kind, b.index, n);
-          p = q < 0.25 ? lerp(target, land, ease(q / 0.25)) : q > 0.8 ? lerp(land, target, ease((q - 0.8) / 0.2)) : land;
+        if (sinceFeed >= 0 && sinceFeed < this.feedHold) {
+          // Drop onto the flower (or the patch), sip while out of play, lift off at the end.
+          const land = landing(patchPt, b.anchor.kind, b.index, n);
+          const down = Math.min(1, sinceFeed / 180), up = Math.max(0, (sinceFeed - (this.feedHold - 180)) / 180);
+          p = up > 0 ? lerp(land, target, ease(up)) : lerp(target, land, ease(down));
           mode = "feed";
         } else if (sinceErr >= 0 && sinceErr < ERR_MS) {
           mode = "error";
           tilt = Math.sin(now / 25) * 14;
         } else if (sinceAsk >= 0 && sinceAsk < ASK_MS) {
           mode = "ask";
-          pulse = Math.sin(Math.PI * (sinceAsk / ASK_MS));
+          pulse = sinceAsk < 160 ? Math.sin((Math.PI / 2) * (sinceAsk / 160)) : Math.max(0.55, 1 - (sinceAsk - 160) / 900);
         }
         const still = status === "paused";
         s = { team: b.team, index: b.index, x: p.x, y: p.y + (mode === "feed" || still ? 0 : bob), flip: face(p), mode, pulse, tilt, flap: 1 };
