@@ -78,14 +78,16 @@ def flower(challenge):
 QUESTION = ${q}
 tally = {}   # answer to QUESTION -> [times fed, times got nectar]
 
-def forage(seen):
+def forage(seen, visit):
     # seen = [[challenge, response], ...] for the flower in front of you
     if not seen:
-        return ["ask", QUESTION]    # takes this round's turn
+        return ["ask", QUESTION]    # the first challenge at the next flower
+    if visit["fed"]:
+        return ["leave", QUESTION]  # move on, and ask QUESTION first at the next flower
     fed, got = tally.get(str(seen[0][1]), [0, 0])
     if fed < 2 or got / fed >= 0.5:   # taste each new answer twice
-        return "feed"               # sits out GAME["feed_cost"] rounds
-    return "leave"                  # free
+        return "feed"               # then sits out GAME["feed_cost"] rounds
+    return ["leave", QUESTION]
 
 def tasted(seen, nectar):
     key = str(seen[0][1])
@@ -147,11 +149,12 @@ type Seen = [Challenge, ${R} | null][];
 const QUESTION: Challenge = ${q};
 const tally = new Map<string, [number, number]>(); // answer to QUESTION -> [times fed, times got nectar]
 
-function forage(seen: Seen): ["ask", Challenge] | "feed" | "leave" {
-  if (seen.length === 0) return ["ask", QUESTION]; // costs 1 turn
+function forage(seen: Seen, visit: { fed: boolean }): ["ask", Challenge] | "feed" | ["leave", Challenge] | "leave" {
+  if (seen.length === 0) return ["ask", QUESTION]; // the first challenge at the next flower
+  if (visit.fed) return ["leave", QUESTION];        // move on, and ask QUESTION first at the next flower
   const [fed, got] = tally.get(JSON.stringify(seen[0][1])) ?? [0, 0];
-  if (fed < 2 || got / fed >= 0.5) return "feed"; // taste each new answer twice; sits out GAME.feed_cost rounds
-  return "leave";                                   // free
+  if (fed < 2 || got / fed >= 0.5) return "feed"; // taste each new answer twice; then sits out GAME.feed_cost rounds
+  return ["leave", QUESTION];
 }
 
 function tasted(seen: Seen, nectar: boolean): void {
