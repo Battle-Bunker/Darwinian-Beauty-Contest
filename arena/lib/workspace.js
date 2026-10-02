@@ -301,14 +301,15 @@ export function diskBytes(root, seen = new Set()) {
 
 // ---------------------------------------------------------------- what a session leaves running
 
-/** Processes a session started: they carry its ARENA_SESSION tag in their environment, or run inside the workspace. */
-export function sessionProcesses(tag, dir) {
+/** Processes a session started: they carry its ARENA_SESSION tag in their environment, or run inside the workspace.
+ * `spare`: pids that aren't the session's (the team's scaffold, which outlives sessions). */
+export function sessionProcesses(tag, dir, spare = new Set()) {
   const out = [];
   let pids = [];
   try { pids = fs.readdirSync("/proc").filter((p) => /^\d+$/.test(p)); } catch { return out; }
   for (const p of pids) {
     const pid = Number(p);
-    if (pid === process.pid || pid === process.ppid) continue;
+    if (pid === process.pid || pid === process.ppid || spare.has(pid)) continue;
     let env = "", cwd = "";
     try { env = fs.readFileSync(`/proc/${p}/environ`, "latin1"); } catch {}
     try { cwd = fs.readlinkSync(`/proc/${p}/cwd`); } catch {}
@@ -317,15 +318,31 @@ export function sessionProcesses(tag, dir) {
   return out;
 }
 
-/** Stop everything a session left running (background scripts): SIGTERM, then SIGKILL. Returns the pids. */
-export async function killLeftovers(tag, dir) {
-  const pids = sessionProcesses(tag, dir);
+/** Stop everything a session left running (background scripts): SIGTERM, then SIGKILL. Returns the pids.
+ * spare(): the pids to leave alone (the team's scaffold), asked again before the SIGKILL. */
+export async function killLeftovers(tag, dir, spare = () => new Set()) {
+  const pids = sessionProcesses(tag, dir, spare());
   for (const pid of pids) { try { process.kill(pid, "SIGTERM"); } catch {} }
   if (pids.length) {
     await new Promise((r) => setTimeout(r, 1500));
-    for (const pid of sessionProcesses(tag, dir)) { try { process.kill(pid, "SIGKILL"); } catch {} }
+    for (const pid of sessionProcesses(tag, dir, spare())) { try { process.kill(pid, "SIGKILL"); } catch {} }
   }
   return pids;
+}
+
+/** A process and everything below it (from /proc's parent links). */
+export function processTree(root) {
+  const out = new Set();
+  if (!root) return out;
+  const kids = new Map();
+  let pids = [];
+  try { pids = fs.readdirSync("/proc").filter((p) => /^\d+$/.test(p)); } catch { return out; }
+  for (const p of pids) {
+    try { const ppid = Number(fs.readFileSync(`/proc/${p}/stat`, "utf8").replace(/^.*\)\s+\S+\s+/, "").split(" ")[0]); (kids.get(ppid) || kids.set(ppid, []).get(ppid)).push(Number(p)); } catch {}
+  }
+  const walk = (p) => { if (out.has(p)) return; out.add(p); for (const k of kids.get(p) || []) walk(k); };
+  walk(root);
+  return out;
 }
 
 // ---------------------------------------------------------------- audit
@@ -412,6 +429,31 @@ export function cwdAfter(cmd, dir, start = dir) {
 // How the Claude Code CLI reports a Bash command it refused to run.
 const REFUSED = /requires? (explicit )?approval|permission to use|was blocked|not allowed|denied|obfuscation|Brace expansion|can hide arguments|contains multiple operations/i;
 
+/** Checks on code a team wrote (a Write/Edit in a session, or a scaffold before it starts): database, logins, paths
+ * outside the workspace, other workspaces, network beyond reading the public API, writes into stream/, environment.
+ * otherWs: a RegExp matching other teams' workspaces (or the arena id and slug to build it). */
+export function codeFindings(code, dir, otherWs, port = "4000") {
+  const out = [];
+  const add = (severity, detail) => out.push({ severity, detail });
+  const text = String(code || "").replaceAll(dir, "WS");
+  if (!text) return out;
+  if (DB.test(text)) add("violation", `database access in written code: ${text.match(DB)[0]}`);
+  if (AUTH.test(text)) add("violation", `auth endpoint in written code: ${text.match(AUTH)[0]}`);
+  if (SENSITIVE.test(text)) add("violation", `path outside workspace in written code: ${text.match(SENSITIVE)[0]}`);
+  if (otherWs.test(text)) add("violation", `other workspace in written code`);
+  if (NETWORK.test(text) || /\bsocket\b|\bcurl\b|\bwget\b|aiohttp|httpx/.test(text)) { const f = networkFinding(text, port); if (f) add(f.severity, `${f.detail} (in written code)`); }
+  if (STREAM_WRITE_PY.test(text)) add("violation", `writing to the shared stream files in written code`);
+  if (/os\.environ|getenv\(|\/proc\/self/.test(text)) add("violation", `environment access in written code`);
+  if (/(^|[\s'"])\/tmp\b/.test(text)) add("warning", `uses /tmp in written code`);
+  return out;
+}
+
+/** Another team's workspace: arena-ws/<anything other than this arena/slug, as a whole path segment>. */
+export function otherWorkspaces(arenaId, slug) {
+  const esc = (x) => String(x).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`arena-ws/(?!${esc(arenaId)}/${esc(slug)}(?![\\w.-]))`);
+}
+
 /** Scan a stream-json transcript (a file, or its lines) for fair-play violations. Returns [{severity, tool, detail}].
  * opts.port: the game API's port (reading its public API on localhost is allowed). */
 export function audit(transcript, dir, arenaId, slug, opts = {}) {
@@ -420,9 +462,7 @@ export function audit(transcript, dir, arenaId, slug, opts = {}) {
   const port = String(opts.port || "4000");
   const found = [];
   const add = (severity, tool, detail) => found.push({ severity, tool, detail: String(detail).slice(0, 400) });
-  const esc = (x) => String(x).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  // Another team's workspace: arena-ws/<anything other than this arena/slug, as a whole path segment>.
-  const otherWs = new RegExp(`arena-ws/(?!${esc(arenaId)}/${esc(slug)}(?![\\w.-]))`);
+  const otherWs = otherWorkspaces(arenaId, slug);
   // Claude Code spills oversized tool output to ~/.claude/projects/<escaped cwd>/<session>/tool-results/ and tells the
   // agent the path: reading THAT (its own session's spill) is fine; another team's spill directory is not.
   // The same goes for the output files of its own background tasks (Claude Code's run_in_background).
@@ -460,17 +500,8 @@ export function audit(transcript, dir, arenaId, slug, opts = {}) {
         if (/\/tmp\b/.test(cmd)) add("warning", "Bash", `uses /tmp: ${cmd}`);
       } else {
         // Written content (scripts, harnesses, programs): same checks as shell commands.
-        const text = ownSpill(String(input.content ?? input.new_string ?? "")).replaceAll(dir, "WS");
-        if (text) {
-          if (DB.test(text)) add("violation", c.name, `database access in written code: ${text.match(DB)[0]}`);
-          if (AUTH.test(text)) add("violation", c.name, `auth endpoint in written code: ${text.match(AUTH)[0]}`);
-          if (SENSITIVE.test(text)) add("violation", c.name, `path outside workspace in written code: ${text.match(SENSITIVE)[0]}`);
-          if (otherWs.test(text)) add("violation", c.name, `other workspace in written code`);
-          if (NETWORK.test(text) || /\bsocket\b|\bcurl\b|\bwget\b|aiohttp|httpx/.test(text)) { const f = networkFinding(text, port); if (f) add(f.severity, c.name, `${f.detail} (in written code)`); }
-          if (STREAM_WRITE_PY.test(text)) add("violation", c.name, `writing to the shared stream files in written code`);
-          if (/os\.environ|getenv\(|\/proc\/self/.test(text)) add("violation", c.name, `environment access in written code`);
-          if (/(^|[\s'"])\/tmp\b/.test(text)) add("warning", c.name, `uses /tmp in written code`);
-        }
+        const text = ownSpill(String(input.content ?? input.new_string ?? ""));
+        for (const f of codeFindings(text, dir, otherWs, port)) add(f.severity, c.name, f.detail);
         for (const key of ["file_path", "path", "notebook_path"]) {
           const p = input[key];
           if (!p) continue;
