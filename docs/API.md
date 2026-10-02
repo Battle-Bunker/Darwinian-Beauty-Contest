@@ -22,8 +22,8 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 |---|---|---|---|
 | POST | `/rooms` | any user | `{ id, shortId, url, isOwner }`. One click; the creator owns the room |
 | GET | `/my/rooms` | any user | `{ rooms: [{shortId, url, isOwner, ownerName, gameCount, createdAt, lastActivity}] }`: rooms I own or have a team in, most recently active first |
-| GET | `/rooms/:room` | anyone | `{ shortId, url, ownerName, isOwner, games: [{shortId, url, status, roundsPlayed, rounds, teamCount}] }` |
-| GET | `/rooms/:room/events` | anyone | Server-Sent Events whenever any game in the room changes |
+| GET | `/rooms/:room` | anyone | `{ shortId, url, ownerName, isOwner, games: [{shortId, url, status, clockMs, endMs, teamCount}] }` |
+| GET | `/rooms/:room/events` | anyone | Server-Sent Events `{game, version}` whenever a game in the room changes |
 | POST | `/rooms/:room/games` | owner | body `{ config? }` → `{ id, shortId, url }` |
 | GET | `/defaults` | anyone | `{ config }` with the default game settings |
 
@@ -33,18 +33,17 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 
 | Method | Path | Who | Body | Returns |
 |---|---|---|---|---|
-| GET | `base` | anyone | | the **game view** (below), filtered for the viewer. `?visits=none` or `?visits=last` leaves out older rounds' visits, which can be thousands per round |
-| GET | `base/rounds/:no` | anyone | | one round, in the same shape as an entry of `rounds` (with its visits), filtered for the viewer |
-| GET | `base/memory/:no` | team member | | `{ round, teamId, language, snapshot, bytes, note }`: what your bee kept at the end of round `no` (any team's once revealed, via `?team=`) |
-| GET | `base/version` | anyone | | `{ version, status, runningRound, roundsPlayed }` |
-| GET | `base/events` | anyone | | SSE: `data: {"game", "version"}` on every change. Refetch the view when it arrives |
-| PATCH | `base/config` | owner, before round 1 | `{ config: {...partial} }` | `{ config, clearedSubmissions }` |
-| POST | `base/teams` | user, before round 1 | `{ name }` | `{ id, name, joinCode }` |
+| GET | `base` | anyone | | the **game view** (below), filtered for the viewer |
+| GET | `base/actions` | anyone | `?after=<seq>&limit=<n ≤ 5000>` | `{ actions: [action], lastSeq, clockMs, status }`: the actions after `after`, oldest first |
+| GET | `base/events` | anyone | `?after=<seq>` | Server-Sent Events: `{version}` when the view should be refetched; `{actions, lastSeq, clockMs}` as the garden writes them (from `after`, in order, page after page until caught up); `{clockMs, lastSeq}` when there is nothing new |
+| PATCH | `base/config` | owner, in the lobby | `{ config: {...partial} }` | `{ config, clearedPrograms }` (changing the language or types, or shrinking a size budget, clears the programs written so far) |
+| POST | `base/start` | owner, in the lobby | | `{ status: "running", participants }`. Teams with all three programs play; at least 2 |
+| POST | `base/status` | owner | `{ action: "pause" \| "resume" \| "finish" }` | `{ status }`. The clock and change budgets stand still while paused; `finish` ends the game early |
+| POST | `base/teams` | user, in the lobby | `{ name }` | `{ id, name, joinCode }` |
 | POST | `base/teams/join` | user | `{ joinCode }` | `{ id, name }` |
-| POST | `base/check` | team member | `{ kind, code }` | `{ ok, size, unit, minified, distance, errors[], budget }`. Validates without saving. `size` is in the game's unit ("characters" or "nodes"); `minified` is the text the game runs (comments, spacing, defined names' lengths and TypeScript types are free; see RULES.md). `distance` is the change since last round: characters of edit between the minified versions, with names lined up. A program outside its turn must have distance 0 |
-| POST | `base/programs` | team member | `{ kind, code }` | same as check plus `submitted: true`; **422** with `errors` if over budget |
-| POST | `base/try` | team member | `{ kind, code, challenges?, flowers?: {clover, orchid} }` | flower: `{ results: [{c, r, error?}] }`. bee: forages your own patch (the `flowers` you pass, else your submissions, else last round's) with your real `MEMORY`: `{ visits, problems, feeds, nectar, turns, memory }` |
-| POST | `base/rounds` | owner | `{ seed? }` | **202** `{ round }`. Runs in the background; add `?wait=1` to block until done. `seed` (0…2³¹−1) fixes the deck order and bee randomness, e.g. to replay identical games with two cohorts; omitted = random |
+| POST | `base/check` | team member | `{ kind, code }` | `{ ok, kind, size, minified, budget, distance, cost, available, errors[] }`. Validates without saving. `size` is weighted nodes of the minified program; `minified` is the text the game runs. Once the game runs, `distance` is the node edits from the version playing now (renames, comments and formatting are free), `cost` what the change would spend and `available` the change budget now (floored) |
+| POST | `base/programs` | team member | `{ kind, code }` | same as check plus `submitted: true, version`, and `available` after paying; the new version goes live at once. **422** with `errors` if it's too big or can't be afforded yet (the error says how long until it can) |
+| POST | `base/try` | team member | `{ kind, code, challenges?, flowers?: {clover, orchid} }` | flower: `{ results: [{c, r, error?, ms}] }`. bee: a few hundred turns in a garden of just your own two flowers (the `flowers` you pass, else your latest): `{ actions, problems, feeds, nectar, cycles }` |
 
 `kind` is `clover`, `orchid` or `bee`.
 
@@ -53,33 +52,26 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 ```json
 {
   "language": "python",
-  "rounds": 5, "turnsPerFlower": 100, "feedCost": 5,
-  "challengeType": "int", "responseType": "int", "maxLen": 64, "maxNodes": 512, "beeMemoryKb": 256,
-  "flowerLogs": true, "publicLogs": false, "revealOnFinish": true, "complexity": "chars",
+  "minutes": 30, "feedCost": 5,
+  "challengeType": "int", "responseType": "int", "maxLen": 64, "maxNodes": 512,
+  "revealOnFinish": true,
   "budgets": {
-    "clover": { "size": 2400,  "changes": 480,  "ms": 150 },
-    "orchid": { "size": 4800,  "changes": 3360, "ms": 50 },
-    "bee":    { "size": 24000, "changes": 4800, "ms": 25 }
+    "clover": { "size": 1100,  "perMinute": 22,  "cap": 220,  "ms": 150 },
+    "orchid": { "size": 2200,  "perMinute": 154, "cap": 1540, "ms": 50 },
+    "bee":    { "size": 11000, "perMinute": 220, "cap": 2200, "ms": 25 }
   }
 }
 ```
 
-- `turnsPerFlower`: each bee gets `turnsPerFlower × flowers` turns per round (`flowers` = 2 × teams).
-- `publicLogs`: after each round everyone sees every visit's flower kind, challenges and responses (not
-  code, bee logs, flower errors, compute or memory, which wait for `revealOnFinish`).
+- `minutes`: game time the garden runs for (it stops while paused).
+- `budgets.<kind>.size`: size budget in weighted nodes (vendor/measure.js; RULES.md explains it to players).
+- `budgets.<kind>.perMinute`, `cap`: change budget earned per minute of game time, and the most that can
+  be banked. A team's budget for a program at game time `t` is `min(cap, bank + perMinute × (t − atMs) / 60000)`,
+  with `bank` and `atMs` from the view's `teams[i].banks[kind]`. Writing programs in the lobby is free.
+- `ms`: wall-clock time per call. The engine runs at most one program per CPU core, so this is
+  effectively CPU time. Every program can read `GAME.ms`.
 - `maxLen` bounds strings and lists. `maxNodes` bounds trees and graphs (graphs: ≤ 4 × maxNodes edges).
-- `beeMemoryKb`: how much of a bee's top-level data is kept each round for `MEMORY`. 0 turns memory off.
-- `complexity`: how size and change are measured (vendor/measure.js; RULES.md explains both to players).
-  `"chars"` counts characters of the minified program, and `"nodes"` counts weighted syntax-tree nodes
-  (literals one per byte). Switching it switches the size and change budgets to that mode's defaults.
-- `budgets.<kind>.size`: size budget in the game's unit. `changes`: how much may change in a round the
-  program may change, in the same unit. One kind may change before each round, in rotation: bees (rounds
-  2, 5, 8, …), orchids (3, 6, 9, …), clovers (4, 7, 10, …). Games have 6 rounds by default.
-- Flowers are stateless (a fresh process or context per call) but get fresh randomness every call and
-  the clock, so every ask runs the flower again. Every program can read `GAME.ms`, its own compute
-  budget per call.
-- `ms` is wall-clock time per call. The engine runs at most one program per CPU core, so this is
-  effectively CPU time.
+- `revealOnFinish`: when the game ends, everyone can see all code and every bee's print output.
 
 Types: `int`, `float`, `bool`, `str`, `any` (any plain JSON), `list[T]`, `tree[T]` (`{"value", "children"}`),
 `graph` and `digraph` (`{"nodes": n, "edges": [[a, b], ...]}` on nodes `0..n-1`), and labelled
@@ -88,51 +80,50 @@ Types: `int`, `float`, `bool`, `str`, `any` (any plain JSON), `list[T]`, `tree[T
 
 ### The game view
 
-There is no separate replay mode. This one document *is* the game, and loading it at any time
-returns everything that has happened so far, filtered to what this viewer is allowed to know.
+There is no separate replay mode. The view plus the actions *are* the game: loading them at any time
+returns everything that has happened so far, filtered to what this viewer is allowed to know. Everything
+is public except code (and what bees print), which is your own team's, or everyone's once a finished game
+is revealed.
 
 ```jsonc
 {
   "room": { "shortId", "url", "isOwner" },
-  "game": { "shortId", "url", "status": "lobby|running|finished", "config", "roundsPlayed",
-            "runningRound": null | n, "lastError", "version", "revealed", "isOwner",
-            "turns",                       // turns per bee in the next round
-            "changeable": ["bee"] },        // programs that may change for the next round (server/lib/schedule.js)
+  "game": { "shortId", "url", "status": "lobby|running|paused|finished", "config",
+            "clockMs",        // game time played so far (updated a few times a second while running)
+            "endMs",          // config.minutes in ms: the game ends when clockMs reaches it
+            "lastSeq",        // the latest action's seq
+            "version", "lastError", "startedAt", "finishedAt", "revealed", "isOwner" },
   "me": { "id", "name", "teamId" } | null,
-  "participants": [teamId, ...] | null,   // fixed when round 1 runs; ledger row/column order
+  "participants": [teamId, ...] | null,   // fixed at the start; ledger row/column order
   "teams": [{ "id", "name", "color", "members": [names], "participant",
-              "submitted": { "clover": bool, "orchid": bool, "bee": bool } }],
-  "myTeam": { "id", "name", "joinCode",
-              "drafts":   { kind: { code, size, distance, submittedAt, submittedBy } },   // pending for next round
-              "previous": { kind: code } } | null,                                       // what played last round
+              "programs": { kind: [{ version, size, distance, cost, atMs, submittedAt, submittedBy, problem, code? }] },
+                                          // every version, oldest first; atMs = game time it went live (0: the lobby)
+              "banks": { kind: { bank, atMs } } }],   // change budget, see Config
+  "myTeam": { "id", "name", "joinCode" } | null,
   "interface": { "flower", "bee", "types": { "challenge", "response", "challengeMeans", "responseMeans", "rules": [..] } },
-                                                  // signatures + type rules only: no starter code, no example values
-  "rounds": [{
-    "no", "startedAt", "finishedAt", "turns",    // turns each bee had this round
-    "feeds":  [[...]],  "nectar": [[...]],        // ledgers: row = bee team, column = patch team (participants order)
-    "scores": [teamScore], "totals": [teamScore],  // this round alone / all rounds so far
-    "programs": { teamId: { kind: { size, distance, carriedOver, code?, problem?, compute? } } },  // code: own team or revealed
-                                                  // size: in the game's unit, under the current rules
-                                                  // compute (flowers): { calls, meanMs, p90Ms, budgetMs }
-    "memory": { teamId: { bytes, note } },        // what each bee kept for later rounds: own team or revealed
-    "visits": [visit]
-  }],
-  "final": [teamScore] | null
+                                          // signatures + type rules only: no starter code
+  "scores": [teamScore] | null,           // the whole game so far
+  "recent": { "fromMs", "toMs", "scores": [teamScore] } | null   // the last five minutes of game time
 }
 ```
 
 `teamScore`: `{ teamId, allure, forage, allureShare, forageShare, fitness, feedsReceived, feedsGiven,
 nectarCollected, pollinators, nectarSources }`.
 
-`visit`: everyone sees `{ bee, patch, seq, start, end, asks, asksBeforeFeed, action: "feed"|"leave"|"error", nectar }`
-(`bee` and `patch` are team ids; `start`/`end` are turn numbers, so all bees move in parallel from
-turn 0 to the round's `turns`; `nectar` is non-null only for feeds). A visit runs `asksBeforeFeed`
-asks, then the feed (`feedCost` turns) if there was one, then any remaining asks: bees may keep
-questioning a flower after feeding. In `steps`, those later asks carry `after: true`. Extra fields by viewer:
+`action`: one turn's worth of what a bee did, public the moment it happens:
 
-- **the bee's team**: `steps: [{c, r, challengeError?}]`, `beeError?`, `beeLog?` (what the bee printed), `note?`
-- **the patch owner**: `kind: "clover"|"orchid"`, plus `steps: [{c, r, flowerError?}]` if `flowerLogs`, and `flowerError?`
-- **everyone, once revealed** (finished game with `revealOnFinish`): all of the above
+```jsonc
+{ "seq", "atMs",                 // order and game time
+  "bee", "patch",                // team ids: whose bee, at whose patch
+  "visit",                       // the bee's visit number: one visit is several actions
+  "kind": "clover|orchid",       // which flower of the patch
+  "action": "ask|feed|leave|error",
+  "beeVersion", "flowerVersion", // which versions of the programs played
+  "c", "r", "ms", "after",       // ask: challenge, response (null if it failed), the flower's time, asked after feeding
+  "nectar",                      // feed: true at a clover
+  "error", "by",                 // what went wrong, and whose fault: bee | challenge | flower | engine
+  "log" }                        // what the bee printed: its own team, or everyone once revealed
+```
 
-The public view never says which flower in a patch a bee visited unless the bee fed and got nectar.
-In that case it was the clover, and everyone can see that from the nectar.
+An `engine` leave ends a visit the bee didn't finish because its team replaced it (or it crashed and
+restarted).

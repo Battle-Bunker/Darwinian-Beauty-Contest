@@ -21,9 +21,19 @@ import os from "node:os";
 import path from "node:path";
 import { spawn, execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { tryFlower, mulberry32 } from "../server/engine.js";
+import { tryFlower } from "../server/engine.js";
 import { normalizeConfig } from "../server/lib/gameConfig.js";
 import { size } from "../server/lib/measure.js";
+
+function mulberry32(seed) {
+  let s = seed >>> 0;
+  return () => {
+    s = (s + 0x6d2b79f5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const EXAMPLES = path.join(ROOT, "arena/examples/v3");
@@ -54,7 +64,7 @@ function challenges(seed, n) {
 
 // The checkers, minified as a bee would run them, plus a forage() hook (kept by name) that returns them.
 async function checkerProgram() {
-  const src = read(path.join(EXAMPLES, "checkers.py")) + "\n\ndef forage(seen, turns_left):\n    return check_paley, check_graceful\n";
+  const src = read(path.join(EXAMPLES, "checkers.py")) + "\n\ndef forage(seen):\n    return check_paley, check_graceful\n";
   const { minified, syntaxError } = await size("python", src);
   if (syntaxError) throw new Error("checkers.py does not parse");
   const file = path.join(os.tmpdir(), `dbc-checkers-${process.pid}.py`);
