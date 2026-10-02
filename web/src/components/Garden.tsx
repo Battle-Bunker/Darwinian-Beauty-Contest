@@ -1,4 +1,4 @@
-// The garden, live: one patch per team (its clover on the left, its orchid on the right) and one bee per
+// The garden, live: one patch per team (its cosmos on the left, its orchid on the right) and one bee per
 // team, flying between flowers as the actions stream in. The animation runs a moment behind the game
 // clock (see gardenModel.ts) and re-renders at most ~30 times a second, only while something moves and
 // the garden is on screen.
@@ -84,7 +84,7 @@ export function Garden({ view, store }: { view: GameView; store: LiveStore }) {
   const fontScale = Math.max(1, Math.min(1.5, 0.8 / scale));
   const [namesPick, setNames] = useState<boolean | null>(null);
   const names = namesPick ?? scale >= 0.72;
-  const ready = (t: Team) => !!t.ready && t.ready.clover && t.ready.orchid && t.ready.bee;
+  const ready = (t: Team) => !!t.ready && t.ready.cosmos && t.ready.orchid && t.ready.bee;
   const now = performance.now();
 
   return (
@@ -112,7 +112,7 @@ export function Garden({ view, store }: { view: GameView; store: LiveStore }) {
             const [patch, kind] = key.split(":");
             const p = layout.pos[patch];
             if (!p) return null;
-            return <circle key={key} cx={p.x + (kind === "clover" ? -FLOWER_DX : FLOWER_DX)} cy={p.y + FLOWER_Y} r={22 + 4 * (1 - v)} className="ask-glow" opacity={(0.4 * v).toFixed(2)} />;
+            return <circle key={key} cx={p.x + (kind === "cosmos" ? -FLOWER_DX : FLOWER_DX)} cy={p.y + FLOWER_Y} r={22 + 4 * (1 - v)} className="ask-glow" opacity={(0.4 * v).toFixed(2)} />;
           })}
           {frame.fx.map((f) => <FeedFx key={f.id} f={f} u={Math.min(1, Math.max(0, (now - f.t0) / FX_MS))} />)}
           {frame.bees.map((b) => <Bee key={b.team} b={b} team={teamsById[b.team]} mine={b.team === myTeamId} showName={names} paused={status === "paused"} />)}
@@ -178,9 +178,13 @@ const GardenBackdrop = memo(function GardenBackdrop({ layout }: { layout: Layout
 });
 
 const STAR_PETAL = "M0 -3 C 7 -8, 7 -17, 0 -22 C -7 -17, -7 -8, 0 -3 Z";
+// A cosmos ray petal, pointing up from the centre: a broad wedge that ends in a row of small teeth.
+const COSMOS_PETAL = "M0 -4.5 C -1.6 -8, -5.2 -14, -5.8 -18.8 L -3.8 -20.9 L -1.9 -19.5 L 0 -21.7 L 1.9 -19.5 L 3.8 -20.9 L 5.8 -18.8 C 5.2 -14, 1.6 -8, 0 -4.5 Z";
+const COSMOS_ANGLES = Array.from({ length: 8 }, (_, i) => i * 45 + 22.5);
 
-/** One flower: the clover is round-petalled, the orchid star-shaped; both in the team's colour. */
-function FlowerShape({ x, color, kind }: { x: number; color: string; kind: "clover" | "orchid" }) {
+/** One flower, in the team's colour: the cosmos an open, eight-petalled daisy with toothed petal tips and a
+ *  golden disc, the orchid a five-pointed star. */
+function FlowerShape({ x, color, kind }: { x: number; color: string; kind: "cosmos" | "orchid" }) {
   return (
     <g transform={`translate(${x} 0)`}>
       <g className="flower">
@@ -188,15 +192,19 @@ function FlowerShape({ x, color, kind }: { x: number; color: string; kind: "clov
         <ellipse cx="-7" cy="2" rx="8" ry="3.5" transform="rotate(-30 -7 2)" className="leaf" />
         <ellipse cx="7" cy="-8" rx="8" ry="3.5" transform="rotate(30 7 -8)" className="leaf" />
         <g transform={`translate(0 ${FLOWER_Y})`}>
-          {kind === "clover" ? (
+          {kind === "cosmos" ? (
             <>
-              {Array.from({ length: 12 }, (_, i) => i * 30).map((a) => (
-                <ellipse key={a} cx="0" cy="-11" rx="3.8" ry="10.5" transform={`rotate(${a})`} fill={color} className="petal" />
+              {COSMOS_ANGLES.map((a) => (
+                <g key={a} transform={`rotate(${a})`}>
+                  <path d={COSMOS_PETAL} fill={color} className="petal" />
+                  <path d="M0 -7.5 L0 -18" className="cosmos-vein" />
+                </g>
               ))}
-              <circle r="7" className="flower-eye" />
-              <circle r="1.5" cx="-2.2" cy="-2" className="flower-eye-dot" />
-              <circle r="1.3" cx="2.4" cy="-1" className="flower-eye-dot" />
-              <circle r="1.3" cx="-0.5" cy="2.6" className="flower-eye-dot" />
+              <circle r="5.4" className="flower-eye" />
+              {COSMOS_ANGLES.map((a) => (
+                <circle key={a} r="0.9" cx={3.1 * Math.sin((a * Math.PI) / 180)} cy={-3.1 * Math.cos((a * Math.PI) / 180)} className="flower-eye-dot" />
+              ))}
+              <circle r="1.1" className="flower-eye-dot" />
             </>
           ) : (
             <>
@@ -222,12 +230,12 @@ const Patch = memo(function Patch({ team, p, mine, dim, maxChars }: { team: Team
   const name = team.name.length > maxChars ? team.name.slice(0, maxChars - 1) + "…" : team.name;
   return (
     <g transform={`translate(${p.x} ${p.y})`} className={`patch ${dim ? "dim" : ""}`}>
-      <title>{`${poss(team.name)} patch: its clover (left) and its orchid (right).`}</title>
+      <title>{`${poss(team.name)} patch: its cosmos (left) and its orchid (right).`}</title>
       {mine && <ellipse cy={-12} rx={112} ry={84} className="patch-mine" />}
       <ellipse cy={24} rx={70} ry={15} className="soil" />
-      <FlowerShape x={-FLOWER_DX} color={team.color} kind="clover" />
+      <FlowerShape x={-FLOWER_DX} color={team.color} kind="cosmos" />
       <FlowerShape x={FLOWER_DX} color={team.color} kind="orchid" />
-      <text x={-FLOWER_DX} y={31} className="kind-tag">clover</text>
+      <text x={-FLOWER_DX} y={31} className="kind-tag">cosmos</text>
       <text x={FLOWER_DX} y={31} className="kind-tag">orchid</text>
       <text y={68} className="patch-label"><tspan fill={team.color} className="patch-label-dot">●</tspan> {name}</text>
     </g>
@@ -307,7 +315,7 @@ function FeedFx({ f, u }: { f: Fx; u: number }) {
 const GardenLegend = memo(function GardenLegend() {
   return (
     <ul className="garden-legend" aria-label="What the garden shows">
-      <li><span className="lg-flowers" aria-hidden>✿</span> each patch: its clover (left, pays nectar) and its orchid (right, pays nothing)</li>
+      <li><span className="lg-flowers" aria-hidden>✿</span> each patch: its cosmos (left, pays nectar) and its orchid (right, pays nothing)</li>
       <li><span className="lg lg-ask">?</span> a bee asks a flower a question</li>
       <li><DropIcon size={16} /> fed and got nectar</li>
       <li><FooledIcon size={16} /> fed at an orchid: fooled</li>
@@ -328,7 +336,7 @@ const BeeTally = memo(function BeeTally({ order, teams, counts, scores, myTeamId
         <thead>
           <tr>
             <th scope="col" className="left">Team</th>
-            <th scope="col" title="Feeds bees made at this team's patch (clover or orchid)">Fed at patch</th>
+            <th scope="col" title="Feeds bees made at this team's patch (cosmos or orchid)">Fed at patch</th>
             <th scope="col" title="Different bees that fed at this patch">Pollinators</th>
             <th scope="col" title="Nectar this team's bee collected">Bee: nectar</th>
             <th scope="col" title="Feeds at orchids: no nectar">Bee: fooled</th>

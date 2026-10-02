@@ -1,8 +1,8 @@
 // Shapes returned by the JSON API (server/games.js, server/routes/api.js).
 
-export type Kind = "clover" | "orchid" | "bee";
-export type FlowerKind = "clover" | "orchid";
-export const KINDS: Kind[] = ["clover", "orchid", "bee"];
+export type Kind = "cosmos" | "orchid" | "bee";
+export type FlowerKind = "cosmos" | "orchid";
+export const KINDS: Kind[] = ["cosmos", "orchid", "bee"];
 
 /**
  * Per-program budgets. size: weighted syntax-tree nodes of the minified program. Change budget accrues

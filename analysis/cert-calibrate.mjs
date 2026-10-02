@@ -1,14 +1,14 @@
-// 4(c) Calibrate costly-but-checkable certificates against the real budgets (clover 150 ms, orchid 50 ms, bee 25 ms
+// 4(c) Calibrate costly-but-checkable certificates against the real budgets (cosmos 150 ms, orchid 50 ms, bee 25 ms
 // per call; Python runner; one program per core). Flowers run through the engine's own runner: server/runners/proc.js
 // with the engine's flower setup (tryFlower's path), one call per challenge, wall time measured around each call
 // (that includes the runner's fork, ~1-3 ms). For each certificate and size:
 //   solve time distribution with a generous 2 s budget, and the share of challenges answered VALIDLY within the
-//   clover's 150 ms and the orchid's 50 ms budgets (run with exactly those budgets, so timeouts are the runner's own).
+//   cosmos's 150 ms and the orchid's 50 ms budgets (run with exactly those budgets, so timeouts are the runner's own).
 // Bee-side verification is timed in-process (a bee is a persistent process, so no fork), in plain python3.
 //
 // Certificates:
 //   factor star   challenge = p*q (two random b-bit primes, built by the bee; int challenges stop at 2^53)
-//                 clover: Pollard-Brent rho + Miller-Rabin (the best stdlib-only method); also naive trial division
+//                 cosmos: Pollard-Brent rho + Miller-Rabin (the best stdlib-only method); also naive trial division
 //   time-lock     2^(2^t) mod N by t sequential squarings; the bee built N = p*q, so it checks with phi(N) in microseconds.
 //                 int challenges: N < 2^53 can be factored by rho, which gives an orchid the same shortcut.
 //                 str challenges: N of 256 bits as 64 hex characters (cannot be factored), response 64 hex characters
@@ -171,7 +171,7 @@ const q = (xs, p) => { const s = [...xs].sort((a, b) => a - b); return s[Math.mi
 const pct = (x) => `${Math.round(100 * x)}%`;
 
 async function calibrate(label, config, code, challenges, valid) {
-  const free = await timeCalls(config, "clover", code, challenges, 2000);
+  const free = await timeCalls(config, "cosmos", code, challenges, 2000);
   const times = free.map((x) => (x.e ? 2000 : x.ms));
   // the real budgets, through the engine's tryFlower path (the runner's own timeout decides)
   const ok = async (kind) => {
@@ -183,9 +183,9 @@ async function calibrate(label, config, code, challenges, valid) {
     }
     return good / challenges.length;
   };
-  const clover = await ok("clover"), orchid = await ok("orchid");
-  console.log(`${label.padEnd(34)} median ${q(times, 0.5).toFixed(1).padStart(7)} ms  p90 ${q(times, 0.9).toFixed(1).padStart(7)}  p99 ${q(times, 0.99).toFixed(1).padStart(7)}  max ${Math.max(...times).toFixed(1).padStart(7)}  | valid within clover 150 ms ${pct(clover).padStart(4)}, orchid 50 ms ${pct(orchid).padStart(4)}`);
-  return { label, median: q(times, 0.5), p90: q(times, 0.9), p99: q(times, 0.99), max: Math.max(...times), clover, orchid };
+  const cosmos = await ok("cosmos"), orchid = await ok("orchid");
+  console.log(`${label.padEnd(34)} median ${q(times, 0.5).toFixed(1).padStart(7)} ms  p90 ${q(times, 0.9).toFixed(1).padStart(7)}  p99 ${q(times, 0.99).toFixed(1).padStart(7)}  max ${Math.max(...times).toFixed(1).padStart(7)}  | valid within cosmos 150 ms ${pct(cosmos).padStart(4)}, orchid 50 ms ${pct(orchid).padStart(4)}`);
+  return { label, median: q(times, 0.5), p90: q(times, 0.9), p99: q(times, 0.99), max: Math.max(...times), cosmos, orchid };
 }
 
 const results = [];
@@ -256,7 +256,7 @@ for (const target of [80, 100]) {
 const tInt = Math.round(0.1 * sqRateInt);
 const tlInt = semiprimes(26, TRIALS, 99).map((x) => x[0]);
 const intCfg = { language: "python", challengeType: "int", responseType: "int" };
-results.push(await calibrate(`int, N < 2^53, t=${tInt}: clover`, intCfg, TLOCK_INT(tInt), tlInt, (ch, r) => Number.isInteger(r)));
+results.push(await calibrate(`int, N < 2^53, t=${tInt}: cosmos`, intCfg, TLOCK_INT(tInt), tlInt, (ch, r) => Number.isInteger(r)));
 results.push(await calibrate(`int, N < 2^53, t=${tInt}: rho shortcut`, intCfg, TLOCK_INT_SHORTCUT(tInt), tlInt, (ch, r) => Number.isInteger(r)));
 }
 

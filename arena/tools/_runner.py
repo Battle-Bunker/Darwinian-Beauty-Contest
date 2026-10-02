@@ -56,8 +56,8 @@ def read_code(kind, path=None):
 
 
 def kind_arg(args):
-    if not args or args[0] not in ("clover", "orchid", "bee"):
-        sys.exit("first argument: clover, orchid or bee")
+    if not args or args[0] not in ("cosmos", "orchid", "bee"):
+        sys.exit("first argument: cosmos, orchid or bee")
     return args[0]
 
 

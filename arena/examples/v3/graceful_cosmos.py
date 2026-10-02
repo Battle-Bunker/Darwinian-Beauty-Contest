@@ -1,4 +1,4 @@
-# Example clover: a graceful labelling of the graph that n builds.
+# Example cosmos: a graceful labelling of the graph that n builds.
 #
 # The challenge n builds a graph with VERTICES dots. Dot 1 links to dot 0, and every later dot i links
 # back to two different earlier dots chosen from n: 2 * VERTICES - 3 links in all.

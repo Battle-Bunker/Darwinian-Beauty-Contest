@@ -4,11 +4,11 @@
 
 | Thing | Name | Why |
 |---|---|---|
-| rewarding flower program | **clover** | White clover (*Trifolium repens*) is the archetypal honest nectar plant, the bread and butter of honeybee forage |
+| rewarding flower program | **cosmos** (plural: cosmos) | The garden cosmos (*Cosmos bipinnatus* and its relatives) is an honest, generous flower: widely grown, in pink, white, crimson and magenta (orange and yellow in the sulphur cosmos), with open, daisy-like flowers that give bees real nectar and pollen |
 | deceptive flower program | **orchid** | The bee orchid (*Ophrys apifera*) is the archetypal deceiver: it offers nothing and looks like something it isn't |
 | bee program | **bee** | |
 | a team's two flowers | **patch** | Bees never learn which patch a flower is in, or which of the two it is |
-| `feeds[s][o]` | **feed ledger** | times bee *s* fed at patch *o* (clover or orchid) |
+| `feeds[s][o]` | **feed ledger** | times bee *s* fed at patch *o* (cosmos or orchid) |
 | `nectar[s][o]` | **nectar ledger** | nectar bee *s* got from patch *o* |
 | Σ√xᵢ | **rootsum** | the diversity-weighted size of an earnings vector |
 | rootsum of a patch's feed column | **allure** | how widely a patch gets pollinated |
@@ -32,7 +32,7 @@ entries count like any other source: a team can always earn from itself, but onl
 
 The round-based design (on the `claude/darwinian-beauty-contest-6c3cia` branch; arena/REPORT.md §1–19)
 tried to force bees and flowers to be unpredictable by making them take turns to change: bees, then
-orchids, then clovers, so each kind could react while the others stood still. It failed for a simple
+orchids, then cosmos flowers, so each kind could react while the others stood still. It failed for a simple
 reason: **a locked program isn't locked behaviour**. A bee that can tell rounds apart (its per-round
 random seed, or how much memory it has) asks a brand-new secret question every round with no code change,
 tastes each flower's answer to it once, and remembers which answers paid. The orchids' turn to copy came
@@ -49,33 +49,33 @@ So this design drops rounds altogether:
   turns that off). Other teams have to read a change from behaviour, not from a changelog.
 - **Change at any time, paid from a budget that refills.** Each program earns change budget per minute of
   game time, up to a cap of one minute's worth, and any change it can afford goes live at once. Over a
-  default 2-minute game that's as much change as the round-based design allowed in six rounds (a clover or
+  default 2-minute game that's as much change as the round-based design allowed in six rounds (a cosmos or
   bee 40% of a full-size program, an orchid 140%). The rates keep the asymmetry: orchids earn 7× a
-  clover's rate, so they can chase whatever bees trust; clovers change slowly. Writing programs in the
+  cosmos's rate, so they can chase whatever bees trust; cosmos flowers change slowly. Writing programs in the
   lobby is free.
 
 What this changes, and what it doesn't:
-- Information no longer comes in batches. An orchid's team sees a clover's answer, and the question a bee
+- Information no longer comes in batches. An orchid's team sees a cosmos's answer, and the question a bee
   asked to get it, the moment it's given, and can aim its orchid at it as soon as it can afford the change.
   Reaction speed (of the people or agents, and of the budget) now matters.
 - A bee can still rotate a secret question as often as it likes, for free: rotating is behaviour, not a
   code change. What it can't hide any more is the question itself (it's public as soon as it's asked) or
   the answers it learned to trust. Whether that's enough for orchids to catch up depends on how fast they
   can react, which is what the games will show.
-- Clovers still have their costly signal: the whole 150 ms flower window on every answer, against an
+- Cosmos flowers still have their costly signal: the whole 150 ms flower window on every answer, against an
   orchid's 100 ms.
 
 ### Lockstep rounds: why timing is equalised
 
 An earlier version let the bees take turns as fast as the programs ran, and recorded every flower's answer
-time in the public stream. That made time itself a detector: an orchid has less compute than a clover, so
+time in the public stream. That made time itself a detector: an orchid has less compute than a cosmos, so
 an orchid that saves time answers sooner, and a bee (or a team reading the stream) could tell the kinds
 apart by the clock rather than by the answers. The game is meant to be about what flowers *say*, so the
 timing is now equalised:
-- **Rounds are fixed 200 ms slots, every bee in step**: a 150 ms flower window (a clover's whole time
+- **Rounds are fixed 200 ms slots, every bee in step**: a 150 ms flower window (a cosmos's whole time
   limit) and a 50 ms decision window. Game time is rounds × 200 ms, so it's the same for every bee
   however busy the machine is; live games pace rounds to real time.
-- **Every answer is delivered at 150 ms.** A clover gets the whole window; an orchid has a shorter limit
+- **Every answer is delivered at 150 ms.** A cosmos gets the whole window; an orchid has a shorter limit
   (100 ms by default, public, so an orchid can time an anytime search to finish just before it), but its
   answer still reaches the bee at 150 ms. The bee is only called in the decision window, after every
   flower in the round is done, so the clock inside a bee can't tell a fast answer from a slow one.
@@ -135,39 +135,39 @@ Diminishing returns per source (`d√k/dk = 1/(2√k)`) mean the k-th feed from 
 less and less, so a bee can't farm one friendly patch and a patch can't rely on one loyal bee. Own-team
 entries count like any other source: a team can always earn from itself, but only as one of N columns.
 
-## Should a bee ever skip its own clover?
+## Should a bee ever skip its own cosmos?
 
 No. A bee meets its own flowers only as often as the shuffled deck deals them (2 of every 2N visits), so
 self-dealing is capped by the deck, and it earns one rootsum term on each side, with diminishing returns.
 
-What it does leak now is its question. Everything is public, so a bee that recognises its own clover by
-asking a secret question shows that question to everyone, along with its clover's answer. The answer to
-a *new* secret question is still unforgeable if the clover answers with a keyed hash, but every orchid
+What it does leak now is its question. Everything is public, so a bee that recognises its own cosmos by
+asking a secret question shows that question to everyone, along with its cosmos's answer. The answer to
+a *new* secret question is still unforgeable if the cosmos answers with a keyed hash, but every orchid
 team can see which questions the bee keeps asking and which answers it feeds on.
 
 ## Asymmetric budgets and fair compute
 
 | Budget (orchid = reference) | Why |
 |---|---|
-| **clover**: ½ size, the whole 150 ms flower window (1.5× an orchid's time), a seventh of the orchid's change rate | **Costly signalling**: a clover can spend effort an orchid can't afford on every answer, such as a bigger, harder instance of its pattern. It changes slowly, so it can't simply out-run imitators. |
-| **orchid**: the reference; 7× a clover's change rate | Orchids answer with more code and faster adaptation: more efficient generators, shallower look-alikes, re-aimed at whatever bees trust. |
+| **cosmos**: ½ size, the whole 150 ms flower window (1.5× an orchid's time), a seventh of the orchid's change rate | **Costly signalling**: a cosmos can spend effort an orchid can't afford on every answer, such as a bigger, harder instance of its pattern. It changes slowly, so it can't simply out-run imitators. |
+| **orchid**: the reference; 7× a cosmos's change rate | Orchids answer with more code and faster adaptation: more efficient generators, shallower look-alikes, re-aimed at whatever bees trust. |
 | **bee**: 5× size, 50 ms per decision | Room for detector repertoires but little time per decision, so the winning signals are *hard to make, easy to check*. |
 
 **Fair compute**: the engine runs at most one program per CPU core, across every game in the process, and
 keeps a small pool of processes per flower. When compute is the signal, a busy machine mustn't make a
-clover time out. Wall-clock limits with one program per core behave like CPU limits (CPU-time interval
+cosmos time out. Wall-clock limits with one program per core behave like CPU limits (CPU-time interval
 timers fire late on tickless kernels). Since game time is counted in rounds, a machine with fewer cores
 than a round needs only makes rounds take longer in wall time; every program still gets its full time.
 
 ## Flowers are stateless, not pure
 
 A flower runs fresh for every call, so nothing carries over between questions. But each call gets fresh
-randomness and the clock (`time`, `Date.now()`) and can read its own budget as `GAME.ms`. A clover can run
+randomness and the clock (`time`, `Date.now()`) and can read its own budget as `GAME.ms`. A cosmos can run
 an anytime search, such as a local search for a big clique, and answer with the best result it found
 within 150 ms; an orchid has 100 ms to fake one. Bees can then judge how good an answer is, not just whether
 they have seen it before. The engine never caches answers, so every ask runs the flower again.
 
-Nothing forces a flower to use randomness: a deterministic clover can still be fingerprinted by repeating
+Nothing forces a flower to use randomness: a deterministic cosmos can still be fingerprinted by repeating
 a question.
 
 ## Programs are measured on, and run as, their minified form

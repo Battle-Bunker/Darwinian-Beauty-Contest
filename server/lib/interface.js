@@ -59,19 +59,19 @@ function typeRules(cT, rT, { maxLen, maxNodes }) {
 // How a flower runs, as comment lines under its signature.
 function flowerNotes(ts, config) {
   const c = ts ? "//" : "#", G = (k) => (ts ? `GAME.${k}` : `GAME["${k}"]`);
-  const { clover, orchid } = config.budgets;
+  const { cosmos, orchid } = config.budgets;
   return `${c} Runs fresh for every question: nothing is kept between calls. ${ts ? "Math.random()" : "random"} is freshly seeded on every call\n` +
     `${c} and the clock is available (${ts ? "Date.now()" : "import time"}). ${G("ms")} is your time limit per call in milliseconds:\n` +
-    `${c} ${clover.ms} for a clover, ${orchid.ms} for an orchid. The clock starts when your program starts, so stop with a margin\n` +
+    `${c} ${cosmos.ms} for a cosmos, ${orchid.ms} for an orchid. The clock starts when your program starts, so stop with a margin\n` +
     `${c} to spare: an answer that isn't done in time reaches the bee as ${ts ? "null" : "None"}. Every answer, however fast, reaches the\n` +
-    `${c} bee ${clover.ms} ms into the round, so it can't tell flowers apart by how long they take.`;
+    `${c} bee ${cosmos.ms} ms into the round, so it can't tell flowers apart by how long they take.`;
 }
 
 // How a bee runs.
 function beeNotes(ts, config) {
   const c = ts ? "//" : "#", G = (k) => (ts ? `GAME.${k}` : `GAME["${k}"]`);
   return `${c} Rounds of ${G("round_ms")} = ${roundMs(config)} ms: as each round starts, every bee's queued action runs (an ask, or a feed);\n` +
-    `${c} answers arrive ${config.budgets.clover.ms} ms in, and forage then has ${G("ms")} = ${config.budgets.bee.ms} ms to return the bee's next action,\n` +
+    `${c} answers arrive ${config.budgets.cosmos.ms} ms in, and forage then has ${G("ms")} = ${config.budgets.bee.ms} ms to return the bee's next action,\n` +
     `${c} queued for its next round. A bee with nothing queued as a round starts misses that round.\n` +
     `${c} A late reply still counts, but the bee misses its next round and the visit ends; of late replies only\n` +
     `${c} ["leave", challenge] is used (its challenge opens the next flower). After any other late reply, or any reply\n` +

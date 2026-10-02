@@ -1,9 +1,9 @@
-# Bee-side checkers for the two example clovers. Plain code with no imports: paste what you need.
+# Bee-side checkers for the two example cosmos flowers. Plain code with no imports: paste what you need.
 # Each takes the challenge you asked and the response you got, and returns a quality score
 # (higher is better), or None when the response is not a well-formed answer of that kind.
 
 
-# ---- Paley clique chain (paley_clover.py) ----
+# ---- Paley clique chain (paley_cosmos.py) ----
 
 CLIQUE_SIZE = 18
 START = 10**8
@@ -59,7 +59,7 @@ def check_paley(challenge, response, enough=None):
         return None
 
 
-# ---- Graceful labelling (graceful_clover.py) ----
+# ---- Graceful labelling (graceful_cosmos.py) ----
 
 VERTICES = 512
 

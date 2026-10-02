@@ -129,7 +129,7 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
             <span className="budget-note">
               Size is in weighted syntax-tree nodes of the minified program (comments, spacing and name lengths are free; every byte of a literal counts).
               Change budget fills by <i>per minute</i> nodes a minute of game time, up to <i>cap</i>; a change costs its node edits from the version playing.
-              The budgets are lopsided on purpose: the clover is small but has strong compute, the orchid changes fast, the bee carries a big kit with little time per decision.
+              The budgets are lopsided on purpose: the cosmos is small but has strong compute, the orchid changes fast, the bee carries a big kit with little time per decision.
             </span>
           </caption>
           <thead><tr><th className="left">Program</th><th>Size (nodes)</th><th>Change per minute</th><th>Change cap</th><th>Time (ms per call)</th></tr></thead>

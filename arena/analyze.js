@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Summarise arenas of continuous games as Markdown: spend, each game (time windows, teams, how fast orchids copy
-// clovers, the change timeline, compute against budget, sessions, storage), the panel, ideas, breeders, the fair-play
+// cosmos flowers, the change timeline, compute against budget, sessions, storage), the panel, ideas, breeders, the fair-play
 // audit, and games of different durations side by side.
 //   node arena/analyze.js [--arenas a,b] [--recompute] > arena/runs/analysis.md
 import { all, migrate, one, pool, q } from "./lib/db.js";
@@ -73,9 +73,9 @@ for (const a of arenas) {
         newCopies: m.copies?.afterNewVersion ?? 0, newCopyLatency: m.copies?.medianLatencyAfterNewVersionMs,
         scaffoldTeams: (m.scaffolds || []).filter((x) => x.starts > x.refused).length, teams: teams.length,
         sessionChanges: m.changes.filter((c) => c.atMs > 0 && c.source === "session").length, autoChanges: m.changes.filter((c) => c.atMs > 0 && c.source === "scaffold").length,
-        cloverCompute: mean(Object.values(m.compute || {}).filter((c) => c.kind === "clover").map((c) => c.meanFrac)),
+        cosmosCompute: mean(Object.values(m.compute || {}).filter((c) => c.kind === "cosmos").map((c) => c.meanFrac)),
         orchidCompute: mean(Object.values(m.compute || {}).filter((c) => c.kind === "orchid").map((c) => c.meanFrac)),
-        cloverNodes: mean(Object.values(m.compute || {}).filter((c) => c.kind === "clover").map((c) => c.answerNodes)),
+        cosmosNodes: mean(Object.values(m.compute || {}).filter((c) => c.kind === "cosmos").map((c) => c.answerNodes)),
         orchidNodes: mean(Object.values(m.compute || {}).filter((c) => c.kind === "orchid").map((c) => c.answerNodes)),
         sessions: ss.game / Math.max(1, teams.length), liveSubmits: rq.live, cost: cost.usd, fitSpread: (() => { const f = (m.final || []).map((x) => x.fitness); return f.length ? Math.max(...f) - Math.min(...f) : null; })() });
     }
@@ -87,13 +87,13 @@ for (const a of arenas) {
     const m = g.metrics;
     if (!m) continue;
     p(`### Game ${g.generation}: ${g.config?.minutes} min, ${m.actions} actions in ${mmss(m.durationMs)} (${f2(m.actionsPerSec)}/s), ${m.rounds} rounds (${f2(m.roundsPerSec)}/s)`);
-    p(`Feed cost ${m.config?.feedCost} rounds; ${m.config?.challengeType} → ${m.config?.responseType}; change budgets per minute (cap): ${["clover", "orchid", "bee"].map((k) => `${k} ${m.config?.budgets?.[k]?.perMinute} (${m.config?.budgets?.[k]?.cap})`).join(", ")}.`);
+    p(`Feed cost ${m.config?.feedCost} rounds; ${m.config?.challengeType} → ${m.config?.responseType}; change budgets per minute (cap): ${["cosmos", "orchid", "bee"].map((k) => `${k} ${m.config?.budgets?.[k]?.perMinute} (${m.config?.budgets?.[k]?.cap})`).join(", ")}.`);
     p();
     const names = Object.fromEntries(Object.entries(m.teams).map(([id, t]) => [id, t.name]));
-    p(`Over time (windows of ${secs(m.windowMs)}; precision = nectar per feed; nectar/bee-round = nectar ÷ (rounds × bees); rival fed = share of visits to rival flowers that ended in a feed; repeat = share of a bee's pre-feed asks repeating a challenge it asked before; stolen/twin = orchid answers equal to an earlier answer of a rival clover / of its own clover; compute = flower time ÷ budget):`);
-    table(["window", "actions", "rounds", "feeds", "precision", "nectar/bee-round", "rival clover fed", "rival orchid fed", "gap", "repeat", "distinct/bee", "stolen", "twin", "clover compute", "orchid compute", "fitness in window", "cumulative fitness"],
-      m.windows.map((w) => [`${mmss(w.from)}-${mmss(w.to)}`, w.actions, w.rounds, w.feeds, f2(w.precision), f3(w.nectarPerBeeRound), pc(w.rivalCloverFed), pc(w.rivalOrchidFed), f2(w.gap), pc(w.repeatShare), f2(w.distinctPerBee),
-        pc(w.stolenShare), pc(w.twinShare), pc(w.cloverCompute), pc(w.orchidCompute),
+    p(`Over time (windows of ${secs(m.windowMs)}; precision = nectar per feed; nectar/bee-round = nectar ÷ (rounds × bees); rival fed = share of visits to rival flowers that ended in a feed; repeat = share of a bee's pre-feed asks repeating a challenge it asked before; stolen/twin = orchid answers equal to an earlier answer of a rival cosmos / of its own cosmos; compute = flower time ÷ budget):`);
+    table(["window", "actions", "rounds", "feeds", "precision", "nectar/bee-round", "rival cosmos fed", "rival orchid fed", "gap", "repeat", "distinct/bee", "stolen", "twin", "cosmos compute", "orchid compute", "fitness in window", "cumulative fitness"],
+      m.windows.map((w) => [`${mmss(w.from)}-${mmss(w.to)}`, w.actions, w.rounds, w.feeds, f2(w.precision), f3(w.nectarPerBeeRound), pc(w.rivalCosmosFed), pc(w.rivalOrchidFed), f2(w.gap), pc(w.repeatShare), f2(w.distinctPerBee),
+        pc(w.stolenShare), pc(w.twinShare), pc(w.cosmosCompute), pc(w.orchidCompute),
         Object.entries(w.fitness).map(([id, f]) => `${names[id]?.slice(0, 12)} ${f2(f)}`).join(", "), Object.entries(w.cumFitness).map(([id, f]) => `${names[id]?.slice(0, 12)} ${f2(f)}`).join(", ")]));
     // Teams.
     const ent = await all("SELECT e.*, p.name, p.model FROM arena.entries e JOIN arena.personas p ON p.id = e.persona_id WHERE e.game_id = $1", [g.id]);
@@ -103,17 +103,17 @@ for (const a of arenas) {
       const f = (m.final || []).find((x) => x.teamId === id);
       const ss = e ? await one(`SELECT count(*) FILTER (WHERE phase = 'game')::int AS n, coalesce(sum(cost_usd), 0) AS usd, count(*) FILTER (WHERE violation)::int AS v FROM arena.sessions WHERE game_id = $1 AND persona_id = $2`, [g.id, e.persona_id]) : {};
       const rq = e ? await one(`SELECT count(*)::int AS n, count(*) FILTER (WHERE op = 'submit' AND ok)::int AS ok, count(*) FILTER (WHERE op = 'submit' AND NOT ok)::int AS bad FROM arena.requests WHERE game_id = $1 AND persona_id = $2`, [g.id, e.persona_id]) : {};
-      trows.push([t.name, e?.model, f2(f?.fitness), `${f?.feedsReceived ?? "-"} / ${f?.nectarCollected ?? "-"}`, f2(t.precision), `${pc(t.rivalCloverFed)} / ${pc(t.rivalOrchidFed)}`, f2(t.gap), pc(t.repeatShare), t.distinctChallenges,
+      trows.push([t.name, e?.model, f2(f?.fitness), `${f?.feedsReceived ?? "-"} / ${f?.nectarCollected ?? "-"}`, f2(t.precision), `${pc(t.rivalCosmosFed)} / ${pc(t.rivalOrchidFed)}`, f2(t.gap), pc(t.repeatShare), t.distinctChallenges,
         ss.n ?? "-", f2(ss.usd), rq.n ?? "-", `${rq.ok ?? 0}/${rq.bad ?? 0}`, ss.v || 0]);
     }
     p("Teams:");
-    table(["team", "model", "fitness", "feeds received / nectar collected", "bee precision", "bee fed at rival clovers / orchids", "gap", "repeat", "distinct challenges", "game sessions", "USD (all sessions)", "requests", "submits ok/refused", "violations"], trows);
+    table(["team", "model", "fitness", "feeds received / nectar collected", "bee precision", "bee fed at rival cosmos / orchids", "gap", "repeat", "distinct challenges", "game sessions", "USD (all sessions)", "requests", "submits ok/refused", "violations"], trows);
     // Copies.
     const cp = m.copies || {};
-    p(`Orchids copying clovers: ${cp.copied ?? 0} matches of ${cp.cloverAnswers ?? 0} distinct clover answers${cp.medianLatencyMs != null ? `, median ${secs(cp.medianLatencyMs)} after the clover's answer first appeared` : ""} ` +
-      `(a match = a rival orchid answering r to c for the first time, after a clover answered r to c). ${cp.afterNewVersion ?? 0} came from an orchid version that went live after the clover's answer appeared` +
+    p(`Orchids copying cosmos flowers: ${cp.copied ?? 0} matches of ${cp.cosmosAnswers ?? 0} distinct cosmos answers${cp.medianLatencyMs != null ? `, median ${secs(cp.medianLatencyMs)} after the cosmos's answer first appeared` : ""} ` +
+      `(a match = a rival orchid answering r to c for the first time, after a cosmos answered r to c). ${cp.afterNewVersion ?? 0} came from an orchid version that went live after the cosmos's answer appeared` +
       `${cp.medianLatencyAfterNewVersionMs != null ? ` (median ${secs(cp.medianLatencyAfterNewVersionMs)})` : ""}: those are copies; the rest can be convergence (the same rule) or coincidence.`);
-    table(["orchid of", "copies", "copied from", "median latency", "fastest 10%", "by a version that went live after the clover's answer", "median latency of those"],
+    table(["orchid of", "copies", "copied from", "median latency", "fastest 10%", "by a version that went live after the cosmos's answer", "median latency of those"],
       Object.values(cp.byOrchid || {}).map((o) => [o.name, o.copies, o.from.join(", "), secs(o.medianLatencyMs), secs(o.p10LatencyMs), o.afterNewVersion, secs(o.medianLatencyAfterNewVersionMs)]));
     // Changes.
     p("Change timeline (every program version; lobby = written before the start):");
@@ -176,10 +176,10 @@ for (const a of arenas) {
 if (durations.length) {
   p("## Games by duration");
   p("Per game, averaged over teams where it's per team. Change budgets accrue per minute of game time, so short games allow little or no change.");
-  table(["minutes", "arena game", "actions/s", "rounds/s", "teams with a scaffold", "in-game changes: sessions / scaffolds", "bee precision", "rival clover−orchid fed gap (discrimination)", "repeat share",
-    "clover / orchid compute used", "clover / orchid answer nodes", "orchid matches of earlier clover answers (median latency)", "of those, copies by a newer orchid version (median latency)", "game sessions per team", "fitness spread", "USD"],
+  table(["minutes", "arena game", "actions/s", "rounds/s", "teams with a scaffold", "in-game changes: sessions / scaffolds", "bee precision", "rival cosmos−orchid fed gap (discrimination)", "repeat share",
+    "cosmos / orchid compute used", "cosmos / orchid answer nodes", "orchid matches of earlier cosmos answers (median latency)", "of those, copies by a newer orchid version (median latency)", "game sessions per team", "fitness spread", "USD"],
     durations.sort((x, y) => x.minutes - y.minutes || x.gen - y.gen).map((d) => [d.minutes, `${d.arena} ${d.gen}`, f2(d.actionsPerSec), f2(d.roundsPerSec), `${d.scaffoldTeams}/${d.teams}`, `${d.sessionChanges} / ${d.autoChanges}`,
-      f2(d.precision), f2(d.gap), pc(d.repeat), `${pc(d.cloverCompute)} / ${pc(d.orchidCompute)}`, `${f2(d.cloverNodes)} / ${f2(d.orchidNodes)}`,
+      f2(d.precision), f2(d.gap), pc(d.repeat), `${pc(d.cosmosCompute)} / ${pc(d.orchidCompute)}`, `${f2(d.cosmosNodes)} / ${f2(d.orchidNodes)}`,
       `${d.copies} (${secs(d.copyLatency)})`, `${d.newCopies} (${secs(d.newCopyLatency)})`, f2(d.sessions), f2(d.fitSpread), f2(d.cost)]));
 }
 

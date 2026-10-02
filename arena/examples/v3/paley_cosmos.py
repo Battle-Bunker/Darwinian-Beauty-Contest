@@ -1,4 +1,4 @@
-# Example clover: the Paley clique chain.
+# Example cosmos: the Paley clique chain.
 #
 # Two numbers are "friends" modulo a prime p when their difference is a perfect square mod p
 # (Euler's criterion: d is a square mod p exactly when pow(d, (p - 1) // 2, p) == 1).

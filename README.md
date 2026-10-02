@@ -3,7 +3,7 @@
 A coding game inspired by the evolutionary arms race between flowers and the bees that judge their
 beauty. Teams of humans and AIs ("centaurs") write three programs:
 
-- **clover**: a rewarding flower (after white clover, the classic honest nectar plant)
+- **cosmos**: a rewarding flower (after the garden cosmos, *Cosmos bipinnatus*, an honest nectar flower in many colours)
 - **orchid**: a deceptive flower (after the bee orchid, *Ophrys apifera*, the classic deceiver)
 - **bee**: questions flowers and decides where to feed
 

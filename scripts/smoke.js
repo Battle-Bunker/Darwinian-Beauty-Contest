@@ -33,8 +33,8 @@ console.log("room", room.url);
 const game = await api(owner, "POST", `/rooms/${room.shortId}/games`);
 console.log("game", game.url);
 const g = `/rooms/${room.shortId}/games/${game.shortId}`;
-// Half a minute of game time; clovers earn change budget fast so the test needn't wait.
-await api(owner, "PATCH", `${g}/config`, { config: { minutes: 0.5, budgets: { clover: { perMinute: 600, cap: 100 } } } });
+// Half a minute of game time; cosmos flowers earn change budget fast so the test needn't wait.
+await api(owner, "PATCH", `${g}/config`, { config: { minutes: 0.5, budgets: { cosmos: { perMinute: 600, cap: 100 } } } });
 
 const players = [];
 for (const name of ["Ada", "Bo", "Cy", "Di"]) {
@@ -49,8 +49,8 @@ const view0 = await api(players[0].token, "GET", g);
 assert.match(view0.interface.flower, /def flower\(challenge\)/);
 assert.match(view0.interface.bee, /def forage\(seen, visit\)/);
 assert.match(view0.interface.bee, /\["leave", challenge\]/);
-assert.deepEqual(["clover", "orchid", "bee"].map((k) => view0.game.config.budgets[k].ms), [150, 100, 50], "every time limit is public");
-const clover = (a, b) => `def flower(challenge):\n    return (challenge * ${a} + ${b}) % 1000\n`;
+assert.deepEqual(["cosmos", "orchid", "bee"].map((k) => view0.game.config.budgets[k].ms), [150, 100, 50], "every time limit is public");
+const cosmos = (a, b) => `def flower(challenge):\n    return (challenge * ${a} + ${b}) % 1000\n`;
 // A bee that tastes each answer twice. `carry`: it moves on with ["leave", q] (its next challenge
 // queued); otherwise with a plain "leave" (and the game asks it for its next challenge).
 const bee = (q, carry) => {
@@ -58,27 +58,27 @@ const bee = (q, carry) => {
   return `tally = {}\ndef forage(seen, visit):\n    if not seen:\n        return ["ask", ${q}]\n    if visit["fed"]:\n        return ${leave}\n    fed, got = tally.get(seen[0][1], [0, 0])\n    return "feed" if fed < 2 or got * 2 >= fed else ${leave}\ndef tasted(seen, nectar):\n    print("tasted", nectar)\n    fed, got = tally.get(seen[0][1], [0, 0])\n    tally[seen[0][1]] = [fed + 1, got + nectar]\n`;
 };
 const variants = [
-  { clover: clover(3, 1), orchid: clover(5, 2), bee: bee(42, true) },  // orchid imitates Bo's clover
-  { clover: clover(5, 2), orchid: clover(9, 4), bee: bee(500, false) },
-  { clover: clover(7, 3), orchid: clover(7, 3), bee: bee(7, false) },  // orchid is a twin of its own clover
+  { cosmos: cosmos(3, 1), orchid: cosmos(5, 2), bee: bee(42, true) },  // orchid imitates Bo's cosmos
+  { cosmos: cosmos(5, 2), orchid: cosmos(9, 4), bee: bee(500, false) },
+  { cosmos: cosmos(7, 3), orchid: cosmos(7, 3), bee: bee(7, false) },  // orchid is a twin of its own cosmos
 ];
 for (const [i, p] of players.slice(0, 3).entries()) {
-  for (const kind of ["clover", "orchid", "bee"]) {
+  for (const kind of ["cosmos", "orchid", "bee"]) {
     const r = await api(p.token, "POST", `${g}/programs`, { kind, code: variants[i][kind] });
     assert.ok(r.ok, `${p.name} ${kind}: ${r.errors}`);
     assert.equal(r.cost, 0, "writing programs before the start is free");
   }
 }
-// Di writes only a clover, so Di's team sits the game out.
-await api(players[3].token, "POST", `${g}/programs`, { kind: "clover", code: clover(1, 1) });
-for (const [kind, code] of [["clover", "x = 1\n"], ["bee", "def flower(c):\n    return c\n"], ["orchid", ""]]) {
+// Di writes only a cosmos, so Di's team sits the game out.
+await api(players[3].token, "POST", `${g}/programs`, { kind: "cosmos", code: cosmos(1, 1) });
+for (const [kind, code] of [["cosmos", "x = 1\n"], ["bee", "def flower(c):\n    return c\n"], ["orchid", ""]]) {
   const r = await api(players[0].token, "POST", `${g}/check`, { kind, code });
   assert.equal(r.ok, false, `${kind} without its entry point`);
   assert.match(r.errors.join(), kind === "bee" ? /must define forage/ : /must define flower/);
 }
-const lambdaClover = await api(players[0].token, "POST", `${g}/check`, { kind: "clover", code: "flower = lambda c: c\n" });
-assert.ok(lambdaClover.ok, lambdaClover.errors);
-const big = await api(players[0].token, "POST", `${g}/check`, { kind: "clover", code: "def flower(c):\n" + "    c = c + 1\n".repeat(400) + "    return c\n" });
+const lambdaCosmos = await api(players[0].token, "POST", `${g}/check`, { kind: "cosmos", code: "flower = lambda c: c\n" });
+assert.ok(lambdaCosmos.ok, lambdaCosmos.errors);
+const big = await api(players[0].token, "POST", `${g}/check`, { kind: "cosmos", code: "def flower(c):\n" + "    c = c + 1\n".repeat(400) + "    return c\n" });
 assert.equal(big.ok, false);
 assert.match(big.errors[0], /Too big: \d+ nodes/);
 const tf = await api(players[0].token, "POST", `${g}/try`, { kind: "orchid", code: variants[0].orchid, challenges: [1, 2, 500] });
@@ -101,7 +101,7 @@ const seen = await until("actions", async () => {
 const adaAsk = seen.actions.find((a) => a.bee === players[0].team.id && a.action === "ask");
 assert.equal(adaAsk.c, 42, "Bo sees Ada's bee's question");
 assert.equal(typeof adaAsk.r, "number");
-assert.ok(seen.actions.every((a) => a.kind === "clover" || a.kind === "orchid"));
+assert.ok(seen.actions.every((a) => a.kind === "cosmos" || a.kind === "orchid"));
 const ada = players[0].team.id, bo = players[1].team.id;
 // tasted runs in the call after a feed, so what it prints goes with the action that call decided
 const adaTasted = (acts) => acts.find((a) => a.bee === ada && /tasted/.test(a.log || ""));
@@ -137,28 +137,28 @@ assert.equal(adaTeam.programs, null, "other teams' code changes are hidden durin
 assert.equal(adaTeam.banks, null, "so are their change budgets");
 assert.equal(view1.game.config.budgets.orchid.ms, 100, "the orchid's time limit is public");
 const own = (await api(players[0].token, "GET", g)).teams.find((t) => t.id === players[0].team.id);
-assert.equal(own.programs.clover.length, 1);
-assert.ok("bank" in own.banks.clover);
+assert.equal(own.programs.cosmos.length, 1);
+assert.ok("bank" in own.banks.cosmos);
 assert.ok(seen.actions.every((a) => a.bee === players[1].team.id || !("beeVersion" in a)), "nor which versions played");
 // About 1,200 nodes of change: more than an orchid earns in this whole 30-second game (1,540 a minute).
 const rewrite = await api(players[0].token, "POST", `${g}/programs`, { kind: "orchid", code: `def flower(c):\n    return len("${"ab".repeat(600)}") + c\n` });
 assert.equal(rewrite.ok, false);
 assert.match(rewrite.errors.join(), /Not enough change budget: this change costs \d+ nodes/);
-const small = clover(3, 9); // one byte changed: costs 1 node
+const small = cosmos(3, 9); // one byte changed: costs 1 node
 const versionBefore = (await api(players[1].token, "GET", g)).game.version;
-const r1 = await until("clover budget", async () => {
-  const r = await api(players[0].token, "POST", `${g}/programs`, { kind: "clover", code: small });
+const r1 = await until("cosmos budget", async () => {
+  const r = await api(players[0].token, "POST", `${g}/programs`, { kind: "cosmos", code: small });
   return r.ok && r;
 });
 assert.equal(r1.cost, 1);
 assert.equal(r1.version, 2);
 assert.ok(r1.atMs > 0, "the reply says when it went live");
-const free = await api(players[0].token, "POST", `${g}/programs`, { kind: "clover", code: "# same thing, explained\n" + small.replace("challenge", "question").replaceAll("challenge", "question") });
+const free = await api(players[0].token, "POST", `${g}/programs`, { kind: "cosmos", code: "# same thing, explained\n" + small.replace("challenge", "question").replaceAll("challenge", "question") });
 assert.ok(free.ok && free.cost === 0, "comments, formatting and renames are free");
 assert.equal((await api(players[1].token, "GET", g)).game.version, versionBefore, "a submission doesn't announce itself");
-await until("the new clover to answer", async () => {
+await until("the new cosmos to answer", async () => {
   const a = await api(players[0].token, "GET", `${g}/actions?after=${seen.lastSeq}&limit=5000`);
-  return a.actions.some((x) => x.patch === players[0].team.id && x.kind === "clover" && x.flowerVersion >= 2 && x.action === "ask" && x.r === (x.c * 3 + 9) % 1000);
+  return a.actions.some((x) => x.patch === players[0].team.id && x.kind === "cosmos" && x.flowerVersion >= 2 && x.action === "ask" && x.r === (x.c * 3 + 9) % 1000);
 });
 
 // A live stream of actions over SSE.
@@ -183,9 +183,9 @@ await api(owner, "POST", `${g}/status`, { action: "finish" });
 const done = await until("finish", async () => { const v = await api(players[1].token, "GET", g); return v.game.status === "finished" && v; });
 assert.ok(done.game.revealed);
 const adaAfter = done.teams.find((t) => t.id === players[0].team.id);
-assert.equal(adaAfter.programs.clover[2].code.startsWith("# same thing"), true);
-assert.deepEqual(adaAfter.programs.clover.map((v) => v.cost), [0, 1, 0], "once it's over, everyone sees every change");
-assert.ok("bank" in adaAfter.banks.clover);
+assert.equal(adaAfter.programs.cosmos[2].code.startsWith("# same thing"), true);
+assert.deepEqual(adaAfter.programs.cosmos.map((v) => v.cost), [0, 1, 0], "once it's over, everyone sees every change");
+assert.ok("bank" in adaAfter.banks.cosmos);
 const after = (await api(players[1].token, "GET", `${g}/actions?limit=5000`)).actions;
 assert.ok(after.slice(0, 50).every((a) => "beeVersion" in a && "flowerVersion" in a));
 assert.ok(after.filter((a) => a.action === "ask").every((a) => "ms" in a), "every answer time, once it's over");
@@ -205,7 +205,7 @@ const g2r = await api(owner, "POST", `/rooms/${room.shortId}/games`, { config: {
 const g2 = `/rooms/${room.shortId}/games/${g2r.shortId}`;
 for (const [i, p] of players.slice(0, 2).entries()) {
   await api(p.token, "POST", `${g2}/teams`, { name: p.name });
-  for (const kind of ["clover", "orchid", "bee"]) await api(p.token, "POST", `${g2}/programs`, { kind, code: variants[i][kind] });
+  for (const kind of ["cosmos", "orchid", "bee"]) await api(p.token, "POST", `${g2}/programs`, { kind, code: variants[i][kind] });
 }
 await api(owner, "POST", `${g2}/start`);
 const end2 = await until("game 2 to end", async () => { const v = await api(owner, "GET", g2); return v.game.status === "finished" && v; }, 20000);

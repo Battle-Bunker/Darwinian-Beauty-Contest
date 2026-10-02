@@ -1,6 +1,6 @@
 """Submit a program: it goes live at once and pays for its change from your change budget.
 
-    python3 tools/submit.py clover            # submits clover.py
+    python3 tools/submit.py cosmos            # submits cosmos.py
     python3 tools/submit.py orchid my_orchid.py
     python3 tools/submit.py bee --force       # skip the quick runtime test
     python3 tools/submit.py bee --json        # print the raw result
@@ -11,7 +11,7 @@ until you can. The runner first runs a quick runtime test (flowers: a few challe
 forage of your own two flowers) and refuses to submit a program that crashes, unless you pass --force.
 
 From your own script:  sys.path.insert(0, "tools"); from _runner import call
-                       r = call("submit", kind="clover", code=source)   # r["ok"], r["text"], r["cost"], ...
+                       r = call("submit", kind="cosmos", code=source)   # r["ok"], r["text"], r["cost"], ...
 """
 import sys
 from _runner import call, kind_arg, read_code, show

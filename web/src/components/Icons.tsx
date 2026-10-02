@@ -45,12 +45,12 @@ export const TrophyIcon = ({ size, ...r }: P) => (
   <svg {...base(size, r)}><path d="M6 3h12v2h3v3a4 4 0 0 1-4 4h-.4A5 5 0 0 1 13 15.9V18h3v3H8v-3h3v-2.1A5 5 0 0 1 7.4 12H7a4 4 0 0 1-4-4V5h3zm0 4H5v1a2 2 0 0 0 1 1.7zm12 0v2.7A2 2 0 0 0 19 8V7z" fill="currentColor" /></svg>
 );
 
-/** A small flower icon (logo, tabs, cards). The garden draws its own two varieties. */
-export function FlowerHead({ color, size = 22 }: { color: string; size?: number }) {
+/** A small flower icon (logo, tabs, cards): 8 petals for a cosmos, 6 otherwise. The garden draws its own two varieties. */
+export function FlowerHead({ color, size = 22, petals = 6 }: { color: string; size?: number; petals?: number }) {
   return (
     <svg width={size} height={size} viewBox="-12 -12 24 24" aria-hidden>
-      {[0, 60, 120, 180, 240, 300].map((a) => (
-        <ellipse key={a} cx="0" cy="-6.2" rx="3.6" ry="5.6" fill={color} stroke="rgba(0,0,0,.35)" strokeWidth=".7" transform={`rotate(${a})`} />
+      {Array.from({ length: petals }, (_, i) => (i * 360) / petals).map((a) => (
+        <ellipse key={a} cx="0" cy="-6.2" rx={petals > 6 ? 3 : 3.6} ry="5.6" fill={color} stroke="rgba(0,0,0,.35)" strokeWidth=".7" transform={`rotate(${a})`} />
       ))}
       <circle r="3.6" fill="#ffd166" stroke="#a86b00" strokeWidth=".8" />
     </svg>

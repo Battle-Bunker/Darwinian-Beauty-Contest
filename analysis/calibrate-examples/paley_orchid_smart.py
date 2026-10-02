@@ -1,10 +1,10 @@
 # Calibration only: the strongest Paley-chain orchid we could write for a 50 ms budget. Same answer format as
-# arena/examples/v3/paley_clover.py (and the same local search: greedy growth plus 1-for-2 and 1-for-1 swaps),
+# arena/examples/v3/paley_cosmos.py (and the same local search: greedy growth plus 1-for-2 and 1-for-1 swaps),
 # with every speed-up we found on top:
 #   - each member's friend set is computed once and cached instead of on every step
 #   - members are masked out before scanning the "misses exactly one member" set
 #   - local names in the hot loops, perf_counter, wider candidate sampling (6) when growing
-#   - spends 80% of its budget (the example clover stops at 65%), and uses the window that suits it best
+#   - spends 80% of its budget (the example cosmos stops at 65%), and uses the window that suits it best
 import itertools
 import random
 import time

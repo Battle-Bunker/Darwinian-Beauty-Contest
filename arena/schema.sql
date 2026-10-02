@@ -246,3 +246,14 @@ CREATE INDEX IF NOT EXISTS scaffolds_game ON arena.scaffolds(game_id, persona_id
 ALTER TABLE arena.requests ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'session';
 ALTER TABLE arena.requests ADD COLUMN IF NOT EXISTS scaffold_id int;
 ALTER TABLE arena.violations ADD COLUMN IF NOT EXISTS scaffold_id int;
+-- The rewarding flower was renamed from clover to cosmos (server/db/migrations/004_cosmos.sql). Rename the kind wherever
+-- the arena stored it as data: requests, the status budgets they got back, game configs and metrics (kind values,
+-- "<team>|<kind>" keys and the clover-named fields). Free text (transcripts, explanations, notebooks, ideas) keeps its words.
+UPDATE arena.requests SET kind = 'cosmos' WHERE kind = 'clover';
+UPDATE arena.requests SET result = jsonb_set(result #- '{budgets,clover}', '{budgets,cosmos}', result -> 'budgets' -> 'clover')
+ WHERE jsonb_typeof(result -> 'budgets') = 'object' AND result -> 'budgets' ? 'clover';
+UPDATE arena.games SET config = jsonb_set(config #- '{budgets,clover}', '{budgets,cosmos}', config -> 'budgets' -> 'clover')
+ WHERE jsonb_typeof(config -> 'budgets') = 'object' AND config -> 'budgets' ? 'clover';
+UPDATE arena.games
+   SET metrics = replace(replace(replace(metrics::text, '"clover', '"cosmos'), '|clover"', '|cosmos"'), '"rivalClover', '"rivalCosmos')::jsonb
+ WHERE metrics::text ~ '"clover|\|clover"|"rivalClover';

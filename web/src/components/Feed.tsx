@@ -16,7 +16,7 @@ const ACTION_FILTERS: [ActionFilter, string][] = [
   ["nectar", "feeds: nectar"], ["fooled", "feeds: fooled"], ["leave", "leaves"], ["error", "mistakes and failures"],
 ];
 
-interface Filters { bee: string; patch: string; kind: "" | "clover" | "orchid"; action: ActionFilter; prints: boolean }
+interface Filters { bee: string; patch: string; kind: "" | "cosmos" | "orchid"; action: ActionFilter; prints: boolean }
 const NONE: Filters = { bee: "", patch: "", kind: "", action: "", prints: false };
 
 function matches(a: Action, f: Filters): boolean {
@@ -86,7 +86,7 @@ export function Feed({ view, store, base, initial }: { view: GameView; store: Li
         <label className="feed-filter"><span>at</span>{teamSelect(f.patch, (v) => set({ patch: v }), "every patch", "Patch team")}</label>
         <label className="feed-filter"><span>flower</span>
           <select value={f.kind} onChange={(e) => set({ kind: e.target.value as Filters["kind"] })} aria-label="Flower">
-            <option value="">both</option><option value="clover">clover</option><option value="orchid">orchid</option>
+            <option value="">both</option><option value="cosmos">cosmos</option><option value="orchid">orchid</option>
           </select>
         </label>
         <label className="feed-filter"><span>doing</span>

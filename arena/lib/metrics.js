@@ -3,14 +3,14 @@
 // to be in memory at once. Stored in arena.games.metrics by run.js and printed by analyze.js.
 //
 //   windows      per stretch of game time (windowMs): actions, rounds, feeds, nectar, precision (nectar per feed),
-//                nectar per bee-round (a bee gets one turn per round unless it is feeding), rival clover vs rival
+//                nectar per bee-round (a bee gets one turn per round unless it is feeding), rival cosmos vs rival
 //                orchid fed rates (share of visits that ended in a feed) and their gap, fingerprinting (share of a
 //                bee's pre-feed asks that repeat a challenge it asked before; distinct challenges), stolen-face and
 //                twin orchid answers, flower compute against budget, and fitness from that stretch's ledgers
-//   teams        per team: the same for its bee, its clover and its orchid, whole game and per window
-//   copies       how fast orchids copy rival clovers: for each answer (c, r) a clover gave, the time until a rival
+//   teams        per team: the same for its bee, its cosmos and its orchid, whole game and per window
+//   copies       how fast orchids copy rival cosmos flowers: for each answer (c, r) a cosmos gave, the time until a rival
 //                orchid first answered r to c (only when that orchid hadn't answered so before), and whether the
-//                orchid's version that did it went live after the clover's answer appeared
+//                orchid's version that did it went live after the cosmos's answer appeared
 //   changes      every program version: who, which, when (game time), size, node edits, cost, and the session
 //   compute      per flower: asks, mean/p90/max ms against its budget, timeouts
 //   final        the game's scores
@@ -39,10 +39,10 @@ export class GameMetrics {
     this.w = new Map();             // window index -> stats
     this.visits = new Map();        // "bee|visit" -> { w, patch, kind, fed }
     this.askedBy = new Map();       // bee -> Set(challenge keys asked before feeding)
-    this.cloverAns = new Map();     // clover team -> Map(c -> Map(r -> first atMs))
+    this.cosmosAns = new Map();     // cosmos team -> Map(c -> Map(r -> first atMs))
     this.orchidAns = new Map();     // orchid team -> Map(c -> Set(r))
-    this.copies = [];               // { orchid, clover, c, latencyMs, atMs, version }
-    this.clovers = 0;               // distinct (clover, c, r) answers
+    this.copies = [];               // { orchid, cosmos, c, latencyMs, atMs, version }
+    this.cosmosAnswerCount = 0;     // distinct (cosmos, c, r) answers
     this.flowerMs = new Map();      // "team|kind" -> [ms]
     this.answers = new Map();       // "team|kind" -> { n, nodes, edges, chars, graphs }: what answers looked like (effort)
     this.beeMs = new Map();         // team -> [ms a bee took to decide]
@@ -59,7 +59,7 @@ export class GameMetrics {
     if (!s) {
       const n = this.ids.length;
       s = { i, actions: 0, asks: 0, feeds: 0, nectar: 0, minRound: Infinity, maxRound: -Infinity, feedsL: zeroLedger(n), nectarL: zeroLedger(n),
-        rival: { cloverVisits: 0, cloverFed: 0, orchidVisits: 0, orchidFed: 0 }, bees: new Map(), orchidAsks: 0, stolen: 0, twin: 0,
+        rival: { cosmosVisits: 0, cosmosFed: 0, orchidVisits: 0, orchidFed: 0 }, bees: new Map(), orchidAsks: 0, stolen: 0, twin: 0,
         flowerMs: new Map(), flowerErrors: 0, beeErrors: 0 };
       this.w.set(i, s);
     }
@@ -68,7 +68,7 @@ export class GameMetrics {
 
   #bee(s, b) {
     let x = s.bees.get(b);
-    if (!x) s.bees.set(b, (x = { asks: 0, repeats: 0, cs: new Map(), feeds: 0, nectar: 0, rivalCloverVisits: 0, rivalCloverFed: 0, rivalOrchidVisits: 0, rivalOrchidFed: 0, errors: 0 }));
+    if (!x) s.bees.set(b, (x = { asks: 0, repeats: 0, cs: new Map(), feeds: 0, nectar: 0, rivalCosmosVisits: 0, rivalCosmosFed: 0, rivalOrchidVisits: 0, rivalOrchidFed: 0, errors: 0 }));
     return x;
   }
 
@@ -87,7 +87,7 @@ export class GameMetrics {
     if (!v) {
       v = { w: s, patch, kind: a.kind, fed: false };
       this.visits.set(vk, v);
-      if (rival) { if (a.kind === "clover") { s.rival.cloverVisits++; bx.rivalCloverVisits++; } else { s.rival.orchidVisits++; bx.rivalOrchidVisits++; } }
+      if (rival) { if (a.kind === "cosmos") { s.rival.cosmosVisits++; bx.rivalCosmosVisits++; } else { s.rival.orchidVisits++; bx.rivalOrchidVisits++; } }
     }
     const bms = a.bee_ms ?? a.beeMs;
     if (bms != null) (this.beeMs.get(bee) || this.beeMs.set(bee, []).get(bee)).push(Number(bms));
@@ -116,18 +116,18 @@ export class GameMetrics {
       if (a.error && a.error_by === "flower") { s.flowerErrors++; if (/time|timeout/i.test(a.error)) this.timeouts.set(fk, (this.timeouts.get(fk) || 0) + 1); }
       if (a.r != null && !a.error) {
         const r = key(a.r);
-        if (a.kind === "clover") {
-          let byC = this.cloverAns.get(patch);
-          if (!byC) this.cloverAns.set(patch, (byC = new Map()));
+        if (a.kind === "cosmos") {
+          let byC = this.cosmosAns.get(patch);
+          if (!byC) this.cosmosAns.set(patch, (byC = new Map()));
           let byR = byC.get(c);
           if (!byR) byC.set(c, (byR = new Map()));
-          if (!byR.has(r)) { byR.set(r, atMs); this.clovers++; }
+          if (!byR.has(r)) { byR.set(r, atMs); this.cosmosAnswerCount++; }
         } else {
-          // An orchid answer: does it match an answer a clover gave to the same challenge earlier?
+          // An orchid answer: does it match an answer a cosmos gave to the same challenge earlier?
           {
             s.orchidAsks++;
             let stolenFrom = null, twin = false;
-            for (const [team, byC] of this.cloverAns) {
+            for (const [team, byC] of this.cosmosAns) {
               const t0 = byC.get(c)?.get(r);
               if (t0 == null || t0 > atMs) continue;
               if (team === patch) twin = true;
@@ -141,7 +141,7 @@ export class GameMetrics {
             if (!rs) mine.set(c, (rs = new Set()));
             if (!rs.has(r)) {
               rs.add(r);
-              if (stolenFrom) this.copies.push({ orchid: patch, clover: stolenFrom.team, c, latencyMs: atMs - stolenFrom.t0, atMs, clovAtMs: stolenFrom.t0, version: a.flower_version ?? null });
+              if (stolenFrom) this.copies.push({ orchid: patch, cosmos: stolenFrom.team, c, latencyMs: atMs - stolenFrom.t0, atMs, cosmosAtMs: stolenFrom.t0, version: a.flower_version ?? null });
             }
           }
         }
@@ -156,7 +156,7 @@ export class GameMetrics {
       if (rival) {
         const vw = v.w; // count the fed visit in the window where the visit started
         const vb = this.#bee(vw, bee);
-        if (v.kind === "clover") { vw.rival.cloverFed++; vb.rivalCloverFed++; } else { vw.rival.orchidFed++; vb.rivalOrchidFed++; }
+        if (v.kind === "cosmos") { vw.rival.cosmosFed++; vb.rivalCosmosFed++; } else { vw.rival.orchidFed++; vb.rivalOrchidFed++; }
       }
     } else if (a.action === "error") {
       bx.errors++;
@@ -183,13 +183,13 @@ export class GameMetrics {
       windows.push({
         from: s.i * this.windowMs, to: (s.i + 1) * this.windowMs, actions: s.actions, rounds, asks: s.asks, feeds: s.feeds, nectar: s.nectar,
         precision: r3(s.feeds ? s.nectar / s.feeds : null), nectarPerBeeRound: r3(rounds ? s.nectar / (rounds * n) : null),
-        rivalCloverFed: r3(s.rival.cloverVisits ? s.rival.cloverFed / s.rival.cloverVisits : null),
+        rivalCosmosFed: r3(s.rival.cosmosVisits ? s.rival.cosmosFed / s.rival.cosmosVisits : null),
         rivalOrchidFed: r3(s.rival.orchidVisits ? s.rival.orchidFed / s.rival.orchidVisits : null),
-        gap: r3(s.rival.cloverVisits && s.rival.orchidVisits ? s.rival.cloverFed / s.rival.cloverVisits - s.rival.orchidFed / s.rival.orchidVisits : null),
+        gap: r3(s.rival.cosmosVisits && s.rival.orchidVisits ? s.rival.cosmosFed / s.rival.cosmosVisits - s.rival.orchidFed / s.rival.orchidVisits : null),
         repeatShare: r3(repeat.length ? repeat.reduce((a, b) => a + b, 0) / repeat.length : null),
         distinctPerBee: r3(bees.length ? bees.reduce((a, b) => a + b.cs.size, 0) / bees.length : null),
         stolenShare: r3(s.orchidAsks ? s.stolen / s.orchidAsks : null), twinShare: r3(s.orchidAsks ? s.twin / s.orchidAsks : null),
-        cloverCompute: r3(comp.clover?.length ? comp.clover.reduce((a, b) => a + b, 0) / comp.clover.length : null),
+        cosmosCompute: r3(comp.cosmos?.length ? comp.cosmos.reduce((a, b) => a + b, 0) / comp.cosmos.length : null),
         orchidCompute: r3(comp.orchid?.length ? comp.orchid.reduce((a, b) => a + b, 0) / comp.orchid.length : null),
         flowerErrors: s.flowerErrors, beeErrors: s.beeErrors,
         fitness: Object.fromEntries(fit.map((x) => [x.teamId, r3(x.fitness)])), cumFitness: Object.fromEntries(cum.map((x) => [x.teamId, r3(x.fitness)])),
@@ -201,9 +201,9 @@ export class GameMetrics {
         const fed = (kind) => { let v = 0; for (let i = 0; i < n; i++) if (this.ids[i] !== id) v += s.feedsL[i][this.idx.get(id)]; return v; };
         perTeam[id].windows.push({
           from: s.i * this.windowMs, asks: b?.asks ?? 0, feeds: b?.feeds ?? 0, nectar: b?.nectar ?? 0, precision: r3(b?.feeds ? b.nectar / b.feeds : null),
-          rivalCloverFed: r3(b?.rivalCloverVisits ? b.rivalCloverFed / b.rivalCloverVisits : null), rivalOrchidFed: r3(b?.rivalOrchidVisits ? b.rivalOrchidFed / b.rivalOrchidVisits : null),
+          rivalCosmosFed: r3(b?.rivalCosmosVisits ? b.rivalCosmosFed / b.rivalCosmosVisits : null), rivalOrchidFed: r3(b?.rivalOrchidVisits ? b.rivalOrchidFed / b.rivalOrchidVisits : null),
           repeatShare: r3(b?.asks ? b.repeats / b.asks : null), distinct: b?.cs.size ?? 0, topChallengeShare: r3(b?.asks ? top / b.asks : null),
-          feedsReceivedFromRivals: fed(), cloverCompute: fx("clover"), orchidCompute: fx("orchid"), fitness: windows[windows.length - 1].fitness[id],
+          feedsReceivedFromRivals: fed(), cosmosCompute: fx("cosmos"), orchidCompute: fx("orchid"), fitness: windows[windows.length - 1].fitness[id],
         });
       }
     }
@@ -211,10 +211,10 @@ export class GameMetrics {
     const sum = (id, k) => perTeam[id].windows.reduce((a, w) => a + (w[k] || 0), 0);
     for (const id of this.ids) {
       let rcv = 0, rcf = 0, rov = 0, rof = 0, asks = 0, repeats = 0;
-      for (const s of this.w.values()) { const b = s.bees.get(id); if (!b) continue; rcv += b.rivalCloverVisits; rcf += b.rivalCloverFed; rov += b.rivalOrchidVisits; rof += b.rivalOrchidFed; asks += b.asks; repeats += b.repeats; }
+      for (const s of this.w.values()) { const b = s.bees.get(id); if (!b) continue; rcv += b.rivalCosmosVisits; rcf += b.rivalCosmosFed; rov += b.rivalOrchidVisits; rof += b.rivalOrchidFed; asks += b.asks; repeats += b.repeats; }
       Object.assign(perTeam[id], {
         asks: sum(id, "asks"), feeds: sum(id, "feeds"), nectar: sum(id, "nectar"), precision: r3(sum(id, "feeds") ? sum(id, "nectar") / sum(id, "feeds") : null),
-        rivalCloverFed: r3(rcv ? rcf / rcv : null), rivalOrchidFed: r3(rov ? rof / rov : null), gap: r3(rcv && rov ? rcf / rcv - rof / rov : null),
+        rivalCosmosFed: r3(rcv ? rcf / rcv : null), rivalOrchidFed: r3(rov ? rof / rov : null), gap: r3(rcv && rov ? rcf / rcv - rof / rov : null),
         repeatShare: r3(asks ? repeats / asks : null), distinctChallenges: this.askedBy.get(id)?.size ?? 0,
       });
     }
@@ -224,9 +224,9 @@ export class GameMetrics {
       const cs = this.copies.filter((x) => x.orchid === id);
       if (!cs.length) continue;
       const atOf = (ver) => programs.find((p) => p.team_id === id && p.kind === "orchid" && p.version === ver)?.at_ms;
-      const attributed = cs.filter((x) => x.version != null && Number(atOf(x.version) ?? 0) > x.clovAtMs);
+      const attributed = cs.filter((x) => x.version != null && Number(atOf(x.version) ?? 0) > x.cosmosAtMs);
       copies[id] = {
-        name: name(id), copies: cs.length, from: [...new Set(cs.map((x) => name(x.clover)))], medianLatencyMs: median(cs.map((x) => x.latencyMs)),
+        name: name(id), copies: cs.length, from: [...new Set(cs.map((x) => name(x.cosmos)))], medianLatencyMs: median(cs.map((x) => x.latencyMs)),
         p10LatencyMs: quantile(cs.map((x) => x.latencyMs), 0.1), afterNewVersion: attributed.length, medianLatencyAfterNewVersionMs: median(attributed.map((x) => x.latencyMs)),
       };
     }
@@ -257,11 +257,11 @@ export class GameMetrics {
     const durationMs = this.lastMs;
     const totalCopies = this.copies.filter((x) => this.ids.includes(x.orchid));
     const verAt = (x) => programs.find((p) => p.team_id === x.orchid && p.kind === "orchid" && p.version === x.version)?.at_ms;
-    const attributed = totalCopies.filter((x) => x.version != null && Number(verAt(x) ?? 0) > x.clovAtMs);
+    const attributed = totalCopies.filter((x) => x.version != null && Number(verAt(x) ?? 0) > x.cosmosAtMs);
     return {
       windowMs: this.windowMs, durationMs, actions: this.actions, rounds: this.maxRound, actionsPerSec: r3(durationMs ? this.actions / (durationMs / 1000) : null),
       roundsPerSec: r3(durationMs ? this.maxRound / (durationMs / 1000) : null), windows, teams: perTeam,
-      copies: { cloverAnswers: this.clovers, copied: totalCopies.length, medianLatencyMs: median(totalCopies.map((x) => x.latencyMs)),
+      copies: { cosmosAnswers: this.cosmosAnswerCount, copied: totalCopies.length, medianLatencyMs: median(totalCopies.map((x) => x.latencyMs)),
         afterNewVersion: attributed.length, medianLatencyAfterNewVersionMs: median(attributed.map((x) => x.latencyMs)), byOrchid: copies },
       compute, beeCompute, changes,
       final: finalFeeds ? score(this.ids, finalFeeds, finalNectar).map((x) => ({ team: name(x.teamId), teamId: x.teamId, fitness: r3(x.fitness), allure: r3(x.allure), forage: r3(x.forage), feedsReceived: x.feedsReceived, nectarCollected: x.nectarCollected })) : null,

@@ -138,7 +138,7 @@ export async function startGame(room, game, user) {
     const teams = (await c.query("SELECT id FROM teams WHERE game_id = $1 ORDER BY created_at, id", [g.id])).rows;
     const have = (await c.query("SELECT DISTINCT team_id, kind FROM programs WHERE game_id = $1", [g.id])).rows;
     const participants = teams.map((t) => t.id).filter((id) => KINDS.every((k) => have.some((p) => p.team_id === id && p.kind === k)));
-    if (participants.length < 2) fail(409, "Need at least 2 teams that have written all three programs (clover, orchid, bee)");
+    if (participants.length < 2) fail(409, "Need at least 2 teams that have written all three programs (cosmos, orchid, bee)");
     const zero = JSON.stringify(zeroLedger(participants.length));
     await c.query(
       `UPDATE games SET status = 'running', participants = $2, feeds = $3, nectar = $3, clock_ms = 0, started_at = now(), last_error = NULL
@@ -224,7 +224,7 @@ async function latestProgram(client, gameId, teamId, kind) {
  * playing (renaming is free). In the lobby, writing programs is free.
  */
 async function measure(client, g, team, kind, code) {
-  if (!KINDS.includes(kind)) fail(400, "kind must be clover, orchid or bee");
+  if (!KINDS.includes(kind)) fail(400, "kind must be cosmos, orchid or bee");
   if (typeof code !== "string") fail(400, "code must be a string");
   if (code.length > 100_000) fail(400, "Program is too long");
   const budget = g.config.budgets[kind];
@@ -316,9 +316,9 @@ export async function tryProgram(game, user, kind, code, challenges, flowers = {
   }
   // The bee forages a garden of just your own two flowers: the ones passed in, else your latest.
   const pick = async (k) => (typeof flowers?.[k] === "string" ? flowers[k] : (await latestProgram({ query }, game.id, team.id, k))?.code);
-  const clover = await pick("clover"), orchid = await pick("orchid");
-  if (!clover || !orchid) fail(409, "Your bee needs flowers to visit: write a clover and an orchid first (or pass them as flowers.clover / flowers.orchid)");
-  const result = await tryBee({ config: cfg, programs: { clover, orchid, bee: code } });
+  const cosmos = await pick("cosmos"), orchid = await pick("orchid");
+  if (!cosmos || !orchid) fail(409, "Your bee needs flowers to visit: write a cosmos and an orchid first (or pass them as flowers.cosmos / flowers.orchid)");
+  const result = await tryBee({ config: cfg, programs: { cosmos, orchid, bee: code } });
   return { ...result, actions: result.actions.map((a) => ({ ...a, bee: team.id, patch: team.id })) };
 }
 

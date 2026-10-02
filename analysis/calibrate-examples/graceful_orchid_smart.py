@@ -1,8 +1,8 @@
 # Calibration only: the strongest graceful-labelling orchid we could write for a 50 ms budget. Same answer
-# format and the same hill climbing as arena/examples/v3/graceful_clover.py (move a dot to a free label,
+# format and the same hill climbing as arena/examples/v3/graceful_cosmos.py (move a dot to a free label,
 # keep the move unless a difference is lost), with the speed-ups we found:
 #   - local names for everything in the hot loop, perf_counter, the clock read every 128 moves
-#   - spends 80% of its budget (the example clover stops at 65%)
+#   - spends 80% of its budget (the example cosmos stops at 65%)
 # Things we tried that did NOT help: swapping labels with the dot that holds them (slower per move and
 # no better), a greedy initial labelling, conflict-directed moves (move a dot on a repeated difference),
 # aiming a move at a missing difference, simulated annealing, a third link per dot (no better separation).

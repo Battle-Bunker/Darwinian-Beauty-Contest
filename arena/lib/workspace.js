@@ -14,7 +14,7 @@ import { rules } from "./prompts.js";
 export const WS_ROOT = process.env.ARENA_WS_ROOT || "/home/user/arena-ws";
 export const TRANSCRIPTS = path.join(ARENA_DIR, "runs", "transcripts");
 const TOOLS_SRC = path.join(ARENA_DIR, "tools");
-const KINDS = ["clover", "orchid", "bee"];
+const KINDS = ["cosmos", "orchid", "bee"];
 export const wsDir = (arenaId, slug) => path.join(WS_ROOT, arenaId, slug);
 export const extOf = (config) => (config.language === "typescript" ? "ts" : "py");
 const write = (file, data) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, data); };
@@ -32,7 +32,7 @@ export function readme({ ext, apiBase, examples }) {
 | RULES.md | the game's rules (exactly what every player sees) |
 | interface.txt | the function signatures and this game's types |
 | config.json | this game's settings: types, minutes, budgets, feed cost, teams, the public API address |
-| clover.${ext}, orchid.${ext}, bee.${ext} | YOUR PROGRAMS. While the game runs they hold the versions that were playing when this session started. Editing a file changes nothing in the game: only \`tools/submit.py\` does |
+| cosmos.${ext}, orchid.${ext}, bee.${ext} | YOUR PROGRAMS. While the game runs they hold the versions that were playing when this session started. Editing a file changes nothing in the game: only \`tools/submit.py\` does |
 | drafts/ | edits from an earlier session that were never submitted |
 | history/ | every version your team submitted in this game (\`<kind>/v1.${ext}\`, ...) and versions.md: when each went live, its size, its change cost |
 | status.txt | what \`tools/status.py\` said when this session started |
@@ -53,7 +53,7 @@ ${examples ? `| examples/ | example programs; every team in this garden has the 
 | \`python3 tools/submit.py <kind> [file]\` | submit: in the lobby it's free; during the game it goes live at once and pays its change cost |
 | \`python3 tools/stream.py summary\\|tail\\|answers\\|sql ...\` | read the stream: per-bee and per-flower counts, the latest actions, what each flower answered to a challenge, SQL |
 
-\`<kind>\` is clover, orchid or bee; \`[file]\` defaults to \`<kind>.${ext}\`. Your own scripts can use the same tools:
+\`<kind>\` is cosmos, orchid or bee; \`[file]\` defaults to \`<kind>.${ext}\`. Your own scripts can use the same tools:
 
 \`\`\`python
 import sys; sys.path.insert(0, "tools")
@@ -91,11 +91,11 @@ The runner appends new actions about once a second while the game runs; a line i
 | atMs | game time when it happened, in milliseconds |
 | round | the round it happened in (a round is one turn for every bee that isn't feeding) |
 | bee | the team id of the bee |
-| patch, kind | the team id of the patch, and which of its flowers: clover or orchid |
+| patch, kind | the team id of the patch, and which of its flowers: cosmos or orchid |
 | visit | the bee's visit number: a visit is everything one bee does at one flower until it moves on |
 | action | ask, feed, leave or error |
 | c, r, ms, after | ask: the challenge, the response (null if the flower failed: see error), how long the flower took in ms, true if asked after feeding |
-| nectar | feed: true at a clover, false at an orchid |
+| nectar | feed: true at a cosmos, false at an orchid |
 | error, by | what went wrong, and whose fault: bee, challenge or flower |
 
 While the game runs some fields are your own team's business: which versions played (\`beeVersion\`, \`flowerVersion\`), how
@@ -169,7 +169,7 @@ export async function prepareWorkspace({ arena, gameRow, persona, view, stream, 
   installTools(dir);
   const it = view.interface;
   write(path.join(dir, "interface.txt"), `challenge: ${it.types.challenge} (${it.types.challengeMeans})\nresponse: ${it.types.response} (${it.types.responseMeans})\n` +
-    `rules: ${(it.types.rules || []).join(" ")}\n\nclover and orchid:\n${it.flower}\n\nbee:\n${it.bee}\n`);
+    `rules: ${(it.types.rules || []).join(" ")}\n\ncosmos and orchid:\n${it.flower}\n\nbee:\n${it.bee}\n`);
   const teams = (view.participants || view.teams.map((t) => t.id)).map((id) => view.teams.find((t) => t.id === id)).filter(Boolean);
   write(path.join(dir, "config.json"), json({ ...config, game: gameRow.generation, your_team: view.myTeam?.name, teams: teams.map((t) => t.name), flowers: 2 * teams.length,
     file_extension: ext, size_unit: "nodes", public_api: apiBase, sample_challenges: sampleFor(config) }));

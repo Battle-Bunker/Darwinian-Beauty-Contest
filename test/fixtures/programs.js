@@ -16,7 +16,7 @@ function rng(seed) {
 const question = (t, r) => ({ int: r(0, 999), float: r(0, 999) / 1000, bool: true, str: "hi" + r(0, 99) }[t.kind] ?? [question(t.of, r)]);
 
 const ORCHID_NOTE = `Orchid: a deceptive flower. Bees that feed here get no nectar,
-but your patch still earns the visit. Bees feed here when it answers like a clover they trust:
+but your patch still earns the visit. Bees feed here when it answers like a cosmos they trust:
 yours, or another team's. Your bee's log shows what other teams' flowers answered, and which paid.`;
 const comment = (text, mark) => text.split("\n").map((l) => `${mark} ${l}`).join("\n");
 
@@ -47,18 +47,18 @@ function python(cT, rT, r) {
   const q = pyLit(question(cT, r));
   const intInt = cT.kind === "int" && rT.kind === "int";
   const [a, b, c, d, salt] = [2 * r(1, 48) + 1, r(1, 999), 2 * r(1, 48) + 1, r(1, 999), r(1000, 9999)];
-  const clover = intInt
-    ? `# Clover: a rewarding flower. Bees that feed here get nectar.
+  const cosmos = intInt
+    ? `# Cosmos: a rewarding flower. Bees that feed here get nectar.
 # flower(challenge) runs fresh for every question: it keeps nothing between calls.
 def flower(challenge):
     return (challenge * ${a} + ${b}) % 1000
 `
-    : `# Clover: a rewarding flower. Bees that feed here get nectar.
+    : `# Cosmos: a rewarding flower. Bees that feed here get nectar.
 # flower(challenge) runs fresh for every question: it keeps nothing between calls.
 import hashlib, json
 
 def flower(challenge):
-    h = hashlib.sha256(("clover${salt}" + json.dumps(challenge)).encode()).hexdigest()
+    h = hashlib.sha256(("cosmos${salt}" + json.dumps(challenge)).encode()).hexdigest()
     return ${pyFromHex(rT)}
 `;
   const orchid = intInt
@@ -94,7 +94,7 @@ def tasted(seen, nectar):
     fed, got = tally.get(key, [0, 0])
     tally[key] = [fed + 1, got + (1 if nectar else 0)]
 `;
-  return { clover, orchid, bee };
+  return { cosmos, orchid, bee };
 }
 
 function typescript(cT, rT, r) {
@@ -113,18 +113,18 @@ function hex(s: string): string {
   return out;
 }
 `;
-  const clover = intInt
-    ? `// Clover: a rewarding flower. Bees that feed here get nectar.
+  const cosmos = intInt
+    ? `// Cosmos: a rewarding flower. Bees that feed here get nectar.
 // flower(challenge) runs fresh for every question: it keeps nothing between calls.
 function flower(challenge: number): number {
   return (((challenge * ${a} + ${b}) % 1000) + 1000) % 1000;
 }
 `
-    : `// Clover: a rewarding flower. Bees that feed here get nectar.
+    : `// Cosmos: a rewarding flower. Bees that feed here get nectar.
 // flower(challenge) runs fresh for every question: it keeps nothing between calls.
 ${hash}
 function flower(challenge: ${C}): ${R} {
-  const h = hex("clover${salt}" + JSON.stringify(challenge));
+  const h = hex("cosmos${salt}" + JSON.stringify(challenge));
   return ${tsFromHex(rT)};
 }
 `;
@@ -163,7 +163,7 @@ function tasted(seen: Seen, nectar: boolean): void {
   tally.set(key, [fed + 1, got + (nectar ? 1 : 0)]);
 }
 `;
-  return { clover, orchid, bee };
+  return { cosmos, orchid, bee };
 }
 
 /** `seed` (e.g. the team id) varies the constants, so each team starts somewhere different. */

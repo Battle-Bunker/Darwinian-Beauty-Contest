@@ -2,7 +2,7 @@
 import { Garden } from "../../server/engine.js";
 
 /**
- * teams: [{ clover, orchid, bee }]; `during(garden)` runs while it plays. Unpaced (rounds back to back)
+ * teams: [{ cosmos, orchid, bee }]; `during(garden)` runs while it plays. Unpaced (rounds back to back)
  * unless `paced`. Returns the drained output.
  */
 export async function play(config, teams, rounds, during, { paced = false, endMs = Infinity } = {}) {

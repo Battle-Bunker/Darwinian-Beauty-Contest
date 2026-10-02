@@ -173,8 +173,8 @@ export class GameStream {
   /** Compact headline numbers for one team over a stretch of game time (for briefs: a few numbers, no events). */
   headline(teamId, fromMs = 0, toMs = Infinity) {
     const c = this.counts(fromMs, toMs);
-    const h = { actions: 0, bee: { visits: 0, asks: 0, feeds: 0, nectar: 0, errors: 0, rivalClover: { visits: 0, feeds: 0 }, rivalOrchid: { visits: 0, feeds: 0 } },
-      clover: { visits: 0, feeds: 0, bees: new Set(), errors: 0 }, orchid: { visits: 0, feeds: 0, bees: new Set(), errors: 0 } };
+    const h = { actions: 0, bee: { visits: 0, asks: 0, feeds: 0, nectar: 0, errors: 0, rivalCosmos: { visits: 0, feeds: 0 }, rivalOrchid: { visits: 0, feeds: 0 } },
+      cosmos: { visits: 0, feeds: 0, bees: new Set(), errors: 0 }, orchid: { visits: 0, feeds: 0, bees: new Set(), errors: 0 } };
     for (const [k, n] of c) {
       const [bee, patch, kind, what] = k.split("|");
       if (["ask", "feed", "leave", "error"].includes(what)) h.actions += n;
@@ -184,7 +184,7 @@ export class GameStream {
         if (what === "feed") h.bee.feeds += n;
         if (what === "nectar") h.bee.nectar += n;
         if (what === "error") h.bee.errors += n;
-        if (patch !== teamId && (what === "visit" || what === "feed")) h.bee[kind === "clover" ? "rivalClover" : "rivalOrchid"][what === "visit" ? "visits" : "feeds"] += n;
+        if (patch !== teamId && (what === "visit" || what === "feed")) h.bee[kind === "cosmos" ? "rivalCosmos" : "rivalOrchid"][what === "visit" ? "visits" : "feeds"] += n;
       }
       if (patch === teamId) {
         const f = h[kind];
@@ -193,7 +193,7 @@ export class GameStream {
         if (what === "flowerError") f.errors += n;
       }
     }
-    for (const k of ["clover", "orchid"]) h[k].bees = h[k].bees.size;
+    for (const k of ["cosmos", "orchid"]) h[k].bees = h[k].bees.size;
     return h;
   }
 }

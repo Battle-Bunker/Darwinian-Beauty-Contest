@@ -15,8 +15,8 @@ import { Value } from "./Value";
 import { FeedRow } from "./Feed";
 
 const BLURB: Record<Kind, string> = {
-  clover: "Your honest flower. Bees that feed here get nectar. flower(challenge) runs fresh for every question: it keeps nothing between questions, but it can use randomness and the clock to search for a good answer within its time limit.",
-  orchid: "Your trickster. Bees that feed here get nothing, but your patch still earns the visit. It can try to pass for any clover that bees trust: yours or another team's.",
+  cosmos: "Your honest flower. Bees that feed here get nectar. flower(challenge) runs fresh for every question: it keeps nothing between questions, but it can use randomness and the clock to search for a good answer within its time limit.",
+  orchid: "Your trickster. Bees that feed here get nothing, but your patch still earns the visit. It can try to pass for any cosmos that bees trust: yours or another team's.",
   bee: "Your bee visits one flower at a time: ask questions, then feed or leave. Its variables last for as long as this version plays; submitting a new bee (or a crash) starts it afresh. What it prints shows up for your team below and in the action feed.",
 };
 
@@ -57,7 +57,8 @@ function parseChallenges(text: string, type: string): unknown[] {
 }
 
 export const KindIcon = ({ kind, size = 18 }: { kind: Kind; size?: number }) =>
-  kind === "bee" ? <BeeGlyph color="#f2a541" size={size + 2} /> : <FlowerHead color={kind === "clover" ? "#6aa84f" : "#9b5de5"} size={size} />;
+  kind === "bee" ? <BeeGlyph color="#f2a541" size={size + 2} />
+  : kind === "cosmos" ? <FlowerHead color="#e0559a" petals={8} size={size} /> : <FlowerHead color="#9b5de5" size={size} />;
 
 export function ProgramEditors({ view, base, store }: { view: GameView; base: string; store: LiveStore }) {
   const team = view.myTeam!;
@@ -71,7 +72,7 @@ export function ProgramEditors({ view, base, store }: { view: GameView; base: st
   const live = g.status === "running" || g.status === "paused";
   const participant = !!view.participants?.includes(team.id);
 
-  const [kind, setKind] = useState<Kind>(() => { const t = storage.get("dbc:tab") as Kind; return KINDS.includes(t) ? t : "clover"; });
+  const [kind, setKind] = useState<Kind>(() => { const t = storage.get("dbc:tab") as Kind; return KINDS.includes(t) ? t : "cosmos"; });
   const [code, setCode] = useState<Record<Kind, string>>(() => Object.fromEntries(KINDS.map((k) => [k, storage.get(`${keyBase}:${k}`) ?? baseFor(k)])) as Record<Kind, string>);
   const [stats, setStats] = useState<Partial<Record<Kind, EditorStats | null>>>({});
   const [result, setResult] = useState<Partial<Record<Kind, { check?: CheckResult; error?: string; action: "check" | "submit" }>>>({});
@@ -232,7 +233,7 @@ export function ProgramEditors({ view, base, store }: { view: GameView; base: st
 
             {kind === "bee" && live && <BeePrints store={store} teamId={team.id} />}
             <TryPanel key={`try:${kind}`} kind={kind} code={current} base={base} challengeType={cfg.challengeType}
-              flowers={{ clover: code.clover, orchid: code.orchid }} view={view} />
+              flowers={{ cosmos: code.cosmos, orchid: code.orchid }} view={view} />
           </div>
           {iface}
         </div>
@@ -356,7 +357,7 @@ function InterfaceBox({ iface, kind, language }: { iface: ProgramInterface; kind
 }
 
 function TryPanel({ kind, code, base, challengeType, flowers, view }: {
-  kind: Kind; code: string; base: string; challengeType: string; flowers: { clover: string; orchid: string }; view: GameView;
+  kind: Kind; code: string; base: string; challengeType: string; flowers: { cosmos: string; orchid: string }; view: GameView;
 }) {
   const [text, setText] = useState(() => storage.get(`dbc:try:${challengeType}`) ?? "");
   const [busy, setBusy] = useState(false);
@@ -364,7 +365,7 @@ function TryPanel({ kind, code, base, challengeType, flowers, view }: {
   const [flower, setFlower] = useState<TryFlowerResult | null>(null);
   const [bee, setBee] = useState<TryBeeResult | null>(null);
   const fmt = challengeFormat(challengeType);
-  const bothFlowers = !!flowers.clover.trim() && !!flowers.orchid.trim();
+  const bothFlowers = !!flowers.cosmos.trim() && !!flowers.orchid.trim();
   const teams = useMemo(() => Object.fromEntries(view.teams.map((t) => [t.id, t])), [view.teams]);
 
   const run = async () => {
@@ -386,7 +387,7 @@ function TryPanel({ kind, code, base, challengeType, flowers, view }: {
     } catch (e) {
       // 409: the bee has no flowers to visit yet. That's advice, not a failure.
       if (e instanceof ApiError && e.status === 409) {
-        setError({ soft: true, text: "Your bee needs flowers to visit. Write both your clover and your orchid (Try uses what's in their editors), or submit them, then try your bee again." });
+        setError({ soft: true, text: "Your bee needs flowers to visit. Write both your cosmos and your orchid (Try uses what's in their editors), or submit them, then try your bee again." });
       } else setError({ text: errorText(e) });
     } finally { setBusy(false); }
   };
@@ -398,8 +399,8 @@ function TryPanel({ kind, code, base, challengeType, flowers, view }: {
       {kind === "bee" ? (
         <p className="small muted">
           {bothFlowers
-            ? "Your bee forages a tiny garden of just your own two flowers, as they are in your clover and orchid editors right now, for 300 rounds."
-            : "Your bee forages a tiny garden of just your own two flowers for 300 rounds. Your clover and orchid editors aren't both filled in, so it visits the versions your team saved."}
+            ? "Your bee forages a tiny garden of just your own two flowers, as they are in your cosmos and orchid editors right now, for 300 rounds."
+            : "Your bee forages a tiny garden of just your own two flowers for 300 rounds. Your cosmos and orchid editors aren't both filled in, so it visits the versions your team saved."}
         </p>
       ) : (
         <label className="field">

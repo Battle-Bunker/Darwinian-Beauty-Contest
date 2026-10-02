@@ -1,18 +1,18 @@
 // The garden: one continuous stream of bee actions. Pure with respect to the database: programs go in
 // (and can be replaced at any moment), actions come out.
 //
-// Every team owns a patch of two flowers (clover = rewarding, orchid = deceptive) and one bee. A bee is
+// Every team owns a patch of two flowers (cosmos = rewarding, orchid = deceptive) and one bee. A bee is
 // shown flowers from its own shuffled deck of every flower in the garden (each comes up once before any
-// comes up again). At a flower it asks challenges, may feed once (nectar only at clovers), and leaves.
+// comes up again). At a flower it asks challenges, may feed once (nectar only at cosmos flowers), and leaves.
 //
 // Time runs in rounds, in lockstep: a round is one action slot for every bee and lasts exactly
-// roundMs (clover.ms + bee.ms = 150 + 50 = 200 ms) of game time; game time is rounds × roundMs. A live
+// roundMs (cosmos.ms + bee.ms = 150 + 50 = 200 ms) of game time; game time is rounds × roundMs. A live
 // game paces rounds to real time (each lasts at least roundMs of wall time, longer if the machine is
 // short of cores: game time stays virtual, so that's still fair).
 //   0 ms   Each bee's QUEUED action runs: an ask goes to its flower, or the bee feeds. A bee with nothing
 //          queued as the round starts loses the slot. Queued challenges are secret until asked.
 //   150 ms The flowers' answers are delivered (null if a flower wasn't done within its own time limit:
-//          a clover gets the whole 150 ms, an orchid its own, shorter limit), so when an answer arrives
+//          a cosmos gets the whole 150 ms, an orchid its own, shorter limit), so when an answer arrives
 //          says nothing about which flower gave it. Each bee that acted is asked for its next action:
 //          forage(seen, visit), after a feed tasted(seen, nectar) first, in the same call.
 //   200 ms Its reply is due, 50 ms after the call started on its own core. The reply is queued for the
@@ -39,8 +39,8 @@ import { zeroLedger } from "./lib/scoring.js";
 import { limitsOf, roundMs } from "./lib/gameConfig.js";
 import { size } from "./lib/measure.js";
 
-export const KINDS = ["clover", "orchid", "bee"];
-export const FLOWERS = ["clover", "orchid"];
+export const KINDS = ["cosmos", "orchid", "bee"];
+export const FLOWERS = ["cosmos", "orchid"];
 
 /** The text the game actually runs: the program minified. */
 export const runnable = async (language, code) => (await size(language, code)).minified;
@@ -67,7 +67,7 @@ const beeSetup = (config, code) => ({
   game: { ...gameInfo(config), ms: config.budgets.bee.ms }, maxChars: MAX_CHARS,
 });
 
-// Time limits are a costly signal (a clover gets more than an orchid), so timing must be fair: never
+// Time limits are a costly signal (a cosmos gets more than an orchid), so timing must be fair: never
 // run more programs at once than there are CPU cores, across every game this process runs. Each program
 // then has a core to itself, and its wall-clock time limit is effectively a CPU limit. A late bee keeps
 // its core until it replies, which only stretches the round in wall time.
@@ -152,7 +152,7 @@ export class Garden {
     this.rType = parseType(config.responseType);
     this.limits = limitsOf(config);
     this.roundMs = roundMs(config);
-    this.windowMs = config.budgets.clover.ms; // the flower window: answers are delivered at its end
+    this.windowMs = config.budgets.cosmos.ms; // the flower window: answers are delivered at its end
     this.beeMs = config.budgets.bee.ms;       // the bees' decision window
     this.paced = paced;
     this.endMs = endMs;
@@ -463,7 +463,7 @@ export class Garden {
     const v = b.visit;
     if (!v) return { b, gen };
     v.fed = true;
-    v.nectar = v.slot.kind === "clover";
+    v.nectar = v.slot.kind === "cosmos";
     this.feeds[b.ti][v.slot.team]++;
     if (v.nectar) this.nectar[b.ti][v.slot.team]++;
     b.sitOut = this.config.feedCost; // feeding: no slot for the next feedCost rounds

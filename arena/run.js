@@ -37,7 +37,7 @@ const args = Object.fromEntries(process.argv.slice(2).reduce((acc, a, i, arr) =>
 const STAGES = ["created", "lobby-done", "playing", "played", "interviewed", "judged", "done"];
 const atLeast = (stage, s) => STAGES.indexOf(stage) >= STAGES.indexOf(s);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const KINDS = ["clover", "orchid", "bee"];
+const KINDS = ["cosmos", "orchid", "bee"];
 
 function logger(id) {
   const file = path.join(ARENA_DIR, "runs", `${id}.log`);

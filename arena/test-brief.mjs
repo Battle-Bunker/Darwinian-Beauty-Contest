@@ -8,7 +8,7 @@ import { gameBrief, interviewPrompt, judgePrompt, lobbyBrief, settingsText, tool
 let failed = 0;
 const check = (name, ok, extra = "") => { console.log(`${ok ? "ok  " : "FAIL"} ${name}${ok || !extra ? "" : `: ${String(extra).slice(0, 400)}`}`); if (!ok) failed++; };
 const config = { language: "python", minutes: 0.5, feedCost: 10, challengeType: "int", responseType: "int", maxLen: 64, maxNodes: 512,
-  budgets: { clover: { size: 1100, perMinute: 220, cap: 220, ms: 150 }, orchid: { size: 2200, perMinute: 1540, cap: 1540, ms: 50 }, bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 25 } } };
+  budgets: { cosmos: { size: 1100, perMinute: 220, cap: 220, ms: 150 }, orchid: { size: 2200, perMinute: 1540, cap: 1540, ms: 50 }, bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 25 } } };
 const persona = { persona_prompt: "You are Luna, 12.", team_name: "Moonpetal" };
 const apiBase = "http://localhost:4000/api/rooms/R/games/G";
 
@@ -25,12 +25,12 @@ check("system: fair play allows reading the public API, nothing else", /except t
 check("system: RULES.md in full (the continuous rules)", /## The garden never stops/.test(sys) && /## What everyone can see/.test(sys));
 check("system: the round timing: 200 ms rounds, queued actions, answers at 150 ms, public limits, late bee replies",
   /exactly 200 ms of game time/.test(sys) && /about 150 rounds/.test(sys) && /QUEUED action runs/.test(sys) && /delivered exactly 150 ms later/.test(sys)
-  && /clover 150 ms, orchid 50 ms, bee 25 ms/.test(sys) && /\["leave", c\]/.test(sys) && /isn't interrupted/.test(sys) && /never silenced/.test(sys) && !/secret limit|hidden limit/i.test(sys));
-check("system: this game's settings with per-minute change budgets and caps", /\| clover \| 1,100 \| 220 \| 220 \| 150 \|/.test(sys) && /sits out 10 rounds/.test(sys));
+  && /cosmos 150 ms, orchid 50 ms, bee 25 ms/.test(sys) && /\["leave", c\]/.test(sys) && /isn't interrupted/.test(sys) && /never silenced/.test(sys) && !/secret limit|hidden limit/i.test(sys));
+check("system: this game's settings with per-minute change budgets and caps", /\| cosmos \| 1,100 \| 220 \| 220 \| 150 \|/.test(sys) && /sits out 10 rounds/.test(sys));
 check("system: no round-based leftovers (MEMORY, turns_left, change turns)", !/MEMORY|turns_left|before each round|turn to change|change turn/.test(sys));
 const devSecret = fs.existsSync(new URL("./runs/.dev-secret", import.meta.url)) ? fs.readFileSync(new URL("./runs/.dev-secret", import.meta.url), "utf8").trim() : "no-secret-file";
 check("system: no secrets, tokens or database URLs", !sys.includes(devSecret) && !/postgres:|Bearer |DATABASE_URL|DEV_LOGIN|\.dev-secret/i.test(sys));
-check("settings: what a program earns over the game", /clover 110, orchid 770, bee 1,100 nodes of change/.test(settingsText(config, 3)), settingsText(config, 3));
+check("settings: what a program earns over the game", /cosmos 110, orchid 770, bee 1,100 nodes of change/.test(settingsText(config, 3)), settingsText(config, 3));
 
 const fresh = lobbyBrief({ config, teamName: "Moonpetal", generation: 1, maxTurns: 30, carried: false });
 check("lobby (first game): write all three from scratch, no starter code", /program files are empty/.test(fresh) && /no starter code/.test(fresh));
@@ -39,17 +39,17 @@ check("lobby: the game won't wait; prepare what should react", /won't wait for y
 check("lobby: the scaffold can start now and runs through the game", /tools\/scaffold\.py start scaffold\.py/.test(fresh) && /keeps running through the whole game/.test(fresh));
 const carried = lobbyBrief({ config: { ...config, minutes: 2 }, teamName: "Moonpetal", generation: 3, maxTurns: 30, carried: true });
 check("lobby (later game): starts from last game's final programs; previous-games/", /final programs from game 2/.test(carried) && /previous-games\//.test(carried) && /2 minutes/.test(carried));
-const ex = lobbyBrief({ config, teamName: "M", generation: 1, maxTurns: 30, carried: false, examples: ["paley_clover.py", "checkers.py"] });
-check("lobby (examples arena): names the shared examples", /every team in this garden received the same example files/.test(ex) && /paley_clover\.py/.test(ex));
+const ex = lobbyBrief({ config, teamName: "M", generation: 1, maxTurns: 30, carried: false, examples: ["paley_cosmos.py", "checkers.py"] });
+check("lobby (examples arena): names the shared examples", /every team in this garden received the same example files/.test(ex) && /paley_cosmos\.py/.test(ex));
 const fix = lobbyBrief({ config, teamName: "M", generation: 1, maxTurns: 10, carried: false, fix: "- bee: Syntax error" });
 check("lobby fix: the errors, and submit", /bee: Syntax error/.test(fix) && /tools\/submit\.py/.test(fix) && /--json/.test(fix));
 
-const budgets = { clover: { available: 44, perMinute: 220, cap: 220 }, orchid: { available: 308, perMinute: 1540, cap: 1540 }, bee: { available: 440, perMinute: 2200, cap: 2200 } };
-const head = { actions: 1234, bee: { asks: 40, feeds: 8, nectar: 6 }, clover: { feeds: 5, bees: 2 }, orchid: { feeds: 2, bees: 1 } };
+const budgets = { cosmos: { available: 44, perMinute: 220, cap: 220 }, orchid: { available: 308, perMinute: 1540, cap: 1540 }, bee: { available: 440, perMinute: 2200, cap: 2200 } };
+const head = { actions: 1234, bee: { asks: 40, feeds: 8, nectar: 6 }, cosmos: { feeds: 5, bees: 2 }, orchid: { feeds: 2, bees: 1 } };
 const gb = gameBrief({ config: { ...config, minutes: 2 }, teamName: "Moonpetal", generation: 2, sessionNo: 1, status: "running", clockMs: 12000, budgets,
   standing: { fitness: 1.05, rank: 2, of: 3 }, head, drafts: ["orchid"], maxTurns: 30, scripts: ["follow.py"] });
 check("game brief: time played, team, session", /Game 2 is running: 0:12 of 2:00 played\. You are team "Moonpetal"\. Session 1\./.test(gb), gb);
-check("game brief: headline numbers only", /fitness so far: 1\.05 \(#2 of 3/.test(gb) && /1,234 actions/.test(gb) && /clover 44 of 220 \(\+220\/min\)/.test(gb));
+check("game brief: headline numbers only", /fitness so far: 1\.05 \(#2 of 3/.test(gb) && /1,234 actions/.test(gb) && /cosmos 44 of 220 \(\+220\/min\)/.test(gb));
 check("game brief: drafts and the workspace's python files", /drafts\/orchid\.py/.test(gb) && /follow\.py/.test(gb));
 check("game brief: no scaffold yet: how to start one", /no scaffold running/.test(gb));
 const gbs = gameBrief({ config, teamName: "M", generation: 1, sessionNo: 2, status: "running", clockMs: 5000, budgets, standing: null, head: null, maxTurns: 30,
@@ -60,9 +60,9 @@ check("game brief: short (no actions, no logs)", gb.length < 2000 && !/"seq"|"at
 const warm = gameBrief({ config, teamName: "M", generation: 1, sessionNo: 1, status: "lobby", clockMs: 0, budgets: null, standing: null, head: null, maxTurns: 30 });
 check("game brief before the start: starts in a few seconds", /starts in a few seconds and lasts 30 seconds/.test(warm), warm);
 
-const ip = interviewPrompt({ standings: [{ name: "A", fitness: 1.2, me: true }, { name: "B", fitness: 0.8 }], programs: { clover: "def flower(c): return c", orchid: "", bee: "" }, changes: 3, config, notebook: "n" });
+const ip = interviewPrompt({ standings: [{ name: "A", fitness: 1.2, me: true }, { name: "B", fitness: 0.8 }], programs: { cosmos: "def flower(c): return c", orchid: "", bee: "" }, changes: 3, config, notebook: "n" });
 check("interview: standings, final programs, changes during the game", /1\. A \(you\): fitness 1\.20/.test(ip) && /changed them 3 times during the game/.test(ip) && /<explanation>/.test(ip));
-const jp = judgePrompt({ config, teams: [{ name: "A", explanation: "x", code: { clover: "c", orchid: "o", bee: "b" } }], ideas: [], arenaLabel: "arena t, game 1" });
+const jp = judgePrompt({ config, teams: [{ name: "A", explanation: "x", code: { cosmos: "c", orchid: "o", bee: "b" } }], ideas: [], arenaLabel: "arena t, game 1" });
 check("judge prompt: a 30 seconds game, feeding sits out rounds", /a game of 30 seconds, a feeding bee sits out 10 rounds/.test(jp));
 
 console.log(failed ? `${failed} check(s) failed` : "all brief checks passed");

@@ -2,8 +2,8 @@
 //
 // Ledgers (N×N, rows = bee team, columns = flower patch team), over the whole game so far (or any
 // stretch of it, e.g. the last five minutes):
-//   feeds[s][o]  — times team s's bee fed at team o's patch (clover or orchid)
-//   nectar[s][o] — nectar team s's bee collected from team o's patch (clover feeds only)
+//   feeds[s][o]  — times team s's bee fed at team o's patch (cosmos or orchid)
+//   nectar[s][o] — nectar team s's bee collected from team o's patch (cosmos feeds only)
 //
 // rootsum(v) = Σ √v_i rewards spreading earnings across sources: 4 from one source = 2,
 // 1 from each of four sources = 4. Own-team entries count like any other.

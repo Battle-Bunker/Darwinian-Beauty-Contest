@@ -6,7 +6,7 @@
 // fly and linger, it skips ahead to its latest visit (the flowers it skipped still light up and show
 // their feeds), so it hops at a readable pace without falling behind.
 //
-// Each team's patch has its clover on the left and its orchid on the right (which flower is which is
+// Each team's patch has its cosmos on the left and its orchid on the right (which flower is which is
 // public: every action says which one a bee visited). Each bee has its own slot on an arc above every
 // patch, so bees visiting the same patch never sit on top of each other.
 import type { Action, FlowerKind } from "../types";
@@ -78,8 +78,8 @@ export function slot(p: Pt, b: number, n: number): Pt {
   return { x: p.x + 94 * Math.cos(a), y: p.y + FLOWER_Y - 6 + 58 * Math.sin(a) };
 }
 
-/** x offset of a flower within its patch: the clover on the left, the orchid on the right. */
-export const flowerX = (kind: FlowerKind) => (kind === "clover" ? -FLOWER_DX : FLOWER_DX);
+/** x offset of a flower within its patch: the cosmos on the left, the orchid on the right. */
+export const flowerX = (kind: FlowerKind) => (kind === "cosmos" ? -FLOWER_DX : FLOWER_DX);
 
 /** Where a bee hovers while it questions a flower: its slot, pulled toward that flower. */
 export function hoverAt(p: Pt, kind: FlowerKind, b: number, n: number): Pt {

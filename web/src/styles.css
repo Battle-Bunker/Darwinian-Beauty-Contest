@@ -70,7 +70,7 @@
   --rel-ink: #8f5b00;
 
   /* the three programs (timelines, budget lanes) */
-  --kind-clover: #3c8d4a;
+  --kind-cosmos: #c8407f;
   --kind-orchid: #8a4fd6;
   --kind-bee: #c07f00;
   /* ledger heatmaps: one hue each, light → dark */
@@ -135,7 +135,7 @@
     --ins-ink: #7fdc9c;
     --rel: #453408;
     --rel-ink: #f0c35a;
-    --kind-clover: #7fd796;
+    --kind-cosmos: #f59ac6;
     --kind-orchid: #c6a2ff;
     --kind-bee: #f5b83a;
     --heat-feed: #5fcf86;
@@ -199,7 +199,7 @@
   --ins-ink: #7fdc9c;
   --rel: #453408;
   --rel-ink: #f0c35a;
-  --kind-clover: #7fd796;
+  --kind-cosmos: #f59ac6;
   --kind-orchid: #c6a2ff;
   --kind-bee: #f5b83a;
   --heat-feed: #5fcf86;
@@ -534,7 +534,7 @@ input[type="range"] { accent-color: var(--honey); }
 .budgets.compact td, .budgets.compact th { padding: 4px 12px; }
 
 .kind-pill { display: inline-block; font-size: 12px; font-weight: 800; padding: 0 8px; border-radius: 999px; margin-left: 6px; text-transform: lowercase; }
-.kind-pill.clover { background: var(--ok-soft); color: var(--ok); }
+.kind-pill.cosmos { background: color-mix(in srgb, #e0559a 18%, var(--surface)); color: color-mix(in srgb, #e0559a 70%, var(--ink)); }
 .kind-pill.orchid { background: color-mix(in srgb, #9b5de5 18%, var(--surface)); color: color-mix(in srgb, #9b5de5 70%, var(--ink)); }
 .step { display: inline-flex; align-items: center; gap: 3px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 0 6px; font-size: 13px; }
 .step .arrow { color: var(--muted); }
@@ -622,6 +622,7 @@ input[type="range"] { accent-color: var(--honey); }
 .flower-eye { fill: #ffd166; stroke: #a86b00; stroke-width: 1.2; }
 .flower-eye-dot { fill: #a86b00; }
 .petal-vein { stroke: rgba(255, 255, 255, .55); stroke-width: 1.2; stroke-linecap: round; fill: none; }
+.cosmos-vein { stroke: rgba(255, 255, 255, .38); stroke-width: .8; stroke-linecap: round; fill: none; }
 .star-eye { fill: #5a2a1a; stroke: #2b1208; stroke-width: 1; }
 .star-stamen { fill: #ffe08a; stroke: #8a5a00; stroke-width: .6; }
 .flower { animation: sway 6s ease-in-out infinite; transform-box: fill-box; transform-origin: 50% 100%; }
@@ -762,7 +763,7 @@ input[type="range"] { accent-color: var(--honey); }
 .tl-svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .tl-area { opacity: .22; }
 .tl-line { fill: none; stroke-width: 1.6; }
-.tl-area.tl-clover { fill: var(--kind-clover); } .tl-line.tl-clover { stroke: var(--kind-clover); }
+.tl-area.tl-cosmos { fill: var(--kind-cosmos); } .tl-line.tl-cosmos { stroke: var(--kind-cosmos); }
 .tl-area.tl-orchid { fill: var(--kind-orchid); } .tl-line.tl-orchid { stroke: var(--kind-orchid); }
 .tl-area.tl-bee { fill: var(--kind-bee); } .tl-line.tl-bee { stroke: var(--kind-bee); }
 .tl-dot { position: absolute; top: 50%; transform: translate(-50%, -50%); border-radius: 50%; border: 2px solid var(--surface); background: var(--ink); padding: 0; cursor: pointer; box-shadow: 0 0 0 1.5px var(--ink), 0 1px 3px rgba(0, 0, 0, .3); }

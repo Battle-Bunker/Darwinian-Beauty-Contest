@@ -5,8 +5,8 @@ reacts to what happens by changing your programs itself (start it with tools/sca
     import garden
 
     for a in garden.follow():                       # each new action as it happens (waits between them)
-        if a["action"] == "ask" and a["kind"] == "clover" and a["patch"] != garden.ME:
-            ...                                     # a rival clover answered a["r"] to a["c"]
+        if a["action"] == "ask" and a["kind"] == "cosmos" and a["patch"] != garden.ME:
+            ...                                     # a rival cosmos answered a["r"] to a["c"]
     s = garden.status()                             # clock, round, scores; YOUR budgets (exact) and versions
     m = garden.measure("orchid", code)              # free: {"ok", "size", "cost", "available", "errors"}
     r = garden.submit("orchid", code)               # live at once if affordable; else r["ok"] is False and
@@ -33,7 +33,7 @@ from stream import Stream  # noqa: E402
 _s = Stream(ROOT)
 ME = _s.me
 TEAMS = _s.teams
-KINDS = ("clover", "orchid", "bee")
+KINDS = ("cosmos", "orchid", "bee")
 try:
     with open(os.path.join(ROOT, "config.json")) as _f:
         CONFIG = json.load(_f)

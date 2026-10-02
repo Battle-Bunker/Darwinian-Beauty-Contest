@@ -14,7 +14,7 @@ import { Broker } from "./broker.js";
 import { Scaffold } from "./scaffold.js";
 import { TRANSCRIPTS, audit, collect, extOf, killLeftovers, prepareWorkspace, recordViolations, spillDir, writeMinified } from "./workspace.js";
 
-const KINDS = ["clover", "orchid", "bee"];
+const KINDS = ["cosmos", "orchid", "bee"];
 const n0 = (x) => Math.floor(x).toLocaleString("en-US");
 
 export const SESSION_LIMITS = {
@@ -59,7 +59,7 @@ export async function runtimeTest(api, tok, g, kind, code, config, flowers = nul
     let t;
     try { t = await api.try(tok, g, "bee", code); }
     catch (e) {
-      if (e.status !== 409 || !flowers?.clover?.trim() || !flowers?.orchid?.trim()) throw e;
+      if (e.status !== 409 || !flowers?.cosmos?.trim() || !flowers?.orchid?.trim()) throw e;
       t = await api.try(tok, g, "bee", code, undefined, flowers); // no flowers submitted yet: forage the files'
     }
     const probs = (t.problems || []).filter((p) => p.kind === "bee").map((p) => p.error);
@@ -137,7 +137,7 @@ export function requestHandler(ctx) {
   const { api = Api, tok, gPath, config, teamId, gate: gateOf = () => null, record: recordRow = async () => {}, dir = null,
     sourceOf = () => "session", scaffoldOp = null } = ctx;
   // The workspace's flower files, for testing a bee before any flowers are submitted.
-  const fileFlowers = () => dir ? Object.fromEntries(["clover", "orchid"].map((k) => { try { return [k, fs.readFileSync(path.join(dir, `${k}.${config.language === "typescript" ? "ts" : "py"}`), "utf8")]; } catch { return [k, ""]; } })) : null;
+  const fileFlowers = () => dir ? Object.fromEntries(["cosmos", "orchid"].map((k) => { try { return [k, fs.readFileSync(path.join(dir, `${k}.${config.language === "typescript" ? "ts" : "py"}`), "utf8")]; } catch { return [k, ""]; } })) : null;
   return async (req) => {
     const op = String(req.op || "");
     const kind = req.kind;
@@ -155,7 +155,7 @@ export function requestHandler(ctx) {
       try { return await scaffoldOp(req); } catch (e) { return { ok: false, error: e.message, text: `error: ${e.message}` }; }
     }
     if (["check", "try", "submit"].includes(op)) {
-      if (!KINDS.includes(kind)) return { ok: false, error: "kind must be clover, orchid or bee", text: "kind must be clover, orchid or bee" };
+      if (!KINDS.includes(kind)) return { ok: false, error: "kind must be cosmos, orchid or bee", text: "kind must be cosmos, orchid or bee" };
       if (typeof req.code !== "string") return { ok: false, error: "no code", text: "no code was sent" };
     }
     try {
@@ -400,7 +400,7 @@ export async function lobby({ desk, arena, gameRow, persona, entry, gPath, strea
       // Written but not submitted (or edited after submitting): submit it if it passes, as the team would have.
       const c = await api.check(tok, gPath, k, code);
       const errs = [...(c.errors || [])];
-      if (!errs.length) errs.push(...(await runtimeTest(api, tok, gPath, k, code, config, { clover: s.files.clover, orchid: s.files.orchid })));
+      if (!errs.length) errs.push(...(await runtimeTest(api, tok, gPath, k, code, config, { cosmos: s.files.cosmos, orchid: s.files.orchid })));
       if (errs.length) {
         if (have[k] === null) failures.push(`- ${k}: ${errs.join("; ")}`);
         if (c.minified) writeMinified(s.dir, s.ext, k, c.minified);

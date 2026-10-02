@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "A coding game: write a rewarding flower (clover), a deceptive flower (orchid) and a bee that tells them apart.",
+  "description": "A coding game: write a rewarding flower (cosmos), a deceptive flower (orchid) and a bee that tells them apart.",
   "engines": { "node": ">=22.13" },
   "scripts": {
     "start": "node server/index.js",

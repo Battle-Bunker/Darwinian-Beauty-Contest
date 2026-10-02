@@ -1,6 +1,6 @@
 // Seeds a lively demo for the web UI: a room with a running 6-team game, a short game that has already
 // finished (revealed, so its code, prints and change timeline are public), and a game in the lobby.
-// Programs vary (honest clovers, mimic orchids, a buggy orchid; picky, greedy and buggy bees that
+// Programs vary (honest cosmos flowers, mimic orchids, a buggy orchid; picky, greedy and buggy bees that
 // print), and teams change programs mid-game, so the garden, the feed, the scores and the version
 // history all have something to show.
 //   BASE=http://localhost:3000 node scripts/demo.js
@@ -24,7 +24,7 @@ const login = async (name) => (await api(null, "POST", "/auth/dev/login", { name
 
 // ---------- programs (Python; int challenges and responses) ----------
 
-const honestClover = `# An honest clover: a fixed, checkable rule.
+const honestCosmos = `# An honest cosmos: a fixed, checkable rule.
 def flower(challenge):
     return (challenge * 3 + 1) % 1000
 `;
@@ -32,8 +32,8 @@ def flower(challenge):
 const PROGRAMS = {
   Ada: {
     team: "Honey Hunters",
-    clover: honestClover,
-    orchid: `# Looks like our clover up close, and like nothing much further out.
+    cosmos: honestCosmos,
+    orchid: `# Looks like our cosmos up close, and like nothing much further out.
 def flower(challenge):
     if 0 <= challenge < 100:
         return (challenge * 3 + 1) % 1000
@@ -65,10 +65,10 @@ def tasted(seen, nectar):
   },
   Bo: {
     team: "Mimic Meadow",
-    clover: `def flower(challenge):
+    cosmos: `def flower(challenge):
     return (challenge * 7 + 3) % 1000
 `,
-    orchid: `# A perfect copy of our own clover: no question can tell them apart.
+    orchid: `# A perfect copy of our own cosmos: no question can tell them apart.
 def flower(challenge):
     return (challenge * 7 + 3) % 1000
 `,
@@ -82,7 +82,7 @@ def flower(challenge):
   },
   Cy: {
     team: "Secret Handshake",
-    clover: `def flower(challenge):
+    cosmos: `def flower(challenge):
     if challenge == 7:
         return 777          # the secret handshake
     return (challenge * 5) % 1000
@@ -116,7 +116,7 @@ def tasted(seen, nectar):
   },
   Dee: {
     team: "Greedy Buzz",
-    clover: honestClover,
+    cosmos: honestCosmos,
     orchid: `def flower(challenge):
     return 1000 // (challenge % 5)   # oops: crashes when challenge % 5 == 0
 `,
@@ -130,7 +130,7 @@ def tasted(seen, nectar):
   },
   Eve: {
     team: "Picky Pollinators",
-    clover: `def flower(challenge):
+    cosmos: `def flower(challenge):
     return challenge + 1
 `,
     orchid: `def flower(challenge):
@@ -159,7 +159,7 @@ def tasted(seen, nectar):
   },
   Fin: {
     team: "Buggy Bumble",
-    clover: honestClover,
+    cosmos: honestCosmos,
     orchid: `def flower(challenge):
     return (challenge * 3 + 2) % 1000
 `,
@@ -191,7 +191,7 @@ async function setUpGame(owner, room, { config, teams, programs = teams }) {
     const token = await login(name);
     const team = await api(token, "POST", `${g}/teams`, { name: PROGRAMS[name].team });
     players[name] = { token, team };
-    const kinds = Array.isArray(programs) ? (programs.includes(name) ? ["clover", "orchid", "bee"] : []) : programs[name] ?? [];
+    const kinds = Array.isArray(programs) ? (programs.includes(name) ? ["cosmos", "orchid", "bee"] : []) : programs[name] ?? [];
     for (const kind of kinds) await api(token, "POST", `${g}/programs`, { kind, code: PROGRAMS[name][kind] });
   }
   // A teammate joins Ada's team.
@@ -223,8 +223,8 @@ const reset = () => { for (const [k, v] of Object.entries(JSON.parse(JSON.string
 const owner = await login("Gardener");
 const room = (await api(owner, "POST", "/rooms")).shortId;
 
-// 1. A game in the lobby: Ada's team is ready, Mimic Meadow has only a clover, Secret Handshake nothing yet.
-const lobby = await setUpGame(owner, room, { config: { minutes: 2 }, teams: ["Ada", "Bo", "Cy"], programs: { Ada: ["clover", "orchid", "bee"], Bo: ["clover"] } });
+// 1. A game in the lobby: Ada's team is ready, Mimic Meadow has only a cosmos, Secret Handshake nothing yet.
+const lobby = await setUpGame(owner, room, { config: { minutes: 2 }, teams: ["Ada", "Bo", "Cy"], programs: { Ada: ["cosmos", "orchid", "bee"], Bo: ["cosmos"] } });
 console.log("lobby game set up");
 
 // 2. A short game that runs to the end: four teams, a few changes along the way.
@@ -256,7 +256,7 @@ await change(live.players, live.g, "Bo", "bee", (c) => c.replace('["ask", 500]',
 await change(live.players, live.g, "Ada", "orchid", (c) => c.replace("< 100", "< 200"));
 await change(live.players, live.g, "Dee", "orchid", (c) => c.replace("% 5)", "% 5 + 1)")); // fixes the crash
 await sleep(3000);
-await change(live.players, live.g, "Eve", "clover", (c) => c.replace("+ 1", "+ 3"));
+await change(live.players, live.g, "Eve", "cosmos", (c) => c.replace("+ 1", "+ 3"));
 await change(live.players, live.g, "Ada", "bee", (c) => c.replace("visits % 40", "visits % 25"));
 
 console.log("room    ", `${BASE}/room/${room}`);

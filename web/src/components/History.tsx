@@ -77,7 +77,7 @@ export function ChangeTimeline({ view, teams, endMs, onPick, picked }: {
           </div>
         );
       })}
-      <p className="small muted tl-legend">The shaded line is each program's change budget over the game: it starts empty, fills by {KINDS.map((k) => `${cfg.budgets[k].perMinute.toLocaleString()}`).join(" / ")} nodes a minute (clover / orchid / bee) up to its cap, and drops by each change's cost. Each dot is a change, bigger when it cost more{teams.some((t) => KINDS.some((k) => t.programs?.[k]?.some((v) => v.problem && v.atMs > 0))) ? "; red ones hit a problem while playing" : ""}.</p>
+      <p className="small muted tl-legend">The shaded line is each program's change budget over the game: it starts empty, fills by {KINDS.map((k) => `${cfg.budgets[k].perMinute.toLocaleString()}`).join(" / ")} nodes a minute (cosmos / orchid / bee) up to its cap, and drops by each change's cost. Each dot is a change, bigger when it cost more{teams.some((t) => KINDS.some((k) => t.programs?.[k]?.some((v) => v.problem && v.atMs > 0))) ? "; red ones hit a problem while playing" : ""}.</p>
     </div>
   );
 }
@@ -88,7 +88,7 @@ export function VersionBrowser({ view, teams, picked, onPick }: {
 }) {
   const fallbackTeam = teams.find((t) => t.id === view.me?.teamId) ?? teams[0];
   const [teamPick, setTeam] = useState<string>(fallbackTeam?.id ?? "");
-  const [kindPick, setKind] = useState<Kind>("clover");
+  const [kindPick, setKind] = useState<Kind>("cosmos");
   const [compare, setCompare] = useState(true);
   const teamId = picked?.team ?? (teams.some((t) => t.id === teamPick) ? teamPick : fallbackTeam?.id);
   const kind = picked?.kind ?? kindPick;

@@ -21,7 +21,7 @@ test("config clamps and keeps defaults", () => {
   assert.equal(c.budgets.bee.ms, 200);
   assert.equal(c.budgets.bee.perMinute, 12.5);
   assert.equal(c.budgets.bee.cap, DEFAULT_CONFIG.budgets.bee.cap);
-  assert.equal(c.budgets.clover.size, DEFAULT_CONFIG.budgets.clover.size);
+  assert.equal(c.budgets.cosmos.size, DEFAULT_CONFIG.budgets.cosmos.size);
   assert.equal(c.challengeType, "str");
   assert.throws(() => normalizeConfig({ responseType: "set[int]" }));
 });

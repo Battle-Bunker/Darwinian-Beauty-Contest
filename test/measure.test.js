@@ -98,7 +98,7 @@ test("the minified programs are valid code", async () => {
   const samples = { python: [READABLE_PY, TERSE_PY], typescript: [] };
   for (const language of ["python", "typescript"]) {
     const s = starters(normalizeConfig({ language }));
-    for (const k of ["clover", "orchid", "bee"]) samples[language].push(s[k]);
+    for (const k of ["cosmos", "orchid", "bee"]) samples[language].push(s[k]);
   }
   samples.python.push(`import random, math as m\nfrom itertools import count\n@staticmethod\ndef g(x, *a, **k):\n    try:\n        return [y for y in a if y] or {z: 1 for z in k}\n    except ValueError as e:\n        raise\n    finally:\n        pass\nclass C:\n    def h(self, q=2):\n        global G\n        if (w := q) > 1: return f"{w!r:>{q}}"\n        elif q: pass\n        else:\n            return not q in (1,)\n`);
   for (const code of samples.python) {

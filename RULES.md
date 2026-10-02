@@ -8,11 +8,11 @@ In this game your team writes **three programs**:
 
 | Program | Named after | What it is |
 |---|---|---|
-| **clover** | white clover (*Trifolium repens*), the classic honest nectar flower | a rewarding flower: bees that feed here get **1 nectar** |
+| **cosmos** | the garden cosmos (*Cosmos bipinnatus*), the honest, many-coloured nectar flower | a rewarding flower: bees that feed here get **1 nectar** |
 | **orchid** | the bee orchid (*Ophrys apifera*), the classic deceiver | a deceptive flower: bees that feed here get **nothing** |
 | **bee** | the honeybee | visits flowers, asks them questions, and decides whether to feed |
 
-Your clover and orchid grow together in your team's **patch**. Bees never learn which patch a flower
+Your cosmos and orchid grow together in your team's **patch**. Bees never learn which patch a flower
 is in, or which of its two flowers it is. All a bee sees is a flower and its answers.
 
 ## The garden never stops
@@ -42,7 +42,7 @@ own two flowers are in the deck too, and every flower comes up once before any c
 which is **queued** for its next round:
 
 - `["ask", challenge]`: ask this challenge at the same flower next round.
-- `"feed"`: feed next round. You get 1 nectar if it's a clover and 0 if it's an orchid, and your bee is
+- `"feed"`: feed next round. You get 1 nectar if it's a cosmos and 0 if it's an orchid, and your bee is
   then busy feeding for the next **10 rounds** (the owner can change the 10): no slot for it while the
   other bees carry on. You can feed **once** per visit, after asking at least once.
 - `["leave", challenge]`: move on, and ask this challenge first at the next flower, next round.
@@ -52,8 +52,8 @@ which is **queued** for its next round:
 
 1. **0 ms.** Every bee's queued action runs at once: each queued challenge goes to its flower, or the
    bee feeds. A bee with nothing queued as the round starts **loses its slot** for that round.
-2. **150 ms.** The flowers' answers are delivered. A clover has the whole 150 ms to answer; an orchid
-   has a shorter time limit, **100 ms** by default (the room owner sets it, never more than a clover's).
+2. **150 ms.** The flowers' answers are delivered. A cosmos has the whole 150 ms to answer; an orchid
+   has a shorter time limit, **100 ms** by default (the room owner sets it, never more than a cosmos's).
    A flower that isn't done within its own limit gives no answer (`None`/`null`). Either way the answer
    reaches the bee at 150 ms, however fast the flower was, so how long an answer took tells a bee
    nothing.
@@ -94,7 +94,7 @@ visitors or change its mind. Within one call, though, a flower can use `random` 
 call) and the clock (`import time`; in TypeScript `Math.random()` and `Date.now()`). So it can run a
 search or an optimisation until its time is nearly up and answer with the best result it found. The
 same challenge can get a different answer every time. `GAME["ms"]` (TypeScript: `GAME.ms`) is your
-flower's own time limit per call in milliseconds: 150 for a clover, and the orchid's own limit (100 by
+flower's own time limit per call in milliseconds: 150 for a cosmos, and the orchid's own limit (100 by
 default) for an orchid, so an orchid can time its work to finish just before its limit. The clock
 starts when your program starts, so stop with a margin to spare: a flower that runs out of time gives
 no answer at all.
@@ -137,7 +137,7 @@ Each program is one function (two for the bee). Here are their shapes; what goes
 ### Python
 
 ```python
-# clover and orchid
+# cosmos and orchid
 def flower(challenge):
     ...  # return a value of the game's response type
 
@@ -174,7 +174,7 @@ In TypeScript, `tree[T]` is `{ value: T; children: Tree<T>[] }` and a graph is
 
 Every program can read a `GAME` dictionary/object: `feed_cost` (rounds a feeding bee sits out),
 `challenge_type`, `response_type`, `max_len`, `max_nodes`, `round_ms` (200: the length of a round) and
-`ms` (your program's own time limit per call, in milliseconds: a clover's, an orchid's, or a bee's 50).
+`ms` (your program's own time limit per call, in milliseconds: a cosmos's, an orchid's, or a bee's 50).
 It doesn't say what time it is in the game.
 
 Python programs may import `math`, `random`, `hashlib`, `string`, `itertools`, `functools`,
@@ -188,20 +188,20 @@ and `time`. TypeScript programs get the standard JavaScript built-ins, including
 Each of your three programs has three budgets, and the room owner sets them per game. The three
 programs get **different** budgets on purpose, measured against the orchid:
 
-| Budget | Measures | clover | orchid | bee |
+| Budget | Measures | cosmos | orchid | bee |
 |---|---|---|---|---|
 | **size** | your program's size in nodes (see below) | 1,100 (half an orchid's) | 2,200 | 11,000 (5× an orchid's) |
-| **change** | nodes of change you earn per minute of play, and the most you can bank (a minute's worth) | 220 a minute, up to 220 | 1,540 a minute, up to 1,540 (7× a clover's) | 2,200 a minute, up to 2,200 |
-| **time** | milliseconds per call (flowers: the whole program, every question) | 150: the whole flower window | 100 (the owner sets it; at most a clover's) | 50: the decision window |
+| **change** | nodes of change you earn per minute of play, and the most you can bank (a minute's worth) | 220 a minute, up to 220 | 1,540 a minute, up to 1,540 (7× a cosmos's) | 2,200 a minute, up to 2,200 |
+| **time** | milliseconds per call (flowers: the whole program, every question) | 150: the whole flower window | 100 (the owner sets it; at most a cosmos's) | 50: the decision window |
 
 Why it's lopsided:
-- **Clovers** are small but powerful: they get the whole 150 ms flower window for every answer, half
+- **Cosmos flowers** are small but powerful: they get the whole 150 ms flower window for every answer, half
   as much again as an orchid's 100. That makes effort a signal. An answer that takes real work to
   produce, like a big graph that fits a tricky rule, is hard for an orchid to fake in two thirds of
-  the time. With randomness and a clock, a clover can search for as long as its time allows and
+  the time. With randomness and a clock, a cosmos can search for as long as its time allows and
   return the best it found, so how good its answers are shows how hard it worked. Every answer is
   delivered at 150 ms, so an orchid can't be caught out by answering early, only by how good its
-  answers are. But clovers change slowly.
+  answers are. But cosmos flowers change slowly.
 - **Orchids** get more code and change fast. They make up for less time with cleverness: a faster
   way to produce the same kind of answer, or a shallower look-alike, re-aimed whenever they see what
   the bees trust.
@@ -257,7 +257,7 @@ paused.
 ## What everyone can see
 
 **Everything the bees do, as it happens.** Every bee's every action is public the moment it happens:
-whose bee, at whose patch, at which of its flowers (clover or orchid), every challenge as it is asked
+whose bee, at whose patch, at which of its flowers (cosmos or orchid), every challenge as it is asked
 and every response, every feed and whether it paid, every leave and every error. The game's settings,
 every time limit included, are public too.
 
@@ -276,7 +276,7 @@ and all printouts.
 
 Two ledgers are kept, with one row per bee team and one column per patch team:
 
-- the **feed ledger** counts how many times each bee fed at each patch (clover *or* orchid)
+- the **feed ledger** counts how many times each bee fed at each patch (cosmos *or* orchid)
 - the **nectar ledger** counts how much nectar each bee collected from each patch
 
 A team's score combines two numbers that both reward **variety**, built from a **rootsum**: add up
@@ -299,11 +299,11 @@ score uses the ledgers of the whole game; the scoreboard also shows the last fiv
 So you want **lots of different bees to feed at your patch**, including at your orchid, and **your
 bee to find nectar at lots of different patches**.
 
-A clover that bees can recognise attracts feeds. An orchid gets fed when it answers like a clover
+A cosmos that bees can recognise attracts feeds. An orchid gets fed when it answers like a cosmos
 that bees trust, and every bee it fools learns to trust that kind of answer a little less. If your
-orchid imitates **your own** clover, your clover's reputation pays the price. If it imitates
-**another team's** clover, theirs does. Everyone sees every answer the moment it's given, so whatever
-a clover does to be recognised, the orchids are watching too.
+orchid imitates **your own** cosmos, your cosmos's reputation pays the price. If it imitates
+**another team's** cosmos, theirs does. Everyone sees every answer the moment it's given, so whatever
+a cosmos does to be recognised, the orchids are watching too.
 
 ## After the game
 

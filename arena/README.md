@@ -30,7 +30,7 @@ metrics, interviews, the teen judges and (unless membership is fixed) selection 
 | `lib/gamecontrol.js` | the game follows the arena's pause file |
 | `lib/social.js`, `lib/population.js`, `lib/personas.js` | interviews → judges → idea ledger → social scores; retirement and breeders; founders, judges, breeders |
 | `lib/presets.js` | game settings, lineups and session pacing for fresh arenas |
-| `examples/v3/` | two example clovers and bee-side checkers (`flower(challenge)`, plain helpers): only for arenas that hand them to every team (`examples` in a preset) |
+| `examples/v3/` | two example cosmos flowers and bee-side checkers (`flower(challenge)`, plain helpers): only for arenas that hand them to every team (`examples` in a preset) |
 | `test-*.mjs` | checks without model calls (see "Tests") |
 | `runs/` | logs, transcripts, the dev secret, the pause file (gitignored) |
 
@@ -138,7 +138,7 @@ refusal for budget carries `wait_s`), `wait_for_budget(kind, cost)`, `scores()` 
 | path | what |
 |---|---|
 | `README.md`, `RULES.md`, `interface.txt`, `config.json` | the file guide, the players' rules, signatures and types, this game's settings (with the public API address) |
-| `clover.py`, `orchid.py`, `bee.py` | in play, exactly the versions playing when the session started (unsubmitted edits move to `drafts/`) |
+| `cosmos.py`, `orchid.py`, `bee.py` | in play, exactly the versions playing when the session started (unsubmitted edits move to `drafts/`) |
 | `history/` | the team's own versions in this game (code and timeline). Other teams' changes are secret until the game ends |
 | `status.txt` | what `tools/status.py` said at the start of the session |
 | `notebook.md` | the persona's notes, kept across sessions and games |
@@ -227,14 +227,14 @@ eight per game, at least 10 s):
 
 - actions, rounds, feeds, **precision** (nectar per feed) and **nectar per bee-round** (a bee gets one turn per round
   unless it is feeding)
-- **rival clover vs rival orchid fed rates** (share of visits to other teams' flowers that ended in a feed) and the gap
+- **rival cosmos vs rival orchid fed rates** (share of visits to other teams' flowers that ended in a feed) and the gap
 - **fingerprinting**: share of a bee's pre-feed asks that repeat a challenge it asked before; distinct challenges per bee
-- **stolen-face / twin** orchid answers (equal to an earlier answer of a rival clover / of its own clover to the same
+- **stolen-face / twin** orchid answers (equal to an earlier answer of a rival cosmos / of its own cosmos to the same
   challenge)
-- **copy latency**: for each answer (c, r) a clover gave, the time until a rival orchid first answered r to c (only if it
-  hadn't before), and how many of those came from an orchid version that went live after the clover's answer appeared.
-  Only those are copies: other matches are convergence (an orchid running the same rule as a rival clover, e.g. a twin
-  of its own clover when two teams chose the same rule) or coincidence in a small answer space
+- **copy latency**: for each answer (c, r) a cosmos gave, the time until a rival orchid first answered r to c (only if it
+  hadn't before), and how many of those came from an orchid version that went live after the cosmos's answer appeared.
+  Only those are copies: other matches are convergence (an orchid running the same rule as a rival cosmos, e.g. a twin
+  of its own cosmos when two teams chose the same rule) or coincidence in a small answer space
 - fitness per window and cumulative; per team: bee precision, fed rates, repeat share, feeds received
 - the **change timeline** (every version: game time, size, node edits, cost, the session that submitted it), **flower
   compute against budget** (mean, p90, max, timeouts; bees' compute isn't recorded by the server), sessions (start

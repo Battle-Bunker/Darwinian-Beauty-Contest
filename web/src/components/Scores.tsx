@@ -96,8 +96,8 @@ export function Scores({ view }: { view: GameView }) {
 
       {view.ledgers && view.participants && (
         <div className="ledgers">
-          <Ledger title="Who fed where" hint="Feeds each bee (row) made at each patch (column), clover or orchid. A column's rootsum is that patch's allure." matrix={view.ledgers.feeds} order={view.participants} teams={teams} myTeamId={myTeamId} tone="feed" verb="fed" />
-          <Ledger title="Who got nectar where" hint="Nectar each bee (row) got from each patch (column): only clovers pay. A row's rootsum is that bee's forage." matrix={view.ledgers.nectar} order={view.participants} teams={teams} myTeamId={myTeamId} tone="nectar" verb="got nectar" />
+          <Ledger title="Who fed where" hint="Feeds each bee (row) made at each patch (column), cosmos or orchid. A column's rootsum is that patch's allure." matrix={view.ledgers.feeds} order={view.participants} teams={teams} myTeamId={myTeamId} tone="feed" verb="fed" />
+          <Ledger title="Who got nectar where" hint="Nectar each bee (row) got from each patch (column): only cosmos flowers pay. A row's rootsum is that bee's forage." matrix={view.ledgers.nectar} order={view.participants} teams={teams} myTeamId={myTeamId} tone="nectar" verb="got nectar" />
         </div>
       )}
 

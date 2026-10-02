@@ -3,7 +3,7 @@
 // calls, no game server (the arena schema in dbc_live for throwaway rows):
 //   node arena/test-scaffold.mjs
 // A stub scaffold: it starts from a session, survives the session's end, submits a change by itself when a rival
-// clover answers, is refused (with a wait time) when a change is over budget, is restarted after it crashes, a
+// cosmos answers, is refused (with a wait time) when a change is over budget, is restarted after it crashes, a
 // forbidden scaffold fails the audit, a greedy one is throttled to its CPU share, and everything stops at game end.
 import { spawn } from "node:child_process";
 import fs from "node:fs";
@@ -26,7 +26,7 @@ const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { retu
 
 // ---------------------------------------------------------------- a fake game: clock, budgets, submissions
 const config = { language: "python", minutes: 2, feedCost: 10, challengeType: "int", responseType: "int", maxLen: 64, maxNodes: 512,
-  budgets: { clover: { size: 1100, perMinute: 220, cap: 220, ms: 150 }, orchid: { size: 2200, perMinute: 600, cap: 600, ms: 100 }, bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 50 } } };
+  budgets: { cosmos: { size: 1100, perMinute: 220, cap: 220, ms: 150 }, orchid: { size: 2200, perMinute: 600, cap: 600, ms: 100 }, bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 50 } } };
 const t0 = Date.now();
 const clock = () => Date.now() - t0;
 const bank = { orchid: { bank: 50, atMs: 0 } };
@@ -34,8 +34,8 @@ const submits = [];
 const avail = (k) => Math.min(config.budgets[k].cap, (bank[k]?.bank ?? 0) + config.budgets[k].perMinute * (clock() - (bank[k]?.atMs ?? 0)) / 60000);
 const fakeApi = {
   view: async () => ({ game: { status: "running", clockMs: clock(), endMs: 120000, round: Math.floor(clock() / 200), config },
-    teams: [{ id: "T1", name: "Moonpetal", banks: { clover: { bank: 0, atMs: 0 }, orchid: bank.orchid, bee: { bank: 0, atMs: 0 } },
-      programs: { clover: [{ version: 1, size: 10, atMs: 0, code: "def flower(c):\n    return c\n" }], orchid: [{ version: submits.length + 1, size: 10, atMs: 0, code: "def flower(c):\n    return 0\n" }], bee: [] } },
+    teams: [{ id: "T1", name: "Moonpetal", banks: { cosmos: { bank: 0, atMs: 0 }, orchid: bank.orchid, bee: { bank: 0, atMs: 0 } },
+      programs: { cosmos: [{ version: 1, size: 10, atMs: 0, code: "def flower(c):\n    return c\n" }], orchid: [{ version: submits.length + 1, size: 10, atMs: 0, code: "def flower(c):\n    return 0\n" }], bee: [] } },
       { id: "T2", name: "Rival", programs: null, banks: null }], scores: [{ teamId: "T1", fitness: 1 }, { teamId: "T2", fitness: 1 }] }),
   check: async (tok, g, kind, code) => ({ ok: true, size: code.length, budget: config.budgets[kind], cost: code.length, available: Math.floor(avail(kind)), errors: [] }),
   try: async (tok, g, kind, code, ch) => ({ results: (ch || [1]).map((c) => ({ c, r: 0, ms: 1 })) }),
@@ -70,7 +70,7 @@ const tool = (...a) => new Promise((resolve) => {
   c.on("close", (status) => resolve({ status, out }));
 });
 
-// The stub scaffold: copy a rival clover's answer into the orchid, then try something over budget, then crash once.
+// The stub scaffold: copy a rival cosmos's answer into the orchid, then try something over budget, then crash once.
 fs.writeFileSync(path.join(dir, "scaffold.py"), `import os, sys
 sys.path.insert(0, "tools")
 import garden
@@ -79,7 +79,7 @@ import helper
 print("scaffold up; me =", garden.ME, "; orchid budget", round(garden.status()["budgets"]["orchid"]["exact"], 1), flush=True)
 seen = 0
 for a in garden.follow(after=0):
-    if a["action"] != "ask" or a["kind"] != "clover" or a["patch"] == garden.ME:
+    if a["action"] != "ask" or a["kind"] != "cosmos" or a["patch"] == garden.ME:
         continue
     seen += 1
     if seen == 1:
@@ -108,8 +108,8 @@ check("the end of the session doesn't stop the scaffold", pid1 && alive(pid1) &&
 const ready = await until("scaffold up", () => /scaffold up; me = T1 ; orchid budget/.test(desk.scaffold.logTail()));
 check("the scaffold talks to the runner between sessions (status through garden.py)", !!ready, desk.scaffold.logTail());
 
-// 2. A rival clover answers: the scaffold copies it into the orchid and submits it by itself.
-append({ seq: 1, atMs: clock(), round: 1, bee: "T1", visit: 1, patch: "T2", kind: "clover", action: "ask", c: 42, r: 127 });
+// 2. A rival cosmos answers: the scaffold copies it into the orchid and submits it by itself.
+append({ seq: 1, atMs: clock(), round: 1, bee: "T1", visit: 1, patch: "T2", kind: "cosmos", action: "ask", c: 42, r: 127 });
 const sub = await until("an automatic submission", () => submits.length >= 1 && submits[0]);
 check("an automatic submission, with the team's token held by the runner", sub && sub.kind === "orchid" && sub.code.includes("T = {42: 127}") && sub.tok === "SECRET-TOKEN", JSON.stringify(sub));
 const reqRows = await until("recorded", async () => { const x = await all("SELECT * FROM arena.requests WHERE game_id = -424242 AND op = 'submit'"); return x.length ? x : null; });
@@ -117,12 +117,12 @@ check("recorded in arena.requests with source 'scaffold'", reqRows?.[0]?.source 
 check("the scaffold's token never appears in the workspace", !fs.readdirSync(path.join(dir, ".runner", "res")).some((f) => fs.readFileSync(path.join(dir, ".runner", "res", f), "utf8").includes("SECRET-TOKEN")));
 
 // 3. A change over budget: refused, with how long until it's affordable.
-append({ seq: 2, atMs: clock(), round: 2, bee: "T1", visit: 2, patch: "T2", kind: "clover", action: "ask", c: 7, r: 22 });
+append({ seq: 2, atMs: clock(), round: 2, bee: "T1", visit: 2, patch: "T2", kind: "cosmos", action: "ask", c: 7, r: 22 });
 const big = await until("the refusal", () => (desk.scaffold.logTail().match(/big change ok (\w+) wait_s (\S+)/) || null));
 check("over budget: refused, and told when it can afford it", big && big[1] === "False" && Number(big[2]) > 0, desk.scaffold.logTail());
 
 // 4. It crashes: restarted after a backoff, re-audited.
-append({ seq: 3, atMs: clock(), round: 3, bee: "T1", visit: 3, patch: "T2", kind: "clover", action: "ask", c: 8, r: 25 });
+append({ seq: 3, atMs: clock(), round: 3, bee: "T1", visit: 3, patch: "T2", kind: "cosmos", action: "ask", c: 8, r: 25 });
 const restarted = await until("a restart", () => desk.scaffold.restarts >= 1 && desk.scaffold.child?.pid && desk.scaffold.child.pid !== pid1, 20000);
 check("after a crash it is restarted (backoff), as a new process", !!restarted && /crashing on purpose/.test(desk.scaffold.logTail(200)) && (desk.scaffold.logTail(200).match(/==== scaffold scaffold\.py starting/g) || []).length >= 2, desk.scaffold.logTail(60));
 const rows = await all("SELECT action, status FROM arena.scaffolds WHERE game_id = -424242 ORDER BY id");

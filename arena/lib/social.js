@@ -71,7 +71,7 @@ async function runJudge({ judge, arena, gameRow, config, teams, ideas, extraIdea
 }
 
 /**
- * teams: [{ persona_id, name, explanation, code: {clover, orchid, bee} }]
+ * teams: [{ persona_id, name, explanation, code: {cosmos, orchid, bee} }]
  * Two waves: one judge first (its new tags are shown to the others so tags converge), then the rest in parallel.
  */
 export async function judgeGame({ arena, gameRow, config, teams, log }) {

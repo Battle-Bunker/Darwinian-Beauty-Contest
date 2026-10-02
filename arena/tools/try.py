@@ -1,6 +1,6 @@
 """Run a program on the game's real runner without submitting it (free, any time).
 
-    python3 tools/try.py clover                    # clover.py on a few sample challenges
+    python3 tools/try.py cosmos                    # cosmos.py on a few sample challenges
     python3 tools/try.py orchid orchid.py 1 42 99  # your challenges (JSON values: 7, "abc", [1,2])
     python3 tools/try.py bee                       # bee.py foraging a garden of just your own two flowers
     python3 tools/try.py bee my_bee.py --json      # raw result: every action of the try

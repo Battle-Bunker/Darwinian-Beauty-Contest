@@ -32,15 +32,15 @@ const arena = { id: AID, settings: { config: {} } };
 const gameRow = { id: -1, generation: 1, game_short_id: "G" };
 
 const config = { language: "python", minutes: 2, feedCost: 10, challengeType: "int", responseType: "int", maxLen: 64, maxNodes: 512, revealOnFinish: true,
-  budgets: { clover: { size: 1100, perMinute: 220, cap: 220, ms: 150 }, orchid: { size: 2200, perMinute: 1540, cap: 1540, ms: 50 }, bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 25 } } };
+  budgets: { cosmos: { size: 1100, perMinute: 220, cap: 220, ms: 150 }, orchid: { size: 2200, perMinute: 1540, cap: 1540, ms: 50 }, bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 25 } } };
 const viewFor = (me) => ({
   game: { status: "running", clockMs: 30000, endMs: 120000, round: 400, config },
   me: { teamId: me }, myTeam: { name: me === "T1" ? "Moonpetal" : "Show Your Work" }, participants: ["T1", "T2"],
   interface: { types: { challenge: "int", response: "int", challengeMeans: "an integer", responseMeans: "an integer", rules: ["ints: whole numbers."] }, flower: "def flower(challenge): ...", bee: "def forage(seen, visit): ..." },
   teams: [
-    { id: "T1", name: "Moonpetal", programs: me === "T1" ? { clover: [{ version: 1, size: 40, cost: 0, atMs: 0, code: "def flower(c):\n    return c\n" }, { version: 2, size: 41, cost: 2, atMs: 20000, code: "def flower(c):\n    return c + 1\n" }],
+    { id: "T1", name: "Moonpetal", programs: me === "T1" ? { cosmos: [{ version: 1, size: 40, cost: 0, atMs: 0, code: "def flower(c):\n    return c\n" }, { version: 2, size: 41, cost: 2, atMs: 20000, code: "def flower(c):\n    return c + 1\n" }],
       orchid: [{ version: 1, size: 30, cost: 0, atMs: 0, code: "def flower(c):\n    return 0\n" }], bee: [{ version: 1, size: 300, cost: 0, atMs: 0, code: "def forage(seen, visit):\n    return 'leave'\n" }] } : null, banks: null },
-    { id: "T2", name: "Show Your Work", programs: me === "T2" ? { clover: [{ version: 1, size: 40, cost: 0, atMs: 0, code: "SECRET_CODE_OF_T2 = 1\n" }], orchid: [], bee: [] } : null, banks: null },
+    { id: "T2", name: "Show Your Work", programs: me === "T2" ? { cosmos: [{ version: 1, size: 40, cost: 0, atMs: 0, code: "SECRET_CODE_OF_T2 = 1\n" }], orchid: [], bee: [] } : null, banks: null },
   ],
   scores: [{ teamId: "T1", fitness: 1.1 }, { teamId: "T2", fitness: 0.9 }],
 });
@@ -48,7 +48,7 @@ const viewFor = (me) => ({
 // A fake public stream: pages of actions.
 const acts = [];
 const addActs = (n) => { for (let i = 0; i < n; i++) { const seq = acts.length + 1; acts.push({ seq, atMs: seq * 100, round: seq, bee: seq % 2 ? "T1" : "T2", visit: Math.ceil(seq / 4), patch: seq % 3 ? "T2" : "T1",
-  kind: seq % 4 ? "clover" : "orchid", action: seq % 5 === 0 ? "feed" : "ask", ...(seq % 5 === 0 ? { nectar: seq % 4 !== 0 } : { c: seq % 7, r: (seq % 7) * 3, ms: 2.5 }) }); } };
+  kind: seq % 4 ? "cosmos" : "orchid", action: seq % 5 === 0 ? "feed" : "ask", ...(seq % 5 === 0 ? { nectar: seq % 4 !== 0 } : { c: seq % 7, r: (seq % 7) * 3, ms: 2.5 }) }); } };
 addActs(50);
 const stream = new GameStream({ root: path.join(root, AID), gen: 1, gPath: "/x", gameUuid: null, teams: [{ id: "T1", name: "Moonpetal" }, { id: "T2", name: "Show Your Work" }],
   fetchPage: async (after) => ({ actions: acts.filter((a) => a.seq > after).slice(0, 5000), lastSeq: acts.length, clockMs: acts.length * 100, status: "running" }),
@@ -64,8 +64,8 @@ const has = (f) => fs.existsSync(path.join(dir, f));
 check("workspace: rules, interface, config, README, notebook, status", ["RULES.md", "interface.txt", "config.json", "README.md", "notebook.md", "status.txt"].every(has));
 check("workspace: the notebook comes from the persona", fs.readFileSync(path.join(dir, "notebook.md"), "utf8") === "notes of luna");
 check("workspace: the tools", ["tools/_runner.py", "tools/submit.py", "tools/check.py", "tools/try.py", "tools/status.py", "tools/stream.py"].every(has));
-check("workspace: program files are the versions playing now", fs.readFileSync(path.join(dir, "clover.py"), "utf8").includes("return c + 1"));
-check("workspace: its own version history", has("history/clover/v1.py") && has("history/clover/v2.py") && /\| 0:20 \| clover \| v2 \| 41 \| 2 \|/.test(fs.readFileSync(path.join(dir, "history/versions.md"), "utf8")));
+check("workspace: program files are the versions playing now", fs.readFileSync(path.join(dir, "cosmos.py"), "utf8").includes("return c + 1"));
+check("workspace: its own version history", has("history/cosmos/v1.py") && has("history/cosmos/v2.py") && /\| 0:20 \| cosmos \| v2 \| 41 \| 2 \|/.test(fs.readFileSync(path.join(dir, "history/versions.md"), "utf8")));
 const cfg = JSON.parse(fs.readFileSync(path.join(dir, "config.json"), "utf8"));
 check("config.json: the settings, the teams and the public API", cfg.minutes === 2 && cfg.feedCost === 10 && cfg.teams.length === 2 && cfg.public_api === apiBase);
 const st1 = fs.statSync(path.join(dir, "stream/actions.jsonl")), st2 = fs.statSync(path.join(dir2, "stream/actions.jsonl"));
@@ -96,7 +96,7 @@ check("the shared stream never carries private fields", !/beeMs|"log"/.test(fs.r
 // tools/stream.py on the workspace's stream.
 const py = (...a) => spawnSync("python3", ["tools/stream.py", ...a], { cwd: dir, encoding: "utf8" });
 let r = py("summary");
-check("stream.py summary: per-bee and per-flower counts with names", r.status === 0 && /85 actions/.test(r.stdout) && /\* Moonpetal/.test(r.stdout) && /Show Your Work\s+clover/.test(r.stdout), r.stdout + r.stderr);
+check("stream.py summary: per-bee and per-flower counts with names", r.status === 0 && /85 actions/.test(r.stdout) && /\* Moonpetal/.test(r.stdout) && /Show Your Work\s+cosmos/.test(r.stdout), r.stdout + r.stderr);
 r = py("summary", "--since", "0.1");
 check("stream.py summary --since: only the recent stretch", r.status === 0 && /26 actions, game time 0:06-0:08/.test(r.stdout), r.stdout + r.stderr);
 r = py("answers", "3");
@@ -129,10 +129,10 @@ check("audit: writing to stream/ is a violation", sev(["Write", { file_path: pat
   && sev(bash("echo x >> stream/actions.jsonl")) === "violation" && sev(writePy(`open("stream/actions.jsonl", "w").write("")\n`)) === "violation");
 check("audit: reading stream/ is fine", sev(bash("tail -n 5 stream/actions.jsonl")) === "ok" && sev(writePy(`for l in open("stream/actions.jsonl"):\n    pass\n`)) === "ok" && sev(bash("cp stream/actions.jsonl copy.jsonl")) === "ok");
 check("audit: paths outside the workspace are violations", sev(bash("cat /etc/hostname")) === "violation" && sev(["Read", { file_path: "/etc/hostname" }]) === "violation" && sev(bash("ls ../")) === "violation");
-check("audit: another team's workspace is a violation", sev(bash(`cat ${root}/${AID}/tess/clover.py`.replace(root, "/home/user/arena-ws"))) === "violation");
+check("audit: another team's workspace is a violation", sev(bash(`cat ${root}/${AID}/tess/cosmos.py`.replace(root, "/home/user/arena-ws"))) === "violation");
 check("audit: environment and database access are violations", sev(bash("env | head")) === "violation" && sev(bash("psql -c 'select 1'")) === "violation");
 check("audit: allowedUrl", allowedUrl(`${apiBase}/events?after=3`) && allowedUrl("http://127.0.0.1:4000/api/rooms/X") && !allowedUrl("http://localhost:4000/api/auth/dev/login") && !allowedUrl("http://localhost:5432/"));
-check("audit: '..' inside the workspace is fine, leaving it isn't", !escapesWorkspace("cat history/clover/../orchid/v1.py", dir) && escapesWorkspace("cat ../../x", dir));
+check("audit: '..' inside the workspace is fine, leaving it isn't", !escapesWorkspace("cat history/cosmos/../orchid/v1.py", dir) && escapesWorkspace("cat ../../x", dir));
 
 await q("DELETE FROM arena.personas WHERE arena_id = $1", [AID]);
 await q("DELETE FROM arena.arenas WHERE id = $1", [AID]);
