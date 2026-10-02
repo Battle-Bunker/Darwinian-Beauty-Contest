@@ -92,7 +92,7 @@ export function statusOf(view, teamId, { afford = null } = {}) {
       const b = config.budgets[k], bank = mine.banks[k] || { bank: 0, atMs: 0 };
       const av = availableNow(b, bank, g.clockMs);
       const full = b.perMinute > 0 ? Math.max(0, (b.cap - av) * 60000 / b.perMinute) : null;
-      const x = { available: Math.floor(av), perMinute: b.perMinute, cap: b.cap, fullInMs: full };
+      const x = { available: Math.floor(av), exact: av, perMinute: b.perMinute, cap: b.cap, bank: bank.bank, bankAtMs: bank.atMs, fullInMs: full };
       let extra = "";
       if (afford != null) {
         const ms = afford > b.cap ? null : afford <= av ? 0 : b.perMinute > 0 ? (afford - av) * 60000 / b.perMinute : null;
@@ -133,16 +133,25 @@ export function statusOf(view, teamId, { afford = null } = {}) {
  * record(row) }. Results carry `text` (what the tool prints) plus the structured fields.
  */
 export function requestHandler(ctx) {
-  const { api = Api, tok, gPath, config, teamId, gate = () => null, record = async () => {}, dir = null } = ctx;
+  const { api = Api, tok, gPath, config, teamId, gate: gateOf = () => null, record: recordRow = async () => {}, dir = null,
+    sourceOf = () => "session", scaffoldOp = null } = ctx;
   // The workspace's flower files, for testing a bee before any flowers are submitted.
   const fileFlowers = () => dir ? Object.fromEntries(["clover", "orchid"].map((k) => { try { return [k, fs.readFileSync(path.join(dir, `${k}.${config.language === "typescript" ? "ts" : "py"}`), "utf8")]; } catch { return [k, ""]; } })) : null;
   return async (req) => {
     const op = String(req.op || "");
     const kind = req.kind;
-    const refusal = gate(op);
+    // Who is asking: a session (an agent's tool call) or the team's scaffold (its token). Nobody else gets answers.
+    const source = sourceOf(req);
+    if (!source) return { ok: false, refused: true, error: "no session of your team is running, and this request isn't from your scaffold", text: "refused: no session of your team is running, and this request isn't from your scaffold" };
+    const record = (row) => recordRow({ ...row, source });
+    const refusal = gateOf(op, source);
     if (refusal) {
       await record({ op, kind, code: req.code, ok: false, refused: refusal });
       return { ok: false, refused: true, error: refusal, text: `refused: ${refusal}` };
+    }
+    if (op === "scaffold") {
+      if (source !== "session" || !scaffoldOp) return { ok: false, error: "only a session can start or stop the scaffold", text: "only a session can start or stop the scaffold" };
+      try { return await scaffoldOp(req); } catch (e) { return { ok: false, error: e.message, text: `error: ${e.message}` }; }
     }
     if (["check", "try", "submit"].includes(op)) {
       if (!KINDS.includes(kind)) return { ok: false, error: "kind must be clover, orchid or bee", text: "kind must be clover, orchid or bee" };
@@ -199,15 +208,19 @@ export function requestHandler(ctx) {
         }
         const r = await api.submit(tok, gPath, kind, req.code);
         const over = (r.errors || []).some((e) => /game over/i.test(e));
-        const out = { ok: !!r.submitted, kind, version: r.version, size: r.size, distance: r.distance, cost: r.cost, available: r.available, errors: r.errors || [], gameOver: over };
+        // Not affordable yet: how long until it is (the server's message says so).
+        const wait = (r.errors || []).map((e) => e.match(/Enough in about (\d+) s/)).find(Boolean);
+        const never = (r.errors || []).some((e) => /can never afford/i.test(e));
+        const out = { ok: !!r.submitted, kind, version: r.version, size: r.size, distance: r.distance, cost: r.cost, available: r.available, atMs: r.atMs ?? null,
+          errors: r.errors || [], gameOver: over, waitS: wait ? Number(wait[1]) : never ? null : undefined, never: never || undefined };
         out.text = r.submitted
           ? `${kind} v${r.version} submitted${r.cost ? `: it cost ${n0(r.cost)} nodes of change, ${n0(r.available ?? 0)} left` : ""}. ${r.available != null ? "It is live now." : "(lobby: free)"}`
           : over ? `not submitted: the game is over.` : `not submitted:\n- ${(r.errors || ["not accepted"]).join("\n- ")}`;
         await record({ op, kind, code: req.code, ok: out.ok, refused: over ? "game over" : null, version: r.version ?? null, cost: r.submitted ? r.cost : null,
-          result: { size: r.size, distance: r.distance, cost: r.cost, available: r.available, errors: r.errors } });
+          clockMs: r.submitted ? r.atMs ?? undefined : undefined, result: { size: r.size, distance: r.distance, cost: r.cost, available: r.available, errors: r.errors } });
         return out;
       }
-      return { ok: false, error: `unknown request ${op}`, text: `unknown request ${op} (submit, check, try, status)` };
+      return { ok: false, error: `unknown request ${op}`, text: `unknown request ${op} (submit, check, try, status, scaffold)` };
     } catch (e) {
       await record({ op, kind, code: req.code, ok: false, result: { error: e.message } }).catch(() => {});
       return { ok: false, error: e.message, text: `error: ${e.message}` };
@@ -222,7 +235,7 @@ export function requestHandler(ctx) {
  * control: { cancelled?, kill? } shared with the caller (the runner stops sessions when the game ends). Returns
  * { sessionId, cost, violation, killed, requests, submitted }.
  */
-export async function runTeamSession({ arena, gameRow, persona, entry, gPath, stream, phase, sessionNo, attempt = 0, buildPrompt, log, control = {}, timeoutMs, carry = null, api = Api }) {
+export async function runTeamSession({ desk, arena, gameRow, persona, entry, gPath, stream, phase, sessionNo, attempt = 0, buildPrompt, log, control = {}, timeoutMs, carry = null, api = Api }) {
   const tok = await login(entry.login_name);
   const view = await api.view(tok, gPath);
   const config = view.game.config;
@@ -244,7 +257,6 @@ export async function runTeamSession({ arena, gameRow, persona, entry, gPath, st
   const sessionId = row.id;
   const port = new URL(apiBase).port || "80";
   let violated = null;
-  const requests = { n: 0, submitted: [] };
   // Fair play, live: before acting on any request, audit what the session has done so far.
   const gate = () => {
     if (violated) return `a fair-play violation earlier in this session (${violated})`;
@@ -255,19 +267,8 @@ export async function runTeamSession({ arena, gameRow, persona, entry, gPath, st
     control.kill?.("violation");
     return `fair-play violation (${violated}): this session is over`;
   };
-  const record = async (r) => {
-    requests.n++;
-    if (r.op === "submit" && r.ok) requests.submitted.push({ kind: r.kind, version: r.version, cost: r.cost });
-    let clockMs = r.clockMs ?? stream?.clockMs ?? null;
-    if (r.op === "submit" && r.ok && gameRow.game_uuid) { // the game time the version went live (the stream's clock lags a little)
-      const at = await one("SELECT at_ms FROM programs WHERE game_id = $1 AND team_id = $2 AND kind = $3 AND version = $4", [gameRow.game_uuid, teamId, r.kind, r.version]).catch(() => null);
-      if (at) clockMs = Number(at.at_ms);
-    }
-    await q(`INSERT INTO arena.requests (session_id, game_id, persona_id, op, kind, code, ok, refused, result, version, cost, clock_ms) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-      [sessionId, gameRow.id, persona.id, r.op, r.kind ?? null, r.code ?? null, r.ok ?? null, r.refused ?? null, JSON.stringify(r.result ?? null), r.version ?? null, r.cost ?? null, clockMs]);
-    if (r.op === "submit" && r.ok) log(`  ${persona.name}: submitted ${r.kind} v${r.version}${r.cost ? ` (cost ${r.cost})` : ""} at ${clockMs != null ? mmss(clockMs) : "?"}`);
-  };
-  const broker = new Broker({ dir, log, handle: requestHandler({ api, tok, gPath, config, teamId, gate, record, dir }) }).start();
+  const session = { id: sessionId, no: sessionNo, gate, requests: 0, submitted: [] };
+  desk.session = session;
   let s;
   try {
     s = await runSession({
@@ -276,13 +277,14 @@ export async function runTeamSession({ arena, gameRow, persona, entry, gPath, st
       ctx: { purpose: phase === "lobby" ? (attempt ? "lobby-fix" : "lobby") : "session", arenaId: arena.id, gameId: gameRow.id, personaId: persona.id },
     });
   } catch (e) {
-    await broker.stop();
-    await killLeftovers(tag, dir);
+    if (desk.session === session) desk.session = null;
+    await killLeftovers(tag, dir, () => desk.scaffold.pids());
     await q("UPDATE arena.sessions SET ended_at = now(), ended_by = $2 WHERE id = $1", [sessionId, e instanceof BudgetError ? "budget" : `error: ${e.message.slice(0, 200)}`]);
     throw e;
   }
-  await broker.stop();
-  const left = await killLeftovers(tag, dir);
+  if (desk.session === session) desk.session = null; // from now on only the scaffold's requests get answers
+  // Whatever the session left running is stopped (its scaffold, which the runner supervises, is not).
+  const left = await killLeftovers(tag, dir, () => desk.scaffold.pids());
   if (left.length) log(`  ${persona.name}: stopped ${left.length} process${left.length > 1 ? "es" : ""} session ${sessionNo} left running`);
   const found = audit(transcript, dir, arena.id, persona.slug, { port });
   await recordViolations({ arena, gameRow, persona, sessionId, found });
@@ -294,7 +296,7 @@ export async function runTeamSession({ arena, gameRow, persona, entry, gPath, st
   const clockEnd = stream?.clockMs ?? null;
   await q(`UPDATE arena.sessions SET ended_at = now(), clock_end = $2, ended_by = $3, cost_usd = $4, cost_estimated = $5, turns = $6, subtype = $7, reply = $8, violation = $9 WHERE id = $1`,
     [sessionId, clockEnd, s.killed ? `killed:${s.killed}` : s.limit ? "usage-limit" : s.isError ? "error" : "done", s.cost, !!s.estimated, s.turns, s.subtype, (s.text || "").slice(0, 20000), violation]);
-  return { sessionId, cost: s.cost, violation, killed: s.killed, limit: s.limit, requests: requests.n, submitted: requests.submitted, dir, ext, files };
+  return { sessionId, cost: s.cost, violation, killed: s.killed, limit: s.limit, requests: session.requests, submitted: session.submitted, dir, ext, files };
 }
 
 // ---------------------------------------------------------------- the lobby
