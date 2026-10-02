@@ -218,3 +218,31 @@ CREATE TABLE IF NOT EXISTS arena.llm_calls (
   error         text
 );
 CREATE INDEX IF NOT EXISTS llm_calls_arena ON arena.llm_calls(arena_id);
+
+-- Scaffolds: a team's own long-running program outside the engine (lib/scaffold.js), started from its workspace,
+-- supervised by the runner until the game ends. One row per start (and per restart after a crash), with the audited source.
+CREATE TABLE IF NOT EXISTS arena.scaffolds (
+  id          serial PRIMARY KEY,
+  arena_id    text NOT NULL,
+  game_id     int NOT NULL,
+  persona_id  text NOT NULL,
+  session_id  int,                               -- the session that asked for it (null: a restart by the runner)
+  action      text NOT NULL,                     -- start | restart | crash-restart | resume
+  file        text NOT NULL,
+  source      text,                              -- the audited code: the entry file and the workspace modules it imports
+  audit       jsonb,                             -- findings of the static audit
+  status      text NOT NULL,                     -- running | refused | finished | crashed | stopped
+  pid         int,
+  clock_start bigint,
+  clock_end   bigint,
+  exit_code   int,
+  cpu_seconds double precision,
+  throttled_ms bigint,
+  started_at  timestamptz NOT NULL DEFAULT now(),
+  ended_at    timestamptz
+);
+CREATE INDEX IF NOT EXISTS scaffolds_game ON arena.scaffolds(game_id, persona_id);
+-- Who made a request: a session (an agent's tool call), the team's scaffold, or the runner itself (lobby fallback).
+ALTER TABLE arena.requests ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'session';
+ALTER TABLE arena.requests ADD COLUMN IF NOT EXISTS scaffold_id int;
+ALTER TABLE arena.violations ADD COLUMN IF NOT EXISTS scaffold_id int;
