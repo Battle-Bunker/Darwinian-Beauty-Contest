@@ -44,8 +44,8 @@ So this design drops rounds altogether:
   slot for the next 10 rounds. A bee is one long-running program; it keeps its state until its team
   replaces it.
 - **Behaviour public at once, changes private.** Every ask, answer, feed and error is public the moment it
-  happens. Code, what bees print, and each team's code changes and change budgets stay secret during
-  play; once the game is over the replay shows every change and budget (and the code, unless the owner
+  happens, with whose bee and whose patch (but not which of the patch's two flowers: see below). Code,
+  what bees print, and each team's code changes and change budgets stay secret during play; once the game is over the replay shows every change and budget (and the code, unless the owner
   turns that off). Other teams have to read a change from behaviour, not from a changelog.
 - **Change at any time, paid from a budget that refills.** Each program earns change budget per minute of
   game time, up to a cap of one minute's worth, and any change it can afford goes live at once. Over a
@@ -94,7 +94,17 @@ timing is now equalised:
   the machine is never oversubscribed and every flower's limit stays fair; slowness only stretches wall
   time.
 
-Each round, in the engine:
+### Which flower: secret during play
+
+During play the public record names the patch a bee asked at, never which of its two flowers: an
+action's `kind` is the patch's own team's until the game is over. What people and programs watching
+the game can see is the same either way. Teams can still mine a rival patch's answers knowing they
+come from one of that team's two flowers, and a feed still says whether it paid, which gives away
+that one visit's flower. But a bee never knows whose patch it is in, so the public record can't hand
+it a ready-made label ("this answer is Bo's cosmos's") to match against. A team has to teach its bee
+signals that work without knowing which patch, or which flower, it is looking at.
+
+### Each round, in the engine
 
 | Game time | What happens |
 |---|---|
@@ -141,7 +151,7 @@ No. A bee meets its own flowers only as often as the shuffled deck deals them (2
 self-dealing is capped by the deck, and it earns one rootsum term on each side, with diminishing returns.
 
 What it does leak now is its question. Everything is public, so a bee that recognises its own cosmos by
-asking a secret question shows that question to everyone, along with its cosmos's answer. The answer to
+asking a secret question shows that question to everyone, along with the answer its patch gave. The answer to
 a *new* secret question is still unforgeable if the cosmos answers with a keyed hash, but every orchid
 team can see which questions the bee keeps asking and which answers it feeds on.
 

@@ -93,7 +93,8 @@ assert.equal(started.participants.length, 3);
 const lateTeam = await api(await login("Late " + stamp), "POST", `${g}/teams`, { name: "Late" }, { allow: [409] });
 assert.equal(lateTeam.status, 409, "teams can't join a running game");
 
-// Everything is public as soon as it happens: everyone sees every ask, answer and feed.
+// What bees do is public as soon as it happens: everyone sees every ask, answer and feed, and at
+// whose patch, but not which of the patch's two flowers it was.
 const seen = await until("actions", async () => {
   const a = await api(players[1].token, "GET", `${g}/actions`);
   return a.actions.filter((x) => x.action === "feed").length >= 6 && a;
@@ -101,8 +102,16 @@ const seen = await until("actions", async () => {
 const adaAsk = seen.actions.find((a) => a.bee === players[0].team.id && a.action === "ask");
 assert.equal(adaAsk.c, 42, "Bo sees Ada's bee's question");
 assert.equal(typeof adaAsk.r, "number");
-assert.ok(seen.actions.every((a) => a.kind === "cosmos" || a.kind === "orchid"));
 const ada = players[0].team.id, bo = players[1].team.id;
+assert.ok(seen.actions.every((a) => a.patch === bo ? a.kind === "cosmos" || a.kind === "orchid" : !("kind" in a)),
+  "which flower: only at your own patch");
+assert.ok(seen.actions.some((a) => a.patch !== bo) && seen.actions.some((a) => a.patch === bo));
+assert.ok(seen.actions.filter((a) => a.action === "feed").every((a) => typeof a.nectar === "boolean"), "whether a feed paid is public");
+const adaOwn = (await api(players[0].token, "GET", `${g}/actions?limit=5000`)).actions;
+assert.ok(adaOwn.filter((a) => a.patch === ada).every((a) => a.kind === "cosmos" || a.kind === "orchid"), "Ada sees which of her flowers");
+assert.ok(adaOwn.filter((a) => a.patch !== ada).every((a) => !("kind" in a)));
+const watcher = (await api(null, "GET", `${g}/actions?limit=5000`)).actions;
+assert.ok(watcher.length && watcher.every((a) => !("kind" in a)), "spectators never see which flower during play");
 // tasted runs in the call after a feed, so what it prints goes with the action that call decided
 const adaTasted = (acts) => acts.find((a) => a.bee === ada && /tasted/.test(a.log || ""));
 await until("Ada's bee to feed and decide", async () => adaTasted((await api(players[0].token, "GET", `${g}/actions?limit=5000`)).actions));
@@ -188,6 +197,7 @@ assert.deepEqual(adaAfter.programs.cosmos.map((v) => v.cost), [0, 1, 0], "once i
 assert.ok("bank" in adaAfter.banks.cosmos);
 const after = (await api(players[1].token, "GET", `${g}/actions?limit=5000`)).actions;
 assert.ok(after.slice(0, 50).every((a) => "beeVersion" in a && "flowerVersion" in a));
+assert.ok(after.every((a) => a.kind === "cosmos" || a.kind === "orchid"), "once it's over, everyone sees which flower");
 assert.ok(after.filter((a) => a.action === "ask").every((a) => "ms" in a), "every answer time, once it's over");
 assert.ok(after.some((a) => a.bee === ada && "beeMs" in a), "and every decision time");
 assert.ok(done.scores.length === 3 && done.scores.every((s) => Number.isFinite(s.fitness)));

@@ -1,5 +1,6 @@
 // What each viewer may see of an action (server/games.js actionView): behaviour is public at once;
-// code changes, print output and how long programs actually took are their own team's during play.
+// which of a patch's two flowers was asked, code changes, print output and how long programs actually
+// took are their own team's during play.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { actionView } from "../server/games.js";
@@ -45,4 +46,25 @@ test("why the engine ended a visit is the bee's team's business during play", ()
   assert.equal(actionView(a, "X", true, false).error, "a new bee took over");
   const slow = row({ action: "error", c: null, r: null, ms: null, bee_ms: null, error: "too slow: no reply within 50 ms", error_by: "bee" });
   assert.equal(actionView(slow, "X", false, false).error, "too slow: no reply within 50 ms", "a bee's mistakes are public");
+});
+
+test("which of a patch's two flowers a bee visited is the patch's team's business during play", () => {
+  const ask = row({});
+  const feed = row({ action: "feed", c: null, r: null, ms: null, nectar: false });
+  for (const a of [ask, feed, row({ action: "leave", c: null, r: null, ms: null })]) {
+    for (const viewer of ["X", "B", undefined]) {
+      const v = actionView(a, viewer, false, false);
+      assert.ok(!("kind" in v), `${a.action} seen by ${viewer}: no kind`);
+      assert.equal(v.patch, "P", "whose patch it was is public");
+      assert.equal(v.bee, "B");
+      assert.equal(v.round, 3);
+    }
+    assert.equal(actionView(a, "P", false, false).kind, "orchid", "the patch's own team sees which flower");
+    assert.equal(actionView(a, "X", true, false).kind, "orchid", "everyone does once it's over");
+    assert.equal(actionView(a, undefined, true, false).kind, "orchid");
+  }
+  const seen = actionView(ask, "X", false, false);
+  assert.deepEqual([seen.c, seen.r], [5, 7], "the challenge and the response are public");
+  assert.equal(actionView(feed, "X", false, false).nectar, false, "whether a feed paid is public");
+  assert.equal(actionView(row({ action: "feed", kind: "cosmos", nectar: true }), undefined, false, false).nectar, true);
 });

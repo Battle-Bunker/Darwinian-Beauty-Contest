@@ -100,7 +100,11 @@ Types: `int`, `float`, `bool`, `str`, `any` (any plain JSON), `list[T]`, `tree[T
 
 There is no separate replay mode. The view plus the actions *are* the game: loading them at any time
 returns everything that has happened so far, filtered to what this viewer is allowed to know:
-- What the bees do is public as it happens, and so is the config (every time limit included).
+- What the bees do is public as it happens: whose bee asked at whose patch, in which round, the
+  challenge and the response, every feed and whether it paid. So is the config (every time limit
+  included).
+- Which of the patch's two flowers an action was at (`kind`) is the patch's own team's until the game
+  is over, then everyone's.
 - A team's code changes (versions, their size, cost and timing, which version played each action), its
   change budgets, and how long its programs actually took (`ms`, `beeMs` on actions) are its own until
   the game is over, then everyone's.
@@ -144,7 +148,7 @@ nectarCollected, pollinators, nectarSources }`.
                                  // when the bee decided, cosmos.ms later
   "bee", "patch",                // team ids: whose bee, at whose patch
   "visit",                       // the bee's visit number: one visit is several actions
-  "kind": "cosmos|orchid",       // which flower of the patch
+  "kind": "cosmos|orchid",       // which flower of the patch: only at your own patch during play, all once it's over
   "action": "ask|feed|leave|error",
   "beeVersion", "flowerVersion", // which versions played: your own programs' during play, all once it's over
   "c", "r", "after",             // ask: challenge, response (null if it failed), asked after feeding
@@ -162,6 +166,10 @@ its next flower. A bee that missed its decision deadline gets an `error` with `b
 no reply within 50 ms"), which ends its visit. An `engine` leave ends a visit the bee didn't finish
 because its team replaced it (or it crashed and restarted). Submissions don't bump the public
 `game.version`, so other teams can't tell when a team changes its code.
+
+During play another team's patch shows up only as a team: `kind` is left out (a feed's `nectar` still
+says whether it paid). Every way of reading actions (pages, `before=`, `mine=1`, the event stream)
+applies the same rules, so programs reading the API see exactly what the web page shows.
 
 The measured times (`ms`, `beeMs`) are private during play because every answer reaches the bee at the
 end of the flower window precisely so that timing can't tell flowers apart; a public stream of answer
