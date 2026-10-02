@@ -367,6 +367,20 @@ export async function viewGame(room, game, user) {
     interface: programInterface(cfg),
     scores: participants ? score(participants, g.feeds, g.nectar) : null,
     recent: participants ? await recentScores(g, participants) : null,
+    // feeds[bee team][patch team] and nectar[...][...] over the whole game, in participants order
+    ledgers: participants ? { feeds: g.feeds, nectar: g.nectar } : null,
+  };
+}
+
+/** Just the live numbers (cheap enough to poll every second): clock, round, scores and ledgers. */
+export async function viewScores(game) {
+  const g = (await query("SELECT * FROM games WHERE id = $1", [game.id])).rows[0];
+  const participants = g.participants || null;
+  return {
+    status: g.status, clockMs: g.clock_ms, endMs: Math.round(g.config.minutes * 60000), round: g.round, lastSeq: g.last_seq, participants,
+    scores: participants ? score(participants, g.feeds, g.nectar) : null,
+    recent: participants ? await recentScores(g, participants) : null,
+    ledgers: participants ? { feeds: g.feeds, nectar: g.nectar } : null,
   };
 }
 
@@ -388,18 +402,22 @@ async function recentScores(g, participants) {
 }
 
 /**
- * Actions after `after` (a seq), oldest first, at most `limit`. Public as soon as they happen, except:
+ * Actions after `after` (a seq), oldest first, at most `limit`; or with `before`, the last `limit`
+ * actions before that seq, still oldest first (before = lastSeq + 1 gives the latest). Public as soon
+ * as they happen, except:
  * what a bee printed (its own team's, or everyone's once a finished game is revealed), and, until the
  * game is over, anything that gives away a code change: which program versions played (your own only)
  * and why the engine ended a bee's visit (a new bee took over, or it restarted).
  */
-export async function viewActions(game, user, { after = 0, limit = 1000 } = {}) {
-  const g = (await query("SELECT status, config, last_seq, clock_ms FROM games WHERE id = $1", [game.id])).rows[0];
+export async function viewActions(game, user, { after = 0, before = null, limit = 1000 } = {}) {
+  const g = (await query("SELECT status, config, last_seq, clock_ms, round FROM games WHERE id = $1", [game.id])).rows[0];
   const mine = await myTeam(game.id, user?.id);
   const over = g.status === "finished", revealed = over && g.config.revealOnFinish;
   const n = Math.max(1, Math.min(5000, Number(limit) || 1000));
-  const { rows } = await query("SELECT * FROM actions WHERE game_id = $1 AND seq > $2 ORDER BY seq LIMIT $3", [game.id, Math.max(0, Number(after) || 0), n]);
-  return { actions: rows.map((a) => actionView(a, mine?.id, over, revealed)), lastSeq: g.last_seq, clockMs: g.clock_ms, status: g.status };
+  const { rows } = before !== null && before !== undefined && before !== ""
+    ? await query("SELECT * FROM (SELECT * FROM actions WHERE game_id = $1 AND seq < $2 ORDER BY seq DESC LIMIT $3) t ORDER BY seq", [game.id, Number(before) || 0, n])
+    : await query("SELECT * FROM actions WHERE game_id = $1 AND seq > $2 ORDER BY seq LIMIT $3", [game.id, Math.max(0, Number(after) || 0), n]);
+  return { actions: rows.map((a) => actionView(a, mine?.id, over, revealed)), lastSeq: g.last_seq, clockMs: g.clock_ms, round: g.round, status: g.status };
 }
 
 export function actionView(a, myTeamId, over, revealed) {

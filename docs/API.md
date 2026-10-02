@@ -34,8 +34,9 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 | Method | Path | Who | Body | Returns |
 |---|---|---|---|---|
 | GET | `base` | anyone | | the **game view** (below), filtered for the viewer |
-| GET | `base/actions` | anyone | `?after=<seq>&limit=<n ≤ 5000>` | `{ actions: [action], lastSeq, clockMs, status }`: the actions after `after`, oldest first |
-| GET | `base/events` | anyone | `?after=<seq>` | Server-Sent Events: `{version}` when the view should be refetched; `{programs: true}` when your own team's programs changed (refetch too); `{actions, lastSeq, clockMs}` as the garden writes them (from `after`, in order, page after page until caught up); `{clockMs, lastSeq}` when there is nothing new |
+| GET | `base/actions` | anyone | `?after=<seq>&limit=<n ≤ 5000>` or `?before=<seq>&limit=<n>` | `{ actions: [action], lastSeq, clockMs, round, status }`: the actions after `after`, oldest first; or the last `limit` before `before`, oldest first (`before = lastSeq + 1` gives the latest) |
+| GET | `base/scores` | anyone | | `{ status, clockMs, endMs, round, lastSeq, participants, scores, recent, ledgers }`: the live numbers, cheap enough to poll every second |
+| GET | `base/events` | anyone | `?after=<seq>` | Server-Sent Events: `{version}` when the view should be refetched; `{programs: true}` when your own team's programs changed (refetch too); `{actions, lastSeq, clockMs, round, status}` as the garden writes them (from `after`, in order, page after page until caught up); `{lastSeq, clockMs, round, status}` when there is nothing new |
 | PATCH | `base/config` | owner, in the lobby | `{ config: {...partial} }` | `{ config, clearedPrograms }` (changing the language or types, or shrinking a size budget, clears the programs written so far) |
 | POST | `base/start` | owner, in the lobby | | `{ status: "running", participants }`. Teams with all three programs play; at least 2 |
 | POST | `base/status` | owner | `{ action: "pause" \| "resume" \| "finish" }` | `{ status }`. The clock and change budgets stand still while paused; `finish` ends the game early |
@@ -111,7 +112,8 @@ returns everything that has happened so far, filtered to what this viewer is all
   "interface": { "flower", "bee", "types": { "challenge", "response", "challengeMeans", "responseMeans", "rules": [..] } },
                                           // signatures + type rules only: no starter code
   "scores": [teamScore] | null,           // the whole game so far
-  "recent": { "fromMs", "toMs", "scores": [teamScore] } | null   // the last five minutes of game time
+  "recent": { "fromMs", "toMs", "scores": [teamScore] } | null,  // the last five minutes of game time
+  "ledgers": { "feeds": [[...]], "nectar": [[...]] } | null      // whole game; row = bee team, column = patch team (participants order)
 }
 ```
 

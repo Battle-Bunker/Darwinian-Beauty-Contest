@@ -37,8 +37,8 @@ export function roomStream(req, res, roomId) {
 
 /**
  * SSE stream for one game: {version} whenever the view should be refetched, {programs: true} when the
- * viewer's own team's programs changed, and {actions, lastSeq, clockMs} as the garden writes them,
- * starting after `after`. fetchActions(after) returns the viewer's filtered page of actions after a seq.
+ * viewer's own team's programs changed, and {actions, lastSeq, clockMs, round, status} as the garden
+ * writes them, starting after `after` (without actions when there's nothing new). fetchActions(after) returns the viewer's filtered page of actions after a seq.
  */
 export function gameStream(req, res, { gameId, teamId, version, after, fetchActions }) {
   let last = after, busy = false, again = false;
@@ -50,11 +50,12 @@ export function gameStream(req, res, { gameId, teamId, version, after, fetchActi
       do {
         again = false;
         const page = await fetchActions(last);
+        const live = { lastSeq: page.lastSeq, clockMs: page.clockMs, round: page.round, status: page.status };
         if (page.actions.length) {
           last = page.actions[page.actions.length - 1].seq;
-          send({ actions: page.actions, lastSeq: page.lastSeq, clockMs: page.clockMs });
+          send({ actions: page.actions, ...live });
           if (last < page.lastSeq) again = true;
-        } else send({ clockMs: page.clockMs, lastSeq: page.lastSeq });
+        } else send(live);
       } while (again && !res.writableEnded);
     } catch (e) {
       console.error("game stream:", e.message);
