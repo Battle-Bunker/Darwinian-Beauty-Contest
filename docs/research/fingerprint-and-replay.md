@@ -3,6 +3,8 @@
 *Research notes, 2026-10-01. Follows [arena/REPORT.md §16](../../arena/REPORT.md). Scripted simulations only: no LLM
 calls, database read-only.*
 
+On the continuous-garden branch the rewarding flower is called **cosmos**; these notes are about the round-based games and use its old name, clover.
+
 ## Summary
 
 - **Probes are universal; fingerprint-and-taste is not.** 208 of 331 bee-games asked (nearly) every flower the same

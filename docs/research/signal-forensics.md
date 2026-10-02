@@ -1,5 +1,7 @@
 # Signal forensics: why bees barely tell clovers from orchids
 
+On the continuous-garden branch the rewarding flower is called **cosmos**; these notes are about the round-based games and use its old name, clover.
+
 **Data.** 32 clean arena games, 9 arenas, 5 rounds each (pilot: 3). I excluded the 8 games marked `contaminated`: baseline g3, graphs g1 (judges only, but still excluded), lists g3, norecap g3, strdark g3, tight g2, trees g2 and unprimed g2.
 
 **Method.**
