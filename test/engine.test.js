@@ -392,7 +392,7 @@ test("paced: a round takes at least 200 ms of wall time", async () => {
 });
 
 test("the clock: game time is rounds × 200 ms; it stands still while paused, and ends the game", async () => {
-  const config = normalizeConfig({});
+  const config = normalizeConfig({ feedCost: 1 });
   const s = starters(config);
   const garden = new Garden({ config, teams: 2, endMs: 1200 });
   await Promise.all([0, 1].flatMap((ti) => Object.entries(s).map(([k, code]) => garden.setProgram(ti, k, code, 1))));
