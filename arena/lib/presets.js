@@ -15,6 +15,7 @@
 //   reserveUsd     no new team session once the spend is within this of the cap (keeps money for interviews and judges)
 //   noEvolution    fixed membership (no retirements or breeding)
 //   examples       a folder copied into every workspace as examples/ (and named in the lobby brief)
+//   scaffold       limits of the teams' scaffolds (lib/scaffold.js SCAFFOLD_LIMITS: cpuShare, memMB, cpuSeconds, ...)
 
 export const DEFAULT_SESSION = { warmupSeconds: 8, gapSeconds: 5, maxIdleGapSeconds: 20, endMarginSeconds: 10, maxMinutes: 6 };
 
@@ -30,10 +31,14 @@ export const PRESETS = {
     reserveUsd: 2.5,
   },
   graphs: {
-    description: "python, int→graph[any], 6 teams, 2-minute games",
-    config: { language: "python", challengeType: "int", responseType: "graph[any]", minutes: 2 },
-    lineup: [["mallory", "opus"], ["kenji", "opus"], ["theo", "sonnet"], ["luna", "sonnet"], ["priya", "sonnet"], ["grace", "haiku"]],
-    reserveUsd: 10,
+    description: "python, int→graph[any], 4 teams (2 opus, 2 sonnet), games of 2, 5 and 10 minutes, scaffolds",
+    config: { language: "python", challengeType: "int", responseType: "graph[any]" },
+    minutesByGame: [2, 5, 10],
+    lineup: [["mallory", "opus"], ["kenji", "opus"], ["rosalind", "sonnet"], ["priya", "sonnet"]],
+    session: { warmupSeconds: 10, gapSeconds: 10, maxIdleGapSeconds: 60, endMarginSeconds: 15, maxMinutes: 8 },
+    limits: { lobby: { opus: { turns: 40, usd: 2.0 }, sonnet: { turns: 40, usd: 1.0 } }, game: { opus: { turns: 25, usd: 0.6 }, sonnet: { turns: 25, usd: 0.35 } } },
+    scaffold: { cpuShare: 0.15 },
+    reserveUsd: 4,
   },
   "graphs-examples": {
     description: "python, int→graph[any], 6 teams, 2-minute games, every team gets the example flowers (arena/examples/v3)",

@@ -23,7 +23,10 @@ check("system: the scaffold: what it's for, how to start it, the garden API, its
 check("system: the game is short", /30 seconds/.test(sys));
 check("system: fair play allows reading the public API, nothing else", /except to read \(GET\) the game's public API/.test(sys) && /Do not write to stream\//.test(sys) && /not even \/tmp/.test(sys));
 check("system: RULES.md in full (the continuous rules)", /## The garden never stops/.test(sys) && /## What everyone can see/.test(sys));
-check("system: this game's settings with per-minute change budgets and caps", /\| clover \| 1,100 \| 220 \| 220 \| 150 \|/.test(sys) && /sits out the next 10 rounds/.test(sys));
+check("system: the round timing: 200 ms rounds, queued actions, answers at 150 ms, public limits, late bee replies",
+  /exactly 200 ms of game time/.test(sys) && /about 150 rounds/.test(sys) && /QUEUED action runs/.test(sys) && /delivered exactly 150 ms later/.test(sys)
+  && /clover 150 ms, orchid 50 ms, bee 25 ms/.test(sys) && /\["leave", c\]/.test(sys) && /isn't interrupted/.test(sys) && /never silenced/.test(sys) && !/secret limit|hidden limit/i.test(sys));
+check("system: this game's settings with per-minute change budgets and caps", /\| clover \| 1,100 \| 220 \| 220 \| 150 \|/.test(sys) && /sits out 10 rounds/.test(sys));
 check("system: no round-based leftovers (MEMORY, turns_left, change turns)", !/MEMORY|turns_left|before each round|turn to change|change turn/.test(sys));
 const devSecret = fs.existsSync(new URL("./runs/.dev-secret", import.meta.url)) ? fs.readFileSync(new URL("./runs/.dev-secret", import.meta.url), "utf8").trim() : "no-secret-file";
 check("system: no secrets, tokens or database URLs", !sys.includes(devSecret) && !/postgres:|Bearer |DATABASE_URL|DEV_LOGIN|\.dev-secret/i.test(sys));

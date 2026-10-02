@@ -20,13 +20,35 @@ export const sizeText = () => `Size is measured in nodes of your program's synta
 export const changeText = () => `A change costs the node edits that turn the version playing now into the new one (inserting or deleting a ` +
   `node costs its size, a changed literal the bytes that change; renames, comments and spacing are free).`;
 
+/** How a round works (the engine's timing), in short; RULES.md has the official wording. Every time limit is public. */
+export function timingText(config) {
+  const b = config.budgets, ms = (k) => b[k]?.ms;
+  return `- Every round is exactly 200 ms of game time, and the bees play it in lockstep: game time is rounds × 200 ms, so a
+  ${durationText(config.minutes)} game is about ${Math.round((config.minutes * 60000) / 200)} rounds.
+- At the start of a round each bee's QUEUED action runs. A bee with nothing queued loses that slot.
+- An ask: the flower gets the challenge, and its answer is delivered exactly 150 ms later (null if the flower hadn't finished
+  by its own limit). The limits are public and in config.json: clover ${ms("clover")} ms, orchid ${ms("orchid")} ms, bee ${ms("bee")} ms.
+  Every answer arrives at 150 ms, so nobody can tell from timing how long a flower took (actual timings are private to their
+  own team during play).
+- Then the bee has ${ms("bee")} ms to return its next action, queued for the next round: ["ask", c] (same flower), "feed" (then it
+  sits out ${config.feedCost} rounds), ["leave", c] (move on and ask c first at the next flower), or "leave" (arrive at the next
+  flower with nothing queued: it loses a round).
+- A bee that misses its ${ms("bee")} ms isn't interrupted. If its late reply is ["leave", c], c is queued as its first ask at the next
+  flower; otherwise (a late ask or feed meant for the visit it lost, a plain "leave", or an error) the game immediately asks it
+  again, forage([], {"fed": False, "nectar": None, "flowers": n}), for its first challenge at the next flower. The same
+  happens whenever a reply doesn't give a next challenge. It gets a slot again once a challenge is queued before a round
+  starts. So a slow bee loses slots but is never silenced. tasted() is called in the same request as the forage() that
+  follows a feed.
+- Queued challenges are secret until they are asked.`;
+}
+
 /** This game's settings, compactly (budgets in nodes). */
 export function settingsText(config, teams) {
   const b = config.budgets;
   return `- ${teams} teams, ${2 * teams} flowers. The game lasts ${durationText(config.minutes)} of game time.
 - Challenges are ${config.challengeType}, responses are ${config.responseType} (interface.txt). Language: ${config.language}.
-- A feeding bee sits out the next ${config.feedCost} rounds (a round is one turn for every bee that isn't feeding).
-- Budgets (nodes; compute in ms per call):
+${timingText(config)}
+- Budgets (nodes; compute: each program's public time limit per call, in ms):
 
 | program | size | change budget earned per minute | most it can bank | compute |
 |---|---|---|---|---|
@@ -115,6 +137,8 @@ ${personaAndSituation(persona, fixed)}
   print it whole. The same stream is on the game's public API, which needs no login: ${apiBase}/events (Server-Sent Events) and
   ${apiBase}/actions?after=<seq>.
 - ${sizeText()} So write readable code, and keep prose in comments (docstrings are strings).
+- Every program's time limit is public (config.json): use your compute right up to your own limit if it helps; the
+  actual time each call took is private to its own team during play.
 - ${changeText()} Your programs run minified, so error messages refer to the minified program (\`tools/check.py <kind> --json\`
   shows it).
 

@@ -64,7 +64,7 @@ async function ensureArena(id, presetName, games) {
   const settings = {
     config: preset.config, minutesByGame: preset.minutesByGame || null, teams: preset.lineup.length, games, description: preset.description,
     session: { ...DEFAULT_SESSION, ...(preset.session || {}) }, limits: preset.limits || null, maxModel: preset.maxModel || null,
-    reserveUsd: preset.reserveUsd ?? 5, noEvolution: !!preset.noEvolution, examples: preset.examples || null, budgetUsd: args.budget ? Number(args.budget) : null,
+    reserveUsd: preset.reserveUsd ?? 5, noEvolution: !!preset.noEvolution, examples: preset.examples || null, scaffold: preset.scaffold || null, budgetUsd: args.budget ? Number(args.budget) : null,
   };
   await q("INSERT INTO arena.arenas (id, preset, settings, owner_name, room_short_id, room_url) VALUES ($1,$2,$3,$4,$5,$6)",
     [id, presetName, settings, owner, room.shortId, room.url]);
