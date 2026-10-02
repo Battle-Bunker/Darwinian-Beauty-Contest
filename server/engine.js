@@ -29,8 +29,13 @@
 // Flowers are stateless: every ask runs the flower afresh, with fresh randomness and the clock, so the
 // same challenge can get a different answer every time. A bee keeps its state for as long as that
 // version of it plays; new code (or a crash) starts it afresh.
-// A team may replace any of its programs at any time: a flower's next ask runs the new code; a bee
-// swaps at the next round boundary, abandoning its visit and whatever it had queued.
+// Visits: as a round starts, a bee that is between visits (and loaded, and not feeding) is assigned its
+// next flower, recorded at once as a public `arrive`; then its queued challenge, if any, is asked there.
+// A visit keeps the program versions in effect when it started, the bee's and the flower's, until it
+// ends: a team may replace any of its programs at any time, but a change reaches a bee only at its next
+// visit. A new flower version answers visits that start after it went live (the old version keeps
+// answering the visits already at it); a new bee takes over when its visit ends (or at once, if it is
+// between visits), dropping whatever the old bee had queued.
 // Every program runs in its minified form (vendor/measure.js): the same text its size is measured on,
 // so names, which minifying shortens, can't hide data.
 import os from "node:os";
@@ -91,6 +96,8 @@ async function withCpu(fn) {
 const FLOWER_POOL = Math.max(1, Number(process.env.FLOWER_POOL) || 2);
 class FlowerPool {
   constructor(language, setup) {
+    this.users = 0;       // visits pinned to this version
+    this.retired = false; // replaced: it goes once no visit uses it
     this.procs = Array.from({ length: FLOWER_POOL }, () => new ProgramProcess(language, "flower", setup));
     this.pending = this.procs.map(() => 0);
     this.ready = Promise.all(this.procs.map((p) => p.ready)).then((r) => r[0]);
@@ -113,7 +120,6 @@ class FlowerPool {
   kill() { for (const p of this.procs) p.kill(); }
 }
 
-const RETIRE_MS = 5000; // a replaced flower finishes the asks it's already answering, then goes
 const sleep = (ms) => new Promise((r) => setTimeout(r, Math.max(0, ms)));
 /** Wait until performance.now() reaches t (timers have whole-millisecond resolution and can fire early). */
 async function until(t) {
@@ -161,9 +167,10 @@ export class Garden {
     this.seq = lastSeq;
     this.flowers = [];                // { team, kind, version, pool }
     this.bees = Array.from({ length: teams }, (_, ti) => ({
-      ti, version: null, code: null, pending: null, proc: null, gen: 0, broken: false,
-      sitOut: 0, visit: null, visits: 0,
-      queued: null,      // the action for the bee's next slot: { act: "ask", c, fresh, beeMs, log } | { act: "feed", beeMs, log }
+      ti, version: null, code: null, pending: null, proc: null, gen: 0, broken: false, loading: false,
+      sitOut: 0, visits: 0,
+      visit: null,       // { slot, pool, version (the flower's, pinned at arrival), no, asks, fed, nectar }
+      queued: null,      // the action for the bee's next slot: { act: "ask", c, beeMs, log } | { act: "feed", beeMs, log }
       busy: false,       // a call is in flight (or the bee is acting this round): no other request goes to it
       asking: null,      // a request outside the round flow (loading, a first challenge): { inTime }
       askedRound: -1,    // the round of its latest request for a first challenge (one new one a round)
@@ -180,7 +187,8 @@ export class Garden {
     this.closed = false;
     this.paused = false;
     this.gate = null;
-    this.retiring = new Set();
+    this.retiring = new Set();        // replaced flower pools still answering visits pinned to them
+    this.onArrive = null;             // called once a round's arrivals are recorded (live games flush them at once)
   }
 
   /** Game time: rounds × roundMs (the round in progress counts in full). It stands still between rounds. */
@@ -197,7 +205,10 @@ export class Garden {
   async setProgram(ti, kind, code, version) {
     const minified = await runnable(this.config.language, code);
     if (kind === "bee") {
-      this.bees[ti].pending = { code: minified, version }; // takes over at the next round boundary
+      // It takes over when the bee's visit ends; a bee between visits (or not started yet) at once.
+      const b = this.bees[ti];
+      b.pending = { code: minified, version };
+      if (this.running && !this.closed && !b.visit) this.#swapIn(b);
       return;
     }
     const pool = new FlowerPool(this.config.language, flowerSetup(this.config, kind, minified));
@@ -205,7 +216,7 @@ export class Garden {
     let slot = this.flowers.find((f) => f.team === ti && f.kind === kind);
     if (!slot) this.flowers.push((slot = { team: ti, kind }));
     else this.#retire(slot.pool);
-    Object.assign(slot, { version, pool });
+    Object.assign(slot, { version, pool }); // for visits that start from now on
   }
 
   /** Pause after the round in progress (the clock stands still until resume). */
@@ -259,18 +270,22 @@ export class Garden {
     // The round boundary: new bees take over, crashed ones start afresh, idle ones are asked again.
     for (const b of this.bees) this.#boundary(b, start);
     if (!this.paced) await this.#settle();
-    // The slots: a bee acts only if an action is queued as the round starts. Feeding bees sit out.
+    // Arrivals and slots. Feeding bees sit out. A bee between visits is assigned its next flower, and the
+    // arrival is published at once; then a bee acts only if an action is queued as the round starts.
     const acting = [];
+    let arrived = false;
     for (const b of this.bees) {
-      if (!b.proc || b.broken) continue;
+      if (!b.proc || b.broken || b.loading) continue;
       if (b.sitOut > 0) { b.sitOut--; continue; }
-      if (b.queued && !b.busy) {
+      if (!b.visit) arrived = this.#arrive(b, start) || arrived;
+      if (b.queued && !b.busy && b.visit) {
         const q = b.queued;
         b.queued = null;
         b.busy = true;
         acting.push({ b, q, gen: b.gen });
       }
     }
+    if (arrived) this.onArrive?.();
     // The flower window: every ask goes to its flower at once.
     const steps = await Promise.all(acting.map((s) => this.#act(s)));
     for (const s of steps) if (s.rec) this.#record(s.b, s.v, s.rec, start);
@@ -288,9 +303,43 @@ export class Garden {
     for (const p of this.retiring) p.kill();
   }
 
-  #retire(proc) {
-    this.retiring.add(proc);
-    setTimeout(() => { proc.kill(); this.retiring.delete(proc); }, RETIRE_MS).unref?.();
+  /** A replaced flower version goes once no visit is pinned to it. */
+  #retire(pool) {
+    pool.retired = true;
+    this.retiring.add(pool);
+    this.#reap(pool);
+  }
+
+  #reap(pool) {
+    if (pool.retired && pool.users <= 0) {
+      pool.kill();
+      this.retiring.delete(pool);
+    }
+  }
+
+  /** Assign a bee between visits its next flower, pinning the flower's version, and publish the arrival. */
+  #arrive(b, start) {
+    const slot = this.#draw();
+    if (!slot) return false;
+    slot.pool.users++;
+    b.visit = { slot, pool: slot.pool, version: slot.version, no: ++b.visits, asks: 0, fed: false, nectar: null };
+    this.#record(b, b.visit, { action: "arrive" }, start);
+    return true;
+  }
+
+  #endVisit(b) {
+    const v = b.visit;
+    if (!v) return;
+    b.visit = null;
+    v.pool.users--;
+    this.#reap(v.pool);
+  }
+
+  /** New code for a bee between visits takes over now: the old bee's queued action goes with it. */
+  #swapIn(b) {
+    const { code, version } = b.pending;
+    b.pending = null;
+    this.#startBee(b, code, version, null);
   }
 
   #problem(team, kind, version, error) {
@@ -303,7 +352,7 @@ export class Garden {
   #record(b, v, fields, atMs) {
     this.out.push({
       seq: ++this.seq, atMs: Math.round(atMs), round: this.round, bee: b.ti, visit: v.no, patch: v.slot.team, kind: v.slot.kind,
-      beeVersion: b.version, flowerVersion: v.slot.version,
+      beeVersion: b.version, flowerVersion: v.version,
       c: null, r: null, after: false, nectar: null, ms: null, beeMs: null, error: null, by: null, log: null, ...fields,
     });
   }
@@ -320,17 +369,17 @@ export class Garden {
   }
 
   #boundary(b, start) {
-    if (b.pending) {
-      const { code, version } = b.pending;
+    if (b.proc && !b.broken && b.proc.dead) { // crashed or hung: it starts afresh (with its new code, if any)
+      const { code, version } = b.pending ?? b;
       b.pending = null;
       this.#startBee(b, code, version, start);
-    } else if (b.proc && !b.broken && b.proc.dead) this.#startBee(b, b.code, b.version, start); // crashed or hung
+    } else if (b.pending && !b.visit) this.#swapIn(b);
     else if (b.proc && !b.broken && !b.busy && !b.queued) this.#askFirst(b); // its last request gave no challenge
   }
 
   #startBee(b, code, version, start) {
     if (b.visit) this.#record(b, b.visit, { action: "leave", error: version === b.version ? "the bee restarted" : "a new bee took over", by: "engine" }, start);
-    b.visit = null;
+    this.#endVisit(b);
     b.queued = null;
     b.log = "";
     b.proc?.kill(); // its call in flight, if any, ends at once (and frees its core); the reply is ignored
@@ -341,11 +390,14 @@ export class Garden {
     b.seen = FRESH;
     const proc = (b.proc = new ProgramProcess(this.config.language, "bee", beeSetup(this.config, code)));
     const gen = b.gen;
-    // Loading counts as a call in flight. Then the new bee is asked for its first challenge at once.
+    // Loading counts as a call in flight (and a loading bee isn't assigned a flower). Then the new bee is
+    // asked for its first challenge at once.
     b.busy = true;
+    b.loading = true;
     const loaded = logged(proc.ready.then((load) => {
       if (gen !== b.gen || this.closed) return;
       b.busy = false;
+      b.loading = false;
       b.asking = null;
       if (!load.ok) {
         b.broken = true; // idle until its team sends new code
@@ -414,7 +466,7 @@ export class Garden {
     if (!res.e && (isPair(a, "ask") || isPair(a, "leave"))) {
       const bad = checkValue(this.cType, a[1], this.limits, "challenge");
       if (!bad) {
-        b.queued = { act: "ask", c: a[1], fresh: true, beeMs: ms, log: this.#takeLog(b, res.out) };
+        b.queued = { act: "ask", c: a[1], beeMs: ms, log: this.#takeLog(b, res.out) };
         return;
       }
       this.#problem(b.ti, "bee", b.version, bad);
@@ -432,9 +484,9 @@ export class Garden {
     return this.flowers.length ? this.flowers[Math.floor(Math.random() * this.flowers.length)] : null;
   }
 
-  /** The flower's answer, labelled with the version that gave it (the flower may be replaced meanwhile). */
-  async #ask(slot, c) {
-    const { pool, version } = slot;
+  /** The answer from the flower version the visit is pinned to, labelled with that version. */
+  async #ask(v, c) {
+    const { pool, version, slot } = v;
     const { res, ms } = await pool.call({ c });
     const bad = res.e || checkValue(this.rType, res.v, this.limits, "response");
     if (bad) {
@@ -444,21 +496,15 @@ export class Garden {
     return { r: res.v, ms, flowerVersion: version };
   }
 
-  /** A bee's slot: its queued ask (at a new flower if it's the first there) or its feed. */
+  /** A bee's slot, at the flower it's visiting: its queued ask or its feed. */
   async #act({ b, q, gen }) {
+    const v = b.visit;
+    if (!v) return { b, gen };
     if (q.act === "ask") {
-      if (q.fresh || !b.visit) {
-        const slot = this.#draw();
-        b.visit = slot && { slot, no: ++b.visits, asks: 0, fed: false, nectar: null };
-      }
-      const v = b.visit;
-      if (!v) return { b, gen };
-      const answer = await this.#ask(v.slot, q.c);
+      const answer = await this.#ask(v, q.c);
       v.asks++;
       return { b, v, gen, step: [q.c, answer.r], rec: { action: "ask", c: q.c, after: v.fed, beeMs: q.beeMs, log: q.log, ...answer } };
     }
-    const v = b.visit;
-    if (!v) return { b, gen };
     v.fed = true;
     v.nectar = v.slot.kind === "cosmos";
     this.feeds[b.ti][v.slot.team]++;
@@ -483,16 +529,19 @@ export class Garden {
     if (res !== LATE) {
       if (call.gen !== b.gen) return null;
       b.busy = false;
-      return this.#onReply(b, v, res.res, res.ms);
+      const out = this.#onReply(b, v, res.res, res.ms);
+      if (b.pending && !b.visit) this.#swapIn(b); // the visit is over: new code takes over now
+      return out;
     }
     // Too slow: the bee loses its next slot and the visit ends, but the engine keeps listening.
-    b.visit = null;
+    this.#endVisit(b);
     this.#problem(b.ti, "bee", b.version, `too slow: no reply within ${this.beeMs} ms`);
     logged(call.done.then(({ res: late, ms }) => {
       if (call.gen !== b.gen || this.closed) return;
       b.busy = false;
       this.#onLate(b, late, ms);
     }));
+    if (b.pending) this.#swapIn(b); // its late reply goes with the old bee
     return { b, v, rec: { action: "error", error: `too slow: no reply within ${this.beeMs} ms`, by: "bee" } };
   }
 
@@ -502,7 +551,7 @@ export class Garden {
     const err = res.e || (validShape(a) ? null : shapeError(a));
     if (err) { // a mistake ends the visit
       this.#problem(b.ti, "bee", b.version, err);
-      b.visit = null;
+      this.#endVisit(b);
       const rec = { action: "error", error: String(err).slice(0, 300), by: "bee", beeMs: ms, log: this.#takeLog(b, res.out) };
       if (!res.dead) this.#askFirst(b);
       return { b, v, rec };
@@ -510,10 +559,10 @@ export class Garden {
     if (isPair(a, "ask")) {
       const bad = checkValue(this.cType, a[1], this.limits, "challenge");
       if (!bad) {
-        b.queued = { act: "ask", c: a[1], fresh: false, beeMs: ms, log: this.#takeLog(b, res.out) };
+        b.queued = { act: "ask", c: a[1], beeMs: ms, log: this.#takeLog(b, res.out) };
         return null;
       }
-      b.visit = null;
+      this.#endVisit(b);
       const rec = { action: "error", error: String(bad).slice(0, 300), by: "challenge", beeMs: ms, log: this.#takeLog(b, res.out) };
       this.#askFirst(b);
       return { b, v, rec };
@@ -523,12 +572,12 @@ export class Garden {
       return null;
     }
     // "leave", ["leave", c], or a second feed (which also moves on)
-    b.visit = null;
+    this.#endVisit(b);
     const rec = { action: "leave", beeMs: ms, log: this.#takeLog(b, res.out) };
     if (isPair(a, "leave")) {
       const bad = checkValue(this.cType, a[1], this.limits, "challenge");
       if (!bad) {
-        b.queued = { act: "ask", c: a[1], fresh: true, beeMs: ms, log: null };
+        b.queued = { act: "ask", c: a[1], beeMs: ms, log: null }; // the first ask at its next flower
         return { b, v, rec };
       }
       Object.assign(rec, { error: String(bad).slice(0, 300), by: "challenge" });
@@ -545,7 +594,7 @@ export class Garden {
   #onLate(b, res, ms) {
     const a = res.a;
     if (!res.e && isPair(a, "leave") && !checkValue(this.cType, a[1], this.limits, "challenge")) {
-      b.queued = { act: "ask", c: a[1], fresh: true, beeMs: ms, log: this.#takeLog(b, res.out) };
+      b.queued = { act: "ask", c: a[1], beeMs: ms, log: this.#takeLog(b, res.out) };
       return;
     }
     if (res.e || !validShape(a)) this.#problem(b.ti, "bee", b.version, res.e || shapeError(a));

@@ -82,8 +82,10 @@ function adopt(g) {
     ledgers: { feeds: g.feeds, nectar: g.nectar }, paced: true,
   });
   if (g.status === "paused") garden.pause();
-  const run = { id: g.id, room: g.room_id, participants: g.participants, index, garden, versions: new Map(), flushing: null, abandoned: false };
+  const run = { id: g.id, room: g.room_id, participants: g.participants, index, garden, versions: new Map(), flushing: null, again: false, abandoned: false };
   runs.set(g.id, run);
+  // Which flower each bee is at is news: write arrivals at once rather than at the next tick.
+  garden.onArrive = () => flushSoon(run);
   run.timer = setInterval(() => flush(run).catch((e) => console.error("garden flush", g.id, e.message)), FLUSH_MS);
   garden.run().then(() => ended(run), (e) => { console.error("garden crashed", g.id, e); return ended(run, e); });
   return run;
@@ -102,6 +104,13 @@ async function loadPrograms(run) {
     run.versions.set(key, p.version);
     await run.garden.setProgram(ti, p.kind, p.code, p.version);
   }
+}
+
+/** Flush now, or as soon as the flush in progress is done. */
+function flushSoon(run) {
+  if (run.abandoned) return;
+  if (run.flushing) { run.again = true; return; }
+  flush(run).catch((e) => console.error("garden flush", run.id, e.message));
 }
 
 async function flush(run) {
@@ -142,7 +151,10 @@ async function flush(run) {
       run.garden.problems.unshift(...d.problems);
       throw e;
     }
-  })().finally(() => { run.flushing = null; });
+  })().finally(() => {
+    run.flushing = null;
+    if (run.again) { run.again = false; flushSoon(run); }
+  });
   return run.flushing;
 }
 
