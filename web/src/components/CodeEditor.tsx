@@ -1,16 +1,16 @@
 // A plain <textarea> over a highlighted <pre>, like quine-court's editor: syntax colours from
-// tree-sitter, plus diff marks (inserted / deleted text) against last round's program.
+// tree-sitter, plus diff marks (inserted / deleted / changed) against another version: for the editor,
+// the version playing now, so the marks are exactly what a change would pay for.
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { getLangTools, paint, type Complexity, type Language, type Mark } from "../lib/codetools";
+import { getLangTools, paint, type Language, type Mark } from "../lib/codetools";
 
-/** size: in the game's complexity unit; minified: the text the game runs. */
+/** size: weighted nodes; minified: the text the game runs; distance: node edits from `previous` (the change cost). */
 export interface EditorStats { size: number; minified: string; syntaxError: boolean; distance: number | null }
 
 interface Highlight { code: string; syntax: Mark[]; diff: Mark[]; prevHtml: string | null }
 
-export function CodeEditor({ value, onChange, language, mode = "chars", previous = null, readOnly = false, onStats, label, showPrevious = false, placeholder }: {
+export function CodeEditor({ value, onChange, language, previous = null, readOnly = false, onStats, label, showPrevious = false, placeholder, previousLabel = "Before", currentLabel = "Now" }: {
   value: string;
-  mode?: Complexity;
   onChange?: (code: string) => void;
   language: Language;
   previous?: string | null;
@@ -19,6 +19,8 @@ export function CodeEditor({ value, onChange, language, mode = "chars", previous
   label: string;
   showPrevious?: boolean;
   placeholder?: string;
+  previousLabel?: string;
+  currentLabel?: string;
 }) {
   const [hl, setHl] = useState<Highlight>({ code: "", syntax: [], diff: [], prevHtml: null });
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -31,11 +33,11 @@ export function CodeEditor({ value, onChange, language, mode = "chars", previous
       try {
         const tools = await getLangTools(language);
         if (cancelled) return;
-        const parsed = tools.parse(value, mode);
+        const parsed = tools.parse(value);
         const syntax = tools.syntax(value);
         let diff: Mark[] = [], prevHtml: string | null = null, distance: number | null = null;
         if (previous !== null) {
-          const d = tools.diff(previous, value, mode);
+          const d = tools.diff(previous, value);
           diff = d.new;
           distance = d.distance;
           prevHtml = paint(previous, tools.syntax(previous), d.old);
@@ -45,10 +47,10 @@ export function CodeEditor({ value, onChange, language, mode = "chars", previous
       } catch (e) {
         if (!cancelled) setLoadError(e instanceof Error ? e.message : String(e));
       }
-    }, hl.code ? 90 : 0);
+    }, hl.code ? Math.min(600, 90 + value.length / 40) : 0); // bigger programs take longer to compare: type ahead first
     return () => { cancelled = true; clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value, previous, language, mode]);
+  }, [value, previous, language]);
 
   // While a fresh highlight is computing, reuse the last marks so colours don't flicker.
   const html = useMemo(() => paint(value, hl.syntax, hl.diff), [value, hl]);
@@ -120,14 +122,14 @@ export function CodeEditor({ value, onChange, language, mode = "chars", previous
     <div className={`code-wrap ${showPrevious && hl.prevHtml !== null ? "with-prev" : ""}`}>
       {showPrevious && previous !== null && (
         <div className="code-pane">
-          <div className="code-pane-label">Last round <span className="muted">(deleted and changed parts)</span></div>
+          <div className="code-pane-label">{previousLabel} <span className="muted">(deleted and changed parts)</span></div>
           <div className="code-box" style={{ height }}>
             <pre className="code-hl code-ro" dangerouslySetInnerHTML={{ __html: hl.prevHtml ?? paint(previous, []) }} />
           </div>
         </div>
       )}
       <div className="code-pane">
-        {showPrevious && previous !== null && <div className="code-pane-label">Now <span className="muted">(new and changed parts)</span></div>}
+        {showPrevious && previous !== null && <div className="code-pane-label">{currentLabel} <span className="muted">(new and changed parts)</span></div>}
         <div className={`code-box ${readOnly ? "readonly" : ""}`} style={{ height }}>
           <pre className="code-gutter" ref={gutter} aria-hidden>{gutterText}</pre>
           <div className="code-area">
@@ -147,6 +149,8 @@ export function CodeEditor({ value, onChange, language, mode = "chars", previous
 }
 
 /** Read-only code with syntax colours and (optionally) diff marks against a previous version. */
-export function CodeView({ code, language, mode, previous = null, showPrevious = false, label }: { code: string; language: Language; mode?: Complexity; previous?: string | null; showPrevious?: boolean; label: string }) {
-  return <CodeEditor value={code} language={language} mode={mode} previous={previous} readOnly showPrevious={showPrevious} label={label} />;
+export function CodeView({ code, language, previous = null, showPrevious = false, label, previousLabel, currentLabel }: {
+  code: string; language: Language; previous?: string | null; showPrevious?: boolean; label: string; previousLabel?: string; currentLabel?: string;
+}) {
+  return <CodeEditor value={code} language={language} previous={previous} readOnly showPrevious={showPrevious} label={label} previousLabel={previousLabel} currentLabel={currentLabel} />;
 }

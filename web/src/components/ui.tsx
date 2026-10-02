@@ -28,11 +28,21 @@ export function TeamChip({ team, you = false, short = false }: { team: Team | un
   );
 }
 
-export function StatusBadge({ status, roundsPlayed, rounds, running }: { status: GameStatus; roundsPlayed: number; rounds: number; running?: number | null }) {
-  if (running) return <span className="badge badge-running"><span className="pulse-dot" />Round {running} running</span>;
+export function StatusBadge({ status }: { status: GameStatus }) {
+  if (status === "running") return <span className="badge badge-running"><span className="pulse-dot" />Live</span>;
+  if (status === "paused") return <span className="badge badge-paused">Paused</span>;
   if (status === "lobby") return <span className="badge badge-lobby">Lobby</span>;
-  if (status === "finished") return <span className="badge badge-done">Finished</span>;
-  return <span className="badge badge-live">Round {roundsPlayed} of {rounds} played</span>;
+  return <span className="badge badge-done">Finished</span>;
+}
+
+/** A thin progress bar (0..1). */
+export function Progress({ value, className = "", label }: { value: number; className?: string; label?: string }) {
+  const v = Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
+  return (
+    <span className={`progress ${className}`} role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(v * 100)}>
+      <span className="progress-fill" style={{ width: `${(v * 100).toFixed(2)}%` }} />
+    </span>
+  );
 }
 
 export function CopyButton({ text, label = "Copy", className = "" }: { text: string; label?: string; className?: string }) {

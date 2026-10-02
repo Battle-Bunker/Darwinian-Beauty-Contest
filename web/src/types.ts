@@ -1,25 +1,24 @@
-// Shapes returned by the JSON API (see docs/API.md).
+// Shapes returned by the JSON API (server/games.js, server/routes/api.js).
 
 export type Kind = "clover" | "orchid" | "bee";
 export type FlowerKind = "clover" | "orchid";
 export const KINDS: Kind[] = ["clover", "orchid", "bee"];
 
-export interface Budget { size: number; changes: number; ms: number }
+/**
+ * Per-program budgets. size: weighted syntax-tree nodes of the minified program. Change budget accrues
+ * `perMinute` nodes a minute of game time, banking up to `cap`. ms: compute per call.
+ */
+export interface Budget { size: number; perMinute: number; cap: number; ms: number }
 
 export interface GameConfig {
   language: "python" | "typescript";
-  rounds: number;
-  turnsPerFlower: number;   // each bee gets turnsPerFlower × flowers turns per round
-  feedCost: number;
+  minutes: number;          // game time; the clock stops while paused
+  feedCost: number;         // turns a feed costs (an ask costs 1)
   challengeType: string;
   responseType: string;
   maxLen: number;
   maxNodes: number;         // trees and graphs
-  beeMemoryKb: number;      // what a bee keeps between rounds for MEMORY
-  flowerLogs: boolean;
-  publicLogs: boolean;      // everyone sees every visit (challenges, responses, flower) after each round
-  complexity: "chars" | "nodes"; // how program size and change are measured
-  revealOnFinish: boolean;
+  revealOnFinish: boolean;  // all code and every bee's prints become public when the game ends
   budgets: Record<Kind, Budget>;
 }
 
@@ -27,9 +26,11 @@ export interface User { id: string; name: string }
 export interface AuthInfo { provider: string; kind: "name-form" | "redirect" | string; loginUrl: string }
 export interface MeResponse { user: User | null; auth: AuthInfo }
 
+export type GameStatus = "lobby" | "running" | "paused" | "finished";
+
 export interface RoomGame {
   id: string; shortId: string; url: string;
-  status: GameStatus; roundsPlayed: number; rounds: number; teamCount: number; createdAt: string;
+  status: GameStatus; clockMs: number; endMs: number; teamCount: number; createdAt: string;
 }
 export interface RoomView {
   id: string; shortId: string; url: string; ownerId: string; isOwner: boolean; ownerName?: string; createdAt: string;
@@ -39,71 +40,95 @@ export interface MyRoom {
   id: string; shortId: string; url: string; isOwner: boolean; ownerName?: string; gameCount: number; createdAt: string; lastActivity?: string;
 }
 
-export type GameStatus = "lobby" | "running" | "finished";
+/** One version of a team's program. Everything but `code` is public; code only for your team, or once revealed. */
+export interface ProgramVersion {
+  version: number;
+  size: number;
+  distance: number | null;  // node edits from the previous version (null when written in the lobby)
+  cost: number;             // change budget it spent (0 in the lobby)
+  atMs: number;             // game time it went live (0: before the start)
+  submittedAt: string;
+  submittedBy: string;
+  problem: string | null;   // the first error it hit while playing
+  code?: string;
+}
 
+/** A team's change budget for one program: `bank` nodes as of game time `atMs` (more accrues from then). */
+export interface Bank { bank: number; atMs: number }
+
+/**
+ * During play a team sees only its own programs and banks (other teams: null). Once the game is
+ * finished everyone sees every team's version history and banks (code still only if revealed).
+ */
 export interface Team {
   id: string; name: string; color: string; members: string[];
-  participant: boolean | null;
-  submitted: Record<Kind, boolean>;
+  participant: boolean | null;                         // null before the game starts
+  programs: Record<Kind, ProgramVersion[]> | null;      // oldest first; the last one is playing
+  banks: Partial<Record<Kind, Bank>> | null;            // once the game has started, for participants
+  ready?: Record<Kind, boolean>;                        // lobby: which programs the team has written
 }
 
-export interface Draft { code: string; size: number; distance: number | null; submittedAt: string; submittedBy: string }
+export interface MyTeam { id: string; name: string; joinCode: string }
 
-export interface MyTeam {
-  id: string; name: string; joinCode: string;
-  drafts: Partial<Record<Kind, Draft>>;
-  previous: Partial<Record<Kind, string>>;
+export type ActionKind = "ask" | "feed" | "leave" | "error";
+
+/**
+ * One bee action, public the moment it happens. bee and patch are team ids. `log` (what the bee
+ * printed) only for its own team, or everyone once a finished game is revealed. During play,
+ * beeVersion / flowerVersion only when that program is yours (all of them once finished), and an
+ * engine-caused leave (a bee replaced or restarted) carries error/by only for the bee's team.
+ */
+export interface Action {
+  seq: number;
+  atMs: number;
+  bee: string;
+  visit: number;
+  patch: string;
+  kind: FlowerKind;
+  action: ActionKind;
+  beeVersion?: number | null;
+  flowerVersion?: number | null;
+  c?: unknown;
+  r?: unknown;
+  ms?: number | null;
+  after?: boolean;          // an ask after feeding at this flower
+  nectar?: boolean | null;
+  error?: string | null;
+  by?: "bee" | "challenge" | "flower" | "engine" | null;
+  log?: string | null;
 }
 
-export interface Step { c: unknown; r: unknown; after?: boolean; challengeError?: string; flowerError?: string }
-
-export interface Visit {
-  bee: string; patch: string; seq: number; start: number; end: number; asks: number;
-  asksBeforeFeed?: number;  // fed visits: asks, then the feed, then (asks - asksBeforeFeed) more asks
-  action: "feed" | "leave" | "error"; nectar: boolean | null;
-  kind?: FlowerKind; steps?: Step[]; beeError?: string; beeLog?: string; note?: string; flowerError?: string;
-}
+export interface ActionsPage { actions: Action[]; lastSeq: number; clockMs: number; status: GameStatus }
 
 export interface TeamScore {
   teamId: string; allure: number; forage: number; allureShare: number; forageShare: number; fitness: number;
   feedsReceived: number; feedsGiven: number; nectarCollected: number; pollinators: number; nectarSources: number;
 }
 
-export interface Compute { calls: number; meanMs: number; p90Ms: number; budgetMs: number }
-export interface ProgramInfo { size: number; distance: number | null; carriedOver: boolean; code?: string; problem?: string | null; compute?: Compute | null }
-export interface MemoryInfo { bytes: number; note: string | null }
-export interface MemorySnapshot { round: number; teamId: string; language: string; snapshot: string | null; bytes: number; note: string | null }
-
-export interface Round {
-  no: number; startedAt: string; finishedAt: string;
-  turns: number;                           // turns each bee had this round
-  memory?: Record<string, MemoryInfo>;     // what each bee kept (own team, or all once revealed)
-  feeds: number[][]; nectar: number[][];
-  scores: TeamScore[]; totals: TeamScore[];
-  programs: Record<string, Record<Kind, ProgramInfo | null>>;
-  visits?: Visit[];                        // left out of the game view for older rounds (?visits=last)
-}
+export interface RecentScores { fromMs: number; toMs: number; scores: TeamScore[] }
 
 export interface GameView {
   room: { id: string; shortId: string; url: string; isOwner: boolean };
   game: {
     id: string; shortId: string; url: string; status: GameStatus; config: GameConfig;
-    roundsPlayed: number; runningRound: number | null; lastError: string | null; version: number;
-    createdAt: string; finishedAt: string | null; revealed: boolean; isOwner: boolean;
-    turns: number;                         // turns per bee in the next round
-    changeable: Kind[];                    // programs that may change for the next round (clovers and orchids take turns)
+    clockMs: number; endMs: number; lastSeq: number; version: number; lastError: string | null;
+    createdAt: string; startedAt: string | null; finishedAt: string | null; revealed: boolean; isOwner: boolean;
   };
   me: { id: string; name: string; teamId: string | null } | null;
   participants: string[] | null;
   teams: Team[];
   myTeam: MyTeam | null;
   interface: ProgramInterface;
-  rounds: Round[];
-  final: TeamScore[] | null;
+  scores: TeamScore[] | null;    // whole game, per participant
+  recent: RecentScores | null;   // the last five minutes of game time
 }
 
-/** size: in the game's complexity unit (`unit`); minified: the text the game runs. */
-export interface CheckResult { ok: boolean; kind: Kind; size: number; unit: string; minified: string; distance: number | null; errors: string[]; budget: Budget; submitted?: boolean }
+/** POST check / programs. size and cost in nodes; available: whole nodes of change budget now (null in the lobby). */
+export interface CheckResult {
+  ok: boolean; kind: Kind; size: number; minified: string; budget: Budget;
+  distance: number | null; cost: number; available: number | null; errors: string[];
+  submitted?: boolean; version?: number;
+}
 
 /** What every team knows before writing code: signatures and type rules (no starter code). */
 export interface ProgramInterface {
@@ -112,12 +137,9 @@ export interface ProgramInterface {
   types: { challenge: string; response: string; challengeMeans: string; responseMeans: string; rules: string[] };
 }
 
-export interface TryFlowerResult { results: { c: unknown; r: unknown; error?: string }[]; error?: string }
-export interface TryBeeVisit {
-  bee: string; patch: string; kind: FlowerKind; start: number; end: number; seq: number; asks: number; asksBeforeFeed?: number;
-  steps: Step[]; action: "feed" | "leave" | "error"; nectar: boolean | null; beeError?: string; beeLog?: string; note?: string;
-}
+export interface TryFlowerResult { results: { c: unknown; r: unknown; error?: string; ms?: number }[]; error?: string }
 export interface TryBeeResult {
-  visits: TryBeeVisit[]; problems: Record<Kind, string | null>; feeds: number; nectar: number;
-  turns?: number; memory?: { snapshot: string | null; bytes: number; note: string | null };
+  actions: Action[];
+  problems: { team: number; kind: Kind; version: number; error: string }[];
+  feeds: number; nectar: number; cycles: number;
 }
