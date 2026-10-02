@@ -119,7 +119,7 @@ export function VersionBrowser({ view, teams, picked, onPick }: {
               <li key={v.version}>
                 <button className={`version-row ${sel?.version === v.version ? "on" : ""}`} onClick={() => onPick({ team: team.id, kind, version: v.version })} aria-pressed={sel?.version === v.version}>
                   <b>v{v.version}</b>
-                  <span className="small">{v.atMs > 0 ? `at ${fmtClock(v.atMs)}` : "before the start"}{v.version === versions.length && view.game.status !== "finished" ? " · playing now" : ""}</span>
+                  <span className="small">{v.atMs > 0 ? `at ${fmtClock(v.atMs)}` : "before the start"}{v.version === versions.length && view.game.status !== "finished" ? " · live" : ""}</span>
                   <span className="small muted">{v.size.toLocaleString()} nodes{v.atMs > 0 ? ` · cost ${v.cost.toLocaleString()}` : ""} · {v.submittedBy}</span>
                   {v.problem && <span className="small bad-text">problem: {v.problem}</span>}
                 </button>

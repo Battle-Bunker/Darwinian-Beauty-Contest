@@ -139,40 +139,64 @@ export function useLiveTick(store: LiveStore, ms: number, always = false): numbe
   return rev;
 }
 
+/** Games whose server has no WebSocket endpoint (then the page uses SSE), so it isn't tried again. */
+const noWebSocket = new Set<string>();
+
 /**
- * Keep `store` fed for one game: load the recent backlog, then follow the SSE stream (reopening it
- * from the last action held after any error, so nothing is replayed or missed). `onVersion` gets the
- * game's version whenever something public but actions changed, or -1 when my team's programs did.
+ * Keep `store` fed for one game: load the recent backlog, then follow the live stream: the WebSocket
+ * endpoint if the server has one, else SSE (the same messages either way). After any drop it reopens
+ * from the last action held, so nothing is replayed or missed. `onVersion` gets the game's version
+ * whenever something public but actions changed, or -1 when my team's programs or the status did.
  */
 export function useGameStream(store: LiveStore, base: string | null, onVersion: (v: number) => void) {
   const versionCb = useRef(onVersion);
   versionCb.current = onVersion;
   useEffect(() => {
     if (!base) return;
-    let es: EventSource | null = null;
+    let conn: { close: () => void } | null = null;
     let closed = false;
     let retry: ReturnType<typeof setTimeout> | null = null;
 
+    const handle = (data: string) => {
+      let msg: any;
+      try { msg = JSON.parse(data); } catch { return; }
+      if (Array.isArray(msg.actions)) store.ingest(msg.actions);
+      const was = store.status;
+      if (typeof msg.clockMs === "number") store.syncClock(msg.clockMs, msg.status, undefined, msg.round);
+      // {version}: something public changed; {programs: true}: my team submitted (private); a new status
+      // (paused, finished): the page changes shape. Refetch the view for any of them.
+      if (typeof msg.version === "number") versionCb.current(msg.version);
+      else if (msg.programs || (was && msg.status && msg.status !== was)) versionCb.current(-1);
+    };
+    const again = () => { conn = null; if (!closed) retry = setTimeout(open, 1500); };
+
+    const openSse = () => {
+      const es = new EventSource(`/api${base}/events?after=${store.lastSeq}`);
+      es.onmessage = (ev) => handle(ev.data);
+      // EventSource would reconnect with the original ?after=, replaying everything since; reopen ourselves.
+      es.onerror = () => { es.close(); again(); };
+      conn = { close: () => es.close() };
+    };
+
+    const openWs = () => {
+      const proto = location.protocol === "https:" ? "wss:" : "ws:";
+      let ws: WebSocket;
+      try { ws = new WebSocket(`${proto}//${location.host}/api${base}/ws?after=${store.lastSeq}`); } catch { noWebSocket.add(base); openSse(); return; }
+      let opened = false;
+      ws.onopen = () => { opened = true; };
+      ws.onmessage = (ev) => { if (typeof ev.data === "string") handle(ev.data); };
+      ws.onclose = () => {
+        if (closed) return;
+        if (!opened) { noWebSocket.add(base); conn = null; open(); } // no endpoint: SSE from now on
+        else again();
+      };
+      conn = { close: () => { ws.onclose = null; ws.close(); } };
+    };
+
     const open = () => {
       if (closed) return;
-      es = new EventSource(`/api${base}/events?after=${store.lastSeq}`);
-      es.onmessage = (ev) => {
-        let msg: any;
-        try { msg = JSON.parse(ev.data); } catch { return; }
-        if (Array.isArray(msg.actions)) store.ingest(msg.actions);
-        const was = store.status;
-        if (typeof msg.clockMs === "number") store.syncClock(msg.clockMs, msg.status, undefined, msg.round);
-        // {version}: something public changed; {programs: true}: my team submitted (private); a new status
-        // (paused, finished): the page changes shape. Refetch the view for any of them.
-        if (typeof msg.version === "number") versionCb.current(msg.version);
-        else if (msg.programs || (was && msg.status && msg.status !== was)) versionCb.current(-1);
-      };
-      es.onerror = () => {
-        // EventSource would reconnect with the original ?after=, replaying everything since; reopen ourselves.
-        es?.close();
-        es = null;
-        if (!closed) retry = setTimeout(open, 1500);
-      };
+      if (typeof WebSocket !== "undefined" && !noWebSocket.has(base)) openWs();
+      else openSse();
     };
 
     (async () => {
@@ -190,7 +214,7 @@ export function useGameStream(store: LiveStore, base: string | null, onVersion: 
     return () => {
       closed = true;
       if (retry) clearTimeout(retry);
-      es?.close();
+      conn?.close();
     };
   }, [store, base]);
 }

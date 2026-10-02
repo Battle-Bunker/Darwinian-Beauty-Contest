@@ -11,7 +11,7 @@ export default defineConfig({
   server: {
     port: Number(process.env.WEB_PORT || 5173),
     proxy: {
-      "/api": { target: api, changeOrigin: true },
+      "/api": { target: api, changeOrigin: true, ws: true },
       "/vendor": { target: api, changeOrigin: true },
     },
   },

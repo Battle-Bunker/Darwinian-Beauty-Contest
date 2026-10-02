@@ -1,9 +1,10 @@
 // Geometry and the live animation for the garden. The garden plays the action stream a moment behind
 // the game clock (DELAY), so actions that arrive in bursts (the server flushes a few times a second)
 // play out at the game times they happened. The game runs in lockstep rounds (200 ms by default): each
-// bee acts at most once a round, so a bee can be shown doing every single thing it does. A bee flies to
-// its next patch right after the last action of its previous visit, arriving as its first question
-// there is asked; when it feeds it sits on the patch for the rounds it's out of play.
+// bee acts at most once a round, so a bee can be shown doing every single thing it does. A bee sets off
+// for its next flower the moment it's given one (an `arrive` action, when the server sends them; else
+// just before its first question there), shows each question and then the flower's answer in its
+// bubble, and when it feeds it sits on the flower for the rounds it's out of play.
 //
 // Each team's patch has its cosmos on the left and its orchid on the right; a bee hovers by and lands on
 // the flower it's at (every action says which). Each bee has its own slot on an arc above every patch, so
@@ -11,6 +12,7 @@
 // shouldn't send, falls back to the middle of the patch.)
 import type { Action, FlowerKind } from "../types";
 import type { LiveStore } from "../lib/live";
+import { showValue } from "../lib/format";
 
 export const CELL_W = 250;
 export const CELL_H = 215;
@@ -115,6 +117,7 @@ export interface BeeSprite {
   flip: boolean;      // facing left
   mode: Mode;
   pulse: number;      // 0..1: the question bubble's pop
+  say: string | null; // what the bubble says: the question, then the answer
   tilt: number;       // degrees
   flap: number;       // wing stroke, 0.35..1 (1: wings still)
 }
@@ -135,6 +138,7 @@ interface BeeState {
   from: Pt; t0: number; t1: number; // the flight in progress (real time)
   queue: Event[];
   askAt: number; feedAt: number; errorAt: number;
+  askText: string; answerText: string;
   last: Pt; // where it was drawn last
 }
 
@@ -147,6 +151,13 @@ function bezier(a: Pt, b: Pt, u: number): Pt {
   const c = { x: (a.x + b.x) / 2, y: Math.min(a.y, b.y) - 20 - dist * 0.18 };
   const k = 1 - u;
   return { x: k * k * a.x + 2 * k * u * c.x + u * u * b.x, y: k * k * a.y + 2 * k * u * c.y + u * u * b.y };
+}
+
+/** A short form of a challenge or answer for a bubble: small scalars as they are, anything else "…". */
+function short(v: unknown): string {
+  if (v === null || v === undefined) return "None";
+  const t = showValue(v, 8);
+  return t.length <= 7 ? t : typeof v === "object" ? "…" : t.slice(0, 6) + "…";
 }
 
 /** First index in `actions` (sorted by seq) with seq > after. */
@@ -170,6 +181,7 @@ export class GardenAnimator {
   private lastReal = 0;
   private fxId = 0;
   private feedHold = 2000; // how long a feeding bee sits on its flower: the rounds it's out of play
+  private windowMs = 150;  // when in a round the flowers' answers are delivered
   /** Set when the garden has nothing left to animate (lets the page stop its animation loop). */
   idle = false;
 
@@ -180,8 +192,9 @@ export class GardenAnimator {
   }
 
   /** Round length and how many rounds a feeding bee sits out (the game's config). */
-  setTiming(roundMs: number, feedRounds: number) {
+  setTiming(roundMs: number, feedRounds: number, windowMs: number) {
     this.feedHold = Math.max(500, Math.min(6000, roundMs * Math.max(1, feedRounds)));
+    this.windowMs = windowMs;
   }
 
   setTeams(layout: Layout, order: string[]) {
@@ -192,7 +205,7 @@ export class GardenAnimator {
       const b = this.bees.get(team);
       if (b) { b.index = index; return; }
       const home = homeOf(layout, team, index, n);
-      this.bees.set(team, { team, index, anchor: null, visit: null, lastT: 0, from: home, t0: 0, t1: 0, queue: [], askAt: -1e9, feedAt: -1e9, errorAt: -1e9, last: home });
+      this.bees.set(team, { team, index, anchor: null, visit: null, lastT: 0, from: home, t0: 0, t1: 0, queue: [], askAt: -1e9, feedAt: -1e9, errorAt: -1e9, askText: "", answerText: "", last: home });
     });
   }
 
@@ -262,8 +275,15 @@ export class GardenAnimator {
       const when = now + Math.max(0, a.atMs - this.display);
       if (a.visit !== b.visit) {
         b.visit = a.visit;
-        const start = Math.min(when, Math.max(b.lastT, when - FLY_MS, now));
-        b.queue.push({ t: start, fly: { anchor: { patch: a.patch, kind: a.kind }, arrive: Math.max(start + MIN_FLY, when) } });
+        const anchor = { patch: a.patch, kind: a.kind };
+        if (a.action === "arrive") {
+          // Given its flower: it sets off now and lands a flight later.
+          const start = Math.max(b.lastT, when);
+          b.queue.push({ t: start, fly: { anchor, arrive: start + FLY_MS } });
+        } else {
+          const start = Math.min(when, Math.max(b.lastT, when - FLY_MS, now));
+          b.queue.push({ t: start, fly: { anchor, arrive: Math.max(start + MIN_FLY, when) } });
+        }
       }
       b.queue.push({ t: when, a });
       b.lastT = when;
@@ -277,13 +297,19 @@ export class GardenAnimator {
         const e = b.queue.shift()!;
         if ("fly" in e) { b.feedAt = -1e9; this.fly(b, e.fly.anchor, now, e.fly.arrive); continue; }
         const { t, a } = e;
-        if (a.action === "ask") { b.askAt = t; b.feedAt = -1e9; this.glow.set(spotKey(a.patch, a.kind), t); }
+        if (a.action === "ask") {
+          b.askAt = t;
+          b.feedAt = -1e9;
+          b.askText = short(a.c);
+          b.answerText = a.error ? "None" : short(a.r);
+          this.glow.set(spotKey(a.patch, a.kind), t);
+        }
         else if (a.action === "feed") {
           b.feedAt = t;
           const p = this.layout.pos[a.patch];
           if (p) this.spawn(landing(p, a.kind, b.index, n), spotKey(a.patch, a.kind), !!a.nectar, now);
         } else if (a.action === "error") { b.errorAt = t; b.feedAt = -1e9; }
-        else b.feedAt = -1e9; // leave
+        else if (a.action === "leave") b.feedAt = -1e9;
       }
     }
 
@@ -321,13 +347,13 @@ export class GardenAnimator {
         const u = ease(Math.max(0, Math.min(1, (now - b.t0) / Math.max(1, b.t1 - b.t0))));
         const p = bezier(b.from, target, u);
         const dx = target.x - b.from.x;
-        s = { team: b.team, index: b.index, x: p.x, y: p.y, flip: Math.abs(dx) > 1 ? dx < 0 : face(p), mode: "fly", pulse: 0, tilt: Math.max(-16, Math.min(16, (target.y - b.from.y) * 0.08)) * (dx < 0 ? -1 : 1), flap: 1 };
+        s = { team: b.team, index: b.index, x: p.x, y: p.y, flip: Math.abs(dx) > 1 ? dx < 0 : face(p), mode: "fly", pulse: 0, say: null, tilt: Math.max(-16, Math.min(16, (target.y - b.from.y) * 0.08)) * (dx < 0 ? -1 : 1), flap: 1 };
       } else if (!b.anchor || !patchPt) {
         const resting = status === "finished" || status === "lobby";
-        s = { team: b.team, index: b.index, x: home.x, y: home.y + (resting ? 0 : bob), flip: face(home), mode: resting ? (status === "finished" ? "rest" : "home") : "idle", pulse: 0, tilt: 0, flap: 1 };
+        s = { team: b.team, index: b.index, x: home.x, y: home.y + (resting ? 0 : bob), flip: face(home), mode: resting ? (status === "finished" ? "rest" : "home") : "idle", pulse: 0, say: null, tilt: 0, flap: 1 };
       } else {
         const sinceFeed = now - b.feedAt, sinceAsk = now - b.askAt, sinceErr = now - b.errorAt;
-        let p = target, mode: Mode = "idle", pulse = 0, tilt = 0;
+        let p = target, mode: Mode = "idle", pulse = 0, tilt = 0, say: string | null = null;
         if (sinceFeed >= 0 && sinceFeed < this.feedHold) {
           // Drop onto the flower (or the patch), sip while out of play, lift off at the end.
           const land = landing(patchPt, b.anchor.kind, b.index, n);
@@ -340,9 +366,11 @@ export class GardenAnimator {
         } else if (sinceAsk >= 0 && sinceAsk < ASK_MS) {
           mode = "ask";
           pulse = sinceAsk < 160 ? Math.sin((Math.PI / 2) * (sinceAsk / 160)) : Math.max(0.55, 1 - (sinceAsk - 160) / 900);
+          // The question while the flower thinks; its answer once it's delivered (at the end of the flower window).
+          say = sinceAsk < this.windowMs ? `${b.askText}?` : `→ ${b.answerText}`;
         }
         const still = status === "paused";
-        s = { team: b.team, index: b.index, x: p.x, y: p.y + (mode === "feed" || still ? 0 : bob), flip: face(p), mode, pulse, tilt, flap: 1 };
+        s = { team: b.team, index: b.index, x: p.x, y: p.y + (mode === "feed" || still ? 0 : bob), flip: face(p), mode, pulse, say, tilt, flap: 1 };
       }
       // Wings beat whenever the bee is airborne in a live game (drawn here, not by CSS: the bee is redrawn every frame anyway).
       if (status === "running" && s.mode !== "feed") s.flap = 0.35 + 0.65 * Math.abs(Math.sin(now / 30 + b.index * 0.7));

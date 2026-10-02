@@ -13,9 +13,9 @@ import { Value } from "./Value";
 import { DropIcon, FooledIcon, PauseIcon, PlayIcon } from "./Icons";
 import { Alert } from "./ui";
 
-type ActionFilter = "" | "ask" | "feed" | "nectar" | "fooled" | "leave" | "error" | "slow" | "after";
+type ActionFilter = "" | "arrive" | "ask" | "feed" | "nectar" | "fooled" | "leave" | "error" | "slow" | "after";
 const ACTION_FILTERS: [ActionFilter, string][] = [
-  ["", "every action"], ["ask", "questions"], ["after", "questions after feeding"], ["feed", "feeds"],
+  ["", "every action"], ["arrive", "arrivals (given a flower)"], ["ask", "questions"], ["after", "questions after feeding"], ["feed", "feeds"],
   ["nectar", "feeds: nectar"], ["fooled", "feeds: fooled"], ["leave", "leaves"], ["error", "mistakes and failures"],
   ["slow", "too slow (missed the deadline)"],
 ];
@@ -33,6 +33,7 @@ function matches(a: Action, f: Filters): boolean {
   if (f.prints && !a.log) return false;
   switch (f.action) {
     case "": return true;
+    case "arrive": return a.action === "arrive";
     case "ask": return a.action === "ask";
     case "after": return a.action === "ask" && !!a.after;
     case "feed": return a.action === "feed";
@@ -174,6 +175,7 @@ export const FeedRow = memo(function FeedRow({ a, teams, myTeamId, tenths = true
             {typeof a.ms === "number" && (flowerLimit ? <Took ms={a.ms} limit={flowerLimit} what={a.kind ?? "flower"} /> : <span className="feed-ms" title="How long the flower took to answer">{a.ms < 10 ? a.ms.toFixed(1) : Math.round(a.ms)} ms</span>)}
           </span>
         )}
+        {a.action === "arrive" && <span className="arrive-text" title="The bee was given this flower: it flies there and asks its first question next">arrives <span className="muted">(new visit)</span></span>}
         {a.action === "feed" && (a.nectar
           ? <span className="ok-text nowrap"><DropIcon size={15} /> fed: <b>nectar</b></span>
           : <span className="bad-text nowrap"><FooledIcon size={15} /> fed: no nectar</span>)}

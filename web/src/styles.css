@@ -641,6 +641,8 @@ input[type="range"] { accent-color: var(--honey); }
 .bee-halo { fill: color-mix(in srgb, var(--honey) 25%, transparent); stroke: var(--honey); stroke-width: 2; }
 .bubble { fill: #fff; stroke: #2b2418; stroke-width: 1.5; }
 .bubble-text { font: 700 14px var(--font-head); text-anchor: middle; fill: #2b2418; }
+.bubble-say { font: 700 11px var(--mono); }
+.bubble-answer { fill: #eef8e4; stroke: #2f7a4b; }
 .bubble-err { fill: #ffd8a8; stroke: #b0302a; }
 .bubble-err-text { fill: #b0302a; }
 .bee-zzz { font: 800 11px var(--font-body); fill: var(--ink); opacity: .7; font-style: italic; }
@@ -715,6 +717,8 @@ input[type="range"] { accent-color: var(--honey); }
 .feed-log { grid-column: 2 / -1; margin: 2px 0 2px; max-width: 100%; }
 .try-list { max-height: 420px; }
 
+.arrive-text { font-weight: 700; color: var(--info); }
+.feed-row.feed-arrive { box-shadow: inset 3px 0 0 var(--info); }
 .feed-took { font-size: 11.5px; white-space: nowrap; padding: 0 6px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); color: var(--ink-soft); font-variant-numeric: tabular-nums; }
 .feed-took.near { border-color: color-mix(in srgb, var(--warn) 55%, var(--line)); color: var(--warn); }
 .feed-took.over { border-color: color-mix(in srgb, var(--danger) 55%, var(--line)); color: var(--danger); font-weight: 800; }

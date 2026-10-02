@@ -1,6 +1,11 @@
 // My team's three programs: write, check, submit and try them. In the lobby writing is free. Once the
-// game runs, a submission pays its change cost (node edits from the version playing now) from a change
-// budget that fills with game time, and goes live at once.
+// game runs, a submission pays its change cost (node edits from the live version) from a change budget
+// that fills with game time, and is live at once for new visits: a visit under way keeps the versions it
+// started with (your bee switches at its next visit; bees already at your flower finish their visit).
+
+/** When a submitted change takes effect (versions are pinned per visit). */
+export const takesEffect = (kind: Kind) =>
+  kind === "bee" ? "from your bee's next visit (it finishes the visit it's on with the old one)" : `for visits that start from now (bees already at your ${kind} finish their visit with the old one)`;
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, errorText } from "../api";
 import { storage } from "../hooks";
@@ -145,7 +150,7 @@ export function ProgramEditors({ view, base, store }: { view: GameView; base: st
 
   let status: React.ReactNode;
   if (!playing) status = <span className="warn-text">Not written yet. {g.status === "lobby" ? "Your team needs all three programs, saved, to play when the game starts." : ""}</span>;
-  else if (unchanged) status = <span className="ok-text"><CheckIcon size={15} /> {g.status === "lobby" ? `Saved as v${playing.version} by ${playing.submittedBy} ${timeAgo(playing.submittedAt)}. This is what plays when the game starts.` : `This is v${playing.version}, playing now.`}</span>;
+  else if (unchanged) status = <span className="ok-text"><CheckIcon size={15} /> {g.status === "lobby" ? `Saved as v${playing.version} by ${playing.submittedBy} ${timeAgo(playing.submittedAt)}. This is what plays when the game starts.` : `This is v${playing.version}, the live version.`}</span>;
   else status = <span className="warn-text">Unsubmitted changes. {g.status === "lobby" ? `v${playing.version} is what's saved.` : `v${playing.version} keeps playing until you submit.`}</span>;
 
   const r = result[kind];
@@ -163,7 +168,7 @@ export function ProgramEditors({ view, base, store }: { view: GameView; base: st
               <KindIcon kind={k} />
               <span className="tab-name">{k}</span>
               {p && <span className="tab-version">v{p.version}</span>}
-              {p && !dirty && <span className="tab-mark ok" title={g.status === "lobby" ? "Saved" : "Playing now"}><CheckIcon size={13} /></span>}
+              {p && !dirty && <span className="tab-mark ok" title={g.status === "lobby" ? "Saved" : "Live"}><CheckIcon size={13} /></span>}
               {dirty && <span className="tab-mark dirty" title="Unsubmitted changes">•</span>}
               {p?.problem && <span className="tab-mark bad" title={`Problem: ${p.problem}`}>!</span>}
             </button>
@@ -177,7 +182,8 @@ export function ProgramEditors({ view, base, store }: { view: GameView; base: st
             <p className="muted small">{BLURB[kind]}</p>
             {playing && live && (
               <p className="small playing-line">
-                <b>Playing now: v{playing.version}</b> · {playing.size.toLocaleString()} nodes · {playing.atMs > 0 ? `live since ${fmtClock(playing.atMs)}` : "since the start"} · by {playing.submittedBy}
+                <b>Live: v{playing.version}</b> · {playing.size.toLocaleString()} nodes · {playing.atMs > 0 ? `since ${fmtClock(playing.atMs)}` : "since the start"} · by {playing.submittedBy}
+                <span className="muted"> · a change applies {kind === "bee" ? "from your bee's next visit" : "to visits that start after it"}</span>
               </p>
             )}
             {playing?.problem && <Alert kind="error"><b>v{playing.version} hit a problem while playing:</b> <span className="mono">{playing.problem}</span></Alert>}
@@ -192,13 +198,13 @@ export function ProgramEditors({ view, base, store }: { view: GameView; base: st
             {overSize && <Alert kind="error">Too big: {s!.size.toLocaleString()} nodes, but the budget is {budget.size.toLocaleString()}. Make it {(s!.size - budget.size).toLocaleString()} nodes smaller to submit. Comments, spacing and name lengths are free; every byte of a string or number counts.</Alert>}
             {incoming[kind] !== undefined && (
               <Alert kind="info">
-                A teammate submitted v{incoming[kind]} of your {kind}, and it's playing now. <button className="link-btn" onClick={() => revertTo("playing")}>Load it</button> (your edits will be replaced)
+                A teammate submitted v{incoming[kind]} of your {kind}, and it's live now. <button className="link-btn" onClick={() => revertTo("playing")}>Load it</button> (your edits will be replaced)
               </Alert>
             )}
 
             <CodeEditor key={`code:${kind}`} value={current} onChange={(v) => edit(kind, v)} language={cfg.language} previous={live && playing ? playing.code ?? null : null}
               onStats={(st) => setStats((x) => ({ ...x, [kind]: st }))} label={`${kind} program`} showPrevious={showPrev}
-              previousLabel={playing ? `v${playing.version}, playing now` : "Before"} currentLabel="Your edit"
+              previousLabel={playing ? `v${playing.version}, live` : "Before"} currentLabel="Your edit"
               placeholder={`Write your ${kind} here, from scratch.`} />
             {!empty && s?.minified && <details className="minified"><summary className="muted small">What actually runs: your program minified ({s.size.toLocaleString()} nodes)</summary><pre>{s.minified}</pre></details>}
 
@@ -210,7 +216,7 @@ export function ProgramEditors({ view, base, store }: { view: GameView; base: st
                   <span className="sr-only">Start over from</span>
                   <select value="" onChange={(e) => { revertTo(e.target.value as "playing" | "empty"); e.target.value = ""; }}>
                     <option value="" disabled>Start over from…</option>
-                    {playing && <option value="playing">{g.status === "lobby" ? `the saved version (v${playing.version})` : `the version playing now (v${playing.version})`}</option>}
+                    {playing && <option value="playing">{g.status === "lobby" ? `the saved version (v${playing.version})` : `the live version (v${playing.version})`}</option>}
                     <option value="empty">an empty editor</option>
                   </select>
                 </label>
@@ -226,7 +232,7 @@ export function ProgramEditors({ view, base, store }: { view: GameView; base: st
               r.check.ok
                 ? <Alert kind="ok">
                     {r.action === "submit"
-                      ? (live ? <><b>v{r.check.version} is live.</b> It cost {plural(r.check.cost, "node")} of change budget; {fmtNodes(r.check.available ?? 0)} left.</> : <><b>Saved as v{r.check.version}.</b> {r.check.size.toLocaleString()} nodes.</>)
+                      ? (live ? <><b>v{r.check.version} is in</b>, {takesEffect(kind)}. It cost {plural(r.check.cost, "node")} of change budget; {fmtNodes(r.check.available ?? 0)} left.</> : <><b>Saved as v{r.check.version}.</b> {r.check.size.toLocaleString()} nodes.</>)
                       : <>Looks good: {r.check.size.toLocaleString()} nodes{live && r.check.distance !== null ? `; this change costs ${r.check.cost} of your ${r.check.available} available` : ""}.</>}
                   </Alert>
                 : <Alert kind="error">{r.action === "submit" && <b>Not submitted: </b>}{r.check.errors.join(" · ")}</Alert>
@@ -269,7 +275,7 @@ function BudgetMeter({ store, budget, bank, cost, status, kind }: { store: LiveS
       </div>
       <div className="budget-note small">
         {cost === null ? <span className="muted">Measuring the change…</span>
-          : cost === 0 ? <span className="muted">No change from the version playing now (comments, spacing and renames are free).</span>
+          : cost === 0 ? <span className="muted">No change from the live version (comments, spacing and renames are free).</span>
           : affordable ? <span className="ok-text">This change costs <b>{cost.toLocaleString()}</b>: affordable now.</span>
           : wait === null ? <span className="bad-text">This change costs <b>{cost.toLocaleString()}</b>, more than your {kind} can ever bank ({budget.cap.toLocaleString()}). Make it smaller.</span>
           : <span className="warn-text">This change costs <b>{cost.toLocaleString()}</b>: affordable in <b>{fmtWait(wait)}</b> of game time{status === "paused" ? " (once the game resumes)" : ""}.</span>}
@@ -293,7 +299,7 @@ function SubmitBar({ store, status, kind, busy, canWrite, blocked, empty, unchan
     : cost === null ? "Measuring…"
     : wait === null ? "Too big a change"
     : wait > 0 ? `Affordable in ${fmtWait(wait)}`
-    : `Submit: goes live now (−${cost})`;
+    : `Submit (−${cost}): ${kind === "bee" ? "from its next visit" : "for new visits"}`;
   return (
     <div className="editor-bar">
       <div className="editor-buttons">

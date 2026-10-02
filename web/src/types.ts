@@ -70,7 +70,8 @@ export interface Team {
 
 export interface MyTeam { id: string; name: string; joinCode: string }
 
-export type ActionKind = "ask" | "feed" | "leave" | "error";
+/** arrive: the bee was given its next flower (public at once, before its first question there). */
+export type ActionKind = "arrive" | "ask" | "feed" | "leave" | "error";
 
 /**
  * One bee action, public the moment it happens. bee and patch are team ids. `log` (what the bee

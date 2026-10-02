@@ -40,7 +40,7 @@ export function Garden({ view, store }: { view: GameView; store: LiveStore }) {
   if (!anim.current) anim.current = new GardenAnimator(layout, order);
   useEffect(() => { anim.current!.setTeams(layout, order); }, [layout, order]);
   const roundMs = g.config.budgets.cosmos.ms + g.config.budgets.bee.ms;
-  useEffect(() => { anim.current!.setTiming(roundMs, g.config.feedCost); }, [roundMs, g.config.feedCost]);
+  useEffect(() => { anim.current!.setTiming(roundMs, g.config.feedCost, g.config.budgets.cosmos.ms); }, [roundMs, g.config.feedCost, g.config.budgets.cosmos.ms]);
 
   const [frame, setFrame] = useState<Frame>(() => anim.current!.frame(performance.now(), status));
   const visible = useRef(true);
@@ -271,12 +271,17 @@ function Bee({ b, team, mine, showName, paused }: { b: BeeSprite; team: Team | u
         <circle cx="13" cy="-2.3" r="1.3" className="bee-eye" />
       </g>
       {showName && <text y={22} className="bee-name">{label}</text>}
-      {b.mode === "ask" && (
+      {b.mode === "ask" && (b.say && b.say !== "…?" && b.say !== "→ …" ? (
+        <g transform={`translate(${b.flip ? -14 : 14} -21) scale(${(0.8 + 0.2 * b.pulse).toFixed(2)})`} opacity={(0.55 + 0.45 * b.pulse).toFixed(2)}>
+          <rect x={-(6 + b.say.length * 3.3)} y={-9} width={12 + b.say.length * 6.6} height={17} rx={8.5} className={`bubble ${b.say.startsWith("→") ? "bubble-answer" : ""}`} />
+          <text y="4" className="bubble-text bubble-say">{b.say}</text>
+        </g>
+      ) : (
         <g transform={`translate(13 -19) scale(${(0.55 + 0.6 * b.pulse).toFixed(2)})`} opacity={(0.35 + 0.65 * b.pulse).toFixed(2)}>
           <circle r="9" className="bubble" />
           <text y="4.5" className="bubble-text">?</text>
         </g>
-      )}
+      ))}
       {b.mode === "error" && (
         <g transform="translate(13 -19)">
           <circle r="9" className="bubble bubble-err" />
@@ -321,7 +326,7 @@ const GardenLegend = memo(function GardenLegend() {
   return (
     <ul className="garden-legend" aria-label="What the garden shows">
       <li><span className="lg-flowers" aria-hidden>✿</span> each patch: its cosmos (left, pays nectar) and its orchid (right, pays nothing)</li>
-      <li><span className="lg lg-ask">?</span> a bee asks a flower a question</li>
+      <li><span className="lg lg-ask">?</span> a bee asks a flower a question (then shows its answer, →)</li>
       <li><DropIcon size={16} /> fed and got nectar</li>
       <li><FooledIcon size={16} /> fed at an orchid: fooled</li>
       <li><span className="lg lg-err">!</span> the bee made a mistake</li>
