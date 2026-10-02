@@ -76,6 +76,7 @@ for (const a of arenas) {
         cosmosCompute: mean(Object.values(m.compute || {}).filter((c) => c.kind === "cosmos").map((c) => c.meanFrac)),
         orchidCompute: mean(Object.values(m.compute || {}).filter((c) => c.kind === "orchid").map((c) => c.meanFrac)),
         cosmosNodes: mean(Object.values(m.compute || {}).filter((c) => c.kind === "cosmos").map((c) => c.answerNodes)),
+        tooSlow: teams.reduce((a, t) => a + (t.tooSlow || 0), 0), missed: mean(teams.map((t) => t.missedShare)),
         orchidNodes: mean(Object.values(m.compute || {}).filter((c) => c.kind === "orchid").map((c) => c.answerNodes)),
         sessions: ss.game / Math.max(1, teams.length), liveSubmits: rq.live, cost: cost.usd, fitSpread: (() => { const f = (m.final || []).map((x) => x.fitness); return f.length ? Math.max(...f) - Math.min(...f) : null; })() });
     }
@@ -104,10 +105,12 @@ for (const a of arenas) {
       const ss = e ? await one(`SELECT count(*) FILTER (WHERE phase = 'game')::int AS n, coalesce(sum(cost_usd), 0) AS usd, count(*) FILTER (WHERE violation)::int AS v FROM arena.sessions WHERE game_id = $1 AND persona_id = $2`, [g.id, e.persona_id]) : {};
       const rq = e ? await one(`SELECT count(*)::int AS n, count(*) FILTER (WHERE op = 'submit' AND ok)::int AS ok, count(*) FILTER (WHERE op = 'submit' AND NOT ok)::int AS bad FROM arena.requests WHERE game_id = $1 AND persona_id = $2`, [g.id, e.persona_id]) : {};
       trows.push([t.name, e?.model, f2(f?.fitness), `${f?.feedsReceived ?? "-"} / ${f?.nectarCollected ?? "-"}`, f2(t.precision), `${pc(t.rivalCosmosFed)} / ${pc(t.rivalOrchidFed)}`, f2(t.gap), pc(t.repeatShare), t.distinctChallenges,
+        t.slotsUsed != null ? `${t.slotsUsed} / ${t.slotsFeeding} / ${t.slotsMissed} (${pc(t.missedShare)})` : "-", t.tooSlow ?? "-",
         ss.n ?? "-", f2(ss.usd), rq.n ?? "-", `${rq.ok ?? 0}/${rq.bad ?? 0}`, ss.v || 0]);
     }
-    p("Teams:");
-    table(["team", "model", "fitness", "feeds received / nectar collected", "bee precision", "bee fed at rival cosmos / orchids", "gap", "repeat", "distinct challenges", "game sessions", "USD (all sessions)", "requests", "submits ok/refused", "violations"], trows);
+    p("Teams (slots: one per round per bee; used = asks + feeds; missed = no action queued as the round started):");
+    table(["team", "model", "fitness", "feeds received / nectar collected", "bee precision", "bee fed at rival cosmos / orchids", "gap", "repeat", "distinct challenges",
+      "slots used / feeding / missed", "too slow", "game sessions", "USD (all sessions)", "requests", "submits ok/refused", "violations"], trows);
     // Copies.
     const cp = m.copies || {};
     p(`Orchids copying cosmos flowers: ${cp.copied ?? 0} matches of ${cp.cosmosAnswers ?? 0} distinct cosmos answers${cp.medianLatencyMs != null ? `, median ${secs(cp.medianLatencyMs)} after the cosmos's answer first appeared` : ""} ` +
@@ -177,10 +180,10 @@ if (durations.length) {
   p("## Games by duration");
   p("Per game, averaged over teams where it's per team. Change budgets accrue per minute of game time, so short games allow little or no change.");
   table(["minutes", "arena game", "actions/s", "rounds/s", "teams with a scaffold", "in-game changes: sessions / scaffolds", "bee precision", "rival cosmos−orchid fed gap (discrimination)", "repeat share",
-    "cosmos / orchid compute used", "cosmos / orchid answer nodes", "orchid matches of earlier cosmos answers (median latency)", "of those, copies by a newer orchid version (median latency)", "game sessions per team", "fitness spread", "USD"],
+    "cosmos / orchid compute used", "cosmos / orchid answer nodes", "orchid matches of earlier cosmos answers (median latency)", "of those, copies by a newer orchid version (median latency)", "too-slow bee decisions", "missed slots (share)", "game sessions per team", "fitness spread", "USD"],
     durations.sort((x, y) => x.minutes - y.minutes || x.gen - y.gen).map((d) => [d.minutes, `${d.arena} ${d.gen}`, f2(d.actionsPerSec), f2(d.roundsPerSec), `${d.scaffoldTeams}/${d.teams}`, `${d.sessionChanges} / ${d.autoChanges}`,
       f2(d.precision), f2(d.gap), pc(d.repeat), `${pc(d.cosmosCompute)} / ${pc(d.orchidCompute)}`, `${f2(d.cosmosNodes)} / ${f2(d.orchidNodes)}`,
-      `${d.copies} (${secs(d.copyLatency)})`, `${d.newCopies} (${secs(d.newCopyLatency)})`, f2(d.sessions), f2(d.fitSpread), f2(d.cost)]));
+      `${d.copies} (${secs(d.copyLatency)})`, `${d.newCopies} (${secs(d.newCopyLatency)})`, d.tooSlow, pc(d.missed), f2(d.sessions), f2(d.fitSpread), f2(d.cost)]));
 }
 
 // ---------- ideas, breeders, audit

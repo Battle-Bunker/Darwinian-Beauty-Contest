@@ -173,7 +173,7 @@ def summary(s, since_ms):
         first_t = a["atMs"] if first_t is None else first_t
         last_t = a["atMs"]
         b = bees.setdefault(a["bee"], {"visits": 0, "asks": 0, "feeds": 0, "nectar": 0, "errors": 0, "cs": {}})
-        f = flowers.setdefault((a["patch"], a["kind"]), {"visits": 0, "asks": 0, "feeds": 0, "bees": set(), "errors": 0, "ms": 0.0})
+        f = flowers.setdefault((a["patch"], a.get("kind") or "?"), {"visits": 0, "asks": 0, "feeds": 0, "bees": set(), "errors": 0, "ms": 0.0, "nectar": 0})
         if last_visit.get(a["bee"]) != a["visit"]:
             last_visit[a["bee"]] = a["visit"]
             b["visits"] += 1
@@ -192,6 +192,8 @@ def summary(s, since_ms):
             f["feeds"] += 1
             f["bees"].add(a["bee"])
             if a.get("nectar"):
+                f["nectar"] += 1
+            if a.get("nectar"):
                 b["nectar"] += 1
         elif act == "error":
             b["errors"] += 1
@@ -206,12 +208,13 @@ def summary(s, since_ms):
         prec = "%.2f" % (b["nectar"] / b["feeds"]) if b["feeds"] else "  - "
         print("  %s %-20s %6d %5d %5d %6d  %s %6d %8d            %s x%d" % ("*" if t == me else " ", s.name(t)[:20], b["visits"], b["asks"], b["feeds"],
                                                                             b["nectar"], prec, b["errors"], len(b["cs"]), _short(json.loads(top[0]) if top[0] != "-" else "-", 20), top[1]))
-    print("\nflowers: team                 kind    visits  asks feeds feed-rate bees-fed errors mean-ms")
+    print("\nflowers: team                 kind    visits  asks feeds feed-rate bees-fed nectar errors mean-ms")
     for (t, k), f in sorted(flowers.items(), key=lambda x: (s.name(x[0][0]), x[0][1])):
         rate = "%.2f" % (f["feeds"] / f["visits"]) if f["visits"] else "  - "
         ms = "%.1f" % (f["ms"] / f["asks"]) if f["asks"] else "-"
-        print("  %s %-20s %-7s %6d %5d %5d %9s %8d %6d %7s" % ("*" if t == me else " ", s.name(t)[:20], k, f["visits"], f["asks"], f["feeds"], rate, len(f["bees"]), f["errors"], ms))
-    print("\n(* = your team; feed-rate = feeds per visit; prec = nectar per feed)")
+        print("  %s %-20s %-7s %6d %5d %5d %9s %8d %6d %6d %7s" % ("*" if t == me else " ", s.name(t)[:20], k, f["visits"], f["asks"], f["feeds"], rate, len(f["bees"]), f["nectar"], f["errors"], ms))
+    print("\n(* = your team; feed-rate = feeds per visit; prec = nectar per feed; kind ? = not public during play (another team's patch):")
+    print(" a feed's nectar still tells what that one flower was; mean-ms only where you may see timings)")
 
 
 def tail(s, n):
@@ -234,7 +237,7 @@ def tail(s, n):
             what = "feed nectar=%s" % a.get("nectar")
         if a.get("error"):
             what += " error(%s): %s" % (a.get("by"), a["error"][:60])
-        print("#%d %s round %s  %s -> %s/%s visit %s  %s" % (a["seq"], _mmss(a["atMs"]), a.get("round"), s.name(a["bee"])[:16], s.name(a["patch"])[:16], a["kind"], a["visit"], what))
+        print("#%d %s round %s  %s -> %s/%s visit %s  %s" % (a["seq"], _mmss(a["atMs"]), a.get("round"), s.name(a["bee"])[:16], s.name(a["patch"])[:16], a.get("kind") or "?", a["visit"], what))
 
 
 def answers(s, challenge, since_ms):
@@ -242,7 +245,7 @@ def answers(s, challenge, since_ms):
     for a in s.actions(since_ms=since_ms):
         if a["action"] != "ask" or a.get("c") != challenge:
             continue
-        d = out.setdefault((a["patch"], a["kind"]), {})
+        d = out.setdefault((a["patch"], a.get("kind") or "?"), {})
         k = json.dumps(a.get("r"))
         e = d.setdefault(k, [0, a["atMs"]])
         e[0] += 1
@@ -280,7 +283,7 @@ def sql(s, query, limit):
                 a = json.loads(raw)
             except ValueError:
                 continue
-            rows.append((a["seq"], a["atMs"], a.get("round"), a["bee"], s.name(a["bee"]), a["patch"], s.name(a["patch"]), a["kind"], a["action"],
+            rows.append((a["seq"], a["atMs"], a.get("round"), a["bee"], s.name(a["bee"]), a["patch"], s.name(a["patch"]), a.get("kind"), a["action"],
                          a["visit"], json.dumps(a.get("c")) if "c" in a else None, json.dumps(a.get("r")) if "r" in a else None,
                          1 if a.get("after") else 0, None if a.get("nectar") is None else int(a["nectar"]), a.get("ms"), a.get("error"), a.get("by")))
     db.executemany("INSERT OR REPLACE INTO actions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)

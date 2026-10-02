@@ -30,15 +30,18 @@ export function timingText(config) {
   by its own limit). The limits are public and in config.json: cosmos ${ms("cosmos")} ms, orchid ${ms("orchid")} ms, bee ${ms("bee")} ms.
   Every answer arrives at 150 ms, so nobody can tell from timing how long a flower took (actual timings are private to their
   own team during play).
-- Then the bee has ${ms("bee")} ms to return its next action, queued for the next round: ["ask", c] (same flower), "feed" (then it
-  sits out ${config.feedCost} rounds), ["leave", c] (move on and ask c first at the next flower), or "leave" (arrive at the next
-  flower with nothing queued: it loses a round).
-- A bee that misses its ${ms("bee")} ms isn't interrupted. If its late reply is ["leave", c], c is queued as its first ask at the next
-  flower; otherwise (a late ask or feed meant for the visit it lost, a plain "leave", or an error) the game immediately asks it
-  again, forage([], {"fed": False, "nectar": None, "flowers": n}), for its first challenge at the next flower. The same
-  happens whenever a reply doesn't give a next challenge. It gets a slot again once a challenge is queued before a round
-  starts. So a slow bee loses slots but is never silenced. tasted() is called in the same request as the forage() that
-  follows a feed.
+- Then every bee that acted has ${ms("bee")} ms (counted from when its call starts on a CPU core of its own) to return its next
+  action, queued for its next round: ["ask", c] (same flower), "feed" (then it is busy feeding for the next ${config.feedCost} rounds),
+  ["leave", c] (move on and ask c first at the next flower: never costs a slot), or "leave" (move on with nothing queued).
+- A bee that takes longer than ${ms("bee")} ms isn't cut off: its call runs on (stopped at 2 s) and the game keeps listening, but it
+  loses its next slot and its visit ends. A late ["leave", c] still counts: c opens the next flower. Anything else (a late ask
+  or feed meant for the lost visit, a plain "leave", an error) gives no challenge to start with, so the game at once calls
+  forage again with seen empty and visit["fed"] False, asking for the first challenge at the next flower. The same happens
+  whenever a reply gives no next challenge (a plain "leave", a second "feed", a challenge of the wrong type or size, a crash):
+  the visit ends and forage is asked again, at most once a round. The bee plays again as soon as a challenge is queued when a
+  round starts. So a slow bee loses slots but is never silenced.
+- After a feed, the next call runs tasted(seen, nectar) and then forage, in one call with one ${ms("bee")} ms deadline (what
+  tasted prints shows on the next action).
 - Queued challenges are secret until they are asked.`;
 }
 
@@ -125,15 +128,19 @@ ${personaAndSituation(persona, fixed)}
   gives it a small CPU share. garden.py: \`follow()\` (each new action as it happens), \`actions(after)\`, \`status()\` (clock,
   round, scores, your exact budgets and their refill rate, your versions), \`live(kind)\` (your code playing now),
   \`measure(kind, code)\` (size and cost, free), \`check(kind, code)\`, \`submit(kind, code)\` (refused with \`wait_s\` if you
-  can't afford it yet), \`wait_for_budget(kind, cost)\`. For example: when a rival cosmos's answer to a challenge appears,
+  can't afford it yet), \`wait_for_budget(kind, cost)\`. For example: when a rival flower's answer to a challenge appears and a feed on that visit paid nectar (so it was a cosmos),
   rewrite your orchid's table and submit it if affordable; or retune your bee's thresholds as the scores move. Its code is
   audited before every start and restart with the fair-play rules below; it also may not start other processes, use
   exec/eval or dynamic imports, or read the environment. \`tools/scaffold.py status|logs|stop|restart\` manage it (its print
   output is its log). In short games it is the main way to react.
 - Scripts you run in a session (the Bash tool's run_in_background option, output to a file in your workspace) are stopped
   when that session ends; only the scaffold outlives sessions.
-- The action stream: every bee action is public the moment it happens, and stream/actions.jsonl holds them all, one JSON
-  object per line, growing about once a second (stream/SCHEMA.md). It can get big: read it with code (tools/stream.py), never
+- What is public during play, the moment it happens: every inspection's bee team, patch team, challenge and response, every
+  feed and whether it gave nectar, and the round. NOT which of a patch's two flowers was visited (you see that only at your
+  own patch; a feed's nectar does tell what that one flower was), not how long any program took, not code. Once the game
+  is over, everything is revealed.
+- The action stream: stream/actions.jsonl holds every public action, one JSON object per line, growing about once a second
+  (stream/SCHEMA.md); stream/mine.jsonl adds what your team sees of its own bee and patch. It can get big: read it with code (tools/stream.py), never
   print it whole. The same stream is on the game's public API, which needs no login: ${apiBase}/events (Server-Sent Events) and
   ${apiBase}/actions?after=<seq>.
 - ${sizeText()} So write readable code, and keep prose in comments (docstrings are strings).
@@ -202,8 +209,8 @@ export function gameBrief({ config, teamName, generation, sessionNo, status, clo
   if (standing) lines.push(`Your fitness so far: ${standing.fitness.toFixed(2)} (#${standing.rank} of ${standing.of}; par is 1.00).`);
   if (head && head.actions) {
     const bee = head.bee;
-    lines.push(`So far: ${n0(head.actions)} actions. Your bee: ${bee.asks} asks, ${bee.feeds} feeds, ${bee.nectar} nectar. ` +
-      `Your cosmos: ${head.cosmos.feeds} feeds from ${head.cosmos.bees} bee${head.cosmos.bees === 1 ? "" : "s"}; your orchid: ${head.orchid.feeds} feeds from ${head.orchid.bees}.`);
+    lines.push(`So far: ${n0(head.actions)} actions. Your bee: ${bee.asks} asks, ${bee.feeds} feeds, ${bee.nectar} nectar${bee.errors ? `, ${bee.errors} errors` : ""}. ` +
+      `Your patch: ${head.patch.feeds} feeds from ${head.patch.bees} bee${head.patch.bees === 1 ? "" : "s"}.`);
   }
   if (budgets) lines.push(`Your change budgets now: ${KINDS.map((k) => `${k} ${n0(budgets[k].available)} of ${n0(budgets[k].cap)} (+${n0(budgets[k].perMinute)}/min)`).join(", ")}.`);
   if (scaffold?.file) lines.push(`Your scaffold ${scaffold.file}: ${scaffold.state}${scaffold.restarts ? `, ${scaffold.restarts} restart${scaffold.restarts > 1 ? "s" : ""}` : ""}; ` +

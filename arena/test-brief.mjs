@@ -25,8 +25,10 @@ check("system: fair play allows reading the public API, nothing else", /except t
 check("system: RULES.md in full (the continuous rules)", /## The garden never stops/.test(sys) && /## What everyone can see/.test(sys));
 check("system: the round timing: 200 ms rounds, queued actions, answers at 150 ms, public limits, late bee replies",
   /exactly 200 ms of game time/.test(sys) && /about 150 rounds/.test(sys) && /QUEUED action runs/.test(sys) && /delivered exactly 150 ms later/.test(sys)
-  && /cosmos 150 ms, orchid 50 ms, bee 25 ms/.test(sys) && /\["leave", c\]/.test(sys) && /isn't interrupted/.test(sys) && /never silenced/.test(sys) && !/secret limit|hidden limit/i.test(sys));
-check("system: this game's settings with per-minute change budgets and caps", /\| cosmos \| 1,100 \| 220 \| 220 \| 150 \|/.test(sys) && /sits out 10 rounds/.test(sys));
+  && /cosmos 150 ms, orchid 50 ms, bee 25 ms/.test(sys) && /\["leave", c\]/.test(sys) && /isn't cut off/.test(sys) && /never silenced/.test(sys) && /tasted\(seen, nectar\) and then forage, in one call/.test(sys)
+  && !/secret limit|hidden limit/i.test(sys));
+check("system: what is public during play (not which flower, not timings, not code)", /every inspection's bee team, patch team, challenge and response/.test(sys) && /NOT which of a patch's two flowers was visited/.test(sys) && /not how long any program took, not code/.test(sys));
+check("system: this game's settings with per-minute change budgets and caps", /\| cosmos \| 1,100 \| 220 \| 220 \| 150 \|/.test(sys) && /busy feeding for the next 10 rounds/.test(sys));
 check("system: no round-based leftovers (MEMORY, turns_left, change turns)", !/MEMORY|turns_left|before each round|turn to change|change turn/.test(sys));
 const devSecret = fs.existsSync(new URL("./runs/.dev-secret", import.meta.url)) ? fs.readFileSync(new URL("./runs/.dev-secret", import.meta.url), "utf8").trim() : "no-secret-file";
 check("system: no secrets, tokens or database URLs", !sys.includes(devSecret) && !/postgres:|Bearer |DATABASE_URL|DEV_LOGIN|\.dev-secret/i.test(sys));
@@ -45,7 +47,7 @@ const fix = lobbyBrief({ config, teamName: "M", generation: 1, maxTurns: 10, car
 check("lobby fix: the errors, and submit", /bee: Syntax error/.test(fix) && /tools\/submit\.py/.test(fix) && /--json/.test(fix));
 
 const budgets = { cosmos: { available: 44, perMinute: 220, cap: 220 }, orchid: { available: 308, perMinute: 1540, cap: 1540 }, bee: { available: 440, perMinute: 2200, cap: 2200 } };
-const head = { actions: 1234, bee: { asks: 40, feeds: 8, nectar: 6 }, cosmos: { feeds: 5, bees: 2 }, orchid: { feeds: 2, bees: 1 } };
+const head = { actions: 1234, bee: { asks: 40, feeds: 8, nectar: 6, errors: 0 }, patch: { visits: 30, feeds: 7, bees: 2 } };
 const gb = gameBrief({ config: { ...config, minutes: 2 }, teamName: "Moonpetal", generation: 2, sessionNo: 1, status: "running", clockMs: 12000, budgets,
   standing: { fitness: 1.05, rank: 2, of: 3 }, head, drafts: ["orchid"], maxTurns: 30, scripts: ["follow.py"] });
 check("game brief: time played, team, session", /Game 2 is running: 0:12 of 2:00 played\. You are team "Moonpetal"\. Session 1\./.test(gb), gb);

@@ -5,8 +5,10 @@ reacts to what happens by changing your programs itself (start it with tools/sca
     import garden
 
     for a in garden.follow():                       # each new action as it happens (waits between them)
-        if a["action"] == "ask" and a["kind"] == "cosmos" and a["patch"] != garden.ME:
-            ...                                     # a rival cosmos answered a["r"] to a["c"]
+        if a["action"] == "ask" and a["patch"] != garden.ME and a.get("r") is not None:
+            ...                                     # a rival flower answered a["r"] to a["c"]
+        if a["action"] == "feed":
+            ...                                     # a["nectar"]: was that flower a cosmos? (same bee and visit as its asks)
     s = garden.status()                             # clock, round, scores; YOUR budgets (exact) and versions
     m = garden.measure("orchid", code)              # free: {"ok", "size", "cost", "available", "errors"}
     r = garden.submit("orchid", code)               # live at once if affordable; else r["ok"] is False and
@@ -17,8 +19,11 @@ reacts to what happens by changing your programs itself (start it with tools/sca
 The change budget is enforced by the server: a submission you can't afford is refused, nothing else happens.
 Everything goes through the game runner (tools/_runner.py): no password or token is ever needed here.
 
-Actions are dicts (stream/SCHEMA.md): seq, atMs, round, bee, patch, kind, visit, action (ask/feed/leave/error),
-c and r for an ask, nectar for a feed. Team ids: garden.ME is yours, garden.TEAMS maps ids to names.
+Actions are dicts (stream/SCHEMA.md): seq, atMs, round, bee, patch, visit, action (ask/feed/leave/error), c and r for
+an ask, nectar for a feed. Which of a patch's two flowers was visited ("kind") is public only once the game is over;
+during play you see it at your own patch only (mine()). A feed's nectar is public, though: it tells what that one
+flower was, and the asks of the same visit (same bee, same visit number) came from it. Team ids: garden.ME is yours,
+garden.TEAMS maps ids to names.
 """
 import json
 import os
@@ -48,6 +53,11 @@ def name(team_id):
 
 
 # ---------------------------------------------------------------- the stream
+
+def mine():
+    """Your own bee's and patch's actions as your team sees them (with kind, your timings, versions, printouts)."""
+    return _s.mine()
+
 
 def actions(after=0, since_ms=None):
     """Every action so far with seq > after (or from game time since_ms on), oldest first."""

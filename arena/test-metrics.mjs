@@ -32,6 +32,9 @@ act(16100, 31, "A", 3, "B", "cosmos", "feed", { nectar: true });
 act(17000, 32, "A", 4, "B", "orchid", "ask", { c: 8, r: 25, ms: 10 });
 act(17100, 32, "A", 4, "B", "orchid", "leave");
 
+// B's bee is too slow once (the engine records it as an error by the bee).
+act(18000, 33, "B", 5, "A", "orchid", "error", { error: "too slow: no reply within 50 ms", error_by: "bee" });
+
 const programs = [
   { team_id: "A", kind: "cosmos", version: 1, size: 40, distance: null, cost: 0, at_ms: 0 },
   { team_id: "A", kind: "orchid", version: 1, size: 30, distance: null, cost: 0, at_ms: 0 },
@@ -42,11 +45,11 @@ const submits = [{ team_id: "A", kind: "orchid", version: 2, refused: null, sess
 const feeds = [[0, 3], [2, 0]], nectar = [[0, 2], [0, 0]];
 const r = m.finish({ programs, submits, finalFeeds: feeds, finalNectar: nectar });
 
-check("windows: one per 10 s with actions", r.windows.length === 2 && r.windows[0].actions === 8 && r.windows[1].actions === 7, r.windows.map((w) => w.actions));
-check("windows: rounds in each", r.windows[0].rounds === 4 && r.windows[1].rounds === 3);
+check("windows: one per 10 s with actions", r.windows.length === 2 && r.windows[0].actions === 8 && r.windows[1].actions === 8, r.windows.map((w) => w.actions));
+check("windows: rounds in each", r.windows[0].rounds === 4 && r.windows[1].rounds === 4);
 check("precision: nectar per feed", r.windows[0].precision === 0.5 && r.windows[1].precision === 0.5);
 check("nectar per bee-round", r.windows[0].nectarPerBeeRound === 0.125, r.windows[0]);
-check("rival fed rates: cosmos vs orchid visits that ended in a feed", r.windows[0].rivalCosmosFed === 0.5 && r.windows[0].rivalOrchidFed === 0.5 && r.windows[1].rivalOrchidFed === 0.5, r.windows);
+check("rival fed rates: cosmos vs orchid visits that ended in a feed", r.windows[0].rivalCosmosFed === 0.5 && r.windows[0].rivalOrchidFed === 0.5 && r.windows[1].rivalOrchidFed === 0.333, r.windows);
 check("fingerprinting: A's bee repeated challenges 5 and 8", r.teams.A.repeatShare === 0.4 && r.teams.A.distinctChallenges === 3, r.teams.A);
 check("per team: bee precision and fed rates", r.teams.A.precision === 0.667 && r.teams.A.rivalCosmosFed === 1 && r.teams.A.rivalOrchidFed === 0.5, r.teams.A);
 const cp = r.copies.byOrchid.A;
@@ -57,6 +60,8 @@ check("stolen share: orchid answers matching an earlier rival cosmos answer", r.
 check("compute: per flower against budget, timeouts", r.compute["B|cosmos"].timeouts === 1 && r.compute["B|cosmos"].budgetMs === 150 && r.compute["A|orchid"].meanFrac === 0.45, r.compute);
 check("changes: timeline with the session that submitted", r.changes.find((c) => c.kind === "orchid" && c.version === 2)?.session === 1 && r.changes[0].atMs === 0);
 check("final scores from the game's ledgers", r.final.length === 2 && r.final.every((x) => Number.isFinite(x.fitness)));
+const B = r.teams.B;
+check("slots: used (asks + feeds), feeding, missed; too-slow decisions", B.tooSlow === 1 && B.slotsUsed === 4 && B.slotsFeeding === 10 && B.slotsMissed === 33 - 4 - 10, JSON.stringify(B));
 check("windowFor: about 8 windows in round numbers", windowFor(30000) === 10000 && windowFor(120000) === 15000 && windowFor(1800000) === 300000);
 
 console.log(failed ? `${failed} check(s) failed` : "all metrics checks passed");

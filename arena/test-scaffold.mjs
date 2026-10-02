@@ -70,7 +70,7 @@ const tool = (...a) => new Promise((resolve) => {
   c.on("close", (status) => resolve({ status, out }));
 });
 
-// The stub scaffold: copy a rival cosmos's answer into the orchid, then try something over budget, then crash once.
+// The stub scaffold: copy a rival flower's answer into the orchid, then try something over budget, then crash once.
 fs.writeFileSync(path.join(dir, "scaffold.py"), `import os, sys
 sys.path.insert(0, "tools")
 import garden
@@ -79,7 +79,7 @@ import helper
 print("scaffold up; me =", garden.ME, "; orchid budget", round(garden.status()["budgets"]["orchid"]["exact"], 1), flush=True)
 seen = 0
 for a in garden.follow(after=0):
-    if a["action"] != "ask" or a["kind"] != "cosmos" or a["patch"] == garden.ME:
+    if a["action"] != "ask" or a["patch"] == garden.ME:
         continue
     seen += 1
     if seen == 1:

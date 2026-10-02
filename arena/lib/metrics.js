@@ -46,6 +46,7 @@ export class GameMetrics {
     this.flowerMs = new Map();      // "team|kind" -> [ms]
     this.answers = new Map();       // "team|kind" -> { n, nodes, edges, chars, graphs }: what answers looked like (effort)
     this.beeMs = new Map();         // team -> [ms a bee took to decide]
+    this.slots = new Map();         // team -> { asks, feeds, tooSlow, errors }: slots used, and decisions that came too late
     this.timeouts = new Map();
     this.actions = 0;
     this.lastMs = 0;
@@ -89,6 +90,10 @@ export class GameMetrics {
       this.visits.set(vk, v);
       if (rival) { if (a.kind === "cosmos") { s.rival.cosmosVisits++; bx.rivalCosmosVisits++; } else { s.rival.orchidVisits++; bx.rivalOrchidVisits++; } }
     }
+    const sl = this.slots.get(bee) || this.slots.set(bee, { asks: 0, feeds: 0, tooSlow: 0, errors: 0 }).get(bee);
+    if (a.action === "ask") sl.asks++;
+    if (a.action === "feed") sl.feeds++;
+    if (a.action === "error") { if (/too slow/i.test(a.error || "")) { sl.tooSlow++; s.tooSlow = (s.tooSlow || 0) + 1; } else sl.errors++; }
     const bms = a.bee_ms ?? a.beeMs;
     if (bms != null) (this.beeMs.get(bee) || this.beeMs.set(bee, []).get(bee)).push(Number(bms));
     if (a.action === "ask") {
@@ -191,7 +196,7 @@ export class GameMetrics {
         stolenShare: r3(s.orchidAsks ? s.stolen / s.orchidAsks : null), twinShare: r3(s.orchidAsks ? s.twin / s.orchidAsks : null),
         cosmosCompute: r3(comp.cosmos?.length ? comp.cosmos.reduce((a, b) => a + b, 0) / comp.cosmos.length : null),
         orchidCompute: r3(comp.orchid?.length ? comp.orchid.reduce((a, b) => a + b, 0) / comp.orchid.length : null),
-        flowerErrors: s.flowerErrors, beeErrors: s.beeErrors,
+        flowerErrors: s.flowerErrors, beeErrors: s.beeErrors, tooSlow: s.tooSlow || 0,
         fitness: Object.fromEntries(fit.map((x) => [x.teamId, r3(x.fitness)])), cumFitness: Object.fromEntries(cum.map((x) => [x.teamId, r3(x.fitness)])),
       });
       for (const id of this.ids) {
@@ -217,6 +222,15 @@ export class GameMetrics {
         rivalCosmosFed: r3(rcv ? rcf / rcv : null), rivalOrchidFed: r3(rov ? rof / rov : null), gap: r3(rcv && rov ? rcf / rcv - rof / rov : null),
         repeatShare: r3(asks ? repeats / asks : null), distinctChallenges: this.askedBy.get(id)?.size ?? 0,
       });
+    }
+    // Slots: a bee has one per round; it uses one per ask or feed and sits out feedCost rounds after a feed. The rest
+    // are missed (nothing queued as the round started: a slow decision, or a reply that gave no next challenge).
+    const feedCost = this.config.feedCost ?? 0;
+    for (const id of this.ids) {
+      const sl = this.slots.get(id) || { asks: 0, feeds: 0, tooSlow: 0, errors: 0 };
+      const used = sl.asks + sl.feeds, sitting = sl.feeds * feedCost;
+      const missed = Math.max(0, this.maxRound - used - sitting);
+      Object.assign(perTeam[id], { slotsUsed: used, slotsFeeding: sitting, slotsMissed: missed, missedShare: r3(this.maxRound ? missed / this.maxRound : null), tooSlow: sl.tooSlow, beeErrors: sl.errors });
     }
     // Copies: per orchid team.
     const copies = {};

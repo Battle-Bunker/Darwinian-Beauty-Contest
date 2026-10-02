@@ -89,9 +89,10 @@ The runner appends new actions about once a second while the game runs; a line i
 |---|---|
 | seq | the action's number: 1, 2, 3, ... |
 | atMs | game time when it happened, in milliseconds |
-| round | the round it happened in (a round is one turn for every bee that isn't feeding) |
+| round | the round it happened in (a round is 200 ms of game time: one action slot for every bee) |
 | bee | the team id of the bee |
-| patch, kind | the team id of the patch, and which of its flowers: cosmos or orchid |
+| patch | the team id of the patch |
+| kind | which of the patch's two flowers, cosmos or orchid: during play only at your own patch (mine.jsonl), for everyone once the game is over. A feed's \`nectar\` is public and tells what that one flower was: the asks of the same visit (same \`bee\` and \`visit\`) came from it |
 | visit | the bee's visit number: a visit is everything one bee does at one flower until it moves on |
 | action | ask, feed, leave or error |
 | c, r, ms, after | ask: the challenge, the response (null if the flower failed: see error), how long the flower took in ms, true if asked after feeding |

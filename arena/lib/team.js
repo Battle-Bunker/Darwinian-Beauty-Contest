@@ -62,8 +62,10 @@ export async function runtimeTest(api, tok, g, kind, code, config, flowers = nul
       if (e.status !== 409 || !flowers?.cosmos?.trim() || !flowers?.orchid?.trim()) throw e;
       t = await api.try(tok, g, "bee", code, undefined, flowers); // no flowers submitted yet: forage the files'
     }
-    const probs = (t.problems || []).filter((p) => p.kind === "bee").map((p) => p.error);
-    const errs = (t.actions || []).filter((a) => a.action === "error");
+    // Too slow is not a failure: a slow bee loses slots but plays on (try.py reports it).
+    const slow = (x) => /too slow/i.test(String(x || ""));
+    const probs = (t.problems || []).filter((p) => p.kind === "bee" && !slow(p.error)).map((p) => p.error);
+    const errs = (t.actions || []).filter((a) => a.action === "error" && !slow(a.error));
     if (probs.length) return [`runtime test (your bee foraging your own two flowers): ${probs[0]}`];
     if (errs.length) return [`runtime test: ${errs.length} of ${t.actions.length} actions were errors, e.g. ${errs[0].error}`];
     return [];
@@ -189,8 +191,12 @@ export function requestHandler(ctx) {
           const acts = t.actions || [];
           const by = (a) => acts.filter((x) => x.action === a).length;
           const probs = (t.problems || []).map((p) => `${p.kind}: ${p.error}`);
-          out = { ok: !probs.some((p) => p.startsWith("bee")) && !by("error"), rounds: t.rounds, feeds: t.feeds, nectar: t.nectar, problems: probs, actions: acts.slice(0, 200),
-            text: `${t.rounds ?? "?"} rounds in a garden of just your own two flowers: ${by("ask")} asks, ${t.feeds} feeds (${t.nectar} nectar), ${by("leave")} leaves, ${by("error")} errors.` +
+          const slowN = acts.filter((a) => a.action === "error" && /too slow/i.test(a.error || "")).length;
+          const ms = acts.map((a) => a.beeMs).filter((x) => x != null).sort((a, b) => a - b);
+          out = { ok: !probs.some((p) => p.startsWith("bee") && !/too slow/i.test(p)) && by("error") === slowN, rounds: t.rounds, feeds: t.feeds, nectar: t.nectar, problems: probs, tooSlow: slowN, actions: acts.slice(0, 200),
+            text: `${t.rounds ?? "?"} rounds in a garden of just your own two flowers: ${by("ask")} asks, ${t.feeds} feeds (${t.nectar} nectar), ${by("leave")} leaves, ${by("error")} errors` +
+              `${slowN ? ` (${slowN} decisions too slow: each costs a slot)` : ""}.` +
+              (ms.length ? ` Decision time: median ${ms[Math.floor(ms.length / 2)].toFixed(1)} ms, slowest ${ms[ms.length - 1].toFixed(1)} ms (limit ${config.budgets?.bee?.ms ?? "?"} ms).` : "") +
               (probs.length ? `\nProblems:\n- ${probs.join("\n- ")}` : "") +
               `\nFirst actions:\n` + acts.slice(0, 12).map((a) => `  ${a.kind} ${a.action}${a.action === "ask" ? ` c=${JSON.stringify(a.c).slice(0, 40)} r=${JSON.stringify(a.r).slice(0, 40)}` : ""}${a.action === "feed" ? ` nectar=${a.nectar}` : ""}${a.error ? ` error: ${a.error.slice(0, 80)}` : ""}${a.log ? ` printed: ${a.log.trim().slice(0, 60)}` : ""}`).join("\n") +
               `\n(--json for every action)` };

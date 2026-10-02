@@ -48,12 +48,13 @@ const viewFor = (me) => ({
 // A fake public stream: pages of actions.
 const acts = [];
 const addActs = (n) => { for (let i = 0; i < n; i++) { const seq = acts.length + 1; acts.push({ seq, atMs: seq * 100, round: seq, bee: seq % 2 ? "T1" : "T2", visit: Math.ceil(seq / 4), patch: seq % 3 ? "T2" : "T1",
-  kind: seq % 4 ? "cosmos" : "orchid", action: seq % 5 === 0 ? "feed" : "ask", ...(seq % 5 === 0 ? { nectar: seq % 4 !== 0 } : { c: seq % 7, r: (seq % 7) * 3, ms: 2.5 }) }); } };
+  _kind: seq % 4 ? "cosmos" : "orchid", action: seq % 5 === 0 ? "feed" : "ask", ...(seq % 5 === 0 ? { nectar: seq % 4 !== 0 } : { c: seq % 7, r: (seq % 7) * 3, ms: 2.5 }) }); } };
 addActs(50);
 const stream = new GameStream({ root: path.join(root, AID), gen: 1, gPath: "/x", gameUuid: null, teams: [{ id: "T1", name: "Moonpetal" }, { id: "T2", name: "Show Your Work" }],
-  fetchPage: async (after) => ({ actions: acts.filter((a) => a.seq > after).slice(0, 5000), lastSeq: acts.length, clockMs: acts.length * 100, status: "running" }),
+  // The public view during play: which flower of a patch isn't public.
+  fetchPage: async (after) => ({ actions: acts.filter((a) => a.seq > after).slice(0, 5000).map(({ _kind, ...a }) => a), lastSeq: acts.length, clockMs: acts.length * 100, status: "running" }),
   // ?mine=1 with a team's token: its own bee's actions and those at its patch, with its private fields.
-  fetchMine: async (tok, after) => { const me = tok.replace("tok-", ""); return { actions: acts.filter((a) => a.seq > after && (a.bee === me || a.patch === me)).map((a) => ({ ...a, ...(a.bee === me ? { beeMs: 3, log: "hi" } : {}), ...(a.patch === me && a.ms ? { flowerVersion: 1 } : {}) })) }; } }).load();
+  fetchMine: async (tok, after) => { const me = tok.replace("tok-", ""); return { actions: acts.filter((a) => a.seq > after && (a.bee === me || a.patch === me)).map(({ _kind, ...a }) => ({ ...a, ...(a.patch === me ? { kind: _kind } : {}), ...(a.bee === me ? { beeMs: 3, log: "hi" } : {}), ...(a.patch === me && a.ms ? { flowerVersion: 1 } : {}) })) }; } }).load();
 await stream.poll();
 
 const apiBase = "http://localhost:4000/api/rooms/R/games/G";
@@ -93,12 +94,13 @@ const mine1 = fs.readFileSync(path.join(dir, "stream/mine.jsonl"), "utf8").trim(
 const mine2 = fs.readFileSync(path.join(dir2, "stream/mine.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
 check("mine.jsonl: only the team's own bee's actions and those at its patch", mine1.length && mine1.every((a) => a.bee === "T1" || a.patch === "T1") && mine2.every((a) => a.bee === "T2" || a.patch === "T2"));
 check("mine.jsonl: with its private fields (timings, printouts), up to date with the stream", mine1.some((a) => a.beeMs === 3 && a.log === "hi") && mine1[mine1.length - 1].seq >= 80);
-check("the shared stream never carries private fields", !/beeMs|"log"/.test(fs.readFileSync(stream.sharedFile, "utf8")));
+check("the shared stream never carries private fields", !/beeMs|"log"|"kind"/.test(fs.readFileSync(stream.sharedFile, "utf8")));
+check("mine.jsonl: which flower was visited, at the team's own patch only", mine1.some((a) => a.patch === "T1" && a.kind) && mine1.every((a) => a.patch === "T1" || !a.kind));
 
 // tools/stream.py on the workspace's stream.
 const py = (...a) => spawnSync("python3", ["tools/stream.py", ...a], { cwd: dir, encoding: "utf8" });
 let r = py("summary");
-check("stream.py summary: per-bee and per-flower counts with names", r.status === 0 && /85 actions/.test(r.stdout) && /\* Moonpetal/.test(r.stdout) && /Show Your Work\s+cosmos/.test(r.stdout), r.stdout + r.stderr);
+check("stream.py summary: per-bee and per-flower counts with names", r.status === 0 && /85 actions/.test(r.stdout) && /\* Moonpetal/.test(r.stdout) && /Show Your Work\s+\?/.test(r.stdout) && /not public during play/.test(r.stdout), r.stdout + r.stderr);
 r = py("summary", "--since", "0.1");
 check("stream.py summary --since: only the recent stretch", r.status === 0 && /26 actions, game time 0:06-0:08/.test(r.stdout), r.stdout + r.stderr);
 r = py("answers", "3");

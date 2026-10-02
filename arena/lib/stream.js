@@ -153,7 +153,7 @@ export class GameStream {
     const b = Math.floor(a.atMs / BUCKET_MS);
     let m = this.buckets.get(b);
     if (!m) this.buckets.set(b, (m = new Map()));
-    const inc = (what) => { const k = `${a.bee}|${a.patch}|${a.kind}|${what}`; m.set(k, (m.get(k) || 0) + 1); };
+    const inc = (what) => { const k = `${a.bee}|${a.patch}|${a.kind ?? "?"}|${what}`; m.set(k, (m.get(k) || 0) + 1); };
     if (this.lastVisit.get(a.bee) !== a.visit) { this.lastVisit.set(a.bee, a.visit); inc("visit"); }
     inc(a.action);
     if (a.action === "feed" && a.nectar) inc("nectar");
@@ -170,30 +170,27 @@ export class GameStream {
     return out;
   }
 
-  /** Compact headline numbers for one team over a stretch of game time (for briefs: a few numbers, no events). */
+  /** Compact headline numbers for one team over a stretch of game time (for briefs: a few numbers, no events). Which
+   * flower of a patch was visited isn't public during play, so the patch counts as one. */
   headline(teamId, fromMs = 0, toMs = Infinity) {
     const c = this.counts(fromMs, toMs);
-    const h = { actions: 0, bee: { visits: 0, asks: 0, feeds: 0, nectar: 0, errors: 0, rivalCosmos: { visits: 0, feeds: 0 }, rivalOrchid: { visits: 0, feeds: 0 } },
-      cosmos: { visits: 0, feeds: 0, bees: new Set(), errors: 0 }, orchid: { visits: 0, feeds: 0, bees: new Set(), errors: 0 } };
+    const h = { actions: 0, bee: { visits: 0, asks: 0, feeds: 0, nectar: 0, errors: 0, rivalFeeds: 0, rivalNectar: 0 }, patch: { visits: 0, feeds: 0, bees: new Set() } };
     for (const [k, n] of c) {
-      const [bee, patch, kind, what] = k.split("|");
+      const [bee, patch, , what] = k.split("|");
       if (["ask", "feed", "leave", "error"].includes(what)) h.actions += n;
       if (bee === teamId) {
         if (what === "visit") h.bee.visits += n;
         if (what === "ask") h.bee.asks += n;
-        if (what === "feed") h.bee.feeds += n;
-        if (what === "nectar") h.bee.nectar += n;
+        if (what === "feed") { h.bee.feeds += n; if (patch !== teamId) h.bee.rivalFeeds += n; }
+        if (what === "nectar") { h.bee.nectar += n; if (patch !== teamId) h.bee.rivalNectar += n; }
         if (what === "error") h.bee.errors += n;
-        if (patch !== teamId && (what === "visit" || what === "feed")) h.bee[kind === "cosmos" ? "rivalCosmos" : "rivalOrchid"][what === "visit" ? "visits" : "feeds"] += n;
       }
       if (patch === teamId) {
-        const f = h[kind];
-        if (what === "visit") f.visits += n;
-        if (what === "feed") { f.feeds += n; f.bees.add(bee); }
-        if (what === "flowerError") f.errors += n;
+        if (what === "visit") h.patch.visits += n;
+        if (what === "feed") { h.patch.feeds += n; h.patch.bees.add(bee); }
       }
     }
-    for (const k of ["cosmos", "orchid"]) h[k].bees = h[k].bees.size;
+    h.patch.bees = h.patch.bees.size;
     return h;
   }
 }
