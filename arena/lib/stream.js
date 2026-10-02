@@ -6,55 +6,32 @@
 //                                                   stream/actions.jsonl, so it is never copied per team.
 //   <WS_ROOT>/<arena>/.runner/g<gen>/actions.jsonl   the runner's private master copy. If a team damages the shared
 //                                                   file through its link, it is rewritten in place from this one.
-//   <workspace>/stream/mine.jsonl                    per team: what only that team sees of the actions involving its
-//                                                   bee or patch ({seq, atMs, beeVersion, flowerVersion, log, error
-//                                                   of an engine leave}; join with actions.jsonl on seq). Read from
-//                                                   the game's tables with the same visibility rule as the API.
+//   <workspace>/stream/mine.jsonl                    per team: the actions of its own bee and at its own patch as that
+//                                                   team sees them (GET .../actions?mine=1 with its token): with what
+//                                                   only it sees during play (its programs' timings and versions, its
+//                                                   bee's printouts). The server decides what that is.
 //
 // Agents read these files with code at their own cadence (tools/stream.py); nothing from the stream goes into a
 // prompt except a few headline numbers (headline()).
 import fs from "node:fs";
 import path from "node:path";
 import { Api } from "./api.js";
-import { all } from "./db.js";
 
 const BUCKET_MS = 5000;
-
-/** What only this team sees of an action during play (the API's actionView with over = false, minus the public
- * fields, which are in actions.jsonl under the same seq): its bee's version and printout, its flowers' version, and
- * the reason the game ended its bee's visit. Null if there's nothing private. */
-export function privateView(row, teamId) {
-  const v = teamView(row, teamId);
-  const out = { seq: v.seq, atMs: v.atMs };
-  for (const k of ["beeVersion", "flowerVersion", "log"]) if (v[k] != null) out[k] = v[k];
-  if (row.error_by === "engine" && v.error) Object.assign(out, { error: v.error, by: v.by });
-  return Object.keys(out).length > 2 ? out : null;
-}
-
-/** An action as one team may see it during play (server/games.js actionView with over = false). */
-export function teamView(row, teamId) {
-  const out = { seq: Number(row.seq), atMs: Number(row.at_ms), round: row.round == null ? null : Number(row.round), bee: row.bee_team, visit: row.visit, patch: row.patch_team, kind: row.kind, action: row.action };
-  if (row.bee_team === teamId) out.beeVersion = row.bee_version;
-  if (row.patch_team === teamId) out.flowerVersion = row.flower_version;
-  if (row.action === "ask") Object.assign(out, { c: row.c, r: row.r, ms: row.ms, ...(row.after ? { after: true } : {}) });
-  if (row.action === "feed") out.nectar = row.nectar;
-  if (row.error && (row.error_by !== "engine" || row.bee_team === teamId)) Object.assign(out, { error: row.error, by: row.error_by });
-  if (row.log && row.bee_team === teamId) out.log = row.log;
-  return out;
-}
 
 export class GameStream {
   /**
    * root: <WS_ROOT>/<arena>; gen: game number; gPath: API path of the game; gameUuid: the game's id (for mine.jsonl);
    * teams: [{id, name}] (participants). fetchPage(after) defaults to the public API (no token).
    */
-  constructor({ root, gen, gPath, gameUuid, teams, fetchPage, log = () => {} }) {
+  constructor({ root, gen, gPath, gameUuid, teams, fetchPage, fetchMine, log = () => {} }) {
     this.sharedFile = path.join(root, ".shared", `g${gen}`, "actions.jsonl");
     this.masterFile = path.join(root, ".runner", `g${gen}`, "actions.jsonl");
     this.gPath = gPath;
     this.gameUuid = gameUuid;
     this.teams = teams;
     this.fetchPage = fetchPage || ((after) => Api.actions(null, gPath, after, 5000));
+    this.fetchMine = fetchMine || ((tok, after) => Api.actions(tok, gPath, after, 5000, { mine: true }));
     this.log = log;
     this.lastSeq = 0;
     this.bytes = 0;
@@ -143,31 +120,30 @@ export class GameStream {
     catch (e) { fs.copyFileSync(this.sharedFile, file); this.log(`stream: could not hard-link (${e.code}); copied instead (it won't update during the session)`); }
   }
 
-  /** Keep <workspace>/stream/mine.jsonl up to date for a team. */
-  trackMine(teamId, file) {
+  /** Keep <workspace>/stream/mine.jsonl up to date for a team (tok: its login, which never leaves the runner). */
+  trackMine(teamId, file, tok) {
     const cur = this.mine.get(teamId);
-    if (cur && cur.file === file) return;
+    if (cur && cur.file === file) { cur.tok = tok || cur.tok; return; }
     let lastSeq = 0;
     if (fs.existsSync(file)) {
       const text = fs.readFileSync(file, "utf8").trimEnd();
       const last = text.slice(text.lastIndexOf("\n") + 1);
       try { lastSeq = last ? JSON.parse(last).seq : 0; } catch { fs.writeFileSync(file, ""); }
     }
-    this.mine.set(teamId, { file, lastSeq });
+    this.mine.set(teamId, { file, lastSeq, tok });
   }
 
   async #pollMine() {
-    if (!this.gameUuid) return;
-    for (const [teamId, m] of this.mine) {
+    for (const [, m] of this.mine) {
+      if (!m.tok) continue;
       for (;;) {
-        const rows = await all(`SELECT * FROM actions WHERE game_id = $1 AND seq > $2 AND (bee_team = $3 OR patch_team = $3) ORDER BY seq LIMIT 5000`,
-          [this.gameUuid, m.lastSeq, teamId]);
+        const page = await this.fetchMine(m.tok, m.lastSeq);
+        const rows = (page.actions || []).filter((a) => a.seq > m.lastSeq);
         if (!rows.length) break;
         fs.mkdirSync(path.dirname(m.file), { recursive: true });
-        const lines = rows.map((r) => privateView(r, teamId)).filter(Boolean).map((x) => JSON.stringify(x));
-        if (lines.length) fs.appendFileSync(m.file, lines.join("\n") + "\n");
-        m.lastSeq = Number(rows[rows.length - 1].seq);
-        if (rows.length < 5000) break;
+        fs.appendFileSync(m.file, rows.map((a) => JSON.stringify(a)).join("\n") + "\n");
+        m.lastSeq = rows[rows.length - 1].seq;
+        if ((page.actions || []).length < 5000) break;
       }
     }
   }

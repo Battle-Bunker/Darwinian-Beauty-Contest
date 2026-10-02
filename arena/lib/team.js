@@ -11,6 +11,7 @@ import { all, one, q } from "./db.js";
 import { BudgetError, callModel, capModel, extractTag, runSession } from "./llm.js";
 import { gameBrief, interviewPrompt, interviewSystem, lobbyBrief, mmss, toolSystem } from "./prompts.js";
 import { Broker } from "./broker.js";
+import { Scaffold } from "./scaffold.js";
 import { TRANSCRIPTS, audit, collect, extOf, killLeftovers, prepareWorkspace, recordViolations, spillDir, writeMinified } from "./workspace.js";
 
 const KINDS = ["clover", "orchid", "bee"];
@@ -228,6 +229,70 @@ export function requestHandler(ctx) {
   };
 }
 
+// ---------------------------------------------------------------- the team's desk: requests for the whole game
+
+/**
+ * One team's link to the runner for a whole game: the broker answering its workspace tools, whichever of its sessions is
+ * running (session requests are gated by that session's live audit), and its scaffold (requests carrying the
+ * scaffold's token). Started before the lobby, stopped (with the scaffold) when the game ends.
+ */
+export class TeamDesk {
+  constructor({ arena, gameRow, persona, entry, gPath, dir, stream, log, apiBase, api = Api, scaffoldLimits = null }) {
+    Object.assign(this, { arena, gameRow, persona, entry, gPath, dir, stream, log, apiBase, api });
+    this.session = null;
+    this.port = new URL(apiBase).port || "80";
+    this.scaffold = new Scaffold({ arena, gameRow, persona, dir, port: this.port, apiBase, clockMs: () => stream?.clockMs ?? 0, log, limits: scaffoldLimits || arena.settings.scaffold || null });
+  }
+
+  async start() {
+    this.tok = await login(this.entry.login_name);
+    const view = await this.api.view(this.tok, this.gPath);
+    this.config = view.game.config;
+    fs.mkdirSync(this.dir, { recursive: true });
+    this.broker = new Broker({ dir: this.dir, log: this.log, handle: requestHandler({
+      api: this.api, tok: this.tok, gPath: this.gPath, config: this.config, teamId: this.entry.team_id, dir: this.dir,
+      sourceOf: (req) => (this.scaffold.owns(req.scaffold) ? "scaffold" : this.session ? "session" : null),
+      gate: (op, source) => (source === "session" ? this.session?.gate(op) ?? null : null),
+      record: (row) => this.record(row),
+      scaffoldOp: (req) => this.scaffoldOp(req),
+    }) }).start();
+    return this;
+  }
+
+  async record(r) {
+    const session = r.source === "session" ? this.session : null;
+    if (session) { session.requests++; if (r.op === "submit" && r.ok) session.submitted.push({ kind: r.kind, version: r.version, cost: r.cost }); }
+    const clockMs = r.clockMs ?? this.stream?.clockMs ?? null;
+    await q(`INSERT INTO arena.requests (session_id, game_id, persona_id, op, kind, code, ok, refused, result, version, cost, clock_ms, source, scaffold_id)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+      [session?.id ?? null, this.gameRow.id, this.persona.id, r.op, r.kind ?? null, r.code ?? null, r.ok ?? null, r.refused ?? null, JSON.stringify(r.result ?? null),
+        r.version ?? null, r.cost ?? null, clockMs, r.source, r.source === "scaffold" ? this.scaffold.rowId : null]);
+    if (r.op === "submit" && r.ok) this.log(`  ${this.persona.name}: ${r.source === "scaffold" ? "SCAFFOLD " : ""}submitted ${r.kind} v${r.version}${r.cost ? ` (cost ${r.cost})` : ""} at ${clockMs != null ? mmss(clockMs) : "?"}`);
+  }
+
+  /** tools/scaffold.py: start | stop | restart | status | logs */
+  async scaffoldOp(req) {
+    const action = String(req.action || "status");
+    const sc = this.scaffold;
+    if (action === "start" || action === "restart") {
+      const file = String(req.file || sc.file || "scaffold.py");
+      if (this.stream?.status === "finished") return { ok: false, text: "the game is over: no scaffold can start now" };
+      const r = await sc.start(file, { action: sc.file && action === "restart" ? "restart" : "start", sessionId: this.session?.id ?? null });
+      return { ok: r.ok, text: r.text, audit: r.found };
+    }
+    if (action === "stop") { const had = !!sc.child; await sc.stop("stopped by the team"); return { ok: true, text: had ? "scaffold stopped" : "no scaffold was running" }; }
+    if (action === "logs") return { ok: true, text: sc.logTail(Math.min(400, Number(req.n) || 40)) };
+    const st = sc.status();
+    return { ok: true, ...st, text: st.file ? `scaffold ${st.file}: ${st.state}${st.pid ? ` (pid ${st.pid}, running ${st.runningForS} s)` : ""}; restarts ${st.restarts}, crashes ${st.crashes}` +
+      `${st.lastExit ? `, last exit ${st.lastExit}` : ""}${st.lastError ? `\naudit: ${st.lastError}` : ""}; CPU ${st.cpuSeconds ?? 0} s, paused ${st.throttledMs} ms for using more than its CPU share` : "no scaffold started in this game" };
+  }
+
+  async stop(reason = "game over") {
+    await this.scaffold.stop(reason);
+    await this.broker?.stop();
+  }
+}
+
 // ---------------------------------------------------------------- one session
 
 /**
@@ -244,7 +309,7 @@ export async function runTeamSession({ desk, arena, gameRow, persona, entry, gPa
   const maxTurns = attempt ? Math.min(15, lim.turns) : lim.turns;
   const apiBase = publicGameUrl(arena.room_short_id, gameRow.game_short_id);
   const status = statusOf(view, teamId);
-  const { dir, ext, drafts } = await prepareWorkspace({ arena, gameRow, persona, view, stream, apiBase, statusText: status.text + "\n(at the start of this session)\n", carry });
+  const { dir, ext, drafts } = await prepareWorkspace({ arena, gameRow, persona, view, stream, apiBase, statusText: status.text + "\n(at the start of this session)\n", carry, tok });
   const teams = (view.participants || view.teams.map((t) => t.id)).length;
   const system = toolSystem(persona, config, dir, { fixed: !!arena.settings.noEvolution, apiBase, teams });
   const scripts = fs.readdirSync(dir).filter((f) => f.endsWith(".py") && !KINDS.includes(f.replace(/\.py$/, "")));
@@ -315,12 +380,12 @@ async function submitted(api, tok, gPath, teamId) {
  * wrote but didn't submit is submitted for it if it passes the checks (writing is free in the lobby). Returns
  * { ready, violation }; a team that isn't ready sits the game out.
  */
-export async function lobby({ arena, gameRow, persona, entry, gPath, stream, log, carry, examples, api = Api }) {
+export async function lobby({ desk, arena, gameRow, persona, entry, gPath, stream, log, carry, examples, api = Api }) {
   const tok = await login(entry.login_name);
   let fix = null, violation = false;
   for (let attempt = 0; attempt <= MAX_LOBBY_FIXES; attempt++) {
     const s = await runTeamSession({
-      arena, gameRow, persona, entry, gPath, stream, phase: "lobby", sessionNo: 0, attempt, log, carry: attempt ? null : carry, api,
+      desk, arena, gameRow, persona, entry, gPath, stream, phase: "lobby", sessionNo: 0, attempt, log, carry: attempt ? null : carry, api,
       buildPrompt: ({ view, maxTurns }) => lobbyBrief({ config: view.game.config, teamName: entry.team_name, generation: gameRow.generation, maxTurns,
         carried: !!carry && Object.values(carry).some(Boolean), fix, examples }),
     });
@@ -344,7 +409,7 @@ export async function lobby({ arena, gameRow, persona, entry, gPath, stream, log
       const r = await api.submit(tok, gPath, k, code);
       if (r.submitted) {
         log(`  ${persona.name}: ${k}.${s.ext} was ${have[k] === null ? "written but not submitted" : "changed after submitting"}; the runner submitted it (v${r.version})`);
-        await q(`INSERT INTO arena.requests (session_id, game_id, persona_id, op, kind, code, ok, refused, result, version, cost, clock_ms) VALUES ($1,$2,$3,'submit',$4,$5,true,'auto: lobby fallback',$6,$7,0,0)`,
+        await q(`INSERT INTO arena.requests (session_id, game_id, persona_id, op, kind, code, ok, refused, result, version, cost, clock_ms, source) VALUES ($1,$2,$3,'submit',$4,$5,true,'auto: lobby fallback',$6,$7,0,0,'runner')`,
           [s.sessionId, gameRow.id, persona.id, k, code, JSON.stringify({ size: r.size }), r.version]);
       } else if (have[k] === null) failures.push(`- ${k}: ${(r.errors || ["not accepted"]).join("; ")}`);
     }

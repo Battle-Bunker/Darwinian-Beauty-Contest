@@ -16,7 +16,7 @@ import path from "node:path";
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "arena-ws-test-"));
 process.env.ARENA_WS_ROOT = root;
 const { prepareWorkspace, audit, allowedUrl, escapesWorkspace, wsDir } = await import("./lib/workspace.js");
-const { GameStream, privateView } = await import("./lib/stream.js");
+const { GameStream } = await import("./lib/stream.js");
 const { migrate, pool, q } = await import("./lib/db.js");
 await migrate();
 let failed = 0;
@@ -51,13 +51,15 @@ const addActs = (n) => { for (let i = 0; i < n; i++) { const seq = acts.length +
   kind: seq % 4 ? "clover" : "orchid", action: seq % 5 === 0 ? "feed" : "ask", ...(seq % 5 === 0 ? { nectar: seq % 4 !== 0 } : { c: seq % 7, r: (seq % 7) * 3, ms: 2.5 }) }); } };
 addActs(50);
 const stream = new GameStream({ root: path.join(root, AID), gen: 1, gPath: "/x", gameUuid: null, teams: [{ id: "T1", name: "Moonpetal" }, { id: "T2", name: "Show Your Work" }],
-  fetchPage: async (after) => ({ actions: acts.filter((a) => a.seq > after).slice(0, 5000), lastSeq: acts.length, clockMs: acts.length * 100, status: "running" }) }).load();
+  fetchPage: async (after) => ({ actions: acts.filter((a) => a.seq > after).slice(0, 5000), lastSeq: acts.length, clockMs: acts.length * 100, status: "running" }),
+  // ?mine=1 with a team's token: its own bee's actions and those at its patch, with its private fields.
+  fetchMine: async (tok, after) => { const me = tok.replace("tok-", ""); return { actions: acts.filter((a) => a.seq > after && (a.bee === me || a.patch === me)).map((a) => ({ ...a, ...(a.bee === me ? { beeMs: 3, log: "hi" } : {}), ...(a.patch === me && a.ms ? { flowerVersion: 1 } : {}) })) }; } }).load();
 await stream.poll();
 
 const apiBase = "http://localhost:4000/api/rooms/R/games/G";
 const p1 = { id: `${AID}/luna`, slug: "luna" }, p2 = { id: `${AID}/tess`, slug: "tess" };
-const { dir } = await prepareWorkspace({ arena, gameRow, persona: p1, view: viewFor("T1"), stream, apiBase, statusText: "Game running: 0:30 of 2:00\n" });
-const { dir: dir2 } = await prepareWorkspace({ arena, gameRow, persona: p2, view: viewFor("T2"), stream, apiBase });
+const { dir } = await prepareWorkspace({ arena, gameRow, persona: p1, view: viewFor("T1"), stream, apiBase, statusText: "Game running: 0:30 of 2:00\n", tok: "tok-T1" });
+const { dir: dir2 } = await prepareWorkspace({ arena, gameRow, persona: p2, view: viewFor("T2"), stream, apiBase, tok: "tok-T2" });
 const has = (f) => fs.existsSync(path.join(dir, f));
 check("workspace: rules, interface, config, README, notebook, status", ["RULES.md", "interface.txt", "config.json", "README.md", "notebook.md", "status.txt"].every(has));
 check("workspace: the notebook comes from the persona", fs.readFileSync(path.join(dir, "notebook.md"), "utf8") === "notes of luna");
@@ -84,12 +86,12 @@ const all = (d) => spawnSync("grep", ["-rIl", "-e", "Bearer", "-e", "postgres://
 check("workspace: no credentials, database URLs or other teams' code", all(dir) === "", all(dir));
 check("workspace: other teams' versions aren't shown during play", !fs.readFileSync(path.join(dir, "history/versions.md"), "utf8").includes("Show Your Work"));
 
-// mine.jsonl: the private view of one team (same rule as the API).
-const row = { seq: 7, at_ms: 700, round: 7, bee_team: "T1", visit: 2, patch_team: "T2", kind: "clover", action: "leave", bee_version: 3, flower_version: 5, error: "a new bee took over", error_by: "engine", log: "hi" };
-const v1 = privateView(row, "T1"), v2 = privateView(row, "T2");
-check("mine.jsonl: your bee's version, printout and engine leave, by seq", v1.seq === 7 && v1.beeVersion === 3 && v1.log === "hi" && v1.by === "engine" && v1.flowerVersion === undefined && v1.c === undefined);
-check("mine.jsonl: the patch owner gets its flower version, not the bee's details", v2.flowerVersion === 5 && v2.beeVersion === undefined && v2.log === undefined && v2.error === undefined);
-check("mine.jsonl: nothing for a team the action doesn't involve", privateView(row, "T3") === null);
+// mine.jsonl: each team's own actions as it sees them (?mine=1 with its token), with its private fields.
+const mine1 = fs.readFileSync(path.join(dir, "stream/mine.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+const mine2 = fs.readFileSync(path.join(dir2, "stream/mine.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+check("mine.jsonl: only the team's own bee's actions and those at its patch", mine1.length && mine1.every((a) => a.bee === "T1" || a.patch === "T1") && mine2.every((a) => a.bee === "T2" || a.patch === "T2"));
+check("mine.jsonl: with its private fields (timings, printouts), up to date with the stream", mine1.some((a) => a.beeMs === 3 && a.log === "hi") && mine1[mine1.length - 1].seq >= 80);
+check("the shared stream never carries private fields", !/beeMs|"log"/.test(fs.readFileSync(stream.sharedFile, "utf8")));
 
 // tools/stream.py on the workspace's stream.
 const py = (...a) => spawnSync("python3", ["tools/stream.py", ...a], { cwd: dir, encoding: "utf8" });

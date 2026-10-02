@@ -16,11 +16,18 @@ REQ = os.path.join(ROOT, ".runner", "req")
 RES = os.path.join(ROOT, ".runner", "res")
 
 
+# A scaffold started by the runner gets a token in its environment: its requests carry it, so the runner knows they
+# come from the team's scaffold (and answers them between sessions too). Sessions have no token.
+SCAFFOLD_TOKEN = os.environ.get("ARENA_SCAFFOLD_TOKEN")
+
+
 def call(op, timeout=180, **args):
     """Send one request to the runner and wait for its answer (a dict). ok is False if it failed."""
     os.makedirs(REQ, exist_ok=True)
     rid = "%d-%s" % (int(time.time() * 1000), uuid.uuid4().hex[:8])
     tmp = os.path.join(REQ, rid + ".tmp")
+    if SCAFFOLD_TOKEN:
+        args["scaffold"] = SCAFFOLD_TOKEN
     with open(tmp, "w") as f:
         json.dump(dict(args, id=rid, op=op), f)
     os.replace(tmp, os.path.join(REQ, rid + ".json"))

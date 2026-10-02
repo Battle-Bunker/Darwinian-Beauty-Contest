@@ -57,7 +57,9 @@ export const Api = {
   submit: (tok, g, kind, code) => api(tok, "POST", `${g}/programs`, { kind, code }, { retries: 1 }),
   try: (tok, g, kind, code, challenges, flowers) => api(tok, "POST", `${g}/try`, { kind, code, challenges, flowers }),
   view: (tok, g) => api(tok, "GET", g),
-  actions: (tok, g, after = 0, limit = 5000) => api(tok, "GET", `${g}/actions?after=${after}&limit=${limit}`),
+  /** mine: only the actions of the team's bee and at its patch, as the team sees them (its token). */
+  actions: (tok, g, after = 0, limit = 5000, { mine = false } = {}) => api(tok, "GET", `${g}/actions?after=${after}&limit=${limit}${mine ? "&mine=1" : ""}`),
+  scores: (g) => api(null, "GET", `${g}/scores`),
   start: (tok, g) => api(tok, "POST", `${g}/start`),
   /** action: pause | resume | finish (the room owner). */
   status: (tok, g, action) => api(tok, "POST", `${g}/status`, { action }, { okStatuses: [409] }),

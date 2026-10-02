@@ -38,7 +38,7 @@ export function readme({ ext, apiBase, examples }) {
 | status.txt | what \`tools/status.py\` said when this session started |
 | notebook.md | your private notes: they carry over to your next sessions and games |
 | stream/actions.jsonl | THE LIVE ACTION STREAM: every bee action in this game so far, one JSON object per line, oldest first. The runner appends new ones about once a second while the game runs. Read it with code; never write to it |
-| stream/mine.jsonl | the actions of your own bee and at your own patch, with what only your team sees (your bee's printouts, your versions) |
+| stream/mine.jsonl | the actions of your own bee and at your own patch as your team sees them (with your programs' timings, versions and your bee's printouts) |
 | stream/teams.json, stream/SCHEMA.md | team ids and names; what a line holds and how to read the stream |
 | tools/ | the tools below |
 | previous-games/ | earlier games in this arena, revealed: every team's final code, the standings, everyone's change timeline, and what the interview panel said about you |
@@ -98,10 +98,11 @@ The runner appends new actions about once a second while the game runs; a line i
 | nectar | feed: true at a clover, false at an orchid |
 | error, by | what went wrong, and whose fault: bee, challenge or flower |
 
-While the game runs nobody sees which versions of other teams' programs played. \`stream/mine.jsonl\` adds what only your
-team sees, one line per action of your bee or at your patch, with the same \`seq\` as in actions.jsonl: \`beeVersion\` (your
-bee), \`flowerVersion\` (your flowers), \`log\` (what your bee printed), and \`error\`/\`by\` when the game ended your bee's
-visit (\`by: "engine"\`: your bee was replaced or restarted mid-visit).
+While the game runs some fields are your own team's business: which versions played (\`beeVersion\`, \`flowerVersion\`), how
+long each program actually took (\`ms\` for a flower's answer, \`beeMs\` for a bee's decision), what a bee printed (\`log\`),
+and why the game ended a bee's visit (\`by: "engine"\`). \`stream/mine.jsonl\` has every action of your bee and at your patch
+as your team sees it, with those fields, under the same \`seq\` as in actions.jsonl. Once the game is over everything is
+public.
 
 \`stream/teams.json\`: \`{"teams": {id: name}, "me": your team id, "participants": [ids]}\`.
 
@@ -136,7 +137,7 @@ export function liveCode(view, teamId) {
  * Write everything a team may see at the start of a session. view: the team's own view of the game (its token).
  * stream: the game's GameStream (links stream/actions.jsonl, tracks stream/mine.jsonl). Returns { dir, ext, drafts }.
  */
-export async function prepareWorkspace({ arena, gameRow, persona, view, stream, apiBase, statusText = null, carry = null }) {
+export async function prepareWorkspace({ arena, gameRow, persona, view, stream, apiBase, statusText = null, carry = null, tok = null }) {
   const dir = wsDir(arena.id, persona.slug);
   const config = view.game.config;
   const ext = extOf(config);
@@ -195,7 +196,7 @@ export async function prepareWorkspace({ arena, gameRow, persona, view, stream, 
   const sdir = path.join(dir, "stream");
   if (stream) {
     stream.linkInto(path.join(sdir, "actions.jsonl"));
-    stream.trackMine(me, path.join(sdir, "mine.jsonl"));
+    stream.trackMine(me, path.join(sdir, "mine.jsonl"), tok);
   }
   write(path.join(sdir, "teams.json"), json({ teams: Object.fromEntries(view.teams.map((t) => [t.id, t.name])), me, participants: view.participants || null }));
   write(path.join(sdir, "SCHEMA.md"), SCHEMA);
