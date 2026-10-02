@@ -415,9 +415,10 @@ async function recentScores(g, participants) {
 /**
  * Actions after `after` (a seq), oldest first, at most `limit`; or with `before`, the last `limit`
  * actions before that seq, still oldest first (before = lastSeq + 1 gives the latest). Public as soon
- * as they happen: whose bee asked at whose patch, in which round, the challenge and the response, every
- * feed and whether it paid, every leave and error. Except, until the game is over:
- * - which of the patch's two flowers it was (`kind`): the patch's own team only;
+ * as they happen: whose bee asked at whose patch, at which of its flowers (`kind`), in which round, the
+ * challenge and the response, every feed and whether it paid, every leave and error. Teams see all of
+ * it; bees never do (a bee is told nothing about whose patch or which flower it is at). Except, until
+ * the game is over:
  * - how long programs actually took (a flower's answer time `ms`, a bee's decision time `beeMs`): your
  *   own only. Every answer reaches the bee at the end of the flower window, so that bees can't tell
  *   flowers apart by timing; the times would undo that if everyone could read them during play;
@@ -444,7 +445,7 @@ export async function viewActions(game, user, { after = 0, before = null, limit 
 
 export function actionView(a, myTeamId, over, revealed) {
   const myBee = over || a.bee_team === myTeamId, myPatch = over || a.patch_team === myTeamId;
-  const out = { seq: a.seq, atMs: a.at_ms, round: a.round, bee: a.bee_team, visit: a.visit, patch: a.patch_team, ...(myPatch ? { kind: a.kind } : {}), action: a.action };
+  const out = { seq: a.seq, atMs: a.at_ms, round: a.round, bee: a.bee_team, visit: a.visit, patch: a.patch_team, kind: a.kind, action: a.action };
   if (myBee) out.beeVersion = a.bee_version;
   if (myPatch) out.flowerVersion = a.flower_version;
   if (myBee && a.bee_ms !== null && a.bee_ms !== undefined) out.beeMs = a.bee_ms;

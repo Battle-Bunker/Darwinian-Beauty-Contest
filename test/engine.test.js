@@ -180,6 +180,22 @@ for (const language of ["python", "typescript"]) {
   });
 }
 
+test("bees are kept in the dark: forage sees only its challenges, the answers, and fed / nectar / flowers", async () => {
+  const bee = `import json
+def forage(seen, visit):
+    print(json.dumps([sorted(visit), sorted(GAME), [len(x) for x in seen]]))
+    return ["ask", 4] if len(seen) < 2 else ["leave", 4]
+`;
+  const out = await play(normalizeConfig({}), [{ ...flowers, bee }, { ...flowers, bee }], 6);
+  const logs = out.actions.filter((a) => a.log).map((a) => JSON.parse(a.log));
+  assert.ok(logs.length > 4);
+  for (const [visitKeys, gameKeys, steps] of logs) {
+    assert.deepEqual(visitKeys, ["fed", "flowers", "nectar"], "nothing about whose patch or which flower");
+    assert.deepEqual(gameKeys, ["challenge_type", "feed_cost", "max_len", "max_nodes", "ms", "response_type", "round_ms"]);
+    assert.ok(steps.every((n) => n === 2), "seen holds [challenge, response] pairs only");
+  }
+});
+
 test("answers can't reveal timing: every answer reaches the bee at the end of the flower window (paced)", async () => {
   // The cosmos works for 120 ms, the orchid answers at once. The bee times the gap between its calls.
   const slowCosmos = `import time\ndef flower(c):\n    ${busy(120)}    return c\n`;

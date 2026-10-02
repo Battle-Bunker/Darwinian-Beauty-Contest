@@ -601,7 +601,6 @@ input[type="range"] { accent-color: var(--honey); }
 .garden-legend li { display: inline-flex; align-items: center; gap: 6px; }
 .lg { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font: 800 12px var(--font-head); border: 1.5px solid #2b2418; background: #fff; color: #2b2418; }
 .lg-err { background: #ffd8a8; border-color: #b0302a; color: #b0302a; }
-.lg-mid { background: var(--surface-2); border-color: var(--ink-soft); color: var(--ink-soft); font-size: 11px; }
 
 /* svg parts */
 .g-hill { fill: var(--hill); }

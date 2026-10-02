@@ -1,6 +1,6 @@
-// What each viewer may see of an action (server/games.js actionView): behaviour is public at once;
-// which of a patch's two flowers was asked, code changes, print output and how long programs actually
-// took are their own team's during play.
+// What each viewer may see of an action (server/games.js actionView): behaviour is public at once,
+// which flower included; code changes, print output and how long programs actually took are their own
+// team's during play.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { actionView } from "../server/games.js";
@@ -48,20 +48,19 @@ test("why the engine ended a visit is the bee's team's business during play", ()
   assert.equal(actionView(slow, "X", false, false).error, "too slow: no reply within 50 ms", "a bee's mistakes are public");
 });
 
-test("which of a patch's two flowers a bee visited is the patch's team's business during play", () => {
+test("which flower a bee asked at is public, during play and after; so are the challenge, response and nectar", () => {
   const ask = row({});
   const feed = row({ action: "feed", c: null, r: null, ms: null, nectar: false });
   for (const a of [ask, feed, row({ action: "leave", c: null, r: null, ms: null })]) {
-    for (const viewer of ["X", "B", undefined]) {
-      const v = actionView(a, viewer, false, false);
-      assert.ok(!("kind" in v), `${a.action} seen by ${viewer}: no kind`);
-      assert.equal(v.patch, "P", "whose patch it was is public");
-      assert.equal(v.bee, "B");
-      assert.equal(v.round, 3);
+    for (const viewer of ["X", "B", "P", undefined]) {
+      for (const over of [false, true]) {
+        const v = actionView(a, viewer, over, over);
+        assert.equal(v.kind, "orchid", `${a.action} seen by ${viewer}${over ? " after the game" : ""}`);
+        assert.equal(v.patch, "P");
+        assert.equal(v.bee, "B");
+        assert.equal(v.round, 3);
+      }
     }
-    assert.equal(actionView(a, "P", false, false).kind, "orchid", "the patch's own team sees which flower");
-    assert.equal(actionView(a, "X", true, false).kind, "orchid", "everyone does once it's over");
-    assert.equal(actionView(a, undefined, true, false).kind, "orchid");
   }
   const seen = actionView(ask, "X", false, false);
   assert.deepEqual([seen.c, seen.r], [5, 7], "the challenge and the response are public");

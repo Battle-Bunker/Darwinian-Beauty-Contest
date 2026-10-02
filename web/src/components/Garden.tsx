@@ -115,7 +115,7 @@ export function Garden({ view, store }: { view: GameView; store: LiveStore }) {
             const [patch, k] = key.split(":");
             const p = layout.pos[patch];
             if (!p) return null;
-            // Which flower was asked is known only at your own patch (and after the game): else the patch glows.
+            // An action without a kind (shouldn't happen) lights up the whole patch.
             if (!k) return <ellipse key={key} cx={p.x} cy={p.y + FLOWER_Y + 2} rx={50 + 5 * (1 - v)} ry={28 + 3 * (1 - v)} className="ask-glow" opacity={(0.32 * v).toFixed(2)} />;
             return <circle key={key} cx={p.x + flowerX(k as FlowerKind)} cy={p.y + FLOWER_Y} r={22 + 4 * (1 - v)} className="ask-glow" opacity={(0.4 * v).toFixed(2)} />;
           })}
@@ -135,7 +135,7 @@ export function Garden({ view, store }: { view: GameView; store: LiveStore }) {
         {status !== "lobby" && <span className="muted small">{store.lastSeq.toLocaleString()} actions so far{status === "running" ? ` · showing game time ${fmtClock(Math.max(0, frame.display))}, a second behind live` : ""}</span>}
         <label className="check small"><input type="checkbox" checked={names} onChange={(e) => setNames(e.target.checked)} /> bee names</label>
       </div>
-      <GardenLegend secret={status === "running" || status === "paused"} />
+      <GardenLegend />
       {status !== "lobby" && view.scores && <BeeTally order={order} teams={teamsById} counts={counts} scores={view.scores} myTeamId={myTeamId} />}
     </div>
   );
@@ -317,11 +317,10 @@ function FeedFx({ f, u }: { f: Fx; u: number }) {
   );
 }
 
-const GardenLegend = memo(function GardenLegend({ secret }: { secret: boolean }) {
+const GardenLegend = memo(function GardenLegend() {
   return (
     <ul className="garden-legend" aria-label="What the garden shows">
       <li><span className="lg-flowers" aria-hidden>✿</span> each patch: its cosmos (left, pays nectar) and its orchid (right, pays nothing)</li>
-      {secret && <li><span className="lg lg-mid" aria-hidden>↕</span> which of a patch's flowers a bee visits is secret until the game ends (but your own patch's), so bees land between the two</li>}
       <li><span className="lg lg-ask">?</span> a bee asks a flower a question</li>
       <li><DropIcon size={16} /> fed and got nectar</li>
       <li><FooledIcon size={16} /> fed at an orchid: fooled</li>

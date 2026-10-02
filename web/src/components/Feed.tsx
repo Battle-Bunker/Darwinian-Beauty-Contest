@@ -1,9 +1,9 @@
 // The live action feed: every bee action as it happens, newest first, filterable by bee team, patch
 // team, flower and action. Reads the page's ring of recent actions a few times a second (or holds
 // still while frozen, so a row can be read while the game races on).
-// During play some fields are only there for your own programs: which flower (`kind`, at your own
-// patch), how long a flower took (`ms`, your flowers) and how long a bee took to decide (`beeMs`, your
-// bee); once the game is over, everyone's. The feed shows what's there and never infers the rest.
+// During play some fields are only there for your own programs: how long a flower took (`ms`, your
+// flowers), how long a bee took to decide (`beeMs`, your bee) and which versions played; once the game is
+// over, everyone's. The feed shows what's there and never infers the rest.
 import { memo, useMemo, useState } from "react";
 import type { Action, Budget, GameView, Kind, Team } from "../types";
 import { loadEarlier, useLiveTick, type LiveStore } from "../lib/live";
@@ -52,8 +52,6 @@ export function Feed({ view, store, base, initial }: { view: GameView; store: Li
   const order = view.participants ?? [];
   const myTeamId = view.me?.teamId ?? null;
   const printsVisible = g.revealed || !!(myTeamId && order.includes(myTeamId));
-  // Which flower is known only at your own patch during play (at every patch once it's over).
-  const kindsVisible = g.status === "finished" || !!(myTeamId && order.includes(myTeamId));
 
   const [f, setF] = useState<Filters>({ ...NONE, ...initial });
   const [frozen, setFrozen] = useState<Action[] | null>(null);
@@ -94,16 +92,11 @@ export function Feed({ view, store, base, initial }: { view: GameView; store: Li
       <div className="feed-filters">
         <label className="feed-filter"><span>Bee</span>{teamSelect(f.bee, (v) => set({ bee: v }), "every bee", "Bee team")}</label>
         <label className="feed-filter"><span>at</span>{teamSelect(f.patch, (v) => set({ patch: v }), "every patch", "Patch team")}</label>
-        {kindsVisible && (
-          <label className="feed-filter" title={g.status === "finished" ? undefined : "Which flower a bee is at is known only at your own patch until the game ends"}>
-            <span>flower</span>
-            <select value={f.kind} onChange={(e) => set({ kind: e.target.value as Filters["kind"], ...(e.target.value && g.status !== "finished" && myTeamId ? { patch: myTeamId } : {}) })} aria-label="Flower">
-              <option value="">{g.status === "finished" ? "both" : "any"}</option>
-              <option value="cosmos">{g.status === "finished" ? "cosmos" : "my cosmos"}</option>
-              <option value="orchid">{g.status === "finished" ? "orchid" : "my orchid"}</option>
-            </select>
-          </label>
-        )}
+        <label className="feed-filter"><span>flower</span>
+          <select value={f.kind} onChange={(e) => set({ kind: e.target.value as Filters["kind"] })} aria-label="Flower">
+            <option value="">both</option><option value="cosmos">cosmos</option><option value="orchid">orchid</option>
+          </select>
+        </label>
         <label className="feed-filter"><span>doing</span>
           <select value={f.action} onChange={(e) => set({ action: e.target.value as ActionFilter })} aria-label="Action">
             {ACTION_FILTERS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}

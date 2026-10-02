@@ -85,7 +85,7 @@ export interface Action {
   bee: string;
   visit: number;
   patch: string;
-  kind?: FlowerKind;        // which of the patch's flowers: your own patch's during play, every one once finished
+  kind?: FlowerKind;        // which of the patch's flowers (always sent; optional only defensively)
   action: ActionKind;
   beeVersion?: number | null;
   flowerVersion?: number | null;

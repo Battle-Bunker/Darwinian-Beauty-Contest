@@ -5,11 +5,10 @@
 // its next patch right after the last action of its previous visit, arriving as its first question
 // there is asked; when it feeds it sits on the patch for the rounds it's out of play.
 //
-// Which of a patch's two flowers a bee is at is secret during play (actions carry `kind` only at your own
-// patch, and for everyone once the game is over). Without it, a bee hovers over the middle of the patch
-// and lands between its two flowers, the same spot whichever flower it is; with it, at the flower
-// itself. Each team's patch has its cosmos on the left and its orchid on the right, and each bee has its
-// own slot on an arc above every patch, so bees visiting the same patch never sit on top of each other.
+// Each team's patch has its cosmos on the left and its orchid on the right; a bee hovers by and lands on
+// the flower it's at (every action says which). Each bee has its own slot on an arc above every patch, so
+// bees visiting the same patch never sit on top of each other. (An action without a kind, which the API
+// shouldn't send, falls back to the middle of the patch.)
 import type { Action, FlowerKind } from "../types";
 import type { LiveStore } from "../lib/live";
 
@@ -84,10 +83,7 @@ export const flowerX = (kind: FlowerKind | undefined) => (kind === "cosmos" ? -F
 /** -0.5..0.5: bee b's place in a row of n. */
 const rowPos = (b: number, n: number) => (n > 1 ? b / (n - 1) - 0.5 : 0);
 
-/**
- * Where a bee hovers while it questions a flower: its slot, pulled toward that flower. When which flower
- * isn't known, in a row above the middle of the patch (its place in the row is the bee's, not the flower's).
- */
+/** Where a bee hovers while it questions a flower: its slot, pulled toward that flower (fallback: above the patch). */
 export function hoverAt(p: Pt, kind: FlowerKind | undefined, b: number, n: number): Pt {
   if (kind === undefined) {
     const u = rowPos(b, n);
@@ -98,7 +94,7 @@ export function hoverAt(p: Pt, kind: FlowerKind | undefined, b: number, n: numbe
   return { x: s.x + (fx - s.x) * 0.38, y: s.y + (fy - s.y) * 0.3 };
 }
 
-/** Where a feeding bee sits: on the flower head (kind unknown: between the two flowers), nudged a little per bee. */
+/** Where a feeding bee sits: on the flower head (fallback: between the two flowers), nudged a little per bee. */
 export function landing(p: Pt, kind: FlowerKind | undefined, b: number, n: number): Pt {
   if (kind === undefined) return { x: p.x + rowPos(b, n) * 14, y: p.y + FLOWER_Y - 8 };
   const s = slot({ x: 0, y: 0 }, b, n);
