@@ -84,8 +84,9 @@ one minute's worth), `minutesByGame`, `session` pacing, `limits`, `maxModel`, `r
    Writing is free. A program file the team wrote but didn't submit is submitted for it if it passes the checks; a team
    still missing a program gets up to 2 short fix sessions, and a team without all three sits the game out.
 3. **Play.** The first in-game sessions start `warmupSeconds` before the owner starts the game, so teams are at their
-   desks when the clock starts. Each team then has sessions back to back (`gapSeconds` apart) while there's more than
-   `endMarginSeconds` of game time left, each capped at `maxMinutes` of real time. Sessions of different teams run at
+   desks when the clock starts. Each team then has sessions back to back while there's more than `endMarginSeconds` of
+   game time left, each capped at `maxMinutes` of real time. The gap between them is `gapSeconds`, doubling after each
+   session that submitted nothing (up to `maxIdleGapSeconds`), since agents often just check the score and stop. Sessions of different teams run at
    the same time, within the concurrency limit. When the clock runs out, the runner stops every running session and
    whatever it started. A submission that arrives after the end is refused by the server and reported as "the game is
    over".
@@ -121,7 +122,8 @@ or running inside the workspace).
 **Tools.** `python3 tools/status.py [--afford N]` (clock, time left, change budgets now with rate and cap and when N nodes
 are affordable, scores for the whole game and the last 5 minutes, versions playing), `tools/check.py <kind> [file]`
 (size, cost now, a quick runtime test), `tools/try.py <kind> [file] [challenges…]` (the game's real runner), and
-`tools/submit.py <kind> [file] [--force]` (live at once; a quick runtime test first). They write a request file into
+`tools/submit.py <kind> [file] [--force]` (live at once; a quick runtime test first: flowers on a few challenges, a bee
+foraging the team's own flowers, or its flower files when none are submitted yet). They write a request file into
 `.runner/req/`; the runner's broker does the call with the team's token and writes the answer back. No credential ever
 enters the workspace or a prompt. Scripts use the same channel: `from _runner import call; call("submit", kind=…, code=…)`.
 `tools/stream.py` reads the stream (`summary`, `tail`, `answers`, `sql` over a local SQLite copy in `cache/`; as a
@@ -131,7 +133,8 @@ library, `Stream().actions(since_ms=…)`, `.follow()`, `.mine()`).
 `GET …/actions` returns) is hard-linked into every workspace, so it costs one file however many teams play. The runner
 also keeps a private master copy (`.runner/g<N>/`); if a team damages the shared file through its link, it is rewritten
 in place from the master (and writing to `stream/` is a fair-play violation). Agents may also read the game's public API
-directly (no login): `GET <api>/rooms/<room>/games/<game>/events?after=<seq>` (SSE), `…/actions?after=<seq>&limit=…`.
+directly (no login): `GET <api>/rooms/<room>/games/<game>/events?after=<seq>` (SSE), `…/actions?after=<seq>&limit=…`,
+`…/scores` (clock, round, scores and ledgers; cheap to poll).
 Briefs carry only headline numbers (time, fitness and rank, a few counts, budgets), never actions.
 
 ## Sessions
@@ -198,8 +201,9 @@ eight per game, at least 10 s):
 - **stolen-face / twin** orchid answers (equal to an earlier answer of a rival clover / of its own clover to the same
   challenge)
 - **copy latency**: for each answer (c, r) a clover gave, the time until a rival orchid first answered r to c (only if it
-  hadn't before), and how many of those came from an orchid version that went live after the clover's answer appeared
-  (the stronger signal: with small answer spaces some matches are coincidences)
+  hadn't before), and how many of those came from an orchid version that went live after the clover's answer appeared.
+  Only those are copies: other matches are convergence (an orchid running the same rule as a rival clover, e.g. a twin
+  of its own clover when two teams chose the same rule) or coincidence in a small answer space
 - fitness per window and cumulative; per team: bee precision, fed rates, repeat share, feeds received
 - the **change timeline** (every version: game time, size, node edits, cost, the session that submitted it), **flower
   compute against budget** (mean, p90, max, timeouts; bees' compute isn't recorded by the server), sessions (start

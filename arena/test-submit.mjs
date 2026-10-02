@@ -33,7 +33,7 @@ const SECRET = "tok-SECRET-1234567890";
 const calls = [];
 const config = { language: "python", minutes: 2, feedCost: 10, challengeType: "int", responseType: "int", maxLen: 64, maxNodes: 512,
   budgets: { clover: { size: 1100, perMinute: 220, cap: 220, ms: 150 }, orchid: { size: 2200, perMinute: 1540, cap: 1540, ms: 50 }, bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 25 } } };
-let gameOver = false;
+let gameOver = false, noFlowersYet = false;
 const fakeApi = {
   view: async (tok) => { calls.push(["view", tok]); return {
     game: { status: "running", clockMs: 30000, endMs: 120000, round: 1234, config },
@@ -43,7 +43,8 @@ const fakeApi = {
     scores: [{ teamId: "T1", fitness: 1.2 }, { teamId: "T2", fitness: 0.8 }], recent: { fromMs: 0, toMs: 30000, scores: [{ teamId: "T1", fitness: 1.2 }, { teamId: "T2", fitness: 0.8 }] },
   }; },
   check: async (tok, g, kind, code) => { calls.push(["check", tok, kind, code]); return { ok: true, size: 42, budget: config.budgets[kind], distance: 3, cost: 3, available: 120, minified: code, errors: [] }; },
-  try: async (tok, g, kind, code, challenges) => { calls.push(["try", tok, kind, code]);
+  try: async (tok, g, kind, code, challenges, flowers) => { calls.push(["try", tok, kind, code, flowers]);
+    if (kind === "bee" && noFlowersYet && !flowers) throw Object.assign(new Error("Your bee needs flowers to visit"), { status: 409 });
     if (kind === "bee") return { rounds: 300, feeds: 20, nectar: 10, problems: [], actions: [{ kind: "clover", action: "ask", c: 1, r: 2 }, { kind: "clover", action: "feed", nectar: true }] };
     if (code.includes("CRASH")) return { results: (challenges || [1]).map((c) => ({ c, r: null, error: "ZeroDivisionError: division by zero", ms: 1 })) };
     return { results: (challenges || [1]).map((c) => ({ c, r: c * 3 + 1, ms: 1.5 })) }; },
@@ -60,7 +61,7 @@ fs.writeFileSync(path.join(ws, "orchid.py"), "def flower(c):\n    return 1 // 0 
 fs.writeFileSync(path.join(ws, "bee.py"), "def forage(seen, visit):\n    return 'feed' if seen else ['ask', 1]\n");
 const records = [];
 let gateRefusal = null;
-const broker = new Broker({ dir: ws, handle: requestHandler({ api: fakeApi, tok: SECRET, gPath: "/rooms/R/games/G", config, teamId: "T1",
+const broker = new Broker({ dir: ws, handle: requestHandler({ api: fakeApi, tok: SECRET, gPath: "/rooms/R/games/G", config, teamId: "T1", dir: ws,
   gate: () => gateRefusal, record: async (r) => records.push(r) }) }).start();
 // Async: the broker answers on this process's event loop.
 const tool = (...a) => new Promise((resolve) => {
@@ -90,6 +91,11 @@ r = await tool("tools/status.py", "--afford", "1000");
 check("status: clock, time left, budgets with rate and cap", /Game running: 0:30 of 2:00 played \(1:30 left\), round 1234/.test(r.stdout) && /clover\s+120 available, \+220\/min, cap 220/.test(r.stdout), r.stdout);
 check("status: when a change of N nodes is affordable", /clover.*1,000 nodes: never \(cap 220/.test(r.stdout) && /orchid.*1,000 nodes: in 0:09/.test(r.stdout) && /bee.*1,000 nodes: now/.test(r.stdout), r.stdout);
 check("status: whole-game and last-5-minutes scores, and the versions playing", /Scores, whole game: 1\. Moonpetal \(you\) 1\.20/.test(r.stdout) && /bee v2 \(live since 0:20/.test(r.stdout), r.stdout);
+noFlowersYet = true;
+r = await tool("tools/submit.py", "bee");
+const beeTry = calls.filter((c) => c[0] === "try" && c[2] === "bee").pop();
+check("submit (bee, no flowers submitted yet): the runtime test forages the workspace's flower files", r.status === 0 && beeTry?.[4]?.clover?.includes("c * 3 + 1"), r.stdout);
+noFlowersYet = false;
 gameOver = true;
 r = await tool("tools/submit.py", "clover");
 check("submit after the game ended: refused cleanly", r.status === 1 && /the game is over/.test(r.stdout) && records.some((x) => x.refused === "game over"), r.stdout);

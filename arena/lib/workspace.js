@@ -72,6 +72,8 @@ The game's public API needs no login, and you may read it (GET only) at ${apiBas
 - \`GET ${apiBase}/events?after=<seq>\`: Server-Sent Events, lines \`data: {...}\` with \`{actions, lastSeq, clockMs}\` as they
   happen (a few times a second), \`{clockMs, lastSeq}\` when nothing is new, \`{version}\` when the game's public state changed
 - \`GET ${apiBase}/actions?after=<seq>&limit=<n ≤ 5000>\`: a page of actions, \`{actions, lastSeq, clockMs, status}\`
+- \`GET ${apiBase}/scores\`: just the live numbers, cheap to poll: clock, round, scores (whole game and last 5 minutes),
+  and the feed and nectar ledgers (who fed where, who got nectar where)
 - \`GET ${apiBase}\`: the game view (status, clock, scores)
 
 stream/actions.jsonl holds the same actions, so you rarely need this. Read at most a few times a second.

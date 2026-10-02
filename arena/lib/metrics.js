@@ -235,10 +235,13 @@ export class GameMetrics {
     }).sort((a, b) => a.atMs - b.atMs || a.team.localeCompare(b.team));
     const durationMs = this.lastMs;
     const totalCopies = this.copies.filter((x) => this.ids.includes(x.orchid));
+    const verAt = (x) => programs.find((p) => p.team_id === x.orchid && p.kind === "orchid" && p.version === x.version)?.at_ms;
+    const attributed = totalCopies.filter((x) => x.version != null && Number(verAt(x) ?? 0) > x.clovAtMs);
     return {
       windowMs: this.windowMs, durationMs, actions: this.actions, rounds: this.maxRound, actionsPerSec: r3(durationMs ? this.actions / (durationMs / 1000) : null),
       roundsPerSec: r3(durationMs ? this.maxRound / (durationMs / 1000) : null), windows, teams: perTeam,
-      copies: { cloverAnswers: this.clovers, copied: totalCopies.length, medianLatencyMs: median(totalCopies.map((x) => x.latencyMs)), byOrchid: copies },
+      copies: { cloverAnswers: this.clovers, copied: totalCopies.length, medianLatencyMs: median(totalCopies.map((x) => x.latencyMs)),
+        afterNewVersion: attributed.length, medianLatencyAfterNewVersionMs: median(attributed.map((x) => x.latencyMs)), byOrchid: copies },
       compute, changes,
       final: finalFeeds ? score(this.ids, finalFeeds, finalNectar).map((x) => ({ team: name(x.teamId), teamId: x.teamId, fitness: r3(x.fitness), allure: r3(x.allure), forage: r3(x.forage), feedsReceived: x.feedsReceived, nectarCollected: x.nectarCollected })) : null,
     };

@@ -7,7 +7,8 @@
 //
 //   minutesByGame  game N lasts minutesByGame[N-1] minutes (the last entry repeats); else config.minutes
 //   session        warmupSeconds: the first in-game sessions start this long before the game does;
-//                  gapSeconds: pause between one team's sessions; endMarginSeconds: no new session with less game
+//                  gapSeconds: pause between one team's sessions, doubling after each session that submitted nothing
+//                  (up to maxIdleGapSeconds; back to gapSeconds after a submission); endMarginSeconds: no new session with less game
 //                  time left than this; maxMinutes: wall-clock cap of one session (the game ending stops it anyway)
 //   limits         per-model session limits (turns, usd), optionally per phase: { lobby: {...}, game: {...} }
 //   maxModel       "sonnet": calls that would use opus (judges, breeders) use sonnet instead
@@ -15,7 +16,7 @@
 //   noEvolution    fixed membership (no retirements or breeding)
 //   examples       a folder copied into every workspace as examples/ (and named in the lobby brief)
 
-export const DEFAULT_SESSION = { warmupSeconds: 8, gapSeconds: 5, endMarginSeconds: 10, maxMinutes: 6 };
+export const DEFAULT_SESSION = { warmupSeconds: 8, gapSeconds: 5, maxIdleGapSeconds: 20, endMarginSeconds: 10, maxMinutes: 6 };
 
 export const PRESETS = {
   pilot: {
@@ -24,7 +25,7 @@ export const PRESETS = {
     minutesByGame: [0.5, 1, 2],
     lineup: [["luna", "sonnet"], ["grace", "haiku"], ["tess", "sonnet"]],
     maxModel: "sonnet",
-    session: { warmupSeconds: 8, gapSeconds: 3, endMarginSeconds: 8, maxMinutes: 5 },
+    session: { warmupSeconds: 8, gapSeconds: 3, maxIdleGapSeconds: 20, endMarginSeconds: 8, maxMinutes: 5 },
     limits: { sonnet: { turns: 30, usd: 0.9 }, haiku: { turns: 30, usd: 0.45 } },
     reserveUsd: 2.5,
   },

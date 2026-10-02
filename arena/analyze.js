@@ -68,6 +68,7 @@ for (const a of arenas) {
       durations.push({ minutes: g.config?.minutes, arena: a.id, gen: g.generation, actionsPerSec: m.actionsPerSec, roundsPerSec: m.roundsPerSec,
         precision: mean(teams.map((t) => t.precision)), gap: mean(teams.map((t) => t.gap)), repeat: mean(teams.map((t) => t.repeatShare)),
         changes: m.changes.filter((c) => c.atMs > 0).length / Math.max(1, teams.length), copies: m.copies?.copied ?? 0, copyLatency: m.copies?.medianLatencyMs,
+        newCopies: m.copies?.afterNewVersion ?? 0, newCopyLatency: m.copies?.medianLatencyAfterNewVersionMs,
         sessions: ss.game / Math.max(1, teams.length), liveSubmits: rq.live, cost: cost.usd, fitSpread: (() => { const f = (m.final || []).map((x) => x.fitness); return f.length ? Math.max(...f) - Math.min(...f) : null; })() });
     }
   }
@@ -101,7 +102,9 @@ for (const a of arenas) {
     table(["team", "model", "fitness", "feeds received / nectar collected", "bee precision", "bee fed at rival clovers / orchids", "gap", "repeat", "distinct challenges", "game sessions", "USD (all sessions)", "requests", "submits ok/refused", "violations"], trows);
     // Copies.
     const cp = m.copies || {};
-    p(`Orchids copying clovers: ${cp.copied ?? 0} copies of ${cp.cloverAnswers ?? 0} distinct clover answers${cp.medianLatencyMs != null ? `, median ${secs(cp.medianLatencyMs)} after the clover's answer first appeared` : ""} (a copy = a rival orchid answering r to c for the first time, after a clover answered r to c).`);
+    p(`Orchids copying clovers: ${cp.copied ?? 0} matches of ${cp.cloverAnswers ?? 0} distinct clover answers${cp.medianLatencyMs != null ? `, median ${secs(cp.medianLatencyMs)} after the clover's answer first appeared` : ""} ` +
+      `(a match = a rival orchid answering r to c for the first time, after a clover answered r to c). ${cp.afterNewVersion ?? 0} came from an orchid version that went live after the clover's answer appeared` +
+      `${cp.medianLatencyAfterNewVersionMs != null ? ` (median ${secs(cp.medianLatencyAfterNewVersionMs)})` : ""}: those are copies; the rest can be convergence (the same rule) or coincidence.`);
     table(["orchid of", "copies", "copied from", "median latency", "fastest 10%", "by a version that went live after the clover's answer", "median latency of those"],
       Object.values(cp.byOrchid || {}).map((o) => [o.name, o.copies, o.from.join(", "), secs(o.medianLatencyMs), secs(o.p10LatencyMs), o.afterNewVersion, secs(o.medianLatencyAfterNewVersionMs)]));
     // Changes.
@@ -154,9 +157,9 @@ for (const a of arenas) {
 if (durations.length) {
   p("## Games by duration");
   p("Per game, averaged over teams where it's per team. Change budgets accrue per minute of game time, so short games allow little or no change.");
-  table(["minutes", "arena game", "actions/s", "rounds/s", "bee precision", "rival clover−orchid fed gap", "repeat share", "in-game versions per team", "orchid copies (median latency)", "game sessions per team", "in-game submits", "fitness spread", "USD"],
+  table(["minutes", "arena game", "actions/s", "rounds/s", "bee precision", "rival clover−orchid fed gap", "repeat share", "in-game versions per team", "orchid matches of earlier clover answers (median latency)", "of those, by an orchid version newer than the answer (median latency)", "game sessions per team", "in-game submits", "fitness spread", "USD"],
     durations.sort((x, y) => x.minutes - y.minutes || x.gen - y.gen).map((d) => [d.minutes, `${d.arena} ${d.gen}`, f2(d.actionsPerSec), f2(d.roundsPerSec), f2(d.precision), f2(d.gap), pc(d.repeat), f2(d.changes),
-      `${d.copies} (${secs(d.copyLatency)})`, f2(d.sessions), d.liveSubmits, f2(d.fitSpread), f2(d.cost)]));
+      `${d.copies} (${secs(d.copyLatency)})`, `${d.newCopies} (${secs(d.newCopyLatency)})`, f2(d.sessions), d.liveSubmits, f2(d.fitSpread), f2(d.cost)]));
 }
 
 // ---------- ideas, breeders, audit

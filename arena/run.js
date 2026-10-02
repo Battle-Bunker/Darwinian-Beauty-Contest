@@ -242,7 +242,7 @@ async function playGame(arena, ctx, log) {
     const p = personas.find((x) => x.id === e.persona_id);
     if (barred.has(p.id)) return;
     let no = ((await one("SELECT max(no)::int AS n FROM arena.sessions WHERE game_id = $1 AND persona_id = $2", [gameRow.id, p.id]))?.n || 0) + 1;
-    let penaltyUntil = 0;
+    let penaltyUntil = 0, idle = 0;
     while (!over()) {
       if (isPaused() || stream.status === "paused") { await sleep(1000); continue; }
       if (Date.now() < penaltyUntil) { await sleep(1000); continue; }
@@ -267,6 +267,7 @@ async function playGame(arena, ctx, log) {
         log(`  ${p.name}: session ${no} ${s.killed ? `stopped (${s.killed})` : "ended"} at ${mmss(stream.clockMs)}: $${s.cost.toFixed(2)}${s.cost && s.killed ? " (estimated)" : ""}, ${s.requests} requests, ` +
           `${s.submitted.length ? `submitted ${s.submitted.map((x) => `${x.kind} v${x.version}`).join(", ")}` : "nothing submitted"}`);
         if (s.violation) penaltyUntil = Date.now() + S.maxMinutes * 60_000; // a violation costs the team its next session
+        idle = s.submitted.length ? 0 : idle + 1; // sessions that change nothing come less often
       } catch (err) {
         if (err instanceof BudgetError) { budgetStop = err.message; log(`  no more sessions: ${err.message}`); break; }
         log(`  ${p.name}: session ${no} failed: ${err.stack || err.message}`);
@@ -275,7 +276,7 @@ async function playGame(arena, ctx, log) {
         state.controls.delete(p.id);
       }
       no++;
-      if (!over()) await sleep(S.gapSeconds * 1000);
+      if (!over()) await sleep(Math.min(S.gapSeconds * 2 ** idle, Math.max(S.gapSeconds, S.maxIdleGapSeconds ?? 20)) * 1000);
     }
   };
 

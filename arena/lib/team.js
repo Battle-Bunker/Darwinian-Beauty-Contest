@@ -45,8 +45,9 @@ function samples(t, maxLen) {
 }
 export const sampleChallenges = (config) => samples(parseType(config.challengeType), config.maxLen);
 
-/** A quick runtime test on the game's real runner: [] when fine, else short error strings. */
-export async function runtimeTest(api, tok, g, kind, code, config) {
+/** A quick runtime test on the game's real runner: [] when fine, else short error strings. A bee forages the team's
+ * submitted flowers, or (before any are submitted) `flowers`: the workspace's flower files. */
+export async function runtimeTest(api, tok, g, kind, code, config, flowers = null) {
   try {
     if (kind !== "bee") {
       const t = await api.try(tok, g, kind, code, sampleChallenges(config));
@@ -54,7 +55,12 @@ export async function runtimeTest(api, tok, g, kind, code, config) {
       const bad = (t.results || []).filter((r) => r.error);
       return bad.length ? [`runtime test: ${bad.slice(0, 3).map((r) => `flower(${JSON.stringify(r.c).slice(0, 40)}) -> ${r.error}`).join("; ")}`] : [];
     }
-    const t = await api.try(tok, g, "bee", code);
+    let t;
+    try { t = await api.try(tok, g, "bee", code); }
+    catch (e) {
+      if (e.status !== 409 || !flowers?.clover?.trim() || !flowers?.orchid?.trim()) throw e;
+      t = await api.try(tok, g, "bee", code, undefined, flowers); // no flowers submitted yet: forage the files'
+    }
     const probs = (t.problems || []).filter((p) => p.kind === "bee").map((p) => p.error);
     const errs = (t.actions || []).filter((a) => a.action === "error");
     if (probs.length) return [`runtime test (your bee foraging your own two flowers): ${probs[0]}`];
@@ -127,7 +133,9 @@ export function statusOf(view, teamId, { afford = null } = {}) {
  * record(row) }. Results carry `text` (what the tool prints) plus the structured fields.
  */
 export function requestHandler(ctx) {
-  const { api = Api, tok, gPath, config, teamId, gate = () => null, record = async () => {} } = ctx;
+  const { api = Api, tok, gPath, config, teamId, gate = () => null, record = async () => {}, dir = null } = ctx;
+  // The workspace's flower files, for testing a bee before any flowers are submitted.
+  const fileFlowers = () => dir ? Object.fromEntries(["clover", "orchid"].map((k) => { try { return [k, fs.readFileSync(path.join(dir, `${k}.${config.language === "typescript" ? "ts" : "py"}`), "utf8")]; } catch { return [k, ""]; } })) : null;
   return async (req) => {
     const op = String(req.op || "");
     const kind = req.kind;
@@ -150,7 +158,7 @@ export function requestHandler(ctx) {
       if (op === "check") {
         const c = await api.check(tok, gPath, kind, req.code);
         const errors = [...(c.errors || [])];
-        if (req.test !== false && !errors.length) errors.push(...(await runtimeTest(api, tok, gPath, kind, req.code, config)));
+        if (req.test !== false && !errors.length) errors.push(...(await runtimeTest(api, tok, gPath, kind, req.code, config, fileFlowers())));
         const out = { ok: !errors.length, kind, size: c.size, budget: c.budget?.size, distance: c.distance, cost: c.cost, available: c.available, minified: c.minified, errors };
         out.text = [`${kind}: ${n0(c.size)} of ${n0(c.budget?.size ?? 0)} nodes.` + (c.available != null ? ` Submitting now would cost ${n0(c.cost)} of the ${n0(c.available)} you have.` : " (lobby: submitting is free)"),
           errors.length ? `Problems:\n- ${errors.join("\n- ")}` : "No problems found."].join("\n");
@@ -159,7 +167,9 @@ export function requestHandler(ctx) {
       }
       if (op === "try") {
         const challenges = Array.isArray(req.challenges) && req.challenges.length ? req.challenges : kind === "bee" ? undefined : sampleChallenges(config);
-        const t = await api.try(tok, gPath, kind, req.code, challenges);
+        let t;
+        try { t = await api.try(tok, gPath, kind, req.code, challenges); }
+        catch (e) { if (kind !== "bee" || e.status !== 409) throw e; t = await api.try(tok, gPath, kind, req.code, undefined, fileFlowers()); }
         let out;
         if (kind !== "bee") {
           const res = t.results || [];
@@ -180,7 +190,7 @@ export function requestHandler(ctx) {
       }
       if (op === "submit") {
         if (!req.force) {
-          const errs = await runtimeTest(api, tok, gPath, kind, req.code, config);
+          const errs = await runtimeTest(api, tok, gPath, kind, req.code, config, fileFlowers());
           if (errs.length) {
             const text = `not submitted: the quick runtime test failed (pass --force to submit anyway):\n- ${errs.join("\n- ")}`;
             await record({ op, kind, code: req.code, ok: false, refused: "runtime test", result: { errors: errs } });
@@ -248,12 +258,16 @@ export async function runTeamSession({ arena, gameRow, persona, entry, gPath, st
   const record = async (r) => {
     requests.n++;
     if (r.op === "submit" && r.ok) requests.submitted.push({ kind: r.kind, version: r.version, cost: r.cost });
-    const clockMs = r.clockMs ?? stream?.clockMs ?? null;
+    let clockMs = r.clockMs ?? stream?.clockMs ?? null;
+    if (r.op === "submit" && r.ok && gameRow.game_uuid) { // the game time the version went live (the stream's clock lags a little)
+      const at = await one("SELECT at_ms FROM programs WHERE game_id = $1 AND team_id = $2 AND kind = $3 AND version = $4", [gameRow.game_uuid, teamId, r.kind, r.version]).catch(() => null);
+      if (at) clockMs = Number(at.at_ms);
+    }
     await q(`INSERT INTO arena.requests (session_id, game_id, persona_id, op, kind, code, ok, refused, result, version, cost, clock_ms) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
       [sessionId, gameRow.id, persona.id, r.op, r.kind ?? null, r.code ?? null, r.ok ?? null, r.refused ?? null, JSON.stringify(r.result ?? null), r.version ?? null, r.cost ?? null, clockMs]);
     if (r.op === "submit" && r.ok) log(`  ${persona.name}: submitted ${r.kind} v${r.version}${r.cost ? ` (cost ${r.cost})` : ""} at ${clockMs != null ? mmss(clockMs) : "?"}`);
   };
-  const broker = new Broker({ dir, log, handle: requestHandler({ api, tok, gPath, config, teamId, gate, record }) }).start();
+  const broker = new Broker({ dir, log, handle: requestHandler({ api, tok, gPath, config, teamId, gate, record, dir }) }).start();
   let s;
   try {
     s = await runSession({
@@ -319,7 +333,7 @@ export async function lobby({ arena, gameRow, persona, entry, gPath, stream, log
       // Written but not submitted (or edited after submitting): submit it if it passes, as the team would have.
       const c = await api.check(tok, gPath, k, code);
       const errs = [...(c.errors || [])];
-      if (!errs.length) errs.push(...(await runtimeTest(api, tok, gPath, k, code, config)));
+      if (!errs.length) errs.push(...(await runtimeTest(api, tok, gPath, k, code, config, { clover: s.files.clover, orchid: s.files.orchid })));
       if (errs.length) {
         if (have[k] === null) failures.push(`- ${k}: ${errs.join("; ")}`);
         if (c.minified) writeMinified(s.dir, s.ext, k, c.minified);
