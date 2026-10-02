@@ -27,7 +27,9 @@ check("system: the round timing: 200 ms rounds, queued actions, answers at 150 m
   /exactly 200 ms of game time/.test(sys) && /about 150 rounds/.test(sys) && /QUEUED action runs/.test(sys) && /delivered exactly 150 ms later/.test(sys)
   && /cosmos 150 ms, orchid 50 ms, bee 25 ms/.test(sys) && /\["leave", c\]/.test(sys) && /isn't cut off/.test(sys) && /never silenced/.test(sys) && /tasted\(seen, nectar\) and then forage, in one call/.test(sys)
   && !/secret limit|hidden limit/i.test(sys));
-check("system: what is public during play (not which flower, not timings, not code)", /every inspection's bee team, patch team, challenge and response/.test(sys) && /NOT which of a patch's two flowers was visited/.test(sys) && /not how long any program took, not code/.test(sys));
+check("system: everything is public to teams (which flower too), bees are in the dark; code, prints, changes, budgets, timings hidden",
+  /which flower it\s+was \(cosmos or orchid\)/.test(sys) && /Bees, though, are in the dark/.test(sys) && /only through code you change/.test(sys)
+  && /code, what bees print, code changes and change budgets, and how long any program took/.test(sys));
 check("system: this game's settings with per-minute change budgets and caps", /\| cosmos \| 1,100 \| 220 \| 220 \| 150 \|/.test(sys) && /busy feeding for the next 10 rounds/.test(sys));
 check("system: no round-based leftovers (MEMORY, turns_left, change turns)", !/MEMORY|turns_left|before each round|turn to change|change turn/.test(sys));
 const devSecret = fs.existsSync(new URL("./runs/.dev-secret", import.meta.url)) ? fs.readFileSync(new URL("./runs/.dev-secret", import.meta.url), "utf8").trim() : "no-secret-file";

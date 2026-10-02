@@ -213,8 +213,7 @@ def summary(s, since_ms):
         rate = "%.2f" % (f["feeds"] / f["visits"]) if f["visits"] else "  - "
         ms = "%.1f" % (f["ms"] / f["asks"]) if f["asks"] else "-"
         print("  %s %-20s %-7s %6d %5d %5d %9s %8d %6d %6d %7s" % ("*" if t == me else " ", s.name(t)[:20], k, f["visits"], f["asks"], f["feeds"], rate, len(f["bees"]), f["nectar"], f["errors"], ms))
-    print("\n(* = your team; feed-rate = feeds per visit; prec = nectar per feed; kind ? = not public during play (another team's patch):")
-    print(" a feed's nectar still tells what that one flower was; mean-ms only where you may see timings)")
+    print("\n(* = your team; feed-rate = feeds per visit; prec = nectar per feed; mean-ms only where you may see timings)")
 
 
 def tail(s, n):

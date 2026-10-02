@@ -5,10 +5,8 @@ reacts to what happens by changing your programs itself (start it with tools/sca
     import garden
 
     for a in garden.follow():                       # each new action as it happens (waits between them)
-        if a["action"] == "ask" and a["patch"] != garden.ME and a.get("r") is not None:
-            ...                                     # a rival flower answered a["r"] to a["c"]
-        if a["action"] == "feed":
-            ...                                     # a["nectar"]: was that flower a cosmos? (same bee and visit as its asks)
+        if a["action"] == "ask" and a["kind"] == "cosmos" and a["patch"] != garden.ME:
+            ...                                     # a rival cosmos answered a["r"] to a["c"]
     s = garden.status()                             # clock, round, scores; YOUR budgets (exact) and versions
     m = garden.measure("orchid", code)              # free: {"ok", "size", "cost", "available", "errors"}
     r = garden.submit("orchid", code)               # live at once if affordable; else r["ok"] is False and
@@ -19,11 +17,9 @@ reacts to what happens by changing your programs itself (start it with tools/sca
 The change budget is enforced by the server: a submission you can't afford is refused, nothing else happens.
 Everything goes through the game runner (tools/_runner.py): no password or token is ever needed here.
 
-Actions are dicts (stream/SCHEMA.md): seq, atMs, round, bee, patch, visit, action (ask/feed/leave/error), c and r for
-an ask, nectar for a feed. Which of a patch's two flowers was visited ("kind") is public only once the game is over;
-during play you see it at your own patch only (mine()). A feed's nectar is public, though: it tells what that one
-flower was, and the asks of the same visit (same bee, same visit number) came from it. Team ids: garden.ME is yours,
-garden.TEAMS maps ids to names.
+Actions are dicts (stream/SCHEMA.md): seq, atMs, round, bee, patch, kind (cosmos/orchid), visit, action
+(ask/feed/leave/error), c and r for an ask, nectar for a feed. Your team sees all of it; your bee sees none of it unless
+you put it into its code. Team ids: garden.ME is yours, garden.TEAMS maps ids to names.
 """
 import json
 import os

@@ -258,26 +258,29 @@ paused.
 
 ## What everyone can see
 
-**Public, as it happens:** which team's bee asked at which team's patch, and in which round; every
-challenge as it is asked and every response; every feed and whether it paid; every leave and every
-error. The game's settings, every time limit included, are public too. People and programs watching
-the game get exactly the same information: the web page shows what the API streams.
+**Public, as it happens: everything the bees do.** For every action of every bee: whose bee, at
+whose patch, at which flower (cosmos or orchid), in which round, the challenge and the response, every
+feed and whether it paid, every leave and every error. The game's settings, every time limit
+included, are public too. People and programs watching the game get exactly the same information:
+the web page shows what the API streams.
 
 **Secret during play:**
-- **which of a patch's two flowers was asked**: everyone sees that Ada's bee asked at Bo's patch, but
-  only Bo's team sees whether it was Bo's cosmos or Bo's orchid. (A feed still says whether it paid,
-  and nectar only comes from a cosmos, so a feed gives away the flower of that one visit.)
-- **how long anything took**: each flower's answer time and each bee's decision time. Every answer
-  arrives at the same moment of the round anyway.
 - **code**: your programs, and what your bee prints.
-- a challenge your bee has queued but not yet asked.
 - your **code changes**: when you change a program, how big the change was, what it cost, and how much
   change budget you have left.
+- **how long anything took**: each flower's answer time and each bee's decision time. Every answer
+  arrives at the same moment of the round anyway.
+- a challenge your bee has queued but not yet asked.
 
 Other teams only see what your programs *do*. (Your team sees all of its own.)
 
-**When the game ends**, everyone can replay it with all of that revealed: which flower every visit was
-at, every team's code changes (when, how big, what they cost), their change budgets over time, which
+**Your team sees everything; your bee sees nothing of it.** A bee never knows whose patch it is at or
+which flower it is talking to: all it ever gets is its own challenges, the answers, and after a feed
+whether it got nectar. So whatever your team works out from the public record (whose cosmos answers
+how, which orchid copies whom) reaches your bee only one way: as a code change, paid from its change
+budget.
+
+**When the game ends**, everyone can replay it with all of that revealed: every team's code changes (when, how big, what they cost), their change budgets over time, which
 version of each program played every action, how long every answer and decision took, and (unless the
 owner turns it off) all code and all printouts.
 
@@ -311,9 +314,9 @@ bee to find nectar at lots of different patches**.
 A cosmos that bees can recognise attracts feeds. An orchid gets fed when it answers like a cosmos
 that bees trust, and every bee it fools learns to trust that kind of answer a little less. If your
 orchid imitates **your own** cosmos, your cosmos's reputation pays the price. If it imitates
-**another team's** cosmos, theirs does. Everyone sees every answer the moment it's given, and whose
-patch gave it (if not which of its two flowers), so whatever a cosmos does to be recognised, the
-orchids are watching too.
+**another team's** cosmos, theirs does. Everyone sees every answer the moment it's given, and which
+flower of whose patch gave it, so whatever a cosmos does to be recognised, the orchids are watching
+too.
 
 ## After the game
 

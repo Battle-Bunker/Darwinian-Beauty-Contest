@@ -128,19 +128,21 @@ ${personaAndSituation(persona, fixed)}
   gives it a small CPU share. garden.py: \`follow()\` (each new action as it happens), \`actions(after)\`, \`status()\` (clock,
   round, scores, your exact budgets and their refill rate, your versions), \`live(kind)\` (your code playing now),
   \`measure(kind, code)\` (size and cost, free), \`check(kind, code)\`, \`submit(kind, code)\` (refused with \`wait_s\` if you
-  can't afford it yet), \`wait_for_budget(kind, cost)\`. For example: when a rival flower's answer to a challenge appears and a feed on that visit paid nectar (so it was a cosmos),
+  can't afford it yet), \`wait_for_budget(kind, cost)\`. For example: when a rival cosmos's answer to a challenge appears,
   rewrite your orchid's table and submit it if affordable; or retune your bee's thresholds as the scores move. Its code is
   audited before every start and restart with the fair-play rules below; it also may not start other processes, use
   exec/eval or dynamic imports, or read the environment. \`tools/scaffold.py status|logs|stop|restart\` manage it (its print
   output is its log). In short games it is the main way to react.
 - Scripts you run in a session (the Bash tool's run_in_background option, output to a file in your workspace) are stopped
   when that session ends; only the scaffold outlives sessions.
-- What is public during play, the moment it happens: every inspection's bee team, patch team, challenge and response, every
-  feed and whether it gave nectar, and the round. NOT which of a patch's two flowers was visited (you see that only at your
-  own patch; a feed's nectar does tell what that one flower was), not how long any program took, not code. Once the game
-  is over, everything is revealed.
-- The action stream: stream/actions.jsonl holds every public action, one JSON object per line, growing about once a second
-  (stream/SCHEMA.md); stream/mine.jsonl adds what your team sees of its own bee and patch. It can get big: read it with code (tools/stream.py), never
+- Every team sees everything that happens, the moment it happens: every inspection's bee team, patch team, which flower it
+  was (cosmos or orchid), challenge and response, every feed and whether it gave nectar, and the round. Hidden during play:
+  code, what bees print, code changes and change budgets, and how long any program took. Once the game is over,
+  everything is revealed.
+- Bees, though, are in the dark: a bee never learns whose patch or which flower it is at. Whatever your team learns from
+  the stream reaches your bee only through code you change (paid from your change budget), in a session or by your scaffold.
+- The action stream: stream/actions.jsonl holds every action, one JSON object per line, growing about once a second
+  (stream/SCHEMA.md); stream/mine.jsonl adds what only your team sees of its own bee and patch. It can get big: read it with code (tools/stream.py), never
   print it whole. The same stream is on the game's public API, which needs no login: ${apiBase}/events (Server-Sent Events) and
   ${apiBase}/actions?after=<seq>.
 - ${sizeText()} So write readable code, and keep prose in comments (docstrings are strings).
@@ -210,7 +212,8 @@ export function gameBrief({ config, teamName, generation, sessionNo, status, clo
   if (head && head.actions) {
     const bee = head.bee;
     lines.push(`So far: ${n0(head.actions)} actions. Your bee: ${bee.asks} asks, ${bee.feeds} feeds, ${bee.nectar} nectar${bee.errors ? `, ${bee.errors} errors` : ""}. ` +
-      `Your patch: ${head.patch.feeds} feeds from ${head.patch.bees} bee${head.patch.bees === 1 ? "" : "s"}.`);
+      `Your patch: ${head.patch.feeds} feeds from ${head.patch.bees} bee${head.patch.bees === 1 ? "" : "s"}` +
+      (head.cosmos ? ` (cosmos ${head.cosmos.feeds}, orchid ${head.orchid.feeds}).` : "."));
   }
   if (budgets) lines.push(`Your change budgets now: ${KINDS.map((k) => `${k} ${n0(budgets[k].available)} of ${n0(budgets[k].cap)} (+${n0(budgets[k].perMinute)}/min)`).join(", ")}.`);
   if (scaffold?.file) lines.push(`Your scaffold ${scaffold.file}: ${scaffold.state}${scaffold.restarts ? `, ${scaffold.restarts} restart${scaffold.restarts > 1 ? "s" : ""}` : ""}; ` +

@@ -170,13 +170,13 @@ export class GameStream {
     return out;
   }
 
-  /** Compact headline numbers for one team over a stretch of game time (for briefs: a few numbers, no events). Which
-   * flower of a patch was visited isn't public during play, so the patch counts as one. */
+  /** Compact headline numbers for one team over a stretch of game time (for briefs: a few numbers, no events). */
   headline(teamId, fromMs = 0, toMs = Infinity) {
     const c = this.counts(fromMs, toMs);
-    const h = { actions: 0, bee: { visits: 0, asks: 0, feeds: 0, nectar: 0, errors: 0, rivalFeeds: 0, rivalNectar: 0 }, patch: { visits: 0, feeds: 0, bees: new Set() } };
+    const h = { actions: 0, bee: { visits: 0, asks: 0, feeds: 0, nectar: 0, errors: 0, rivalFeeds: 0, rivalNectar: 0 }, patch: { visits: 0, feeds: 0, bees: new Set() },
+      cosmos: { feeds: 0, bees: new Set() }, orchid: { feeds: 0, bees: new Set() } };
     for (const [k, n] of c) {
-      const [bee, patch, , what] = k.split("|");
+      const [bee, patch, kind, what] = k.split("|");
       if (["ask", "feed", "leave", "error"].includes(what)) h.actions += n;
       if (bee === teamId) {
         if (what === "visit") h.bee.visits += n;
@@ -187,10 +187,10 @@ export class GameStream {
       }
       if (patch === teamId) {
         if (what === "visit") h.patch.visits += n;
-        if (what === "feed") { h.patch.feeds += n; h.patch.bees.add(bee); }
+        if (what === "feed") { h.patch.feeds += n; h.patch.bees.add(bee); if (h[kind]) { h[kind].feeds += n; h[kind].bees.add(bee); } }
       }
     }
-    h.patch.bees = h.patch.bees.size;
+    for (const x of [h.patch, h.cosmos, h.orchid]) x.bees = x.bees.size;
     return h;
   }
 }

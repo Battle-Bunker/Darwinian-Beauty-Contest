@@ -44,9 +44,10 @@ So this design drops rounds altogether:
   slot for the next 10 rounds. A bee is one long-running program; it keeps its state until its team
   replaces it.
 - **Behaviour public at once, changes private.** Every ask, answer, feed and error is public the moment it
-  happens, with whose bee and whose patch (but not which of the patch's two flowers: see below). Code,
-  what bees print, and each team's code changes and change budgets stay secret during play; once the game is over the replay shows every change and budget (and the code, unless the owner
-  turns that off). Other teams have to read a change from behaviour, not from a changelog.
+  happens, with whose bee, whose patch and which flower (but bees never see any of it: see below). Code,
+  what bees print, each team's code changes and change budgets, and how long programs took stay secret
+  during play; once the game is over the replay shows every change and budget (and the code, unless
+  the owner turns that off). Other teams have to read a change from behaviour, not from a changelog.
 - **Change at any time, paid from a budget that refills.** Each program earns change budget per minute of
   game time, up to a cap of one minute's worth, and any change it can afford goes live at once. Over a
   default 2-minute game that's as much change as the round-based design allowed in six rounds (a cosmos or
@@ -94,15 +95,19 @@ timing is now equalised:
   the machine is never oversubscribed and every flower's limit stays fair; slowness only stretches wall
   time.
 
-### Which flower: secret during play
+### Teams see everything; bees see nothing
 
-During play the public record names the patch a bee asked at, never which of its two flowers: an
-action's `kind` is the patch's own team's until the game is over. What people and programs watching
-the game can see is the same either way. Teams can still mine a rival patch's answers knowing they
-come from one of that team's two flowers, and a feed still says whether it paid, which gives away
-that one visit's flower. But a bee never knows whose patch it is in, so the public record can't hand
-it a ready-made label ("this answer is Bo's cosmos's") to match against. A team has to teach its bee
-signals that work without knowing which patch, or which flower, it is looking at.
+Every action is public as it happens, which flower included: whose bee asked which flower of whose
+patch, what it asked, what it was told, and whether a feed paid. (Hiding the flower was tried briefly;
+it bought little, since a patch's two flowers can usually be told apart by their answers, and it only
+made the record harder to mine.) Bees, though, know nothing of it: a bee is told only its own
+challenges, the answers, and after a feed whether it got nectar, never whose patch or which flower.
+
+So the tension lives in the channel from team to bee. Whatever a team learns from the record (which
+answers come from cosmos flowers, which orchids copy whom) can reach its bee only as a code change,
+paid from the bee's change budget. Full transparency gives every team the most power to
+reverse-engineer what a cosmos's signal is and how to fake it, which is what makes honest signalling
+hard: a cosmos's signal survives only if it stays costly to produce even once everyone understands it.
 
 ### Flowers are drawn at random, not dealt
 
