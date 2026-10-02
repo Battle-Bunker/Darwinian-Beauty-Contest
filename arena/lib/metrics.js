@@ -44,6 +44,8 @@ export class GameMetrics {
     this.copies = [];               // { orchid, clover, c, latencyMs, atMs, version }
     this.clovers = 0;               // distinct (clover, c, r) answers
     this.flowerMs = new Map();      // "team|kind" -> [ms]
+    this.answers = new Map();       // "team|kind" -> { n, nodes, edges, chars, graphs }: what answers looked like (effort)
+    this.beeMs = new Map();         // team -> [ms a bee took to decide]
     this.timeouts = new Map();
     this.actions = 0;
     this.lastMs = 0;
@@ -87,9 +89,18 @@ export class GameMetrics {
       this.visits.set(vk, v);
       if (rival) { if (a.kind === "clover") { s.rival.cloverVisits++; bx.rivalCloverVisits++; } else { s.rival.orchidVisits++; bx.rivalOrchidVisits++; } }
     }
+    const bms = a.bee_ms ?? a.beeMs;
+    if (bms != null) (this.beeMs.get(bee) || this.beeMs.set(bee, []).get(bee)).push(Number(bms));
     if (a.action === "ask") {
       s.asks++;
       const c = key(a.c);
+      if (a.r != null) {
+        const fk2 = `${patch}|${a.kind}`;
+        const st = this.answers.get(fk2) || this.answers.set(fk2, { n: 0, nodes: 0, edges: 0, chars: 0, graphs: 0 }).get(fk2);
+        st.n++;
+        st.chars += JSON.stringify(a.r).length;
+        if (a.r && typeof a.r === "object" && Number.isInteger(a.r.nodes) && Array.isArray(a.r.edges)) { st.graphs++; st.nodes += a.r.nodes; st.edges += a.r.edges.length; }
+      }
       if (!a.after) {
         bx.asks++;
         let seen = this.askedBy.get(bee);
@@ -224,14 +235,24 @@ export class GameMetrics {
     for (const [fk, ms] of this.flowerMs) {
       const [id, kind] = fk.split("|");
       const b = budgetMs(kind);
+      const ans = this.answers.get(fk);
       compute[fk] = { team: name(id), kind, asks: ms.length, budgetMs: b, meanMs: r3(ms.reduce((a, x) => a + x, 0) / ms.length), p90Ms: r3(quantile(ms, 0.9)), maxMs: r3(Math.max(...ms)),
-        meanFrac: r3(ms.reduce((a, x) => a + x, 0) / ms.length / (b || 1)), p90Frac: r3(quantile(ms, 0.9) / (b || 1)), timeouts: this.timeouts.get(fk) || 0 };
+        meanFrac: r3(ms.reduce((a, x) => a + x, 0) / ms.length / (b || 1)), p90Frac: r3(quantile(ms, 0.9) / (b || 1)), timeouts: this.timeouts.get(fk) || 0,
+        answerChars: ans ? r3(ans.chars / ans.n) : null, answerNodes: ans?.graphs ? r3(ans.nodes / ans.graphs) : null, answerEdges: ans?.graphs ? r3(ans.edges / ans.graphs) : null };
+    }
+    // How long bees took to decide, against their budget.
+    const beeCompute = {};
+    for (const [id, ms] of this.beeMs) {
+      const b = budgetMs("bee");
+      beeCompute[id] = { team: name(id), decisions: ms.length, budgetMs: b, meanMs: r3(ms.reduce((a, x) => a + x, 0) / ms.length), p90Ms: r3(quantile(ms, 0.9)), maxMs: r3(Math.max(...ms)),
+        overBudget: b ? ms.filter((x) => x > b).length : null };
     }
     // Changes: every version, with the session that submitted it.
     const changes = programs.map((p) => {
       const s = submits.find((r) => r.team_id === p.team_id && r.kind === p.kind && r.version === p.version);
       return { team: name(p.team_id), teamId: p.team_id, kind: p.kind, version: p.version, atMs: Number(p.at_ms), size: p.size, distance: p.distance, cost: p.cost,
-        problem: p.problem ? String(p.problem).slice(0, 160) : null, session: s ? s.session_no : null, auto: s?.refused?.startsWith("auto") || false };
+        problem: p.problem ? String(p.problem).slice(0, 160) : null, session: s ? s.session_no : null, auto: s?.refused?.startsWith("auto") || false,
+        source: s?.source || (Number(p.at_ms) > 0 ? "unknown" : "lobby") };
     }).sort((a, b) => a.atMs - b.atMs || a.team.localeCompare(b.team));
     const durationMs = this.lastMs;
     const totalCopies = this.copies.filter((x) => this.ids.includes(x.orchid));
@@ -242,7 +263,7 @@ export class GameMetrics {
       roundsPerSec: r3(durationMs ? this.maxRound / (durationMs / 1000) : null), windows, teams: perTeam,
       copies: { cloverAnswers: this.clovers, copied: totalCopies.length, medianLatencyMs: median(totalCopies.map((x) => x.latencyMs)),
         afterNewVersion: attributed.length, medianLatencyAfterNewVersionMs: median(attributed.map((x) => x.latencyMs)), byOrchid: copies },
-      compute, changes,
+      compute, beeCompute, changes,
       final: finalFeeds ? score(this.ids, finalFeeds, finalNectar).map((x) => ({ team: name(x.teamId), teamId: x.teamId, fitness: r3(x.fitness), allure: r3(x.allure), forage: r3(x.forage), feedsReceived: x.feedsReceived, nectarCollected: x.nectarCollected })) : null,
     };
   }
@@ -256,17 +277,23 @@ export async function computeGameMetrics({ all, one }, gameUuid, { windowMs, are
   const m = new GameMetrics({ config: g.config, participants: g.participants || [], names, windowMs });
   let after = 0;
   for (;;) {
-    const rows = await all(`SELECT seq, at_ms, round, bee_team, visit, patch_team, kind, action, c, r, after, nectar, ms, error, error_by, flower_version
-                              FROM actions WHERE game_id = $1 AND seq > $2 ORDER BY seq LIMIT 20000`, [gameUuid, after]);
+    const rows = await all(`SELECT * FROM actions WHERE game_id = $1 AND seq > $2 ORDER BY seq LIMIT 20000`, [gameUuid, after]);
     for (const r of rows) m.add(r);
     if (rows.length < 20000) break;
     after = Number(rows[rows.length - 1].seq);
   }
   const programs = await all("SELECT team_id, kind, version, size, distance, cost, at_ms, problem FROM programs WHERE game_id = $1 ORDER BY at_ms, version", [gameUuid]);
-  const submits = arenaGameId ? await all(`SELECT e.team_id, r.kind, r.version, r.refused, s.no AS session_no FROM arena.requests r JOIN arena.sessions s ON s.id = r.session_id
+  const submits = arenaGameId ? await all(`SELECT e.team_id, r.kind, r.version, r.refused, r.source, s.no AS session_no FROM arena.requests r LEFT JOIN arena.sessions s ON s.id = r.session_id
                                              JOIN arena.entries e ON e.game_id = r.game_id AND e.persona_id = r.persona_id
                                             WHERE r.game_id = $1 AND r.op = 'submit' AND r.ok AND r.version IS NOT NULL`, [arenaGameId]) : [];
   const out = m.finish({ programs, submits, finalFeeds: g.feeds, finalNectar: g.nectar });
+  // Scaffolds: who ran one, how often it started, crashed or was refused, its CPU, and what it submitted.
+  out.scaffolds = arenaGameId ? await all(`SELECT e.team_id, e.team_name AS team, count(*)::int AS starts, count(*) FILTER (WHERE sc.status = 'crashed')::int AS crashes,
+        count(*) FILTER (WHERE sc.status = 'refused')::int AS refused, coalesce(sum(sc.cpu_seconds), 0) AS cpu_seconds, coalesce(sum(sc.throttled_ms), 0)::bigint AS throttled_ms,
+        (SELECT count(*)::int FROM arena.requests r WHERE r.game_id = sc.game_id AND r.persona_id = sc.persona_id AND r.source = 'scaffold' AND r.op = 'submit' AND r.ok) AS submits,
+        (SELECT count(*)::int FROM arena.requests r WHERE r.game_id = sc.game_id AND r.persona_id = sc.persona_id AND r.source = 'scaffold' AND r.op = 'submit' AND NOT r.ok) AS refused_submits,
+        min(sc.clock_start) AS first_start_ms
+      FROM arena.scaffolds sc JOIN arena.entries e ON e.game_id = sc.game_id AND e.persona_id = sc.persona_id WHERE sc.game_id = $1 GROUP BY 1, 2, sc.game_id, sc.persona_id`, [arenaGameId]) : [];
   out.storage = await one(`SELECT count(*)::int AS actions, coalesce(sum(pg_column_size(a.*)), 0)::bigint AS bytes FROM actions a WHERE a.game_id = $1`, [gameUuid]);
   out.config = { minutes: g.config.minutes, feedCost: g.config.feedCost, challengeType: g.config.challengeType, responseType: g.config.responseType, budgets: g.config.budgets };
   out.clockMs = Number(g.clock_ms);

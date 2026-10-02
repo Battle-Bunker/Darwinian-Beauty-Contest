@@ -57,23 +57,31 @@ for (const a of arenas) {
     const m = g.metrics;
     const ent = await all("SELECT e.*, p.name, p.model FROM arena.entries e JOIN arena.personas p ON p.id = e.persona_id WHERE e.game_id = $1 ORDER BY e.fitness_rank NULLS LAST", [g.id]);
     const ss = await one(`SELECT count(*) FILTER (WHERE phase = 'lobby')::int AS lobby, count(*) FILTER (WHERE phase = 'game')::int AS game, coalesce(sum(cost_usd), 0) AS usd FROM arena.sessions WHERE game_id = $1`, [g.id]);
-    const rq = await one(`SELECT count(*) FILTER (WHERE op = 'submit' AND ok AND clock_ms > 0)::int AS live, count(*) FILTER (WHERE op = 'submit' AND NOT ok)::int AS refused FROM arena.requests WHERE game_id = $1`, [g.id]);
+    const rq = await one(`SELECT count(*) FILTER (WHERE op = 'submit' AND ok AND clock_ms > 0)::int AS live, count(*) FILTER (WHERE op = 'submit' AND NOT ok AND clock_ms > 0)::int AS refused FROM arena.requests WHERE game_id = $1`, [g.id]);
     const cost = await one("SELECT coalesce(sum(cost_usd), 0) AS usd FROM arena.llm_calls WHERE game_id = $1", [g.id]);
     const w = ent[0];
     grows.push([g.generation, g.config?.minutes, `[${g.game_short_id}](${WEB}${g.game_url})`, g.stage, ent.filter((e) => !e.sat_out).length, m?.actions ?? "-", m?.rounds ?? "-", f2(m?.actionsPerSec),
       w?.fitness != null ? `${w.team_name} (${w.model}) ${f2(w.fitness)}` : "-", ent.filter((e) => e.fitness != null).map((e) => `${e.team_name} ${f2(e.fitness)}`).join(", ") || "-",
-      `${ss.lobby}/${ss.game}`, `${rq.live}/${rq.refused}`, m ? m.changes.filter((c) => c.atMs > 0).length : "-", f2(cost.usd), g.contaminated ? `QUARANTINED: ${g.contaminated}` : ""]);
+      `${ss.lobby}/${ss.game}`, m ? `${(m.scaffolds || []).filter((x) => x.starts > x.refused).length}` : "-",
+      m ? `${m.changes.filter((c) => c.atMs > 0 && c.source === "session").length} / ${m.changes.filter((c) => c.atMs > 0 && c.source === "scaffold").length}` : "-",
+      `${rq.live}/${rq.refused}`, f2(cost.usd), g.contaminated ? `QUARANTINED: ${g.contaminated}` : ""]);
     if (m && !g.contaminated) {
       const teams = Object.values(m.teams);
       durations.push({ minutes: g.config?.minutes, arena: a.id, gen: g.generation, actionsPerSec: m.actionsPerSec, roundsPerSec: m.roundsPerSec,
         precision: mean(teams.map((t) => t.precision)), gap: mean(teams.map((t) => t.gap)), repeat: mean(teams.map((t) => t.repeatShare)),
         changes: m.changes.filter((c) => c.atMs > 0).length / Math.max(1, teams.length), copies: m.copies?.copied ?? 0, copyLatency: m.copies?.medianLatencyMs,
         newCopies: m.copies?.afterNewVersion ?? 0, newCopyLatency: m.copies?.medianLatencyAfterNewVersionMs,
+        scaffoldTeams: (m.scaffolds || []).filter((x) => x.starts > x.refused).length, teams: teams.length,
+        sessionChanges: m.changes.filter((c) => c.atMs > 0 && c.source === "session").length, autoChanges: m.changes.filter((c) => c.atMs > 0 && c.source === "scaffold").length,
+        cloverCompute: mean(Object.values(m.compute || {}).filter((c) => c.kind === "clover").map((c) => c.meanFrac)),
+        orchidCompute: mean(Object.values(m.compute || {}).filter((c) => c.kind === "orchid").map((c) => c.meanFrac)),
+        cloverNodes: mean(Object.values(m.compute || {}).filter((c) => c.kind === "clover").map((c) => c.answerNodes)),
+        orchidNodes: mean(Object.values(m.compute || {}).filter((c) => c.kind === "orchid").map((c) => c.answerNodes)),
         sessions: ss.game / Math.max(1, teams.length), liveSubmits: rq.live, cost: cost.usd, fitSpread: (() => { const f = (m.final || []).map((x) => x.fitness); return f.length ? Math.max(...f) - Math.min(...f) : null; })() });
     }
   }
   p("### Games");
-  table(["game", "minutes", "link", "stage", "teams", "actions", "rounds", "actions/s", "winner", "final fitness", "sessions lobby/game", "in-game submits ok/refused", "in-game versions", "USD", ""], grows);
+  table(["game", "minutes", "link", "stage", "teams", "actions", "rounds", "actions/s", "winner", "final fitness", "sessions lobby/game", "teams with a scaffold", "in-game versions by sessions / scaffolds", "in-game submits ok/refused", "USD", ""], grows);
 
   for (const g of games) {
     const m = g.metrics;
@@ -109,12 +117,23 @@ for (const a of arenas) {
       Object.values(cp.byOrchid || {}).map((o) => [o.name, o.copies, o.from.join(", "), secs(o.medianLatencyMs), secs(o.p10LatencyMs), o.afterNewVersion, secs(o.medianLatencyAfterNewVersionMs)]));
     // Changes.
     p("Change timeline (every program version; lobby = written before the start):");
-    table(["game time", "team", "program", "version", "size", "node edits", "cost", "session", "first problem"],
-      m.changes.map((c) => [c.atMs ? mmss(c.atMs) : "lobby", c.team, c.kind, `v${c.version}`, c.size, c.distance ?? "-", c.cost, c.session != null ? (c.auto ? `${c.session} (runner)` : c.session) : "-", c.problem || ""]));
+    table(["game time", "team", "program", "version", "size", "node edits", "cost", "by", "first problem"],
+      m.changes.map((c) => [c.atMs ? mmss(c.atMs) : "lobby", c.team, c.kind, `v${c.version}`, c.size, c.distance ?? "-", c.cost,
+        c.source === "scaffold" ? "scaffold" : c.source === "runner" ? "runner (lobby fallback)" : c.session != null ? `session ${c.session}` : c.source, c.problem || ""]));
+    if ((m.scaffolds || []).length) {
+      p("Scaffolds:");
+      table(["team", "starts", "crashes", "refused by the audit", "first start", "CPU s", "paused for its CPU share", "automatic submissions ok / refused"],
+        m.scaffolds.map((x) => [x.team, x.starts, x.crashes, x.refused, x.first_start_ms != null ? mmss(Number(x.first_start_ms)) : "-", f2(x.cpu_seconds), `${(Number(x.throttled_ms) / 1000).toFixed(1)} s`, `${x.submits} / ${x.refused_submits}`]));
+    } else p("No team ran a scaffold.\n");
     // Compute.
     p("Flower compute against budget:");
-    table(["flower", "asks", "mean ms", "p90 ms", "max ms", "budget ms", "mean/budget", "p90/budget", "timeouts"],
-      Object.values(m.compute || {}).sort((x, y) => x.team.localeCompare(y.team) || x.kind.localeCompare(y.kind)).map((c) => [`${c.team} ${c.kind}`, c.asks, c.meanMs, c.p90Ms, c.maxMs, c.budgetMs, pc(c.meanFrac), pc(c.p90Frac), c.timeouts]));
+    table(["flower", "asks", "mean ms", "p90 ms", "max ms", "budget ms", "mean/budget", "p90/budget", "timeouts", "answer chars", "answer nodes / edges (graphs)"],
+      Object.values(m.compute || {}).sort((x, y) => x.team.localeCompare(y.team) || x.kind.localeCompare(y.kind)).map((c) => [`${c.team} ${c.kind}`, c.asks, c.meanMs, c.p90Ms, c.maxMs, c.budgetMs, pc(c.meanFrac), pc(c.p90Frac), c.timeouts,
+        f2(c.answerChars), c.answerNodes != null ? `${f2(c.answerNodes)} / ${f2(c.answerEdges)}` : "-"]));
+    if (Object.keys(m.beeCompute || {}).length) {
+      p("Bee decision time against budget:");
+      table(["bee", "decisions", "mean ms", "p90 ms", "max ms", "budget ms", "over budget"], Object.values(m.beeCompute).map((b) => [b.team, b.decisions, b.meanMs, b.p90Ms, b.maxMs, b.budgetMs, b.overBudget ?? "-"]));
+    }
     // Sessions.
     const sess = await all(`SELECT s.*, p.name, (SELECT count(*)::int FROM arena.requests r WHERE r.session_id = s.id) AS requests,
                                    (SELECT string_agg(r.kind || ' v' || r.version, ', ' ORDER BY r.id) FROM arena.requests r WHERE r.session_id = s.id AND r.op = 'submit' AND r.ok) AS submits,
@@ -157,9 +176,11 @@ for (const a of arenas) {
 if (durations.length) {
   p("## Games by duration");
   p("Per game, averaged over teams where it's per team. Change budgets accrue per minute of game time, so short games allow little or no change.");
-  table(["minutes", "arena game", "actions/s", "rounds/s", "bee precision", "rival clover−orchid fed gap", "repeat share", "in-game versions per team", "orchid matches of earlier clover answers (median latency)", "of those, by an orchid version newer than the answer (median latency)", "game sessions per team", "in-game submits", "fitness spread", "USD"],
-    durations.sort((x, y) => x.minutes - y.minutes || x.gen - y.gen).map((d) => [d.minutes, `${d.arena} ${d.gen}`, f2(d.actionsPerSec), f2(d.roundsPerSec), f2(d.precision), f2(d.gap), pc(d.repeat), f2(d.changes),
-      `${d.copies} (${secs(d.copyLatency)})`, `${d.newCopies} (${secs(d.newCopyLatency)})`, f2(d.sessions), d.liveSubmits, f2(d.fitSpread), f2(d.cost)]));
+  table(["minutes", "arena game", "actions/s", "rounds/s", "teams with a scaffold", "in-game changes: sessions / scaffolds", "bee precision", "rival clover−orchid fed gap (discrimination)", "repeat share",
+    "clover / orchid compute used", "clover / orchid answer nodes", "orchid matches of earlier clover answers (median latency)", "of those, copies by a newer orchid version (median latency)", "game sessions per team", "fitness spread", "USD"],
+    durations.sort((x, y) => x.minutes - y.minutes || x.gen - y.gen).map((d) => [d.minutes, `${d.arena} ${d.gen}`, f2(d.actionsPerSec), f2(d.roundsPerSec), `${d.scaffoldTeams}/${d.teams}`, `${d.sessionChanges} / ${d.autoChanges}`,
+      f2(d.precision), f2(d.gap), pc(d.repeat), `${pc(d.cloverCompute)} / ${pc(d.orchidCompute)}`, `${f2(d.cloverNodes)} / ${f2(d.orchidNodes)}`,
+      `${d.copies} (${secs(d.copyLatency)})`, `${d.newCopies} (${secs(d.newCopyLatency)})`, f2(d.sessions), f2(d.fitSpread), f2(d.cost)]));
 }
 
 // ---------- ideas, breeders, audit

@@ -17,11 +17,12 @@ metrics, interviews, the teen judges and (unless membership is fixed) selection 
 | `analyze.js` | a Markdown report of the arena schema: spend, each game over time, teams, orchid copying, the change timeline, compute, sessions, storage, the panel, ideas, breeders, the fair-play audit, and games of different durations side by side |
 | `server.sh` | (re)starts the arena's own game server on port 4000 (dbc_live, the dev-login secret, `CPU_SLOTS=3`) |
 | `schema.sql` | the `arena` Postgres schema in dbc_live, applied on every run |
-| `tools/` | the workspace tools copied into every workspace (Python, stdlib only): `submit.py`, `check.py`, `try.py`, `status.py`, `stream.py`, and `_runner.py`, their link to the runner |
+| `tools/` | the workspace tools copied into every workspace (Python, stdlib only): `submit.py`, `check.py`, `try.py`, `status.py`, `scaffold.py`, `stream.py`, `garden.py` (the scaffold API), and `_runner.py`, their link to the runner |
 | `lib/llm.js` | `claude -p` wrapper: concurrency limiter, retries, usage-limit pause, spend guard, cost ledger (`arena.llm_calls`); sessions with live transcripts, a stop control, and estimated costs for sessions stopped mid-way |
 | `lib/api.js` | HTTP client for the game API (dev login with the dev secret, Bearer tokens) |
-| `lib/team.js` | one team session (workspace, live fair-play gate, requests from the tools, audit, notebook, cleanup), the lobby with fix sessions, the interview |
+| `lib/team.js` | each team's desk for a game (its broker, which session is running, its scaffold), one session (workspace, live fair-play gate, audit, notebook, cleanup), the lobby with fix sessions, the interview |
 | `lib/broker.js` | the runner's end of the tools: request files in `<workspace>/.runner/req/`, answers in `.runner/res/` |
+| `lib/scaffold.js`, `lib/scaffold_launch.py` | scaffolds: static audit, launch under limits, CPU share, restarts, logs |
 | `lib/stream.js` | the live action stream: the shared public JSONL, the runner's master copy, per-team private details, headline numbers for briefs |
 | `lib/workspace.js` | builds workspaces, archives finished games, the fair-play audit, finds and stops what a session left running |
 | `lib/prompts.js` | system prompt, lobby and in-game briefs, interview, judge and breeder prompts |
@@ -95,11 +96,40 @@ one minute's worth), `minutesByGame`, `session` pacing, `limits`, `maxModel`, `r
    ideas into the shared ledger (one judge first so tags converge); retirement and breeding as before (social score =
    0.2·understanding + 0.3·respect + 0.2·novelty + 0.3·team-up; never part of fitness).
 
-Games are short (seconds to minutes) and a session takes minutes, so a session often outlasts its game. What reacts
-during a game is what the team prepared: programs that adapt by themselves, and scripts it starts in its session (for
-example one that follows the stream and calls `tools/submit.py`). Those may run in the background while the session
-lasts; the runner stops everything a session started when it ends (processes carrying the session's `ARENA_SESSION` tag
-or running inside the workspace).
+Games are short (minutes) and an LLM session is slow by comparison, so what reacts during a game is what the team
+prepared: programs that adapt by themselves, and above all its **scaffold** (below). Scripts a session starts may run in
+the background while that session lasts; the runner stops everything a session started when it ends (processes carrying
+the session's `ARENA_SESSION` tag or running inside the workspace), except the team's scaffold.
+
+## Scaffolds
+
+A scaffold is the team's own Python program running outside the engine for the rest of the game, with no LLM in the
+loop: it follows the stream and submits changes by itself, within the team's change budget (the server enforces it).
+A session starts it, in the lobby or during the game: `python3 tools/scaffold.py start scaffold.py` (also `restart`,
+`stop`, `status`, `logs`). `lib/scaffold.js` supervises it:
+
+- **Audit before every start and restart** (`auditScaffold`): the entry file and the workspace modules it imports (not
+  `tools/`, which the runner reinstalls first), with the session audit's rules for written code (no paths outside the
+  workspace, no database, no logins or credentials, no network except GETs to the game's public API on localhost, no
+  writes into `stream/`, no environment) plus: nothing that escapes supervision or the audit (subprocesses, `os.system`,
+  fork/exec/spawn, kill, multiprocessing, pty, ctypes, `exec`/`eval`/`compile`, dynamic imports) and no string literal
+  that is a path outside the workspace. A refused scaffold doesn't start; the findings go to `arena.violations`
+  (`tool = 'scaffold'`). Every start is a row in `arena.scaffolds` with the audited source.
+- **Limits**: `nice 15`; RLIMIT_AS 1 GB, RLIMIT_CPU 900 s, RLIMIT_FSIZE 200 MB, 256 open files
+  (`lib/scaffold_launch.py`); a CPU share of 0.15 core (`settings.scaffold.cpuShare`), enforced by pausing it
+  (SIGSTOP/SIGCONT) whenever it used more over the last 2 s. Its own process group; output to
+  `<workspace>/scaffold/scaffold.log` (trimmed past 2 MB).
+- **Lifecycle**: it outlives sessions; a crash restarts it after 1, 2, 4, 8, 15, 30 s (re-audited); a clean exit is
+  final; the end of the game (or the runner stopping) stops it. After a runner restart, scaffolds that were running are
+  started again.
+- **Attribution**: its environment carries a token (read by `tools/_runner.py`, never by the team's code), so its
+  requests are answered between sessions too and recorded with `source = 'scaffold'` in `arena.requests`. Requests with
+  neither a running session nor the token are refused.
+
+`tools/garden.py` is its API: `follow()` / `follow_live()` (the file, or the public SSE), `actions(after)`, `last()`,
+`status()` (clock, round, scores, the team's budgets with exact `available`, `perMinute` and `cap`, its versions),
+`live(kind)` (the code playing now), `measure(kind, code)` (size and cost, free), `check`, `try_program`, `submit` (a
+refusal for budget carries `wait_s`), `wait_for_budget(kind, cost)`, `scores()` and `game_over()` (public API).
 
 ## A team's workspace
 
@@ -113,7 +143,8 @@ or running inside the workspace).
 | `status.txt` | what `tools/status.py` said at the start of the session |
 | `notebook.md` | the persona's notes, kept across sessions and games |
 | `stream/actions.jsonl` | the live public stream: a hard link to the runner's shared copy, appended about once a second |
-| `stream/mine.jsonl` | what only this team sees of its own bee's and patch's actions (printouts, versions, engine leaves), by `seq` |
+| `stream/mine.jsonl` | its own bee's and patch's actions as the team sees them (`GET …/actions?mine=1`): with its programs' timings, versions and printouts, private during play |
+| `scaffold/scaffold.log` | its scaffold's output |
 | `stream/teams.json`, `stream/SCHEMA.md` | names, and the line format with how to read it |
 | `tools/` | the tools (below) |
 | `previous-games/game-N/` | finished games of the arena, revealed: every team's final code, standings, everyone's change timeline, the panel's feedback, the team's own history |
@@ -224,6 +255,8 @@ node arena/test-workspace.mjs  # workspace files, the shared stream (hard links,
                                # the audit (public API reads allowed; logins, writes, other hosts, stream writes not)
 node arena/test-metrics.mjs    # metrics on a hand-made stream: windows, precision, fed rates, repeats, copy latency, compute
 node arena/test-pause.mjs      # usage-limit detection, pause and resume, in-game sessions on a limit, the game's pause sync
+node arena/test-scaffold.mjs   # a stub scaffold: starts, outlives its session, submits by itself, is refused over budget,
+                               # restarts after a crash, forbidden scaffolds fail the audit, CPU share, stopped at game end
 ```
 
 They need the `dbc_live` database (the arena schema, a throwaway arena row, ledger rows they delete).
