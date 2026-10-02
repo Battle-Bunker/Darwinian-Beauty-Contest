@@ -51,7 +51,10 @@ export function auditScaffold(dir, entry, { arenaId, slug, port = "4000" }) {
     for (const lit of code.match(PY_STRINGS) || []) {
       const v = lit.replace(/^('''|"""|'|")|('''|"""|'|")$/g, "");
       if (/^https?:/i.test(v)) continue;
-      if ((/^\/[\w.-]/.test(v) && !path.resolve(v).startsWith(dir)) || (/(^|\/)\.\.(\/|$)/.test(v) && !path.resolve(dir, v).startsWith(dir))) {
+      // An absolute path into a real top-level directory (not "/events?after=", a URL path) or a ".." that leaves.
+      const top = v.match(/^\/([\w.-]+)/)?.[1];
+      const absOut = top && fs.existsSync("/" + top) && !path.resolve(v).startsWith(dir);
+      if (absOut || (/(^|\/)\.\.(\/|$)/.test(v) && !path.resolve(dir, v).startsWith(dir))) {
         add("violation", `${rel}: a path outside the workspace: ${v.slice(0, 80)}`);
       }
     }

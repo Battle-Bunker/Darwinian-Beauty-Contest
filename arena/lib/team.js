@@ -78,7 +78,7 @@ export async function runtimeTest(api, tok, g, kind, code, config, flowers = nul
 /** Change budget available now: min(cap, bank + perMinute × (clock − atMs)). */
 export const availableNow = (budget, bank, clockMs) => Math.min(budget.cap, bank.bank + (budget.perMinute * Math.max(0, clockMs - bank.atMs)) / 60000);
 
-export function statusOf(view, teamId, { afford = null } = {}) {
+export function statusOf(view, teamId, { afford = null, code = false } = {}) {
   const g = view.game, config = g.config, endMs = g.endMs ?? config.minutes * 60000;
   const name = Object.fromEntries(view.teams.map((t) => [t.id, t.name]));
   const mine = view.teams.find((t) => t.id === teamId);
@@ -118,7 +118,7 @@ export function statusOf(view, teamId, { afford = null } = {}) {
     for (const k of KINDS) {
       const vs = mine.programs[k] || [];
       const v = vs[vs.length - 1];
-      out.versions[k] = v ? { version: v.version, size: v.size, atMs: v.atMs, problem: v.problem } : null;
+      out.versions[k] = v ? { version: v.version, size: v.size, atMs: v.atMs, problem: v.problem, ...(code ? { code: v.code } : {}) } : null;
       parts.push(v ? `${k} v${v.version} (${v.atMs ? `live since ${mmss(v.atMs)}` : "lobby"}, ${n0(v.size)} nodes${v.problem ? `; problem: ${v.problem.slice(0, 80)}` : ""})` : `${k}: not submitted`);
     }
     lines.push(`Your programs ${g.status === "lobby" ? "submitted" : "playing"}: ${parts.join(", ")}.`);
@@ -161,7 +161,7 @@ export function requestHandler(ctx) {
     try {
       if (op === "status") {
         const view = await api.view(tok, gPath);
-        const s = statusOf(view, teamId, { afford: Number.isFinite(req.afford) ? req.afford : null });
+        const s = statusOf(view, teamId, { afford: Number.isFinite(req.afford) ? req.afford : null, code: !!req.code });
         await record({ op, ok: true, result: { clockMs: s.clockMs, budgets: s.budgets }, clockMs: s.clockMs });
         return s;
       }

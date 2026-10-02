@@ -17,7 +17,8 @@ import path from "node:path";
 import { Api, ApiError, gamePath, login } from "./lib/api.js";
 import { ARENA_DIR, all, migrate, one, pool, q } from "./lib/db.js";
 import { BudgetError, GLOBAL_CAP, PAUSE_FILE, isPaused, llmStats, pause, setArenaCap, spend, waitIfPaused } from "./lib/llm.js";
-import { WS_ROOT, diskBytes, wsDir } from "./lib/workspace.js";
+import { WS_ROOT, diskBytes, killLeftovers, wsDir } from "./lib/workspace.js";
+import { publicGameUrl } from "./lib/api.js";
 import { GameStream } from "./lib/stream.js";
 import { syncPause } from "./lib/gamecontrol.js";
 import { computeGameMetrics } from "./lib/metrics.js";
@@ -26,7 +27,7 @@ import { breed, decideRetirements, retire, seedBreeders } from "./lib/population
 import { DEFAULT_SESSION, PRESETS } from "./lib/presets.js";
 import { gameBrief, mmss } from "./lib/prompts.js";
 import { judgeGame, seedJudges } from "./lib/social.js";
-import { finalPrograms, interview, lobby, runTeamSession } from "./lib/team.js";
+import { TeamDesk, finalPrograms, interview, lobby, runTeamSession } from "./lib/team.js";
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((acc, a, i, arr) => {
   if (a.startsWith("--")) acc.push([a.slice(2), arr[i + 1] && !arr[i + 1].startsWith("--") ? arr[i + 1] : true]);
@@ -180,7 +181,7 @@ async function syncGamePause(ctx, stream, log) {
   if (r) { stream.status = r === "paused" ? "paused" : "running"; log(`  game ${r} at ${mmss(stream.clockMs)}${r === "paused" ? " (the pause file exists)" : ""}`); }
 }
 
-async function lobbyStage(arena, ctx, stream, log) {
+async function lobbyStage(arena, ctx, stream, desks, log) {
   const { gameRow, gPath, entries } = ctx;
   const personas = await all("SELECT * FROM arena.personas WHERE id = ANY($1)", [entries.map((e) => e.persona_id)]);
   const examples = arena.settings.examples ? fs.readdirSync(path.resolve(ARENA_DIR, "..", arena.settings.examples)) : null;
@@ -195,7 +196,7 @@ async function lobbyStage(arena, ctx, stream, log) {
     }
     try {
       const carry = await carryOver(arena, gameRow.generation, p.id);
-      return { p, ...(await lobby({ arena, gameRow, persona: p, entry: e, gPath, stream, log, carry, examples })) };
+      return { p, ...(await lobby({ desk: desks.get(p.id), arena, gameRow, persona: p, entry: e, gPath, stream, log, carry, examples })) };
     } catch (err) {
       if (err instanceof BudgetError) throw err;
       log(`  ${p.name}: lobby failed: ${err.stack || err.message}`);
@@ -218,8 +219,25 @@ async function playGame(arena, ctx, log) {
   let view = await Api.view(ownerTok, gPath);
   const teams = view.teams.map((t) => ({ id: t.id, name: t.name }));
   const stream = new GameStream({ root: path.join(WS_ROOT, arena.id), gen, gPath, gameUuid: gameRow.game_uuid, teams, log }).load();
+  // Every team's desk (its tools' requests, its scaffold) lives from the lobby to the end of the game.
+  const allEntries = await all("SELECT * FROM arena.entries WHERE game_id = $1", [gameRow.id]);
+  const allPersonas = await all("SELECT * FROM arena.personas WHERE id = ANY($1)", [allEntries.map((e) => e.persona_id)]);
+  const desks = new Map();
+  const apiBase = publicGameUrl(arena.room_short_id, gameRow.game_short_id);
+  for (const e of allEntries) {
+    const p = allPersonas.find((x) => x.id === e.persona_id);
+    desks.set(p.id, await new TeamDesk({ arena, gameRow, persona: p, entry: e, gPath, dir: wsDir(arena.id, p.slug), stream, log, apiBase }).start());
+  }
+  const state = { ownerTok, gPath, controls: new Map(), stream, over: false, desks };
+  live.set(gameRow.id, state);
+  // After a runner restart: scaffolds that were running are started again (re-audited).
+  for (const r of await all(`SELECT DISTINCT ON (persona_id) persona_id, file, status, ended_at FROM arena.scaffolds WHERE game_id = $1 ORDER BY persona_id, id DESC`, [gameRow.id])) {
+    if (r.status !== "running" || view.game.status === "finished") continue;
+    await q("UPDATE arena.scaffolds SET status = 'stopped', ended_at = coalesce(ended_at, now()) WHERE game_id = $1 AND persona_id = $2 AND status = 'running'", [gameRow.id, r.persona_id]);
+    await desks.get(r.persona_id)?.scaffold.start(r.file, { action: "resume" });
+  }
   let lobbyRes = null;
-  if (gameRow.stage === "created") lobbyRes = await lobbyStage(arena, ctx, stream, log);
+  if (gameRow.stage === "created") lobbyRes = await lobbyStage(arena, ctx, stream, desks, log);
   // A violation in the lobby costs the team its sessions during the game.
   const barred = new Set((await all("SELECT DISTINCT persona_id FROM arena.sessions WHERE game_id = $1 AND phase = 'lobby' AND violation", [gameRow.id])).map((r) => r.persona_id));
   view = await Api.view(ownerTok, gPath);
@@ -228,14 +246,21 @@ async function playGame(arena, ctx, log) {
   const personas = await all("SELECT * FROM arena.personas WHERE id = ANY($1)", [entries.map((e) => e.persona_id)]);
   const ready = (t) => t && (view.game.status !== "lobby" ? view.participants?.includes(t.id) : KINDS.every((k) => t.ready?.[k]));
   const players = entries.filter((e) => ready(view.teams.find((t) => t.id === e.team_id)));
-  if (players.length < 2) throw new Error(`game ${gen}: only ${players.length} team(s) have all three programs; a game needs 2`);
-  const state = { ownerTok, gPath, controls: new Map(), stream, over: false };
-  live.set(gameRow.id, state);
+  if (players.length < 2) {
+    for (const d of desks.values()) await d.stop("no game");
+    live.delete(gameRow.id);
+    throw new Error(`game ${gen}: only ${players.length} team(s) have all three programs; a game needs 2`);
+  }
   stream.status = view.game.status;
   stream.clockMs = view.game.clockMs;
   const endMs = view.game.endMs;
   const over = () => state.over || stream.status === "finished";
   let budgetStop = null;
+  const autoCounts = new Map();
+  const autoCount = (personaId) => autoCounts.get(personaId) || 0;
+  const refreshAuto = async () => {
+    for (const r of await all("SELECT persona_id, count(*)::int AS n FROM arena.requests WHERE game_id = $1 AND source = 'scaffold' AND op = 'submit' AND ok GROUP BY 1", [gameRow.id])) autoCounts.set(r.persona_id, r.n);
+  };
 
   // One team's sessions, back to back, while the game lasts.
   const sessionsOf = async (e) => {
@@ -252,16 +277,18 @@ async function playGame(arena, ctx, log) {
       if (diskLow(log)) continue;
       const control = {};
       state.controls.set(p.id, control);
+      await refreshAuto().catch(() => {});
       try {
         const head = stream.headline(e.team_id);
+        const desk = desks.get(p.id);
         const s = await runTeamSession({
-          arena, gameRow, persona: p, entry: e, gPath, stream, phase: "game", sessionNo: no, control, log, timeoutMs: S.maxMinutes * 60_000,
+          desk, arena, gameRow, persona: p, entry: e, gPath, stream, phase: "game", sessionNo: no, control, log, timeoutMs: S.maxMinutes * 60_000,
           buildPrompt: ({ view: v, drafts, status, maxTurns, scripts }) => {
             const mine = v.scores ? [...v.scores].sort((a, b) => b.fitness - a.fitness) : null;
             const rank = mine ? mine.findIndex((x) => x.teamId === e.team_id) : -1;
             return gameBrief({ config: v.game.config, teamName: e.team_name, generation: gen, sessionNo: no, status: v.game.status, clockMs: v.game.clockMs,
               budgets: status.budgets, standing: rank >= 0 && v.game.clockMs > 0 ? { fitness: mine[rank].fitness, rank: rank + 1, of: mine.length } : null,
-              head: v.game.clockMs > 0 ? head : null, drafts, maxTurns, scripts });
+              head: v.game.clockMs > 0 ? head : null, drafts, maxTurns, scripts, scaffold: desk.scaffold.status(), automatic: autoCount(p.id) });
           },
         });
         log(`  ${p.name}: session ${no} ${s.killed ? `stopped (${s.killed})` : "ended"} at ${mmss(stream.clockMs)}: $${s.cost.toFixed(2)}${s.cost && s.killed ? " (estimated)" : ""}, ${s.requests} requests, ` +
@@ -313,6 +340,11 @@ async function playGame(arena, ctx, log) {
   state.over = true;
   for (const [, c] of state.controls) { c.cancelled = "game over"; c.kill?.("game over"); }
   await Promise.all(loops);
+  for (const [pid, d] of desks) {
+    await d.stop("game over");
+    const left = await killLeftovers(null, d.dir);
+    if (left.length) log(`  ${allPersonas.find((x) => x.id === pid)?.name}: stopped ${left.length} leftover process(es) at the end of the game`);
+  }
   await stream.stop();
   await stream.poll();
   live.delete(gameRow.id);
@@ -444,6 +476,7 @@ async function shutdown(sig) {
   console.log(`[arena] ${sig}: pausing running games and stopping sessions`);
   for (const [gameId, st] of live) {
     for (const [, c] of st.controls) { c.cancelled = "runner stopped"; c.kill?.("runner stopped"); }
+    for (const d of st.desks?.values() || []) await d.scaffold.stop("runner stopped").catch(() => {});
     if (st.stream.status === "running") {
       try { await Api.status(st.ownerTok, st.gPath, "pause"); await q("UPDATE arena.games SET paused_by = 'runner-exit' WHERE id = $1", [gameId]); } catch (e) { console.log(`[arena] could not pause: ${e.message}`); }
     }

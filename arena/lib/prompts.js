@@ -44,7 +44,8 @@ export const FRAME_SUMMARY = `Every team agent is told: it is one team in a tour
 badly are removed and replaced); each game is one short continuous stretch of play (a minute or two); before it starts the
 agent writes its three programs in a private workspace with tools and python3 (the lobby, where writing is free); while the
 game runs it gets a session to watch the public action stream and submit changes, which go live at once and cost change
-budget that refills with game time; it may leave its own scripts running during that session; after every game it is
+budget that refills with game time; it can start a scaffold, its own program that keeps watching the stream and submitting
+changes by itself for the rest of the game; after every game it is
 interviewed by a panel of 10-14-year-old players who score understanding, respect, novelty and want-to-team-up (where the arena
 has selection, agents that repeatedly do poorly there are removed); game fitness matters too; it keeps a notebook across
 sessions and games; and it gets RULES.md in full.`;
@@ -92,12 +93,23 @@ ${personaAndSituation(persona, fixed)}
   pays its change cost; if you can't afford it yet it is refused and you're told when you can. \`tools/check.py\` (size, cost
   now, a quick runtime test) and \`tools/try.py\` (run it on the game's real runner) are free. \`tools/status.py\` shows the clock,
   your change budgets and the scores right now.
-- Games are short (this one: ${durationText(config.minutes)}), and a session is slow by comparison: a game may well end before
-  your session does, and then the session is stopped. What reacts during a game is what you prepared: programs that adapt by
-  themselves (a bee learns as it goes), and any script you start in your session, for example one that follows the stream
-  and calls tools/submit.py by itself (README.md shows how). Such a script may run in the background while your session lasts
-  (the Bash tool's run_in_background option, output to a file in your workspace); everything your session started is stopped
-  when it ends.
+- Games are short (this one: ${durationText(config.minutes)}), and a session is slow by comparison: you think in seconds to
+  minutes, the garden moves every 200 ms. So in a game what reacts is what you prepared: programs that adapt by themselves
+  (a bee learns as it goes), and above all your SCAFFOLD.
+- Your scaffold is a program of your own that runs outside the game engine for the rest of the game, even between and after
+  your sessions: it watches the action stream and changes your programs itself, within your change budget. Write it in
+  Python with tools/garden.py and start it with \`python3 tools/scaffold.py start scaffold.py\` (you can start it in the
+  lobby, before the game begins). The runner supervises it: it restarts it if it crashes, stops it when the game ends, and
+  gives it a small CPU share. garden.py: \`follow()\` (each new action as it happens), \`actions(after)\`, \`status()\` (clock,
+  round, scores, your exact budgets and their refill rate, your versions), \`live(kind)\` (your code playing now),
+  \`measure(kind, code)\` (size and cost, free), \`check(kind, code)\`, \`submit(kind, code)\` (refused with \`wait_s\` if you
+  can't afford it yet), \`wait_for_budget(kind, cost)\`. For example: when a rival clover's answer to a challenge appears,
+  rewrite your orchid's table and submit it if affordable; or retune your bee's thresholds as the scores move. Its code is
+  audited before every start and restart with the fair-play rules below; it also may not start other processes, use
+  exec/eval or dynamic imports, or read the environment. \`tools/scaffold.py status|logs|stop|restart\` manage it (its print
+  output is its log). In short games it is the main way to react.
+- Scripts you run in a session (the Bash tool's run_in_background option, output to a file in your workspace) are stopped
+  when that session ends; only the scaffold outlives sessions.
 - The action stream: every bee action is public the moment it happens, and stream/actions.jsonl holds them all, one JSON
   object per line, growing about once a second (stream/SCHEMA.md). It can get big: read it with code (tools/stream.py), never
   print it whole. The same stream is on the game's public API, which needs no login: ${apiBase}/events (Server-Sent Events) and
@@ -147,15 +159,16 @@ export function lobbyBrief({ config, teamName, generation, maxTurns, carried, st
     `you get another session, while it runs. The game won't wait for you, and it will likely be over before that session ends. ` +
     `Change budgets during the game: clover ${n0(b.clover.perMinute)}, orchid ${n0(b.orchid.perMinute)} and bee ${n0(b.bee.perMinute)} ` +
     `nodes a minute, banking at most ${n0(b.clover.cap)} / ${n0(b.orchid.cap)} / ${n0(b.bee.cap)}. So whatever should react during the ` +
-    `game must be ready now: programs that adapt by themselves, and any script you'll want to start at once in that session ` +
-    `(for example one that follows stream/actions.jsonl and submits changes with tools/submit.py). Keep such scripts in your workspace.`);
+    `game must be ready now: programs that adapt by themselves, and your scaffold (scaffold.py, using tools/garden.py), which you ` +
+    `can start now with \`python3 tools/scaffold.py start scaffold.py\`: it keeps running through the whole game, watching the stream ` +
+    `and submitting changes by itself, while you are not there. Check that it starts cleanly (\`tools/scaffold.py status\` and \`logs\`).`);
   parts.push(`Update notebook.md (it carries over to your next sessions and games), then end with a one-paragraph summary of what you ` +
     `wrote and why. You have at most about ${maxTurns} tool calls.`);
   return parts.join("\n\n");
 }
 
 /** The brief of a session while the game runs (or is about to start): headline numbers only. */
-export function gameBrief({ config, teamName, generation, sessionNo, status, clockMs, budgets, standing, head, drafts = [], maxTurns, scripts = [] }) {
+export function gameBrief({ config, teamName, generation, sessionNo, status, clockMs, budgets, standing, head, drafts = [], maxTurns, scripts = [], scaffold = null, automatic = 0 }) {
   const x = ext(config);
   const endMs = config.minutes * 60000;
   const parts = [];
@@ -169,12 +182,15 @@ export function gameBrief({ config, teamName, generation, sessionNo, status, clo
       `Your clover: ${head.clover.feeds} feeds from ${head.clover.bees} bee${head.clover.bees === 1 ? "" : "s"}; your orchid: ${head.orchid.feeds} feeds from ${head.orchid.bees}.`);
   }
   if (budgets) lines.push(`Your change budgets now: ${KINDS.map((k) => `${k} ${n0(budgets[k].available)} of ${n0(budgets[k].cap)} (+${n0(budgets[k].perMinute)}/min)`).join(", ")}.`);
+  if (scaffold?.file) lines.push(`Your scaffold ${scaffold.file}: ${scaffold.state}${scaffold.restarts ? `, ${scaffold.restarts} restart${scaffold.restarts > 1 ? "s" : ""}` : ""}; ` +
+    `it has submitted ${automatic} change${automatic === 1 ? "" : "s"} by itself (\`tools/scaffold.py logs\`).`);
+  else lines.push(`You have no scaffold running (\`python3 tools/scaffold.py start scaffold.py\` starts one; it runs until the game ends).`);
   if (lines.length) parts.push(lines.join("\n"));
   parts.push(`Your program files are the versions playing now. stream/actions.jsonl is the live stream (growing; read it with code: ` +
     `tools/stream.py, stream/SCHEMA.md); stream/mine.jsonl has your own bee's printouts. \`python3 tools/status.py\` shows the clock, ` +
     `your budgets and the scores right now.`);
   if (drafts.length) parts.push(`Edits from an earlier session that were never submitted: drafts/${drafts.map((k) => `${k}.${x}`).join(", drafts/")}.`);
-  if (scripts.length) parts.push(`Scripts in your workspace you might start: ${scripts.join(", ")}.`);
+  if (scripts.length) parts.push(`Python files in your workspace: ${scripts.join(", ")}.`);
   parts.push(`Submit whenever you like: \`python3 tools/submit.py <kind>\` goes live at once and pays its change cost. Nothing is submitted ` +
     `for you. When the game ends this session is stopped, and so is everything it started. Update notebook.md as you go (it ` +
     `carries over to the next game), and end with a one-paragraph summary. At most about ${maxTurns} tool calls.`);
