@@ -81,8 +81,18 @@ export function slot(p: Pt, b: number, n: number): Pt {
  *  of the patch) when which flower it is isn't known. */
 export const flowerX = (kind: FlowerKind | undefined) => (kind === "cosmos" ? -FLOWER_DX : kind === "orchid" ? FLOWER_DX : 0);
 
-/** Where a bee hovers while it questions a flower (or, kind unknown, the patch): its slot, pulled toward it. */
+/** -0.5..0.5: bee b's place in a row of n. */
+const rowPos = (b: number, n: number) => (n > 1 ? b / (n - 1) - 0.5 : 0);
+
+/**
+ * Where a bee hovers while it questions a flower: its slot, pulled toward that flower. When which flower
+ * isn't known, in a row above the middle of the patch (its place in the row is the bee's, not the flower's).
+ */
 export function hoverAt(p: Pt, kind: FlowerKind | undefined, b: number, n: number): Pt {
+  if (kind === undefined) {
+    const u = rowPos(b, n);
+    return { x: p.x + u * Math.min(96, 19 * Math.max(1, n - 1)), y: p.y + FLOWER_Y - 44 + Math.abs(u) * 14 };
+  }
   const s = slot(p, b, n);
   const fx = p.x + flowerX(kind), fy = p.y + FLOWER_Y;
   return { x: s.x + (fx - s.x) * 0.38, y: s.y + (fy - s.y) * 0.3 };
@@ -90,9 +100,9 @@ export function hoverAt(p: Pt, kind: FlowerKind | undefined, b: number, n: numbe
 
 /** Where a feeding bee sits: on the flower head (kind unknown: between the two flowers), nudged a little per bee. */
 export function landing(p: Pt, kind: FlowerKind | undefined, b: number, n: number): Pt {
+  if (kind === undefined) return { x: p.x + rowPos(b, n) * 14, y: p.y + FLOWER_Y - 8 };
   const s = slot({ x: 0, y: 0 }, b, n);
-  const mid = kind === undefined;
-  return { x: p.x + flowerX(kind) + s.x * (mid ? 0.16 : 0.12), y: p.y + FLOWER_Y - (mid ? 14 : 6) + (s.y - FLOWER_Y + 6) * 0.1 };
+  return { x: p.x + flowerX(kind) + s.x * 0.12, y: p.y + FLOWER_Y - 6 + (s.y - FLOWER_Y + 6) * 0.1 };
 }
 
 /** The key of the spot an action happened at: the flower if known, else the patch. */

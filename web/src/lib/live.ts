@@ -37,8 +37,8 @@ export class LiveStore {
   private endMs = Infinity;
   private rateWindow: [number, number][] = [];
 
-  /** Add actions (in seq order). Anything already held is skipped. */
-  ingest(list: Action[]) {
+  /** Add actions (in seq order). Anything already held is skipped. `live`: they just happened (counts toward the rate). */
+  ingest(list: Action[], live = true) {
     let added = 0;
     for (const a of list) {
       if (a.seq <= this.lastSeq) continue;
@@ -54,7 +54,7 @@ export class LiveStore {
       this.complete = false;
     }
     const now = performance.now();
-    this.rateWindow.push([now, added]);
+    if (live) this.rateWindow.push([now, added]);
     while (this.rateWindow.length && now - this.rateWindow[0][0] > 5000) this.rateWindow.shift();
     this.bump();
   }
@@ -180,7 +180,7 @@ export function useGameStream(store: LiveStore, base: string | null, onVersion: 
         // The latest BACKLOG actions, oldest first.
         const page = await api<ActionsPage>("GET", `${base}/actions?before=${Number.MAX_SAFE_INTEGER}&limit=${BACKLOG}`);
         if (closed) return;
-        store.ingest(page.actions);
+        store.ingest(page.actions, false);
         if (page.actions.length < BACKLOG) store.complete = true;
         store.syncClock(page.clockMs, page.status, undefined, page.round);
       } catch { /* the stream still works without the backlog */ }

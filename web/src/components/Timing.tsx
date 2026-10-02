@@ -60,12 +60,12 @@ export function TimingPanel({ data, limit, title, unit, missLabel }: {
     <div className="timing">
       <div className="timing-title"><b>{title}</b> <span className="small muted">({n.toLocaleString()} {unit}; limit {limit} ms)</span></div>
       <div className="timing-stats">
-        <span className="timing-stat"><span className="timing-label">Typical</span><b>{fmtMs(stats.median)}</b><span className="muted"> ms</span></span>
-        <span className="timing-stat"><span className="timing-label">Slowest 10%</span><b>{fmtMs(stats.p90)}</b><span className="muted"> ms</span></span>
-        <span className="timing-stat"><span className="timing-label">Slowest</span><b>{fmtMs(stats.max)}</b><span className="muted"> ms</span></span>
+        <span className="timing-stat"><span className="timing-label">Typical</span><span><b>{fmtMs(stats.median)}</b><span className="muted"> ms</span></span></span>
+        <span className="timing-stat"><span className="timing-label">Slowest 10%</span><span><b>{fmtMs(stats.p90)}</b><span className="muted"> ms</span></span></span>
+        <span className="timing-stat"><span className="timing-label">Slowest</span><span><b>{fmtMs(stats.max)}</b><span className="muted"> ms</span></span></span>
         <span className={`timing-stat ${late ? "timing-bad" : ""}`}>
           <span className="timing-label">{late ? <><span aria-hidden>⏱ </span>{missLabel}</> : missLabel}</span>
-          <b>{late.toLocaleString()}</b><span className="muted"> ({n ? Math.round((late / n) * 100) : 0}%)</span>
+          <span><b>{late.toLocaleString()}</b><span className="muted"> ({n ? Math.round((late / n) * 100) : 0}%)</span></span>
         </span>
       </div>
       <div className="timing-hist" role="img" aria-label={`Histogram of ${unit}: ${stats.bins.map((c, i) => `${Math.round(i * width)}–${Math.round((i + 1) * width)} ms: ${c}`).join(", ")}; over the limit: ${late}`}>
@@ -81,7 +81,10 @@ export function TimingPanel({ data, limit, title, unit, missLabel }: {
           </span>
         </div>
         <div className="timing-axis small muted" aria-hidden>
-          <span>0</span><span>{fmtMs(limit / 2)}</span><span>{limit} ms</span><span className="timing-axis-late">late</span>
+          <span style={{ gridColumn: "1 / span 3" }}>0</span>
+          <span style={{ gridColumn: "5 / span 3", textAlign: "center" }}>{fmtMs(limit / 2)}</span>
+          <span style={{ gridColumn: "9 / span 3", textAlign: "right" }}>{limit} ms</span>
+          <span className="timing-axis-late" style={{ gridColumn: "12" }}>late</span>
         </div>
       </div>
     </div>
