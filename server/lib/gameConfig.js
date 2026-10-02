@@ -7,20 +7,22 @@ import { parseType, typeToString } from "./types.js";
 //   orchid: room for elaborate imitations, and 7× a clover's change rate to chase what it imitates
 //   bee:    5× the orchid's size for detector repertoires, half its compute: checks must be cheap
 // Change budget accrues continuously while the game runs, `perMinute` nodes a minute, and banks up to
-// `cap` (ten minutes' worth): spend it whenever you like, on any change you can afford, and the new
-// program goes live at once. Before the game starts, writing programs is free.
+// `cap` (one minute's worth): spend it whenever you like, on any change you can afford, and the new
+// program goes live at once. Before the game starts, writing programs is free. Over a default 2-minute
+// game a clover or bee can change 40% of a full-size program and an orchid 140%, as much as in the
+// round-based design's six rounds (two change turns per kind, of 20% and 70%).
 // The clover's size is just enough for the longer of the two example clovers (arena/examples: the
 // Paley clique chain is 1,024 nodes, the graceful labelling 427).
 const BUDGETS = {
-  clover: { size: 1100, perMinute: 22, cap: 220, ms: 150 },
-  orchid: { size: 2200, perMinute: 154, cap: 1540, ms: 50 },
-  bee: { size: 11000, perMinute: 220, cap: 2200, ms: 25 },
+  clover: { size: 1100, perMinute: 220, cap: 220, ms: 150 },
+  orchid: { size: 2200, perMinute: 1540, cap: 1540, ms: 50 },
+  bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 25 },
 };
 
 export const DEFAULT_CONFIG = Object.freeze({
   language: "python",          // "python" | "typescript"
-  minutes: 30,                 // how long the game runs (game time: it stops while paused)
-  feedCost: 5,                 // turns a feed costs (an ask always costs 1)
+  minutes: 2,                  // how long the game runs (game time: it stops while paused)
+  feedCost: 10,                // rounds a feeding bee sits out (an ask takes its turn in one round)
   challengeType: "int",        // type of the value a bee asks with
   responseType: "int",         // type of the value a flower answers with
   maxLen: 64,                  // max length of strings and lists in challenges/responses

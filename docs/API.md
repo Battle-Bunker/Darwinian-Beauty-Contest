@@ -43,7 +43,7 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 | POST | `base/teams/join` | user | `{ joinCode }` | `{ id, name }` |
 | POST | `base/check` | team member | `{ kind, code }` | `{ ok, kind, size, minified, budget, distance, cost, available, errors[] }`. Validates without saving. `size` is weighted nodes of the minified program; `minified` is the text the game runs. Once the game runs, `distance` is the node edits from the version playing now (renames, comments and formatting are free), `cost` what the change would spend and `available` the change budget now (floored) |
 | POST | `base/programs` | team member | `{ kind, code }` | same as check plus `submitted: true, version`, and `available` after paying; the new version goes live at once. **422** with `errors` if it's too big or can't be afforded yet (the error says how long until it can) |
-| POST | `base/try` | team member | `{ kind, code, challenges?, flowers?: {clover, orchid} }` | flower: `{ results: [{c, r, error?, ms}] }`. bee: a few hundred turns in a garden of just your own two flowers (the `flowers` you pass, else your latest): `{ actions, problems, feeds, nectar, cycles }` |
+| POST | `base/try` | team member | `{ kind, code, challenges?, flowers?: {clover, orchid} }` | flower: `{ results: [{c, r, error?, ms}] }`. bee: 300 rounds in a garden of just your own two flowers (the `flowers` you pass, else your latest): `{ actions, problems, feeds, nectar, rounds }` |
 
 `kind` is `clover`, `orchid` or `bee`.
 
@@ -52,18 +52,20 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 ```json
 {
   "language": "python",
-  "minutes": 30, "feedCost": 5,
+  "minutes": 2, "feedCost": 10,
   "challengeType": "int", "responseType": "int", "maxLen": 64, "maxNodes": 512,
   "revealOnFinish": true,
   "budgets": {
-    "clover": { "size": 1100,  "perMinute": 22,  "cap": 220,  "ms": 150 },
-    "orchid": { "size": 2200,  "perMinute": 154, "cap": 1540, "ms": 50 },
-    "bee":    { "size": 11000, "perMinute": 220, "cap": 2200, "ms": 25 }
+    "clover": { "size": 1100,  "perMinute": 220,  "cap": 220,  "ms": 150 },
+    "orchid": { "size": 2200,  "perMinute": 1540, "cap": 1540, "ms": 50 },
+    "bee":    { "size": 11000, "perMinute": 2200, "cap": 2200, "ms": 25 }
   }
 }
 ```
 
-- `minutes`: game time the garden runs for (it stops while paused).
+- `minutes`: game time the garden runs for (it stops while paused). Fractions are fine (`0.5` = 30 s).
+- `feedCost`: a **round** is one turn for every bee that isn't feeding; a bee that feeds sits out the
+  next `feedCost` rounds.
 - `budgets.<kind>.size`: size budget in weighted nodes (vendor/measure.js; RULES.md explains it to players).
 - `budgets.<kind>.perMinute`, `cap`: change budget earned per minute of game time, and the most that can
   be banked. A team's budget for a program at game time `t` is `min(cap, bank + perMinute × (t − atMs) / 60000)`,
@@ -94,6 +96,7 @@ returns everything that has happened so far, filtered to what this viewer is all
   "game": { "shortId", "url", "status": "lobby|running|paused|finished", "config",
             "clockMs",        // game time played so far (updated a few times a second while running)
             "endMs",          // config.minutes in ms: the game ends when clockMs reaches it
+            "round",          // rounds played so far
             "lastSeq",        // the latest action's seq
             "version", "lastError", "startedAt", "finishedAt", "revealed", "isOwner" },
   "me": { "id", "name", "teamId" } | null,
@@ -118,7 +121,7 @@ nectarCollected, pollinators, nectarSources }`.
 `action`: one turn's worth of what a bee did, public the moment it happens:
 
 ```jsonc
-{ "seq", "atMs",                 // order and game time
+{ "seq", "atMs", "round",        // order, game time, and the round it happened in
   "bee", "patch",                // team ids: whose bee, at whose patch
   "visit",                       // the bee's visit number: one visit is several actions
   "kind": "clover|orchid",       // which flower of the patch

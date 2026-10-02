@@ -1,4 +1,4 @@
-// The continuous garden (server/engine.js): round-robin turns, the visit rules, stateless flowers,
+// The continuous garden (server/engine.js): rounds of round-robin turns, the visit rules, stateless flowers,
 // bees that keep their state until replaced, instant swaps, and the game clock.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -7,28 +7,32 @@ import { starters } from "./fixtures/programs.js";
 import { play } from "./fixtures/garden.js";
 import { DEFAULT_CONFIG, available, normalizeConfig } from "../server/lib/gameConfig.js";
 
-/** How many turns an action costs. */
-const turnsOf = (a, feedCost, visitAsked) =>
-  a.action === "ask" || a.action === "error" ? 1 : a.action === "feed" ? feedCost : a.action === "leave" && !visitAsked && !a.by ? 1 : 0;
+/** How many rounds an action takes: its turn, and for a feed the rounds the bee then sits out. */
+const roundsOf = (a, feedCost, visitAsked) =>
+  a.action === "ask" || a.action === "error" ? 1 : a.action === "feed" ? 1 + feedCost : a.action === "leave" && !visitAsked && !a.by ? 1 : 0;
 
 for (const language of ["python", "typescript"]) {
-  test(`${language}: round robin: every bee's turns add up to the cycles played`, async () => {
+  test(`${language}: round robin: every bee's turns and feeds add up to the rounds played`, async () => {
     const config = normalizeConfig({ language, feedCost: 4 });
     const s = starters(config);
     const out = await play(config, [s, s, s, s], 120);
-    assert.equal(out.cycles, 120);
+    assert.equal(out.rounds, 120);
+    assert.equal(out.round, 120);
     for (let b = 0; b < 4; b++) {
       const mine = out.actions.filter((a) => a.bee === b);
       assert.ok(mine.length > 10, `bee ${b} acted ${mine.length} times`);
       let used = 0;
       const asked = new Map();
-      for (const a of mine) {
-        used += turnsOf(a, config.feedCost, asked.get(a.visit));
+      for (const [i, a] of mine.entries()) {
+        used += roundsOf(a, config.feedCost, asked.get(a.visit));
         if (a.action === "ask") asked.set(a.visit, true);
         if (a.action === "feed") assert.equal(a.nectar, a.kind === "clover");
+        // A feeding bee is out of the round robin: its next action comes feedCost + 1 rounds later.
+        const next = mine[i + 1];
+        if (a.action === "feed" && next) assert.ok(next.round >= a.round + config.feedCost + 1, `fed in round ${a.round}, next in ${next.round}`);
       }
-      // A feed's turns may run past the last cycle.
-      assert.ok(used >= out.cycles && used <= out.cycles + config.feedCost - 1, `bee ${b}: ${used} turns in ${out.cycles} cycles`);
+      // The rounds a feed sits out may run past the last round.
+      assert.ok(used >= out.rounds && used <= out.rounds + config.feedCost, `bee ${b}: ${used} rounds of turns in ${out.rounds} rounds`);
       // A shuffled deck: every flower comes up once before any comes up again.
       const firstLap = [...new Map(mine.map((a) => [a.visit, `${a.patch}:${a.kind}`])).values()].slice(0, 8);
       assert.equal(new Set(firstLap).size, 8);
@@ -127,7 +131,7 @@ for (const language of ["python", "typescript"]) {
     };
     const p = language === "python" ? py : ts;
     const out = await play(config, [{ clover: p.clover(1), orchid: p.clover(2), bee: p.bee }], 60, async (garden) => {
-      while (garden.cycles < 20) await new Promise((r) => setTimeout(r, 5));
+      while (garden.rounds < 20) await new Promise((r) => setTimeout(r, 5));
       await garden.setProgram(0, "clover", p.clover(3), 2);
       await garden.setProgram(0, "bee", p.bee, 2);
     });
@@ -186,10 +190,14 @@ test("change budgets accrue per minute of game time up to a cap", () => {
   assert.equal(bee.size, 5 * orchid.size);
   assert.equal(clover.ms, 3 * orchid.ms);
   assert.equal(orchid.perMinute, 7 * clover.perMinute);
-  for (const b of [clover, orchid, bee]) assert.equal(b.cap, 10 * b.perMinute, "ten minutes' worth");
-  assert.equal(available(clover, { bank: 0, atMs: 0 }, 60000), 22);
-  assert.equal(available(clover, { bank: 5, atMs: 60000 }, 90000), 16);
+  for (const b of [clover, orchid, bee]) assert.equal(b.cap, b.perMinute, "a minute's worth");
+  // Over a default game: 40% of a full-size clover or bee, 140% of an orchid.
+  const total = (b) => b.perMinute * DEFAULT_CONFIG.minutes;
+  assert.deepEqual([clover, orchid, bee].map((b) => total(b) / b.size), [0.4, 1.4, 0.4]);
+  assert.equal(available(clover, { bank: 0, atMs: 0 }, 30000), 110);
+  assert.equal(available(clover, { bank: 5, atMs: 30000 }, 45000), 60);
   assert.equal(available(clover, { bank: 0, atMs: 0 }, 3600000), 220);
+  assert.equal(DEFAULT_CONFIG.feedCost, 10);
 });
 
 test("try a flower: answers and timings", async () => {

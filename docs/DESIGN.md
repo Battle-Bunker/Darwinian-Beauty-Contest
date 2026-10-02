@@ -39,16 +39,19 @@ tastes each flower's answer to it once, and remembers which answers paid. The or
 too late every time (REPORT.md §19).
 
 So this design drops rounds altogether:
-- **One stream.** Bees take turns round robin, as fast as the programs run, for the whole game. A bee is
-  one long-running program; it keeps its state until its team replaces it.
+- **One stream.** Bees take turns round robin, as fast as the programs run, for the whole game (2 minutes
+  by default). A **round** is one turn for every bee; a bee that feeds is out of the round robin for the
+  next 10 rounds. A bee is one long-running program; it keeps its state until its team replaces it.
 - **Behaviour public at once, changes private.** Every ask, answer, feed and error is public the moment it
   happens. Code, what bees print, and each team's code changes and change budgets stay secret during
   play; once the game is over the replay shows every change and budget (and the code, unless the owner
   turns that off). Other teams have to read a change from behaviour, not from a changelog.
 - **Change at any time, paid from a budget that refills.** Each program earns change budget per minute of
-  game time, up to a cap of ten minutes' worth, and any change it can afford goes live at once. The rates
-  keep the asymmetry: orchids earn 7× a clover's rate, so they can chase whatever bees trust; clovers
-  change slowly. Writing programs in the lobby is free.
+  game time, up to a cap of one minute's worth, and any change it can afford goes live at once. Over a
+  default 2-minute game that's as much change as the round-based design allowed in six rounds (a clover or
+  bee 40% of a full-size program, an orchid 140%). The rates keep the asymmetry: orchids earn 7× a
+  clover's rate, so they can chase whatever bees trust; clovers change slowly. Writing programs in the
+  lobby is free.
 
 What this changes, and what it doesn't:
 - Information no longer comes in batches. An orchid's team sees a clover's answer, and the question a bee
@@ -62,8 +65,8 @@ What this changes, and what it doesn't:
 
 ### How it runs
 
-- `server/engine.js`: a `Garden` runs one game's loop. Each cycle every bee that isn't busy takes one turn,
-  all at once (a feed keeps a bee busy for `feedCost` cycles). Programs can be swapped at any moment: a
+- `server/engine.js`: a `Garden` runs one game's loop. Each round every bee that isn't feeding takes one
+  turn, all at once (a feed takes a bee out of the round robin for the next `feedCost` rounds). Programs can be swapped at any moment: a
   flower's next ask uses the new code; a bee swaps at its next turn, abandoning its visit. Answers are
   labelled with the version that gave them.
 - `server/live.js`: each running game's garden runs in exactly one server process, whichever holds the
@@ -78,7 +81,7 @@ What this changes, and what it doesn't:
 - Viewers get the actions over Server-Sent Events, or page through them with `GET .../actions`.
 
 How fast the garden runs depends on the programs: with trivial programs it does over a thousand actions a
-second; flowers that use their compute budget slow every cycle down to their pace.
+second; flowers that use their compute budget slow every round down to their pace.
 
 ## Why rootsum
 

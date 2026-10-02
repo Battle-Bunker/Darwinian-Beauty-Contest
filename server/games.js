@@ -347,7 +347,7 @@ export async function viewGame(room, game, user) {
     room: { id: room.id, shortId: shortId(room), url: `/room/${shortId(room)}`, isOwner },
     game: {
       id: g.id, shortId: shortId(g), url: `/room/${shortId(room)}/game/${shortId(g)}`, status: g.status, config: cfg,
-      clockMs: g.clock_ms, endMs: Math.round(cfg.minutes * 60000), lastSeq: g.last_seq, version: g.version, lastError: g.last_error,
+      clockMs: g.clock_ms, endMs: Math.round(cfg.minutes * 60000), round: g.round, lastSeq: g.last_seq, version: g.version, lastError: g.last_error,
       createdAt: g.created_at, startedAt: g.started_at, finishedAt: g.finished_at, revealed, isOwner,
     },
     me: user ? { id: user.id, name: user.name, teamId: mine?.id ?? null } : null,
@@ -403,7 +403,7 @@ export async function viewActions(game, user, { after = 0, limit = 1000 } = {}) 
 }
 
 export function actionView(a, myTeamId, over, revealed) {
-  const out = { seq: a.seq, atMs: a.at_ms, bee: a.bee_team, visit: a.visit, patch: a.patch_team, kind: a.kind, action: a.action };
+  const out = { seq: a.seq, atMs: a.at_ms, round: a.round, bee: a.bee_team, visit: a.visit, patch: a.patch_team, kind: a.kind, action: a.action };
   if (over || a.bee_team === myTeamId) out.beeVersion = a.bee_version;
   if (over || a.patch_team === myTeamId) out.flowerVersion = a.flower_version;
   if (a.action === "ask") Object.assign(out, { c: a.c, r: a.r, ms: a.ms, ...(a.after ? { after: true } : {}) });

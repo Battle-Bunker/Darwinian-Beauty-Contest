@@ -17,7 +17,7 @@ is in, or which of its two flowers it is. All a bee sees is a flower and its ans
 
 ## The garden never stops
 
-A game is one continuous stretch of play, 30 minutes by default (the room owner sets it).
+A game is one continuous stretch of play, 2 minutes by default (the room owner sets it).
 
 1. **The lobby.** Teams join and write their programs. Writing is free here: anything within the size
    budgets. A team needs all three programs to take part.
@@ -27,26 +27,27 @@ A game is one continuous stretch of play, 30 minutes by default (the room owner 
 3. **The end.** When the clock runs out the game is over. The owner can also pause it (the clock and
    the budgets stand still) or end it early.
 
-### Bees take turns
+### Bees take turns, in rounds
 
-The bees take turns round robin, as fast as the programs run: every bee that isn't busy takes one
-turn, then they all go again. Each bee is shown one flower at a time, from its own shuffled deck of
-every flower in the garden. Your own two flowers are in the deck too, and every flower comes up once
-before any comes up again.
+The bees take turns round robin, as fast as the programs run. A **round** is one turn for every bee:
+every bee that isn't busy feeding takes its turn, then the next round starts. Each bee is shown one
+flower at a time, from its own shuffled deck of every flower in the garden. Your own two flowers are
+in the deck too, and every flower comes up once before any comes up again.
 
 At each flower your bee can:
 
-- **ask** a challenge: takes **1 turn**. The flower answers with its response.
-- **feed**: takes **5 turns** (the owner can change this). You get 1 nectar if it was a clover and 0
-  if it was an orchid. You can feed **once** per visit.
-- **leave**: free once you've asked something. The next flower appears.
+- **ask** a challenge: that's its turn this round. The flower answers with its response.
+- **feed**: you get 1 nectar if it was a clover and 0 if it was an orchid, and your bee is busy
+  feeding: it's **out of the round robin for the next 10 rounds** (the owner can change the 10) while
+  the other bees carry on. You can feed **once** per visit.
+- **leave**: free once you've asked something. The next flower appears straight away, in the same turn.
 
 You must ask at least once before you feed. **After feeding you can keep asking the same flower**:
 that's how you study a flower you now know is generous (or know is a fake). Once you've fed, anything
 other than another ask moves on to the next flower.
 
-A bee that leaves without asking anything still loses 1 turn. If your bee crashes, runs out of time or
-returns something odd, that costs 1 turn and ends the visit.
+A bee that leaves without asking anything still uses up its turn. If your bee crashes, runs out of time
+or returns something odd, that uses up its turn and ends the visit.
 
 **Bees remember things.** Your bee is one running program: its variables last from call to call for as
 long as that version of it plays, so it can learn as it goes. Submitting a new bee starts the new one
@@ -108,7 +109,7 @@ def flower(challenge):
 def forage(seen, visit):
     # seen  = [[challenge, response], ...] at the flower in front of you (empty when it arrives)
     # visit = {"fed": True/False, "nectar": True/False/None, "flowers": how many flowers are in the garden}
-    ...  # return ["ask", challenge] (1 turn), "feed" (GAME["feed_cost"] turns) or "leave" (free)
+    ...  # return ["ask", challenge] (this round's turn), "feed" (then sit out GAME["feed_cost"] rounds) or "leave" (free)
 
 def tasted(seen, nectar):   # optional: called right after you feed; nectar is True or False
     ...
@@ -129,8 +130,9 @@ function tasted(seen: [Challenge, Response | null][], nectar: boolean): void   /
 In TypeScript, `tree[T]` is `{ value: T; children: Tree<T>[] }` and a graph is
 `{ nodes: number; edges: [number, number][] }`.
 
-Every program can read a `GAME` dictionary/object: `feed_cost`, `challenge_type`, `response_type`,
-`max_len`, `max_nodes` and `ms` (your program's own time limit per call, in milliseconds). It doesn't
+Every program can read a `GAME` dictionary/object: `feed_cost` (rounds a feeding bee sits out),
+`challenge_type`, `response_type`, `max_len`, `max_nodes` and `ms` (your program's own time limit per
+call, in milliseconds). It doesn't
 say what time it is in the game.
 
 Python programs may import `math`, `random`, `hashlib`, `string`, `itertools`, `functools`,
@@ -147,7 +149,7 @@ programs get **different** budgets on purpose, measured against the orchid:
 | Budget | Measures | clover | orchid | bee |
 |---|---|---|---|---|
 | **size** | your program's size in nodes (see below) | 1,100 (half an orchid's) | 2,200 | 11,000 (5× an orchid's) |
-| **change** | nodes of change you earn per minute of play, and the most you can bank | 22 a minute, up to 220 | 154 a minute, up to 1,540 (7× a clover's) | 220 a minute, up to 2,200 |
+| **change** | nodes of change you earn per minute of play, and the most you can bank (a minute's worth) | 220 a minute, up to 220 | 1,540 a minute, up to 1,540 (7× a clover's) | 2,200 a minute, up to 2,200 |
 | **compute** | milliseconds per call (flowers: the whole program, every question) | 150 (3× an orchid's) | 50 | 25 (half an orchid's) |
 
 Why it's lopsided:

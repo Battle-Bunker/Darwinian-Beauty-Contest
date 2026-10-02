@@ -81,10 +81,10 @@ tally = {}   # answer to QUESTION -> [times fed, times got nectar]
 def forage(seen):
     # seen = [[challenge, response], ...] for the flower in front of you
     if not seen:
-        return ["ask", QUESTION]    # costs 1 turn
+        return ["ask", QUESTION]    # takes this round's turn
     fed, got = tally.get(str(seen[0][1]), [0, 0])
     if fed < 2 or got / fed >= 0.5:   # taste each new answer twice
-        return "feed"               # costs GAME["feed_cost"] turns
+        return "feed"               # sits out GAME["feed_cost"] rounds
     return "leave"                  # free
 
 def tasted(seen, nectar):
@@ -150,7 +150,7 @@ const tally = new Map<string, [number, number]>(); // answer to QUESTION -> [tim
 function forage(seen: Seen): ["ask", Challenge] | "feed" | "leave" {
   if (seen.length === 0) return ["ask", QUESTION]; // costs 1 turn
   const [fed, got] = tally.get(JSON.stringify(seen[0][1])) ?? [0, 0];
-  if (fed < 2 || got / fed >= 0.5) return "feed"; // taste each new answer twice; costs GAME.feed_cost turns
+  if (fed < 2 || got / fed >= 0.5) return "feed"; // taste each new answer twice; sits out GAME.feed_cost rounds
   return "leave";                                   // free
 }
 

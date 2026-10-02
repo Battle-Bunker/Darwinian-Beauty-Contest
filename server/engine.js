@@ -2,12 +2,12 @@
 // (and can be replaced at any moment), actions come out.
 //
 // Every team owns a patch of two flowers (clover = rewarding, orchid = deceptive) and one bee. The bees
-// take turns round robin, as fast as the programs run: in each cycle every bee that isn't busy takes one
-// turn, all of them at once. A bee is shown flowers from its own shuffled deck of every flower in the
-// garden (each comes up once before any comes up again). At a flower it may ask challenges (a turn
-// each), feed once (feedCost turns; nectar only at clovers), keep asking after feeding, and leave
-// (free once it has asked; an empty glance costs a turn). After a feed, anything but an ask ends the
-// visit.
+// take turns round robin, as fast as the programs run: in each round every bee that isn't feeding takes
+// one turn, all of them at once. A bee is shown flowers from its own shuffled deck of every flower in
+// the garden (each comes up once before any comes up again). At a flower it may ask challenges (a turn
+// each), feed once (nectar only at clovers; the bee then sits out the next feedCost rounds), keep asking
+// after feeding, and leave (free once it has asked; an empty glance costs a turn). After a feed,
+// anything but an ask ends the visit.
 // Flowers are stateless: every ask runs the flower afresh, with fresh randomness and the clock, so the
 // same challenge can get a different answer every time. A bee keeps its state for as long as that
 // version of it plays; new code (or a crash) starts it afresh.
@@ -97,24 +97,25 @@ const shuffle = (a) => {
 export class Garden {
   /**
    * teams: number of teams (ledger rows/columns are team indices).
-   * clockMs: game time already played. endMs: game time at which run() stops (default config.minutes).
-   * maxCycles: stop after this many cycles instead (for trying a bee).
+   * clockMs: game time already played; round: rounds already played. endMs: game time at which run()
+   * stops (default config.minutes). maxRounds: stop after this many rounds instead (for trying a bee).
    * lastSeq: the last action number already used. ledgers: { feeds, nectar } so far.
    */
-  constructor({ config, teams, clockMs = 0, endMs = config.minutes * 60000, maxCycles = Infinity, lastSeq = 0, ledgers = null }) {
+  constructor({ config, teams, clockMs = 0, round = 0, endMs = config.minutes * 60000, maxRounds = Infinity, lastSeq = 0, ledgers = null }) {
     this.config = config;
     this.n = teams;
     this.cType = parseType(config.challengeType);
     this.rType = parseType(config.responseType);
     this.limits = limitsOf(config);
     this.endMs = endMs;
-    this.maxCycles = maxCycles;
-    this.cycles = 0;
+    this.maxRounds = maxRounds;
+    this.rounds = 0;                  // rounds run by this garden
+    this.round = round;               // rounds in the game so far (the current round is round + 1)
     this.seq = lastSeq;
     this.clockBase = clockMs;
     this.startedAt = null;            // performance.now() when the clock last started
     this.flowers = [];                // { team, kind, version, pool }
-    this.bees = Array.from({ length: teams }, (_, ti) => ({ ti, version: null, code: null, pending: null, proc: null, broken: false, wait: 0, deck: [], visit: null, visits: 0 }));
+    this.bees = Array.from({ length: teams }, (_, ti) => ({ ti, version: null, code: null, pending: null, proc: null, broken: false, sitOut: 0, deck: [], visit: null, visits: 0 }));
     this.feeds = ledgers?.feeds ?? zeroLedger(teams);
     this.nectar = ledgers?.nectar ?? zeroLedger(teams);
     this.out = [];                    // actions not yet drained
@@ -166,7 +167,7 @@ export class Garden {
     await this.running;
   }
 
-  /** Runs until the game clock reaches endMs (or maxCycles, or stop()). */
+  /** Runs until the game clock reaches endMs (or maxRounds, or stop()). */
   run() {
     this.running ??= this.#loop().finally(() => this.#close());
     return this.running;
@@ -174,21 +175,23 @@ export class Garden {
 
   /** Everything new since the last drain: actions, program problems, the clock and the ledgers. */
   drain() {
-    return { actions: this.out.splice(0), problems: this.problems.splice(0), clockMs: Math.round(this.clockMs()), lastSeq: this.seq, feeds: this.feeds, nectar: this.nectar };
+    return { actions: this.out.splice(0), problems: this.problems.splice(0), clockMs: Math.round(this.clockMs()), round: this.round, lastSeq: this.seq, feeds: this.feeds, nectar: this.nectar };
   }
 
   async #loop() {
     if (!this.paused) this.startedAt = performance.now();
     while (!this.stopped) {
       if (this.paused) { await new Promise((resolve) => { this.gate = resolve; }); this.gate = null; continue; }
-      if (this.clockMs() >= this.endMs || this.cycles >= this.maxCycles) break;
+      if (this.clockMs() >= this.endMs || this.rounds >= this.maxRounds) break;
       const bees = this.bees.filter((b) => b.pending || (b.proc && !b.broken));
-      if (!bees.length || !this.flowers.length) { await new Promise((r) => setTimeout(r, 100)); this.cycles++; continue; }
+      this.rounds++;
+      if (!bees.length || !this.flowers.length) { await new Promise((r) => setTimeout(r, 100)); continue; } // nobody can play
+      this.round++;
+      // Feeding bees are out of the round robin: they sit this round out.
       const acting = [];
-      for (const b of bees) { if (b.wait > 0) b.wait--; else acting.push(b); }
+      for (const b of bees) { if (b.sitOut > 0) b.sitOut--; else acting.push(b); }
       if (acting.length) await Promise.all(acting.map((b) => this.#turn(b)));
       else await new Promise((r) => setImmediate(r));
-      this.cycles++;
     }
     this.clockBase = this.clockMs();
     this.startedAt = null;
@@ -214,7 +217,7 @@ export class Garden {
 
   #record(b, v, fields) {
     this.out.push({
-      seq: ++this.seq, atMs: Math.round(this.clockMs()), bee: b.ti, visit: v.no, patch: v.slot.team, kind: v.slot.kind,
+      seq: ++this.seq, atMs: Math.round(this.clockMs()), round: this.round, bee: b.ti, visit: v.no, patch: v.slot.team, kind: v.slot.kind,
       beeVersion: b.version, flowerVersion: v.slot.version,
       c: null, r: null, after: false, nectar: null, ms: null, error: null, by: null, log: null, ...fields,
     });
@@ -308,7 +311,7 @@ export class Garden {
         const logs = [log, t.out].filter(Boolean).join("").slice(0, MAX_LOG) || null;
         this.#record(b, v, { action: "feed", nectar: v.nectar, log: logs, ...(t.e ? { error: ("tasted: " + t.e).slice(0, 300), by: "bee" } : {}) });
         if (this.config.feedCost === 0) continue;
-        b.wait = this.config.feedCost - 1;
+        b.sitOut = this.config.feedCost; // feeding: out of the round robin for the next feedCost rounds
         return;
       }
       // leave (or a second feed, which also moves on): free once the bee has asked here
@@ -346,11 +349,11 @@ export async function tryFlower({ config, code, kind, challenges }) {
   }
 }
 
-/** A bee foraging a garden of just its own team's two flowers for `cycles` turns (the "try it" tool). */
-export async function tryBee({ config, programs, cycles = 300 }) {
-  const garden = new Garden({ config, teams: 1, endMs: Infinity, maxCycles: cycles });
+/** A bee foraging a garden of just its own team's two flowers for `rounds` rounds (the "try it" tool). */
+export async function tryBee({ config, programs, rounds = 300 }) {
+  const garden = new Garden({ config, teams: 1, endMs: Infinity, maxRounds: rounds });
   await Promise.all(KINDS.map((k) => garden.setProgram(0, k, programs[k], 1)));
   await garden.run();
   const { actions, problems, feeds, nectar } = garden.drain();
-  return { actions, problems, feeds: feeds[0][0], nectar: nectar[0][0], cycles: garden.cycles };
+  return { actions, problems, feeds: feeds[0][0], nectar: nectar[0][0], rounds: garden.rounds };
 }
