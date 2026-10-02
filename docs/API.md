@@ -35,7 +35,7 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 |---|---|---|---|---|
 | GET | `base` | anyone | | the **game view** (below), filtered for the viewer |
 | GET | `base/actions` | anyone | `?after=<seq>&limit=<n ≤ 5000>` | `{ actions: [action], lastSeq, clockMs, status }`: the actions after `after`, oldest first |
-| GET | `base/events` | anyone | `?after=<seq>` | Server-Sent Events: `{version}` when the view should be refetched; `{actions, lastSeq, clockMs}` as the garden writes them (from `after`, in order, page after page until caught up); `{clockMs, lastSeq}` when there is nothing new |
+| GET | `base/events` | anyone | `?after=<seq>` | Server-Sent Events: `{version}` when the view should be refetched; `{programs: true}` when your own team's programs changed (refetch too); `{actions, lastSeq, clockMs}` as the garden writes them (from `after`, in order, page after page until caught up); `{clockMs, lastSeq}` when there is nothing new |
 | PATCH | `base/config` | owner, in the lobby | `{ config: {...partial} }` | `{ config, clearedPrograms }` (changing the language or types, or shrinking a size budget, clears the programs written so far) |
 | POST | `base/start` | owner, in the lobby | | `{ status: "running", participants }`. Teams with all three programs play; at least 2 |
 | POST | `base/status` | owner | `{ action: "pause" \| "resume" \| "finish" }` | `{ status }`. The clock and change budgets stand still while paused; `finish` ends the game early |
@@ -81,9 +81,12 @@ Types: `int`, `float`, `bool`, `str`, `any` (any plain JSON), `list[T]`, `tree[T
 ### The game view
 
 There is no separate replay mode. The view plus the actions *are* the game: loading them at any time
-returns everything that has happened so far, filtered to what this viewer is allowed to know. Everything
-is public except code (and what bees print), which is your own team's, or everyone's once a finished game
-is revealed.
+returns everything that has happened so far, filtered to what this viewer is allowed to know:
+- What the bees do is public as it happens.
+- A team's code changes (versions, their size, cost and timing, which version played each action) and
+  its change budgets are its own until the game is over, then everyone's.
+- Code, and what bees print, is your own team's, or everyone's once a finished game is revealed
+  (`revealOnFinish`).
 
 ```jsonc
 {
@@ -96,9 +99,11 @@ is revealed.
   "me": { "id", "name", "teamId" } | null,
   "participants": [teamId, ...] | null,   // fixed at the start; ledger row/column order
   "teams": [{ "id", "name", "color", "members": [names], "participant",
-              "programs": { kind: [{ version, size, distance, cost, atMs, submittedAt, submittedBy, problem, code? }] },
-                                          // every version, oldest first; atMs = game time it went live (0: the lobby)
-              "banks": { kind: { bank, atMs } } }],   // change budget, see Config
+              "ready": { kind: bool },    // in the lobby: which programs the team has written (it plays if all three)
+              "programs": { kind: [{ version, size, distance, cost, atMs, submittedAt, submittedBy, problem, code? }] } | null,
+                                          // every version, oldest first; atMs = game time it went live (0: the lobby).
+                                          // Your own team's during play, everyone's once the game is over
+              "banks": { kind: { bank, atMs } } | null }],   // change budget (see Config): same visibility
   "myTeam": { "id", "name", "joinCode" } | null,
   "interface": { "flower", "bee", "types": { "challenge", "response", "challengeMeans", "responseMeans", "rules": [..] } },
                                           // signatures + type rules only: no starter code
@@ -118,12 +123,14 @@ nectarCollected, pollinators, nectarSources }`.
   "visit",                       // the bee's visit number: one visit is several actions
   "kind": "clover|orchid",       // which flower of the patch
   "action": "ask|feed|leave|error",
-  "beeVersion", "flowerVersion", // which versions of the programs played
+  "beeVersion", "flowerVersion", // which versions played: your own programs' during play, all once it's over
   "c", "r", "ms", "after",       // ask: challenge, response (null if it failed), the flower's time, asked after feeding
   "nectar",                      // feed: true at a clover
   "error", "by",                 // what went wrong, and whose fault: bee | challenge | flower | engine
+                                 // (engine: shown to the bee's team during play, to all once it's over)
   "log" }                        // what the bee printed: its own team, or everyone once revealed
 ```
 
 An `engine` leave ends a visit the bee didn't finish because its team replaced it (or it crashed and
-restarted).
+restarted). Submissions don't bump the public `game.version`, so other teams can't tell when a team
+changes its code.

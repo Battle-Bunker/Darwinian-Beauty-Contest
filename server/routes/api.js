@@ -26,10 +26,11 @@ export function apiRouter() {
   const base = "/rooms/:room/games/:game";
   r.get(base, wrap(async (req, res) => res.json(await G.viewGame(req.room, req.game, req.user))));
   r.get(`${base}/actions`, wrap(async (req, res) => res.json(await G.viewActions(req.game, req.user, { after: req.query.after, limit: req.query.limit }))));
-  r.get(`${base}/events`, (req, res) => gameStream(req, res, {
-    gameId: req.game.id, version: req.game.version, after: Number(req.query.after ?? req.game.last_seq) || 0,
+  r.get(`${base}/events`, wrap(async (req, res) => gameStream(req, res, {
+    gameId: req.game.id, teamId: await G.myTeamId(req.game, req.user), version: req.game.version,
+    after: Number(req.query.after ?? req.game.last_seq) || 0,
     fetchActions: (after) => G.viewActions(req.game, req.user, { after, limit: 1000 }),
-  }));
+  })));
   r.patch(`${base}/config`, requireUser, wrap(async (req, res) => res.json(await G.updateConfig(req.room, req.game, req.user, req.body?.config ?? req.body))));
   r.post(`${base}/start`, requireUser, wrap(async (req, res) => res.json(await G.startGame(req.room, req.game, req.user))));
   r.post(`${base}/status`, requireUser, wrap(async (req, res) => res.json(await G.setStatus(req.room, req.game, req.user, req.body?.action))));

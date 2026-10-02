@@ -20,7 +20,7 @@ const lockKey = (gameId) => `dbc:garden:${gameId}`;
 
 export async function startLive() {
   await connectLocks();
-  bus.on("change", (c) => { if (c.game && c.version !== undefined) sync(c.game); });
+  bus.on("change", (c) => { if (c.game && (c.version !== undefined || c.programs)) sync(c.game); });
   setInterval(sweep, SWEEP_MS).unref();
   await sweep();
 }
@@ -127,9 +127,9 @@ async function flush(run) {
           await c.query("UPDATE programs SET problem = COALESCE(problem, $5) WHERE game_id = $1 AND team_id = $2 AND kind = $3 AND version = $4",
             [run.id, ids[p.team], p.kind, p.version, p.error]);
         }
-        if (d.problems.length) {
-          const v = (await c.query("UPDATE games SET version = version + 1 WHERE id = $1 RETURNING version", [run.id])).rows[0].version;
-          await c.query("SELECT pg_notify('dbc', $1)", [JSON.stringify({ game: run.id, room: run.room, version: v, problems: true })]);
+        // A program's problems are its team's business until the game is over.
+        for (const team of new Set(d.problems.map((p) => ids[p.team]))) {
+          await c.query("SELECT pg_notify('dbc', $1)", [JSON.stringify({ game: run.id, team, programs: true })]);
         }
         await c.query("SELECT pg_notify('dbc', $1)", [JSON.stringify({ game: run.id, seq: d.lastSeq, clockMs: d.clockMs })]);
       });

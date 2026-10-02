@@ -41,9 +41,10 @@ too late every time (REPORT.md §19).
 So this design drops rounds altogether:
 - **One stream.** Bees take turns round robin, as fast as the programs run, for the whole game. A bee is
   one long-running program; it keeps its state until its team replaces it.
-- **Everything public at once, code private.** Every ask, answer, feed and error is public the moment it
-  happens, and so is every program version's size, cost and timing, and every team's change budget. Only
-  code (and what bees print) stays secret until the end.
+- **Behaviour public at once, changes private.** Every ask, answer, feed and error is public the moment it
+  happens. Code, what bees print, and each team's code changes and change budgets stay secret during
+  play; once the game is over the replay shows every change and budget (and the code, unless the owner
+  turns that off). Other teams have to read a change from behaviour, not from a changelog.
 - **Change at any time, paid from a budget that refills.** Each program earns change budget per minute of
   game time, up to a cap of ten minutes' worth, and any change it can afford goes live at once. The rates
   keep the asymmetry: orchids earn 7× a clover's rate, so they can chase whatever bees trust; clovers

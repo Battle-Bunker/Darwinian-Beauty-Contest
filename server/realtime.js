@@ -1,6 +1,8 @@
 // Live updates over Postgres LISTEN/NOTIFY, so any number of server processes stay in sync. One LISTEN
 // connection per process fans notifications out on `bus`:
-//   {game, room, version}   something about the game changed (teams, programs, status): refetch the view
+//   {game, room, version}   something public about the game changed (teams, status): refetch the view
+//   {game, team, programs}  one team's programs changed (a submission, or a program hit a problem):
+//                           only that team's viewers are told, so nobody else learns of the change
 //   {game, seq, clockMs}    the garden wrote actions up to seq (live.js, a few times a second)
 import { EventEmitter } from "node:events";
 import pg from "pg";
@@ -34,11 +36,11 @@ export function roomStream(req, res, roomId) {
 }
 
 /**
- * SSE stream for one game: {version} whenever the view should be refetched, and {actions, lastSeq,
- * clockMs} as the garden writes them, starting after `after`. fetchActions(after) returns the viewer's
- * filtered page of actions after a seq.
+ * SSE stream for one game: {version} whenever the view should be refetched, {programs: true} when the
+ * viewer's own team's programs changed, and {actions, lastSeq, clockMs} as the garden writes them,
+ * starting after `after`. fetchActions(after) returns the viewer's filtered page of actions after a seq.
  */
-export function gameStream(req, res, { gameId, version, after, fetchActions }) {
+export function gameStream(req, res, { gameId, teamId, version, after, fetchActions }) {
   let last = after, busy = false, again = false;
   const send = open(req, res, () => bus.off("change", onChange));
   const pump = async () => {
@@ -63,6 +65,7 @@ export function gameStream(req, res, { gameId, version, after, fetchActions }) {
   const onChange = (c) => {
     if (c.game !== gameId) return;
     if (c.version !== undefined) send({ version: c.version });
+    if (c.programs && teamId && c.team === teamId) send({ programs: true });
     if (c.seq !== undefined) pump();
   };
   bus.on("change", onChange);

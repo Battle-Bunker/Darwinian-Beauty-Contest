@@ -28,6 +28,12 @@ async function touch(client, gameId) {
   await client.query("SELECT pg_notify('dbc', $1)", [JSON.stringify({ game: gameId, room: rows[0].room_id, version: rows[0].version })]);
 }
 
+// A team's programs changed. Other teams mustn't learn even that much while the game runs, so this
+// doesn't bump the public version: the garden (live.js) and the team's own viewers hear about it.
+async function touchPrograms(client, gameId, teamId) {
+  await client.query("SELECT pg_notify('dbc', $1)", [JSON.stringify({ game: gameId, team: teamId, programs: true })]);
+}
+
 // ---------- rooms ----------
 
 export async function createRoom(user) {
@@ -162,6 +168,11 @@ export async function setStatus(room, game, user, action) {
 
 // ---------- teams ----------
 
+/** The viewer's team id in this game, or null. */
+export async function myTeamId(game, user) {
+  return (await myTeam(game.id, user?.id))?.id ?? null;
+}
+
 async function myTeam(gameId, userId, client = { query }) {
   if (!userId) return null;
   const { rows } = await client.query(
@@ -276,8 +287,8 @@ export async function submitProgram(game, user, kind, code) {
     if (live) {
       await c.query("UPDATE banks SET bank = $4, at_ms = $5 WHERE game_id = $1 AND team_id = $2 AND kind = $3",
         [g.id, team.id, kind, check.exact - check.cost, g.clock_ms]);
-    }
-    await touch(c, g.id);
+      await touchPrograms(c, g.id, team.id);
+    } else await touch(c, g.id); // the lobby shows who has written what
     return { ...shown(check), submitted: true, version, available: live ? Math.floor(check.exact - check.cost) : null };
   });
 }
@@ -302,7 +313,11 @@ export async function tryProgram(game, user, kind, code, challenges, flowers = {
 
 // ---------- the views: everything a given viewer may see, live or later ----------
 
-/** Everything about a game but its actions. All of it is public except code (and bees' print output). */
+/**
+ * Everything about a game but its actions. During play, each team sees only its own program versions
+ * and change budgets (other teams': null); once the game is over, everyone sees everyone's. Code is
+ * your own team's, or everyone's once a finished game is revealed.
+ */
 export async function viewGame(room, game, user) {
   const g = (await query("SELECT * FROM games WHERE id = $1", [game.id])).rows[0];
   const cfg = g.config;
@@ -317,6 +332,8 @@ export async function viewGame(room, game, user) {
   const banks = (await query("SELECT * FROM banks WHERE game_id = $1", [g.id])).rows;
   const participants = g.participants || null;
   const canSee = (teamId) => revealed || mine?.id === teamId;
+  const over = g.status === "finished";
+  const canSeeChanges = (teamId) => over || mine?.id === teamId;
 
   const versionView = (p) => ({
     version: p.version, size: p.size, distance: p.distance, cost: p.cost, atMs: p.at_ms,
@@ -339,8 +356,12 @@ export async function viewGame(room, game, user) {
       id: t.id, name: t.name, color: t.color,
       members: members.filter((m) => m.team_id === t.id).map((m) => m.name),
       participant: participants ? participants.includes(t.id) : null,
-      programs: programsOf(t.id),       // every version, oldest first (code only where you may see it)
-      banks: banksOf(t.id),             // change budget: bank as of game time atMs (see config budgets)
+      // in the lobby: which programs each team has written (it plays if all three)
+      ...(g.status === "lobby" ? { ready: Object.fromEntries(KINDS.map((k) => [k, progs.some((p) => p.team_id === t.id && p.kind === k)])) } : {}),
+      // every version, oldest first, and the change budget (bank as of game time atMs): your own team's
+      // during play, everyone's once it's over. Code only where you may see it.
+      programs: canSeeChanges(t.id) ? programsOf(t.id) : null,
+      banks: canSeeChanges(t.id) ? banksOf(t.id) : null,
     })),
     myTeam: mine ? { id: mine.id, name: mine.name, joinCode: mine.join_code } : null,
     interface: programInterface(cfg),
@@ -367,26 +388,27 @@ async function recentScores(g, participants) {
 }
 
 /**
- * Actions after `after` (a seq), oldest first, at most `limit`. Everything is public as soon as it
- * happens, except what a bee printed: its own team's, or everyone's once a finished game is revealed.
+ * Actions after `after` (a seq), oldest first, at most `limit`. Public as soon as they happen, except:
+ * what a bee printed (its own team's, or everyone's once a finished game is revealed), and, until the
+ * game is over, anything that gives away a code change: which program versions played (your own only)
+ * and why the engine ended a bee's visit (a new bee took over, or it restarted).
  */
 export async function viewActions(game, user, { after = 0, limit = 1000 } = {}) {
   const g = (await query("SELECT status, config, last_seq, clock_ms FROM games WHERE id = $1", [game.id])).rows[0];
   const mine = await myTeam(game.id, user?.id);
-  const revealed = g.status === "finished" && g.config.revealOnFinish;
+  const over = g.status === "finished", revealed = over && g.config.revealOnFinish;
   const n = Math.max(1, Math.min(5000, Number(limit) || 1000));
   const { rows } = await query("SELECT * FROM actions WHERE game_id = $1 AND seq > $2 ORDER BY seq LIMIT $3", [game.id, Math.max(0, Number(after) || 0), n]);
-  return { actions: rows.map((a) => actionView(a, mine?.id, revealed)), lastSeq: g.last_seq, clockMs: g.clock_ms, status: g.status };
+  return { actions: rows.map((a) => actionView(a, mine?.id, over, revealed)), lastSeq: g.last_seq, clockMs: g.clock_ms, status: g.status };
 }
 
-export function actionView(a, myTeamId, revealed) {
-  const out = {
-    seq: a.seq, atMs: a.at_ms, bee: a.bee_team, visit: a.visit, patch: a.patch_team, kind: a.kind, action: a.action,
-    beeVersion: a.bee_version, flowerVersion: a.flower_version,
-  };
+export function actionView(a, myTeamId, over, revealed) {
+  const out = { seq: a.seq, atMs: a.at_ms, bee: a.bee_team, visit: a.visit, patch: a.patch_team, kind: a.kind, action: a.action };
+  if (over || a.bee_team === myTeamId) out.beeVersion = a.bee_version;
+  if (over || a.patch_team === myTeamId) out.flowerVersion = a.flower_version;
   if (a.action === "ask") Object.assign(out, { c: a.c, r: a.r, ms: a.ms, ...(a.after ? { after: true } : {}) });
   if (a.action === "feed") out.nectar = a.nectar;
-  if (a.error) Object.assign(out, { error: a.error, by: a.error_by });
+  if (a.error && (a.error_by !== "engine" || over || a.bee_team === myTeamId)) Object.assign(out, { error: a.error, by: a.error_by });
   if (a.log && (revealed || a.bee_team === myTeamId)) out.log = a.log;
   return out;
 }

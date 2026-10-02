@@ -95,16 +95,21 @@ assert.match(adaFeed((await api(players[0].token, "GET", `${g}/actions`)).action
 const spectator = await api(null, "GET", `${g}/actions?limit=5`);
 assert.equal(spectator.actions.length, 5);
 
-// Changes cost change budget, which accrues with game time; a change goes live at once.
+// Changes cost change budget, which accrues with game time; a change goes live at once. During play a
+// team sees only its own versions and budgets.
 const view1 = await api(players[1].token, "GET", g);
 const ada = view1.teams.find((t) => t.id === players[0].team.id);
-assert.equal(ada.programs.clover.length, 1);
-assert.equal(ada.programs.clover[0].code, undefined, "code is private");
-assert.ok(ada.banks.clover && "bank" in ada.banks.clover, "budgets are public");
+assert.equal(ada.programs, null, "other teams' code changes are hidden during play");
+assert.equal(ada.banks, null, "so are their change budgets");
+const own = (await api(players[0].token, "GET", g)).teams.find((t) => t.id === players[0].team.id);
+assert.equal(own.programs.clover.length, 1);
+assert.ok("bank" in own.banks.clover);
+assert.ok(seen.actions.every((a) => a.bee === players[1].team.id || !("beeVersion" in a)), "nor which versions played");
 const rewrite = await api(players[0].token, "POST", `${g}/programs`, { kind: "orchid", code: "import random\ndef flower(c):\n    return random.randrange(1000) + c * 17 % 9 + len(str(c))\n" });
 assert.equal(rewrite.ok, false);
 assert.match(rewrite.errors.join(), /Not enough change budget: this change costs \d+ nodes/);
 const small = clover(3, 9); // one byte changed: costs 1 node
+const versionBefore = (await api(players[1].token, "GET", g)).game.version;
 const r1 = await until("clover budget", async () => {
   const r = await api(players[0].token, "POST", `${g}/programs`, { kind: "clover", code: small });
   return r.ok && r;
@@ -113,8 +118,9 @@ assert.equal(r1.cost, 1);
 assert.equal(r1.version, 2);
 const free = await api(players[0].token, "POST", `${g}/programs`, { kind: "clover", code: "# same thing, explained\n" + small.replace("challenge", "question").replaceAll("challenge", "question") });
 assert.ok(free.ok && free.cost === 0, "comments, formatting and renames are free");
+assert.equal((await api(players[1].token, "GET", g)).game.version, versionBefore, "a submission doesn't announce itself");
 await until("the new clover to answer", async () => {
-  const a = await api(players[2].token, "GET", `${g}/actions?after=${seen.lastSeq}&limit=5000`);
+  const a = await api(players[0].token, "GET", `${g}/actions?after=${seen.lastSeq}&limit=5000`);
   return a.actions.some((x) => x.patch === players[0].team.id && x.kind === "clover" && x.flowerVersion >= 2 && x.action === "ask" && x.r === (x.c * 3 + 9) % 1000);
 });
 
@@ -139,7 +145,11 @@ await until("the clock to move", async () => (await api(owner, "GET", g)).game.c
 await api(owner, "POST", `${g}/status`, { action: "finish" });
 const done = await until("finish", async () => { const v = await api(players[1].token, "GET", g); return v.game.status === "finished" && v; });
 assert.ok(done.game.revealed);
-assert.equal(done.teams.find((t) => t.id === players[0].team.id).programs.clover[2].code.startsWith("# same thing"), true);
+const adaAfter = done.teams.find((t) => t.id === players[0].team.id);
+assert.equal(adaAfter.programs.clover[2].code.startsWith("# same thing"), true);
+assert.deepEqual(adaAfter.programs.clover.map((v) => v.cost), [0, 1, 0], "once it's over, everyone sees every change");
+assert.ok("bank" in adaAfter.banks.clover);
+assert.ok((await api(players[1].token, "GET", `${g}/actions?limit=50`)).actions.every((a) => "beeVersion" in a && "flowerVersion" in a));
 assert.ok(done.scores.length === 3 && done.scores.every((s) => Number.isFinite(s.fitness)));
 assert.match(adaFeed((await api(players[1].token, "GET", `${g}/actions`)).actions).log, /tasted/, "revealed after the game");
 const settled = (await api(owner, "GET", g)).game.lastSeq;

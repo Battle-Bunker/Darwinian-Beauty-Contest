@@ -209,13 +209,17 @@ paused.
 
 ## What everyone can see
 
-**Everything that happens, as it happens.** Every bee's every action is public the moment it happens:
+**Everything the bees do, as it happens.** Every bee's every action is public the moment it happens:
 whose bee, at whose patch, at which of its flowers (clover or orchid), every challenge and response,
-every feed and whether it paid, every error, and how long each flower took to answer. So is every
-program version's size, change cost and when it went live, and every team's change budget.
+every feed and whether it paid, every error, and how long each flower took to answer.
 
-**Only code stays secret**, and what your bee prints (your team sees its own bee's printouts). When the
-game ends, all code and all printouts are revealed to everyone (unless the owner turns that off).
+**Secret during play:** your code, what your bee prints, and your **code changes**: when you change a
+program, how big the change was, what it cost, and how much change budget you have left. Other teams
+only see what your programs *do*. (Your team sees all of its own.)
+
+**When the game ends**, everyone can replay it with all of that revealed: every team's code changes
+(when, how big, what they cost), their change budgets over time, which version of each program played
+every turn, and (unless the owner turns it off) all code and all printouts.
 
 ## Scoring: Darwinian fitness
 
