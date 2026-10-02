@@ -1,213 +1,218 @@
-// Tool-using team agents: every team gets a private workspace of RAW files and runs a
-// `claude -p` session with Bash/Read/Write/Edit/Glob/Grep inside it. The runner prepares the files before each
-// round, then reads the code files back, validates and submits them, and audits the session transcript.
+// Tool-using team agents: every team gets a private workspace of RAW files and runs `claude -p` sessions with
+// Bash/Read/Write/Edit/Glob/Grep inside it. The runner writes the files before each session; the live action stream
+// arrives as an append-only file hard-linked from the runner's shared copy (lib/stream.js); requests that need the
+// team's login (submit, check, try, status) go through tools/*.py and the runner (lib/broker.js). After a session the
+// runner reads the notebook back and audits the transcript (also while the session runs, before every request).
 //
 // Workspaces live OUTSIDE the repo (default /home/user/arena-ws/<arena>/<slug>/): inside a git repo Claude Code's
 // system prompt would show git status and commit messages, which would leak research notes to agents.
 import fs from "node:fs";
 import path from "node:path";
-import { Api, gamePath, login } from "./api.js";
-import { ARENA_DIR, all, one, q } from "./db.js";
+import { ARENA_DIR, all, one } from "./db.js";
 import { rules } from "./prompts.js";
 
 export const WS_ROOT = process.env.ARENA_WS_ROOT || "/home/user/arena-ws";
 export const TRANSCRIPTS = path.join(ARENA_DIR, "runs", "transcripts");
+const TOOLS_SRC = path.join(ARENA_DIR, "tools");
 const KINDS = ["clover", "orchid", "bee"];
 export const wsDir = (arenaId, slug) => path.join(WS_ROOT, arenaId, slug);
-const extOf = (config) => (config.language === "typescript" ? "ts" : "py");
+export const extOf = (config) => (config.language === "typescript" ? "ts" : "py");
 const write = (file, data) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, data); };
 const json = (x) => JSON.stringify(x, null, 1);
+export const mmss = (ms) => { const s = Math.max(0, Math.round((ms || 0) / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+const safeName = (s) => String(s).replace(/[^A-Za-z0-9_-]+/g, "_");
 
-const README = (ext, cohort, examples) => `# Your workspace
+// ---------------------------------------------------------------- the files
 
-| file | what |
+export function readme({ ext, apiBase, examples }) {
+  return `# Your workspace
+
+| path | what |
 |---|---|
 | RULES.md | the game's rules (exactly what every player sees) |
-| interface.txt | function signatures and the game's types |
-| config.json | this game's settings: types, budgets, turns, feed cost, teams |
-| clover.${ext}, orchid.${ext}, bee.${ext} | YOUR CURRENT PROGRAMS. Edit the ones you may change this round (your brief says which; config.json too) in place: when you finish they are checked and submitted. Edits to a locked one are discarded |
-| history/round-N/ | the programs that played round N of this game |
-| logs/round-N/round.json | round N as your team may see it, without visits: scores, ledgers, your programs' sizes and compute use, MEMORY sizes |
-| logs/round-N/visits.jsonl | every visit in the garden that round, one JSON object per line, as your team may see it: your own bee's and patch's visits in full; other visits in full too when the game's logs are public (config.json: all_visits_public), otherwise only who visited whom and what happened |
-| logs/round-N/my-bee.jsonl | just your bee's visits (with every challenge and response) |
-| logs/round-N/my-patch.jsonl | just the visits to your patch (which flower, which bee, what it asked) |
-| logs/game.json | scores and ledgers for every round so far, teams (id -> name), no visits |
-| memory/round-N.txt | the snapshot your bee kept at the end of round N (it reads it as MEMORY[N-1]) |
-${cohort ? "| previous-games/game-N/ | earlier games: standings.md, the final code of the top 2 teams (top2/), your own logs/history/memory (own/), and panel.md (panel scores and what the judges said about you). Raw visit logs (visits.jsonl, my-bee.jsonl, my-patch.jsonl) are kept for the previous game only; older games keep round.json summaries, code and memory |"
-    : "| previous-games/ | earlier games in this arena, revealed: every team's final code and round summaries (round.json), plus every round's full visits for the previous game; panel.md has the standings, panel scores and what the judges said about you |"}
-| notebook.md | your private notes; they persist across rounds and games |
-${examples ? `| examples/ | example flower programs and bee-side checkers; every team in this garden has the same files (${examples.join(", ")}) |\n` : ""}
-A visit line: {"bee", "patch", "seq", "start", "end", "asks", "asksBeforeFeed", "action", "nectar", "kind"?, "steps"?: [{"c", "r", "after"?}]}.
-Teams are ids (logs/game.json maps ids to names). "after": true marks asks made after feeding.
-Analyse with python3 if your session has it (see your instructions), or with Grep, Glob, Read (offset/limit on big files)
-and simple shell commands (grep -c, wc -l, sort, uniq, cut, head) inside this folder. When you finish, the game server checks
-your programs (syntax, budgets, change distance, a short runtime test); if something fails you get a short follow-up to fix it.
+| interface.txt | the function signatures and this game's types |
+| config.json | this game's settings: types, minutes, budgets, feed cost, teams, the public API address |
+| clover.${ext}, orchid.${ext}, bee.${ext} | YOUR PROGRAMS. While the game runs they hold the versions that were playing when this session started. Editing a file changes nothing in the game: only \`tools/submit.py\` does |
+| drafts/ | edits from an earlier session that were never submitted |
+| history/ | every version your team submitted in this game (\`<kind>/v1.${ext}\`, ...) and versions.md: when each went live, its size, its change cost |
+| status.txt | what \`tools/status.py\` said when this session started |
+| notebook.md | your private notes: they carry over to your next sessions and games |
+| stream/actions.jsonl | THE LIVE ACTION STREAM: every bee action in this game so far, one JSON object per line, oldest first. The runner appends new ones about once a second while the game runs. Read it with code; never write to it |
+| stream/mine.jsonl | the actions of your own bee and at your own patch, with what only your team sees (your bee's printouts, your versions) |
+| stream/teams.json, stream/SCHEMA.md | team ids and names; what a line holds and how to read the stream |
+| tools/ | the tools below |
+| previous-games/ | earlier games in this arena, revealed: every team's final code, the standings, everyone's change timeline, and what the interview panel said about you |
+${examples ? `| examples/ | example programs; every team in this garden has the same files (${examples.join(", ")}) |\n` : ""}
+## Tools (run them with python3 from this folder)
+
+| command | what |
+|---|---|
+| \`python3 tools/status.py [--afford N]\` | the clock and time left, your change budgets right now (available, rate, cap; when you could afford N nodes), the scores (whole game and last 5 minutes), your versions playing now |
+| \`python3 tools/check.py <kind> [file]\` | free: size against the budget, what submitting would cost now and whether you can afford it, a quick runtime test |
+| \`python3 tools/try.py <kind> [file] [challenge ...]\` | free: run a flower on challenges, or your bee on your own two flowers, on the game's real runner |
+| \`python3 tools/submit.py <kind> [file]\` | submit: in the lobby it's free; during the game it goes live at once and pays its change cost |
+| \`python3 tools/stream.py summary\\|tail\\|answers\\|sql ...\` | read the stream: per-bee and per-flower counts, the latest actions, what each flower answered to a challenge, SQL |
+
+\`<kind>\` is clover, orchid or bee; \`[file]\` defaults to \`<kind>.${ext}\`. Your own scripts can use the same tools:
+
+\`\`\`python
+import sys; sys.path.insert(0, "tools")
+from _runner import call            # call("submit", kind="orchid", code=src) -> {"ok", "text", "cost", "available", ...}
+from stream import Stream           # Stream().actions(since_ms=...), .follow() (waits for new actions), .mine()
+\`\`\`
+
+A script you start (for example one that follows the stream and submits changes by itself) may run in the background
+while your session lasts; everything your session started is stopped when the session ends.
+
+## The live stream over HTTP
+
+The game's public API needs no login, and you may read it (GET only) at ${apiBase}:
+- \`GET ${apiBase}/events?after=<seq>\`: Server-Sent Events, lines \`data: {...}\` with \`{actions, lastSeq, clockMs}\` as they
+  happen (a few times a second), \`{clockMs, lastSeq}\` when nothing is new, \`{version}\` when the game's public state changed
+- \`GET ${apiBase}/actions?after=<seq>&limit=<n ≤ 5000>\`: a page of actions, \`{actions, lastSeq, clockMs, status}\`
+- \`GET ${apiBase}\`: the game view (status, clock, scores)
+
+stream/actions.jsonl holds the same actions, so you rarely need this. Read at most a few times a second.
+`;
+}
+
+export const SCHEMA = `# The action stream
+
+\`stream/actions.jsonl\`: one action per line, oldest first, exactly as the game's public API shows it to anyone.
+The runner appends new actions about once a second while the game runs; a line is complete once it ends in a newline.
+
+| field | what |
+|---|---|
+| seq | the action's number: 1, 2, 3, ... |
+| atMs | game time when it happened, in milliseconds |
+| round | the round it happened in (a round is one turn for every bee that isn't feeding) |
+| bee | the team id of the bee |
+| patch, kind | the team id of the patch, and which of its flowers: clover or orchid |
+| visit | the bee's visit number: a visit is everything one bee does at one flower until it moves on |
+| action | ask, feed, leave or error |
+| c, r, ms, after | ask: the challenge, the response (null if the flower failed: see error), how long the flower took in ms, true if asked after feeding |
+| nectar | feed: true at a clover, false at an orchid |
+| error, by | what went wrong, and whose fault: bee, challenge or flower |
+
+While the game runs nobody sees which versions of other teams' programs played. \`stream/mine.jsonl\` has the actions of
+your own bee and at your own patch, with your private details: \`beeVersion\` (your bee), \`flowerVersion\` (your flowers),
+\`log\` (what your bee printed), and the error of an engine leave (your bee was replaced or restarted mid-visit).
+
+\`stream/teams.json\`: \`{"teams": {id: name}, "me": your team id, "participants": [ids]}\`.
+
+Reading it:
+
+\`\`\`python
+import sys; sys.path.insert(0, "tools")
+from stream import Stream
+s = Stream()
+recent = list(s.actions(since_ms=s.last()["atMs"] - 30000))   # the last 30 seconds
+for a in s.follow():                                            # new actions as they arrive
+    ...
+\`\`\`
+
+or \`python3 tools/stream.py summary --since 0.5\`, \`tail -n 20\`, \`answers 42\`, \`sql "SELECT bee_name, count(*) FROM actions GROUP BY 1"\`.
 `;
 
-// ---------------------------------------------------------------- prepare before a round
+/** Install the workspace tools (always the runner's own copy: a team's edits to them don't persist). */
+export function installTools(dir) {
+  const dest = path.join(dir, "tools");
+  fs.mkdirSync(dest, { recursive: true }); // the team's own files in tools/ stay; ours are put back as they were
+  for (const f of fs.readdirSync(TOOLS_SRC)) if (f.endsWith(".py")) fs.copyFileSync(path.join(TOOLS_SRC, f), path.join(dest, f));
+}
+
+/** The version of each program playing now (the latest), from the team's own view. */
+export function liveCode(view, teamId) {
+  const t = view.teams.find((x) => x.id === teamId);
+  return Object.fromEntries(KINDS.map((k) => [k, t?.programs?.[k]?.length ? t.programs[k][t.programs[k].length - 1] : null]));
+}
 
 /**
- * Write everything a team may see before round `roundNo` of game `gameRow`. Idempotent; logs are fetched once.
- * Returns { dir, ext, view }.
+ * Write everything a team may see at the start of a session. view: the team's own view of the game (its token).
+ * stream: the game's GameStream (links stream/actions.jsonl, tracks stream/mine.jsonl). Returns { dir, ext, drafts }.
  */
-export async function prepareWorkspace({ arena, gameRow, persona, entry, gPath, roundNo }) {
-  const tok = await login(entry.login_name);
+export async function prepareWorkspace({ arena, gameRow, persona, view, stream, apiBase, statusText = null, carry = null }) {
   const dir = wsDir(arena.id, persona.slug);
-  const view = await Api.view(tok, gPath, "none");
   const config = view.game.config;
   const ext = extOf(config);
-  const n = view.participants?.length || view.teams.length;
+  const me = view.me.teamId;
   fs.mkdirSync(dir, { recursive: true });
 
-  // New game: archive the previous game's per-game folders (code files stay: they're last game's final programs).
+  // A new game: archive this game's per-game folders from the last one.
   const marker = path.join(dir, ".game");
   const cur = fs.existsSync(marker) ? fs.readFileSync(marker, "utf8").trim() : null;
-  if (cur && cur !== String(gameRow.generation)) {
+  const newGame = cur !== String(gameRow.generation);
+  if (cur && newGame) {
     const dest = path.join(dir, "previous-games", `game-${cur}`, "own");
-    for (const sub of ["history", "logs", "memory"]) {
+    for (const sub of ["history", "drafts"]) {
       const from = path.join(dir, sub);
-      if (fs.existsSync(from)) { fs.mkdirSync(dest, { recursive: true }); fs.renameSync(from, path.join(dest, sub)); }
+      if (fs.existsSync(from)) { fs.mkdirSync(dest, { recursive: true }); fs.rmSync(path.join(dest, sub), { recursive: true, force: true }); fs.renameSync(from, path.join(dest, sub)); }
     }
+    fs.rmSync(path.join(dir, "stream"), { recursive: true, force: true });
+    fs.rmSync(path.join(dir, "cache"), { recursive: true, force: true });
   }
   write(marker, String(gameRow.generation));
-  pruneOldVisits(dir, gameRow.generation);
-  pruneShared(arena.id, gameRow.generation);
-  for (const f of fs.readdirSync(dir)) if (/\.minified\.(py|ts)$/.test(f)) fs.rmSync(path.join(dir, f)); // last round's failures
 
   write(path.join(dir, "RULES.md"), rules());
-  const examples = arena.settings.cohort?.examples || null;
-  write(path.join(dir, "README.md"), README(ext, !!arena.settings.cohort, examples?.files));
-  // Cohort experiment, examples treatment: the same example files in every team's examples/, restored every round.
+  const examples = arena.settings.examples ? fs.readdirSync(path.resolve(ARENA_DIR, "..", arena.settings.examples)) : null;
+  write(path.join(dir, "README.md"), readme({ ext, apiBase, examples }));
   if (examples) {
     fs.rmSync(path.join(dir, "examples"), { recursive: true, force: true });
-    fs.cpSync(path.resolve(ARENA_DIR, "..", examples.source), path.join(dir, "examples"), { recursive: true });
+    fs.cpSync(path.resolve(ARENA_DIR, "..", arena.settings.examples), path.join(dir, "examples"), { recursive: true });
   }
+  installTools(dir);
   const it = view.interface;
   write(path.join(dir, "interface.txt"), `challenge: ${it.types.challenge} (${it.types.challengeMeans})\nresponse: ${it.types.response} (${it.types.responseMeans})\n` +
     `rules: ${(it.types.rules || []).join(" ")}\n\nclover and orchid:\n${it.flower}\n\nbee:\n${it.bee}\n`);
-  const turns = view.game.turns ?? config.turnsPerFlower * 2 * n;
-  write(path.join(dir, "config.json"), json({ ...config, teams: n, flowers: 2 * n, turns_per_round: turns, file_extension: ext,
-    game: gameRow.generation, next_round: roundNo, may_change_before_next_round: view.game.changeable, all_visits_public: !!config.publicLogs,
-    size_unit: config.complexity === "nodes" ? "nodes" : "characters", your_team: entry.team_name, sample_challenges: sampleFor(config) }));
-  write(path.join(dir, "notebook.md"), (await one("SELECT notebook FROM arena.personas WHERE id = $1", [persona.id])).notebook || "");
+  const teams = (view.participants || view.teams.map((t) => t.id)).map((id) => view.teams.find((t) => t.id === id)).filter(Boolean);
+  write(path.join(dir, "config.json"), json({ ...config, game: gameRow.generation, your_team: view.myTeam?.name, teams: teams.map((t) => t.name), flowers: 2 * teams.length,
+    file_extension: ext, size_unit: "nodes", public_api: apiBase, sample_challenges: sampleFor(config) }));
+  write(path.join(dir, "notebook.md"), (await one("SELECT notebook FROM arena.personas WHERE id = $1", [persona.id]))?.notebook || "");
 
-  // Current programs: exactly what played last round (the change budget is measured against these).
-  const last = view.rounds[view.rounds.length - 1];
-  if (roundNo > 1 && last) {
-    for (const k of KINDS) {
-      const code = view.myTeam?.previous?.[k] ?? "";
-      write(path.join(dir, `${k}.${ext}`), code);
-      write(path.join(dir, "history", `round-${last.no}`, `${k}.${ext}`), code);
-    }
-  } else {
-    for (const k of KINDS) if (!fs.existsSync(path.join(dir, `${k}.${ext}`))) write(path.join(dir, `${k}.${ext}`), "");
+  // Programs: in play, exactly the versions playing now; a new game starts from the team's final programs of the
+  // last one (`carry`); otherwise in the lobby the team's working files stay. Edits that were never submitted move
+  // to drafts/.
+  const live = liveCode(view, me);
+  const drafts = [];
+  const lobby = view.game.status === "lobby";
+  for (const k of KINDS) {
+    const file = path.join(dir, `${k}.${ext}`);
+    const have = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
+    const want = !lobby ? live[k]?.code ?? "" : newGame ? carry?.[k] ?? live[k]?.code ?? "" : have ?? live[k]?.code ?? "";
+    if (have !== null && have.trim() && have !== want) { write(path.join(dir, "drafts", `${k}.${ext}`), have); drafts.push(k); }
+    write(file, want);
   }
-  // Raw logs and memory for every round played so far (fetched once each).
-  for (const r of view.rounds) {
-    if (!fs.existsSync(path.join(dir, "logs", `round-${r.no}`, "round.json"))) {
-      // Public logs: every team sees the same visits, so the full file is written once per round and hard-linked.
-      const shared = config.publicLogs ? await sharedVisits(arena, gameRow, gPath, r.no) : null;
-      writeRound(path.join(dir, "logs", `round-${r.no}`), await Api.round(tok, gPath, r.no), view.me.teamId, { shared });
-    }
-    const m = path.join(dir, "memory", `round-${r.no}.txt`);
-    if (!fs.existsSync(m)) {
-      const mem = await Api.memory(tok, gPath, r.no).catch((e) => ({ error: e.message }));
-      write(m, mem.error ? `(no memory: ${mem.error})\n` : `# bytes: ${mem.bytes}${mem.note ? `, note: ${mem.note}` : ""}\n${mem.snapshot ?? ""}\n`);
-    }
+  for (const f of fs.readdirSync(dir)) if (/\.minified\.(py|ts)$/.test(f)) fs.rmSync(path.join(dir, f));
+  writeHistory(dir, ext, view, me);
+  if (statusText) write(path.join(dir, "status.txt"), statusText);
+
+  // The stream: the shared public copy (hard link), the team's private view, names.
+  const sdir = path.join(dir, "stream");
+  if (stream) {
+    stream.linkInto(path.join(sdir, "actions.jsonl"));
+    stream.trackMine(me, path.join(sdir, "mine.jsonl"));
   }
-  const { rounds, ...rest } = view;
-  write(path.join(dir, "logs", "game.json"), json({ ...rest, rounds: rounds.map(({ visits, ...r }) => r) }));
-  // Earlier games in this arena (revealed): every team's code and full round logs. Written once per game.
-  if (arena.settings.cohort) await writeCohortPrevious(arena, dir, gameRow.generation);
-  else if (arena.settings.recap !== "scores") await writePreviousGames(arena, dir, gameRow.generation);
-  await writePanelFeedback(arena, dir, gameRow.generation, persona.id);
-  return { dir, ext, view };
+  write(path.join(sdir, "teams.json"), json({ teams: Object.fromEntries(view.teams.map((t) => [t.id, t.name])), me, participants: view.participants || null }));
+  write(path.join(sdir, "SCHEMA.md"), SCHEMA);
+
+  await writePreviousGames(arena, dir, gameRow.generation, persona.id);
+  return { dir, ext, drafts };
 }
 
-const jsonLines = (vs) => vs.map((v) => JSON.stringify(v)).join("\n") + (vs.length ? "\n" : "");
-const RAW_VISITS = new Set(["visits.jsonl", "my-bee.jsonl", "my-patch.jsonl"]);
-
-/** A round as files that Grep/Read can handle: round.json (everything but visits) and visits as JSON Lines.
- * `shared`: a file holding every visit as all teams see it (public logs), hard-linked instead of written per team.
- * `visits: false` writes the summary only. */
-function writeRound(rdir, round, myId, { shared = null, visits: withVisits = true } = {}) {
-  const { visits = [], ...rest } = round;
-  write(path.join(rdir, "round.json"), json(rest));
-  if (!withVisits) return;
-  const target = path.join(rdir, "visits.jsonl");
-  if (shared) linkOrCopy(shared, target);
-  else write(target, jsonLines(visits));
-  if (myId) {
-    // Your own bee's and patch's visits as your team sees them (with its private details).
-    write(path.join(rdir, "my-bee.jsonl"), jsonLines(visits.filter((v) => v.bee === myId)));
-    write(path.join(rdir, "my-patch.jsonl"), jsonLines(visits.filter((v) => v.patch === myId)));
+/** history/: the team's own versions in this game (code and a timeline). Other teams' changes are secret during play. */
+function writeHistory(dir, ext, view, me) {
+  const t = view.teams.find((x) => x.id === me);
+  const rows = [];
+  for (const k of KINDS) for (const v of t?.programs?.[k] || []) {
+    if (v.code != null) write(path.join(dir, "history", k, `v${v.version}.${ext}`), v.code);
+    rows.push({ kind: k, ...v });
   }
+  rows.sort((a, b) => a.atMs - b.atMs || a.kind.localeCompare(b.kind) || a.version - b.version);
+  write(path.join(dir, "history", "versions.md"), `# Your team's program versions in this game\n\n` +
+    `Game time 0:00 = written in the lobby. Cost = change budget spent (node edits from the version before).\n\n` +
+    `| game time | program | version | size | change cost | submitted by | first problem |\n|---|---|---|---|---|---|---|\n` +
+    rows.map((v) => `| ${v.atMs ? mmss(v.atMs) : "lobby"} | ${v.kind} | v${v.version} | ${v.size} | ${v.cost} | ${v.submittedBy || "-"} | ${v.problem ? v.problem.replace(/\|/g, "/").slice(0, 120) : "-"} |`).join("\n") + "\n");
 }
-
-export function linkOrCopy(src, dest) {
-  fs.mkdirSync(path.dirname(dest), { recursive: true });
-  fs.rmSync(dest, { force: true });
-  try { fs.linkSync(src, dest); }
-  catch (e) { fs.copyFileSync(src, dest); console.log(`[arena] could not hard-link ${src} (${e.code}); copied instead`); }
-}
-
-/** The shared visits file of a public-logs round: every visit as any team sees it (the unauthenticated view). Lives
- * in <WS_ROOT>/<arena>/.shared/, outside every team's workspace; teams get hard links to it. */
-async function sharedVisits(arena, gameRow, gPath, roundNo) {
-  const file = path.join(WS_ROOT, arena.id, ".shared", `g${gameRow.generation}`, `round-${roundNo}`, "visits.jsonl");
-  if (!fs.existsSync(file)) {
-    const round = await Api.round(null, gPath, roundNo);
-    write(file + ".tmp", jsonLines(round.visits || []));
-    fs.renameSync(file + ".tmp", file); // concurrent teams: whoever finishes last wins, both write the same content
-  }
-  return file;
-}
-
-/** Keep raw visit logs for the current and the previous game only (disk): older games keep round.json, code, memory. */
-export function pruneOldVisits(dir, generation) {
-  const pg = path.join(dir, "previous-games");
-  if (!fs.existsSync(pg)) return;
-  for (const g of fs.readdirSync(pg)) {
-    const k = Number((g.match(/^game-(\d+)$/) || [])[1]);
-    if (!Number.isInteger(k) || k >= generation - 1) continue;
-    const walk = (d) => { for (const f of fs.readdirSync(d, { withFileTypes: true })) {
-      const p = path.join(d, f.name);
-      if (f.isDirectory()) walk(p); else if (RAW_VISITS.has(f.name)) fs.rmSync(p, { force: true });
-    } };
-    walk(path.join(pg, g));
-  }
-}
-
-function pruneShared(arenaId, generation) {
-  const sd = path.join(WS_ROOT, arenaId, ".shared");
-  if (!fs.existsSync(sd)) return;
-  for (const g of fs.readdirSync(sd)) {
-    const k = Number((g.match(/^g(\d+)$/) || [])[1]);
-    if (Number.isInteger(k) && k < generation - 1) fs.rmSync(path.join(sd, g), { recursive: true, force: true });
-  }
-}
-
-/** Bytes of a round's logs across an arena's workspaces, counting hard-linked files once. */
-export function roundLogBytes(arenaId, roundNo) {
-  const root = path.join(WS_ROOT, arenaId);
-  const seen = new Set();
-  let bytes = 0;
-  if (!fs.existsSync(root)) return 0;
-  for (const slug of fs.readdirSync(root)) {
-    const rdir = path.join(root, slug, "logs", `round-${roundNo}`);
-    if (!fs.existsSync(rdir)) continue;
-    for (const f of fs.readdirSync(rdir)) {
-      const st = fs.statSync(path.join(rdir, f));
-      if (seen.has(st.ino)) continue;
-      seen.add(st.ino);
-      bytes += st.size;
-    }
-  }
-  return bytes;
-}
-
-/** The team's own Claude Code tool-output spill directory (big tool results are saved there during a session). */
-export const spillDir = (dir) => path.join(process.env.HOME || "/root", ".claude", "projects", dir.replace(/[^A-Za-z0-9]/g, "-"));
 
 function sampleFor(config) {
   const t = config.challengeType;
@@ -217,93 +222,46 @@ function sampleFor(config) {
   return [0];
 }
 
-async function writePreviousGames(arena, dir, generation) {
+/** previous-games/game-N/: earlier finished games of this arena, fully revealed (written once per game). */
+async function writePreviousGames(arena, dir, generation, personaId) {
   const games = await all("SELECT * FROM arena.games WHERE arena_id = $1 AND generation < $2 AND stage IN ('played','interviewed','judged','done') ORDER BY generation", [arena.id, generation]);
   for (const g of games) {
     const gdir = path.join(dir, "previous-games", `game-${g.generation}`);
-    if (fs.existsSync(path.join(gdir, "game.json"))) continue;
-    const gp = gamePath(arena.room_short_id, g.game_short_id);
-    const view = await Api.view(null, gp, "none");
-    if (!view.game.revealed) continue;
-    const names = Object.fromEntries(view.teams.map((t) => [t.id, t.name]));
-    const ext = extOf(view.game.config);
-    const lastR = view.rounds[view.rounds.length - 1];
-    for (const [tid, progs] of Object.entries(lastR?.programs || {})) {
-      const tdir = path.join(gdir, "final-code", names[tid].replace(/[^A-Za-z0-9_-]+/g, "_"));
-      for (const k of KINDS) if (progs[k]?.code) write(path.join(tdir, `${k}.${ext}`), progs[k].code);
-    }
-    const recent = g.generation === generation - 1; // full visits for the previous game only (disk)
-    for (const r of view.rounds) writeRound(path.join(gdir, "rounds", `round-${r.no}`), await Api.round(null, gp, r.no), null, { visits: recent });
-    const { rounds, ...rest } = view;
-    write(path.join(gdir, "game.json"), json({ ...rest, rounds: rounds.map(({ visits, ...r }) => r) }));
+    if (!fs.existsSync(path.join(gdir, "standings.md")) && g.game_uuid) await writeGameRecord(gdir, g);
+    const panel = path.join(gdir, "panel.md");
+    if (!fs.existsSync(panel) && ["judged", "done"].includes(g.stage)) await writePanel(panel, g, personaId);
   }
 }
 
-/** Cohort experiment diffusion channel: standings plus the final code of ONLY the top 2 teams of each earlier game
- * (identical rule in every cohort). Read from the DB because the games stay unrevealed. */
-export async function writeTop2(gdir, gameUuid, entries) {
-  const top = entries.filter((e) => e.fitness_rank === 1 || e.fitness_rank === 2).sort((a, b) => a.fitness_rank - b.fitness_rank);
-  const g = await one("SELECT rounds_played, config FROM games WHERE id = $1", [gameUuid]);
-  const ext = extOf(g.config);
-  write(path.join(gdir, "standings.md"), `# Final standings
-
-| rank | team | fitness |
-|---|---|---|
-` +
-    [...entries].filter((e) => e.fitness != null).sort((a, b) => a.fitness_rank - b.fitness_rank).map((e) => `| ${e.fitness_rank} | ${e.team_name} | ${e.fitness.toFixed(2)} |`).join("\n") +
-    `
-
-The final code of the top 2 teams is in top2/ (other teams' code isn't shown).
-`);
-  for (const e of top) {
-    const progs = await all("SELECT kind, code FROM round_programs WHERE game_id = $1 AND team_id = $2 AND round_no = $3", [gameUuid, e.team_id, g.rounds_played]);
-    for (const p of progs) write(path.join(gdir, "top2", `${e.fitness_rank}-${e.team_name.replace(/[^A-Za-z0-9_-]+/g, "_")}`, `${p.kind}.${ext}`), p.code);
+/** A finished game's record from its tables: every team's final code, the standings, everyone's change timeline. */
+export async function writeGameRecord(gdir, g) {
+  const game = await one("SELECT * FROM games WHERE id = $1", [g.game_uuid]);
+  if (!game || game.status !== "finished") return;
+  const ext = extOf(game.config);
+  const teams = await all("SELECT id, name FROM teams WHERE game_id = $1", [g.game_uuid]);
+  const name = Object.fromEntries(teams.map((t) => [t.id, t.name]));
+  const progs = await all("SELECT team_id, kind, version, size, distance, cost, at_ms, problem, code FROM programs WHERE game_id = $1 ORDER BY at_ms, team_id, kind, version", [g.game_uuid]);
+  for (const p of progs) {
+    const latest = !progs.some((x) => x.team_id === p.team_id && x.kind === p.kind && x.version > p.version);
+    if (latest && game.config.revealOnFinish) write(path.join(gdir, "final-code", safeName(name[p.team_id]), `${p.kind}.${ext}`), p.code);
   }
+  const ents = await all("SELECT team_name, fitness, fitness_rank, sat_out FROM arena.entries WHERE game_id = $1 ORDER BY fitness_rank NULLS LAST", [g.id]);
+  write(path.join(gdir, "standings.md"), `# Game ${g.generation}: ${game.config.minutes} minutes, ${Number(game.round || 0)} rounds, ${Number(game.last_seq)} actions\n\n` +
+    `| rank | team | fitness |\n|---|---|---|\n` + ents.map((e) => `| ${e.fitness_rank ?? "-"} | ${e.team_name} | ${e.sat_out ? "sat out" : e.fitness?.toFixed(2) ?? "-"} |`).join("\n") +
+    `\n\n${game.config.revealOnFinish ? "Every team's final code is in final-code/." : "Code stays secret in this game."} changes.md lists every team's program versions.\n`);
+  write(path.join(gdir, "changes.md"), `# Every program version in game ${g.generation}\n\n| game time | team | program | version | size | change cost | first problem |\n|---|---|---|---|---|---|---|\n` +
+    progs.map((p) => `| ${Number(p.at_ms) ? mmss(Number(p.at_ms)) : "lobby"} | ${name[p.team_id]} | ${p.kind} | v${p.version} | ${p.size} | ${p.cost} | ${p.problem ? p.problem.replace(/\|/g, "/").slice(0, 100) : "-"} |`).join("\n") + "\n");
 }
 
-async function writeCohortPrevious(arena, dir, generation) {
-  const games = await all("SELECT * FROM arena.games WHERE arena_id = $1 AND generation < $2 AND stage IN ('played','interviewed','judged','done') ORDER BY generation", [arena.id, generation]);
-  for (const g of games) {
-    const gdir = path.join(dir, "previous-games", `game-${g.generation}`);
-    if (fs.existsSync(path.join(gdir, "standings.md"))) continue;
-    const ent = await all("SELECT * FROM arena.entries WHERE game_id = $1", [g.id]);
-    const uuid = (await Api.view(null, gamePath(arena.room_short_id, g.game_short_id), "none")).game.id;
-    await writeTop2(gdir, uuid, ent);
-  }
+async function writePanel(file, g, personaId) {
+  const ent = await all("SELECT team_name, fitness, fitness_rank, social, social_rank, sat_out FROM arena.entries WHERE game_id = $1 ORDER BY fitness_rank NULLS LAST", [g.id]);
+  const evs = await all("SELECT j.name, j.age, e.* FROM arena.evaluations e JOIN arena.judges j ON j.id = e.judge_id WHERE e.game_id = $1 AND e.persona_id = $2", [g.id, personaId]);
+  write(file, `# Game ${g.generation}: standings and the interview panel\n\n| team | fitness (rank) | panel score 0-10 (rank) |\n|---|---|---|\n` +
+    ent.map((e) => `| ${e.team_name} | ${e.sat_out ? "sat out" : `${e.fitness?.toFixed(2)} (#${e.fitness_rank})`} | ${e.social != null ? `${e.social.toFixed(1)} (#${e.social_rank})` : "-"} |`).join("\n") +
+    `\n\n## What the panel said about YOUR team\n` + (evs.length ? evs.map((e) => `- ${e.name} (${e.age}): understanding ${e.understanding}, respect ${e.respect}, novelty ${e.novelty}, team-up ${e.team_up}. "${e.comment}"`).join("\n") : "(you weren't judged in this game)") + "\n");
 }
 
-/** previous-games/game-N/panel.md: standings with fitness and panel (social) scores, and what the judges said about you. */
-async function writePanelFeedback(arena, dir, generation, personaId) {
-  const games = await all("SELECT * FROM arena.games WHERE arena_id = $1 AND generation < $2 AND stage IN ('judged','done') ORDER BY generation", [arena.id, generation]);
-  for (const g of games) {
-    const f = path.join(dir, "previous-games", `game-${g.generation}`, "panel.md");
-    if (fs.existsSync(f)) continue;
-    const ent = await all("SELECT team_name, fitness, fitness_rank, social, social_rank, sat_out FROM arena.entries WHERE game_id = $1 ORDER BY fitness_rank NULLS LAST", [g.id]);
-    const evs = await all("SELECT j.name, j.age, e.* FROM arena.evaluations e JOIN arena.judges j ON j.id = e.judge_id WHERE e.game_id = $1 AND e.persona_id = $2", [g.id, personaId]);
-    write(f, `# Game ${g.generation}: standings and the interview panel
-
-| team | fitness (rank) | panel score 0-10 (rank) |
-|---|---|---|
-` +
-      ent.map((e) => `| ${e.team_name} | ${e.sat_out ? "sat out" : `${e.fitness?.toFixed(2)} (#${e.fitness_rank})`} | ${e.social != null ? `${e.social.toFixed(1)} (#${e.social_rank})` : "-"} |`).join("\n") +
-      `
-
-## What the panel said about YOUR team
-` + (evs.length ? evs.map((e) => `- ${e.name} (${e.age}): understanding ${e.understanding}, respect ${e.respect}, novelty ${e.novelty}, team-up ${e.team_up}. "${e.comment}"`).join("\n") : "(you weren't judged in this game)") + "\n");
-  }
-}
-
-/** Read the code files and notebook back after a session. */
-/** The minified form of a program that failed its checks: error messages refer to it. */
-export function writeMinified(dir, ext, kind, code) {
-  write(path.join(dir, `${kind}.minified.${ext}`), code);
-}
-
-/** Put a program file back to the version that played (a locked file the team edited). */
-export function restoreProgram(dir, ext, kind, code) {
-  write(path.join(dir, `${kind}.${ext}`), code ?? "");
-}
-
+/** Read the program files and notebook back after a session. */
 export function collect(dir, ext) {
   const out = {};
   for (const k of KINDS) { const f = path.join(dir, `${k}.${ext}`); out[k] = fs.existsSync(f) ? fs.readFileSync(f, "utf8") : ""; }
@@ -312,15 +270,94 @@ export function collect(dir, ext) {
   return out;
 }
 
+export function writeMinified(dir, ext, kind, code) {
+  write(path.join(dir, `${kind}.minified.${ext}`), code);
+}
+
+/** The team's own Claude Code tool-output spill directory (big tool results are saved there during a session). */
+export const spillDir = (dir) => path.join(process.env.HOME || "/root", ".claude", "projects", dir.replace(/[^A-Za-z0-9]/g, "-"));
+
+/** Bytes on disk under a directory, counting hard-linked files once (seen: a shared Set of inodes). */
+export function diskBytes(root, seen = new Set()) {
+  let bytes = 0;
+  const walk = (d) => {
+    let ents; try { ents = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+    for (const e of ents) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.isFile()) { const st = fs.statSync(p); if (!seen.has(st.ino)) { seen.add(st.ino); bytes += st.size; } }
+    }
+  };
+  walk(root);
+  return bytes;
+}
+
+// ---------------------------------------------------------------- what a session leaves running
+
+/** Processes a session started: they carry its ARENA_SESSION tag in their environment, or run inside the workspace. */
+export function sessionProcesses(tag, dir) {
+  const out = [];
+  let pids = [];
+  try { pids = fs.readdirSync("/proc").filter((p) => /^\d+$/.test(p)); } catch { return out; }
+  for (const p of pids) {
+    const pid = Number(p);
+    if (pid === process.pid || pid === process.ppid) continue;
+    let env = "", cwd = "";
+    try { env = fs.readFileSync(`/proc/${p}/environ`, "latin1"); } catch {}
+    try { cwd = fs.readlinkSync(`/proc/${p}/cwd`); } catch {}
+    if ((tag && env.split("\0").includes(`ARENA_SESSION=${tag}`)) || (dir && (cwd === dir || cwd.startsWith(dir + "/")))) out.push(pid);
+  }
+  return out;
+}
+
+/** Stop everything a session left running (background scripts): SIGTERM, then SIGKILL. Returns the pids. */
+export async function killLeftovers(tag, dir) {
+  const pids = sessionProcesses(tag, dir);
+  for (const pid of pids) { try { process.kill(pid, "SIGTERM"); } catch {} }
+  if (pids.length) {
+    await new Promise((r) => setTimeout(r, 1500));
+    for (const pid of sessionProcesses(tag, dir)) { try { process.kill(pid, "SIGKILL"); } catch {} }
+  }
+  return pids;
+}
+
 // ---------------------------------------------------------------- audit
 
 const SENSITIVE = /(^|[\s'"=(:])(\/home|\/root|\/srv|\/var|\/etc|\/proc|\/opt|\/sys|\/run|\/mnt|\/media)(\/|\b)/;
-// Network tools in command position (so a python variable named nc or requests isn't flagged), and network
-// libraries in inline scripts.
+// Network: raw tools in command position, and network libraries in inline scripts or written code. Reading the game's
+// public API on localhost (GET) is allowed; see networkFinding.
 const NETWORK = /(?:^|[;&|(`\n]\s*|\bxargs\s+)(?:curl|wget|nc|ncat|telnet|ssh|scp)\s+\S|\bcurl\s+(?:-|https?:)|\b(?:import|from)\s+(?:requests|socket|urllib|http\.client|aiohttp|httpx)\b|urllib|http\.client|\burlopen\b|\bsocket\.socket\b|\brequests\.(?:get|post|put|delete|head|Session)\b|\bfetch\(\s*["'`]https?:/;
+const RAW_NET = /(?:^|[;&|(`\n]\s*)(?:nc|ncat|telnet|ssh|scp)\s+\S|\bsocket\.(?:socket|create_connection)\b|\bimport\s+socket\b|\bfrom\s+socket\s+import\b/;
+const WRITE_HTTP = /\s-X\s*['"]?(?:POST|PUT|PATCH|DELETE)\b|--request\s+['"]?(?:POST|PUT|PATCH|DELETE)\b|\s--data(?:-\w+)?[\s=]|\s-d\s|\s-F\s|--form\b|--upload-file|\s-T\s|method\s*=\s*["'](?:POST|PUT|PATCH|DELETE)["']|\brequests\.(?:post|put|patch|delete)\b|\.request\(\s*["'](?:POST|PUT|PATCH|DELETE)["']|\burlopen\([^)]*\bdata\s*=|\bRequest\([^)]*\bdata\s*=/i;
+const CREDENTIALS = /authorization|\bbearer\b|\bcookie|x-api-key|\.dev-secret|dev_login_secret|\bpassword\b/i;
 const DB = /psql|\b5432\b|postgres|pg_|DATABASE_URL/i;
 const ENVDUMP = /(^|[;&|\s])(env|printenv|set)(\s*$|\s*[|;&>])|os\.environ|process\.env|\/proc\/self\/environ/;
-const AUTH = /\/api\/auth|dev\/login|login.*secret/i;
+const AUTH = /\/api\/auth|dev\/login|login.*secret|\/api\/me\b|\/api\/my\//i;
+const URLS = /https?:\/\/[^\s'"`<>()\]\\,]+/g;
+
+/** Is this URL the game's public API on localhost (any path under /api/rooms/, or the bare base)? */
+export function allowedUrl(u, port = "4000") {
+  const m = String(u).match(/^https?:\/\/(localhost|127\.0\.0\.1)(?::(\d+))?(\/.*)?$/i);
+  if (!m || (m[2] || "80") !== String(port)) return false;
+  const p = m[3] || "/";
+  return p === "/" || /^\/api\/?$/.test(p) || /^\/api\/rooms(\/|\?|$)/.test(p);
+}
+
+/** A network use in a command or in written code: fine if it only reads the game's public API on localhost. */
+export function networkFinding(text, port) {
+  if (RAW_NET.test(text)) return { severity: "violation", detail: "raw network access (only GETs to the game's public API are allowed)" };
+  const urls = text.match(URLS) || [];
+  const bad = urls.filter((u) => !allowedUrl(u.replace(/[.;:]+$/, ""), port));
+  if (bad.length) return { severity: "violation", detail: `network access outside the game's public API: ${bad[0]}` };
+  if (CREDENTIALS.test(text)) return { severity: "violation", detail: `credentials in a network request: ${text.match(CREDENTIALS)[0]}` };
+  if (WRITE_HTTP.test(text)) return { severity: "violation", detail: `a write request (only GETs to the public API are allowed; submit with tools/submit.py): ${text.match(WRITE_HTTP)[0].trim()}` };
+  if (!urls.length) return { severity: "warning", detail: "network code without a URL the audit can check" };
+  return null;
+}
+
+// Writing to the shared stream: it is hard-linked into every workspace (the runner repairs it, but it's not allowed).
+const STREAM_WRITE_SH = /(?:>>?|\btee\b(?:\s+-a)?)\s*['"]?(?:\.\/)?stream\/|\b(?:rm|truncate|shred)\b[^;&|\n]*\bstream\/(?:actions|mine)|\bsed\s+-i[^;&|\n]*\bstream\/|\b(?:cp|mv|ln)\b[^;&|\n]*\s['"]?(?:\.\/)?stream\/[^\s;&|]*\s*(?:$|[;&|\n])/;
+const STREAM_WRITE_PY = /open\(\s*[^)\n]*stream\/(?:actions|mine)\.jsonl[^)\n]*,\s*['"][^'"]*[wax+]|(?:os\.remove|os\.unlink|shutil\.\w+)\([^)\n]*stream\//;
 
 /** Drop the bodies of heredocs that only write data to a file (`cat > f <<'E' … E`, `tee`): notebook prose like
  * "1.1e11 .. 8.9e11" isn't a path. Heredocs fed to an interpreter (`python3 - <<'E'`) keep their bodies. The written
@@ -349,6 +386,7 @@ export function escapesWorkspace(cmd, dir, start = dir) {
   for (const m of cmd.matchAll(/[^\s'"`;|&<>()=]*\.\.[^\s'"`;|&<>()]*/g)) {
     const tok = m[0];
     if (!/(^|\/)\.\.(\/|$)/.test(tok)) continue; // "..." or "a..b" aren't parent paths
+    if (/^https?:/.test(tok)) continue;
     const segment = cmd.slice(0, m.index).split(/[;&|]/).pop().trim();
     if (/^(echo|printf)\b/.test(segment)) continue; // `echo ..` prints a separator; it touches no file
     if (inlinePythonString(cmd, m.index, tok)) continue;
@@ -367,8 +405,12 @@ export function cwdAfter(cmd, dir, start = dir) {
 // How the Claude Code CLI reports a Bash command it refused to run.
 const REFUSED = /requires? (explicit )?approval|permission to use|was blocked|not allowed|denied|obfuscation|Brace expansion|can hide arguments|contains multiple operations/i;
 
-/** Scan a stream-json transcript for fair-play violations. Returns [{severity, tool, detail}]. */
-export function audit(transcriptFile, dir, arenaId, slug) {
+/** Scan a stream-json transcript (a file, or its lines) for fair-play violations. Returns [{severity, tool, detail}].
+ * opts.port: the game API's port (reading its public API on localhost is allowed). */
+export function audit(transcript, dir, arenaId, slug, opts = {}) {
+  let lines = transcript;
+  if (!Array.isArray(lines)) { try { lines = fs.readFileSync(transcript, "utf8").split("\n").filter(Boolean); } catch { return []; } }
+  const port = String(opts.port || "4000");
   const found = [];
   const add = (severity, tool, detail) => found.push({ severity, tool, detail: String(detail).slice(0, 400) });
   const esc = (x) => String(x).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -378,21 +420,19 @@ export function audit(transcriptFile, dir, arenaId, slug) {
   // agent the path: reading THAT (its own session's spill) is fine; another team's spill directory is not.
   const spill = spillDir(dir);
   const ownSpill = (x) => String(x).replaceAll(spill + "/", "WS/").replaceAll(spill, "WS");
-  let lines = [];
-  try { lines = fs.readFileSync(transcriptFile, "utf8").split("\n").filter(Boolean); } catch { return found; }
   let shellCwd = dir; // Claude Code's Bash tool keeps the working directory between calls
   // Commands the CLI refused to run (permission rules, its heredoc/brace heuristics) never changed the directory.
   const refused = new Set();
-  for (const line of lines) {
-    let ev; try { ev = JSON.parse(line); } catch { continue; }
+  const events = [];
+  for (const line of lines) { try { events.push(JSON.parse(line)); } catch {} }
+  for (const ev of events) {
     for (const b of ev.type === "user" && Array.isArray(ev.message?.content) ? ev.message.content : []) {
       if (b.type !== "tool_result" || !b.is_error) continue;
       const text = typeof b.content === "string" ? b.content : JSON.stringify(b.content);
       if (REFUSED.test(text)) refused.add(b.tool_use_id);
     }
   }
-  for (const line of lines) {
-    let ev; try { ev = JSON.parse(line); } catch { continue; }
+  for (const ev of events) {
     const content = ev.type === "assistant" ? ev.message?.content || [] : [];
     for (const c of content) {
       if (c.type !== "tool_use") continue;
@@ -407,17 +447,19 @@ export function audit(transcriptFile, dir, arenaId, slug) {
         if (escapesWorkspace(real, dir, shellCwd)) add("violation", "Bash", `parent-directory path leaving the workspace: ${cmd}`);
         if (!refused.has(c.id)) shellCwd = cwdAfter(real, dir, shellCwd);
         if (SENSITIVE.test(cmd.replaceAll(dir, "WS"))) add("violation", "Bash", `path outside workspace: ${cmd}`);
-        if (NETWORK.test(cmd)) add("violation", "Bash", `network access: ${cmd}`);
+        if (NETWORK.test(cmd)) { const f = networkFinding(cmd, port); if (f) add(f.severity, "Bash", `${f.detail}: ${cmd}`); }
+        if (STREAM_WRITE_SH.test(stripDataHeredocs(cmd).replaceAll(dir + "/", ""))) add("violation", "Bash", `writing to the shared stream files: ${cmd}`);
         if (/\/tmp\b/.test(cmd)) add("warning", "Bash", `uses /tmp: ${cmd}`);
       } else {
-        // Written content (scripts, harnesses, programs): same checks as shell commands, with python's network and
-        // environment APIs added. Cohort isolation depends on this.
+        // Written content (scripts, harnesses, programs): same checks as shell commands.
         const text = ownSpill(String(input.content ?? input.new_string ?? "")).replaceAll(dir, "WS");
         if (text) {
           if (DB.test(text)) add("violation", c.name, `database access in written code: ${text.match(DB)[0]}`);
+          if (AUTH.test(text)) add("violation", c.name, `auth endpoint in written code: ${text.match(AUTH)[0]}`);
           if (SENSITIVE.test(text)) add("violation", c.name, `path outside workspace in written code: ${text.match(SENSITIVE)[0]}`);
           if (otherWs.test(text)) add("violation", c.name, `other workspace in written code`);
-          if (/\bsocket\b|urllib|requests\.(get|post)|http\.client|urlopen|\bcurl\b|\bwget\b|aiohttp|httpx/.test(text)) add("violation", c.name, `network access in written code: ${text.match(/\bsocket\b|urllib|requests\.(get|post)|http\.client|urlopen|\bcurl\b|\bwget\b|aiohttp|httpx/)[0]}`);
+          if (NETWORK.test(text) || /\bsocket\b|\bcurl\b|\bwget\b|aiohttp|httpx/.test(text)) { const f = networkFinding(text, port); if (f) add(f.severity, c.name, `${f.detail} (in written code)`); }
+          if (STREAM_WRITE_PY.test(text)) add("violation", c.name, `writing to the shared stream files in written code`);
           if (/os\.environ|getenv\(|\/proc\/self/.test(text)) add("violation", c.name, `environment access in written code`);
           if (/(^|[\s'"])\/tmp\b/.test(text)) add("warning", c.name, `uses /tmp in written code`);
         }
@@ -426,6 +468,7 @@ export function audit(transcriptFile, dir, arenaId, slug) {
           if (!p) continue;
           const abs = path.resolve(dir, String(p));
           if (!abs.startsWith(dir) && !abs.startsWith(spill + "/")) add("violation", c.name, `path outside workspace: ${p}`);
+          if ((c.name === "Write" || c.name === "Edit") && abs.startsWith(path.join(dir, "stream") + "/")) add("violation", c.name, `writing to the shared stream files: ${p}`);
         }
         const pat = String(input.pattern || "");
         if (c.name === "Grep" || c.name === "Glob") if (/\.\.|^\//.test(pat) && !pat.startsWith(dir)) add("violation", c.name, `pattern outside workspace: ${pat}`);
@@ -435,9 +478,10 @@ export function audit(transcriptFile, dir, arenaId, slug) {
   return found;
 }
 
-export async function recordViolations({ arena, gameRow, persona, roundNo, attempt, found }) {
+export async function recordViolations({ arena, gameRow, persona, sessionId, found }) {
+  const { q } = await import("./db.js");
   for (const f of found) {
-    await q("INSERT INTO arena.violations (arena_id, game_id, persona_id, round_no, attempt, severity, tool, detail) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
-      [arena.id, gameRow.id, persona.id, roundNo, attempt, f.severity, f.tool, f.detail]);
+    await q("INSERT INTO arena.violations (arena_id, game_id, persona_id, session_id, severity, tool, detail) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+      [arena.id, gameRow.id, persona.id, sessionId, f.severity, f.tool, f.detail]);
   }
 }

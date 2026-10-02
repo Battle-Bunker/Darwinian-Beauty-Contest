@@ -1,7 +1,7 @@
 // Population management: retire personas that repeatedly do poorly socially (mandatory) or on fitness,
 // and refill the slots with personas written by competing breeders (biased towards successful breeders).
 import { all, one, q } from "./db.js";
-import { BudgetError, callModel, extractJson } from "./llm.js";
+import { BudgetError, callModel, capModel, extractJson } from "./llm.js";
 import { BREEDERS } from "./personas.js";
 import { breederPrompt, breederSystem } from "./prompts.js";
 import { loadLedger } from "./social.js";
@@ -167,13 +167,13 @@ export async function breed(arena, generation, slot, log) {
 
 async function breedWith(b, scores, arena, generation, slot, log) {
   const prompt = breederPrompt({
-    arena, config: arena.settings.config, population: await populationText(arena), records: await recordsText(),
+    arena, config: { ...arena.settings.config, minutesByGame: arena.settings.minutesByGame || undefined }, population: await populationText(arena), records: await recordsText(),
     ideas: await loadLedger(), exemplars: await exemplarsText(arena), slot,
   });
   let spec = null;
   for (let attempt = 0; attempt < 2 && !spec; attempt++) {
     try {
-      const r = await callModel({ model: b.model, system: breederSystem(b), prompt: attempt ? prompt + "\n\nReply with the JSON object only." : prompt, effort: "medium",
+      const r = await callModel({ model: capModel(b.model, arena.settings?.maxModel), system: breederSystem(b), prompt: attempt ? prompt + "\n\nReply with the JSON object only." : prompt, effort: "medium",
         ctx: { purpose: "breeder", arenaId: arena.id, personaId: "breeder:" + b.id } });
       const j = extractJson(r.text);
       if (j && typeof j.persona_prompt === "string" && j.persona_prompt.length > 100 && j.name && j.team_name) spec = j;

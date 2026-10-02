@@ -1,7 +1,7 @@
 // Teen social evaluation: interviews, judges, the idea ledger, social scores.
 // Social score is its own number per persona per game. It is never mixed into game fitness.
 import { all, one, q } from "./db.js";
-import { BudgetError, callModel, extractJson } from "./llm.js";
+import { BudgetError, callModel, capModel, extractJson } from "./llm.js";
 import { JUDGES } from "./personas.js";
 import { judgePrompt, judgeSystem } from "./prompts.js";
 
@@ -14,7 +14,7 @@ export async function seedJudges() {
   }
 }
 
-/** The idea ledger. `exclude`: arenas whose ideas this judging must not see (sibling cohorts in the experiment). */
+/** The idea ledger. `exclude`: arenas whose ideas this judging must not see (settings.ledgerExclude: e.g. the sibling arms of a controlled experiment). */
 export async function loadLedger(exclude = []) {
   return all(`SELECT i.id, i.tag, i.description, i.first_team, i.first_arena, i.first_game_id,
                      (SELECT count(DISTINCT s.game_id)::int FROM arena.idea_sightings s WHERE s.idea_id = i.id) AS games
@@ -47,9 +47,9 @@ async function runJudge({ judge, arena, gameRow, config, teams, ideas, extraIdea
   let parsed = null, text = "";
   for (let attempt = 0; attempt < 2 && !parsed; attempt++) {
     const r = await callModel({
-      model: judge.model, system: judgeSystem(judge),
+      model: capModel(judge.model, arena.settings?.maxModel), system: judgeSystem(judge),
       prompt: attempt ? prompt + `\n\nIMPORTANT: your last reply was not valid JSON. Reply with the JSON object only.` : prompt,
-      effort: judge.model === "haiku" ? "low" : "medium", ctx: { purpose: "judge", arenaId: arena.id, gameId: gameRow.id, personaId: "judge:" + judge.id },
+      effort: capModel(judge.model, arena.settings?.maxModel) === "haiku" ? "low" : "medium", ctx: { purpose: "judge", arenaId: arena.id, gameId: gameRow.id, personaId: "judge:" + judge.id },
     });
     text = r.text;
     const j = extractJson(text);
@@ -80,7 +80,7 @@ export async function judgeGame({ arena, gameRow, config, teams, log }) {
   await q("DELETE FROM arena.idea_sightings WHERE game_id = $1", [gameRow.id]);
   await q("DELETE FROM arena.ideas i WHERE first_game_id = $1 AND NOT EXISTS (SELECT 1 FROM arena.idea_sightings s WHERE s.idea_id = i.id)", [gameRow.id]);
   await q("DELETE FROM arena.evaluations WHERE game_id = $1", [gameRow.id]);
-  const ideasBefore = await loadLedger(arena.settings?.cohort?.siblings || []);
+  const ideasBefore = await loadLedger(arena.settings?.ledgerExclude || []);
   const known = new Map(ideasBefore.map((i) => [i.tag, i]));
   const firstIdx = gameRow.id % judges.length;
   const first = judges[firstIdx], rest = judges.filter((_, i) => i !== firstIdx);

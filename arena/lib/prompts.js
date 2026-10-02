@@ -1,38 +1,55 @@
-// Prompt builders: team agents (tool-using sessions before each round, and the post-game interview), teen judges
-// and breeders.
+// Prompt builders: team agents (tool-using sessions in the lobby and while the game runs, and the post-game
+// interview), teen judges and breeders. Briefs carry only a few headline numbers; the action stream stays in files
+// that agents read with code (lib/stream.js, tools/stream.py).
 import fs from "node:fs";
 import path from "node:path";
 import { ARENA_DIR } from "./db.js";
-import { changeable } from "../../server/lib/schedule.js";
 
 // Read fresh for every prompt: RULES.md is the players' document and may be edited while arenas run.
 export const rules = () => fs.readFileSync(path.join(ARENA_DIR, "..", "RULES.md"), "utf8");
 const KINDS = ["clover", "orchid", "bee"];
-const codeBlock = (lang, code) => "```" + (lang === "typescript" ? "ts" : "python") + "\n" + code.replace(/\s+$/, "") + "\n```";
+const codeBlock = (lang, code) => "```" + (lang === "typescript" ? "ts" : "python") + "\n" + String(code || "").replace(/\s+$/, "") + "\n```";
+const ext = (config) => (config.language === "typescript" ? "ts" : "py");
+export const mmss = (ms) => { const s = Math.max(0, Math.round((ms || 0) / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+const n0 = (x) => Math.floor(x).toLocaleString("en-US");
+/** "30 seconds", "1 minute", "2 minutes", "1.5 minutes" */
+export const durationText = (minutes) => minutes < 1 ? `${Math.round(minutes * 60)} seconds` : minutes === 1 ? "1 minute" : `${+minutes.toFixed(2)} minutes`;
+
+export const sizeText = () => `Size is measured in nodes of your program's syntax tree after the game minifies it: comments, spacing and the ` +
+  `lengths of names you define are free, and every literal (a string or a number) counts one node per byte.`;
+export const changeText = () => `A change costs the node edits that turn the version playing now into the new one (inserting or deleting a ` +
+  `node costs its size, a changed literal the bytes that change; renames, comments and spacing are free).`;
+
+/** This game's settings, compactly (budgets in nodes). */
+export function settingsText(config, teams) {
+  const b = config.budgets;
+  return `- ${teams} teams, ${2 * teams} flowers. The game lasts ${durationText(config.minutes)} of game time.
+- Challenges are ${config.challengeType}, responses are ${config.responseType} (interface.txt). Language: ${config.language}.
+- A feeding bee sits out the next ${config.feedCost} rounds (a round is one turn for every bee that isn't feeding).
+- Budgets (nodes; compute in ms per call):
+
+| program | size | change budget earned per minute | most it can bank | compute |
+|---|---|---|---|---|
+${KINDS.map((k) => `| ${k} | ${n0(b[k].size)} | ${n0(b[k].perMinute)} | ${n0(b[k].cap)} | ${b[k].ms} |`).join("\n")}
+
+  Change budget starts at 0 when the game starts and grows with game time. Over this whole game a program earns
+  ${KINDS.map((k) => `${k} ${n0(b[k].perMinute * config.minutes)}`).join(", ")} nodes of change, but it can bank only up to its cap, so
+  budget it doesn't spend beyond that is lost.`;
+}
 
 // ---------------------------------------------------------------- team agents
 
-/** The game's size unit, and how size and change are measured, in the players' words (config.complexity). */
-export const unitOf = (config) => (config.complexity === "nodes" ? "nodes" : "characters");
-export const sizeText = (config) => config.complexity === "nodes"
-  ? `Size is measured in nodes of your program's syntax tree after the game minifies it: comments, spacing and the lengths of names ` +
-    `you define are free, and every literal (a string or a number) counts one node per byte.`
-  : `Size is measured in characters after the game minifies your program: comments, spacing and the lengths of names you define ` +
-    `are free; strings, numbers and keywords count character by character.`;
-const changeMeasureText = (config) => config.complexity === "nodes"
-  ? `A change is measured on the minified programs too, as a tree edit: inserting or deleting a node costs its weight, and a changed ` +
-    `literal costs its byte-level edit (renames, comments and spacing are free).`
-  : `A change is measured on the minified programs too: the characters inserted, deleted or replaced between last round's minified ` +
-    `program and the new one (renames, comments and spacing are free).`;
-
 /** What every team agent is told about its situation, in one paragraph (for the breeders). */
 export const FRAME_SUMMARY = `Every team agent is told: it is one team in a tournament of games (where the arena has selection, teams that keep doing
-badly are removed and replaced); after every game it is interviewed by a panel of 10-14-year-old players who score understanding,
-respect, novelty and want-to-team-up (where the arena has selection, agents that repeatedly do poorly there are removed); game
-fitness matters too; before each round it works on its three programs as files in a private workspace, with tools and python3;
-it keeps a notebook across rounds and games; and it gets RULES.md in full.`;
+badly are removed and replaced); each game is one short continuous stretch of play (a minute or two); before it starts the
+agent writes its three programs in a private workspace with tools and python3 (the lobby, where writing is free); while the
+game runs it gets a session to watch the public action stream and submit changes, which go live at once and cost change
+budget that refills with game time; it may leave its own scripts running during that session; after every game it is
+interviewed by a panel of 10-14-year-old players who score understanding, respect, novelty and want-to-team-up (where the arena
+has selection, agents that repeatedly do poorly there are removed); game fitness matters too; it keeps a notebook across
+sessions and games; and it gets RULES.md in full.`;
 
-/** Persona and situation, shared by the round sessions and the interview. `fixed`: the arena keeps the same teams. */
+/** Persona and situation, shared by the sessions and the interview. `fixed`: the arena keeps the same teams. */
 function personaAndSituation(persona, fixed) {
   return `# Who you are
 ${persona.persona_prompt.trim()}
@@ -40,7 +57,9 @@ ${persona.persona_prompt.trim()}
 # Your situation
 You are one team in an ongoing tournament ("arena") of Darwinian Beauty Contest. Every team is run by an AI agent playing a
 persona, standing in for a human+AI team. You play as team "${persona.team_name}".
-- Each game has several rounds. Before each round you may change some of your programs, within the budgets.
+- Each game is one continuous stretch of play, a minute or two of game time. Before it starts (the lobby) you write your
+  three programs. While it runs, the bees forage without pause and you may change your programs at any moment, paying for
+  each change from a budget that refills as the game goes on.
 ${fixed
     ? `- Games follow one another, always with the same teams.
 - After EVERY game you will be INTERVIEWED: you must teach your code to a panel of players aged 10-14. They score how well they
@@ -55,36 +74,110 @@ ${fixed
   the operator of this system.`;
 }
 
-/** System prompt of a round session: tools, persona, how the workspace works, fair play, and RULES.md. */
-export function toolSystem(persona, config, dir, fixed = false) {
-  const ext = config.language === "typescript" ? "ts" : "py";
+/** System prompt of a session (lobby or game): tools, persona, how the workspace works, fair play, RULES.md, settings. */
+export function toolSystem(persona, config, dir, { fixed = false, apiBase, teams }) {
+  const x = ext(config);
   return `You are a team agent in a coding game, working with tools inside your own workspace folder: ${dir}
 Tools: Read (absolute paths inside your workspace; use offset/limit for big files), Write and Edit (files in your workspace),
-Glob and Grep (search inside your workspace), and Bash inside your workspace: simple shell commands (ls, grep, wc, sort, uniq,
-cut, head) and python3. Use python3 to analyse the raw logs (JSON/JSONL) and to test your programs locally, e.g. a small harness
-that imports your flower and runs it on many challenges, or that replays logged visits through your bee. Keep scripts and their
-output files inside your workspace.
+Glob and Grep (search inside your workspace), and Bash inside your workspace: simple shell commands (ls, grep, wc, head) and
+python3. Use python3 to analyse the action stream and to test your programs; the workspace tools in tools/ run with python3 too.
 Work step by step, then stop with a short summary.
 
 ${personaAndSituation(persona, fixed)}
 
 # How you work
-You work inside your team's private workspace (the current directory). README.md explains every file. Your programs are
-clover.${ext}, orchid.${ext} and bee.${ext}. When you finish, the ones you may change this round (your brief says which) are
-checked and submitted; the others play unchanged. The logs are raw files and can be large (visits are JSON Lines, one visit per
-line). The game server checks your programs (syntax, size and change budgets, a short runtime test); if something fails you get
-a short follow-up session with the errors.
-${sizeText(config)} So write readable code, and keep prose in comments (docstrings are strings).
-${changeMeasureText(config)} Your programs run in minified form, so error messages refer to the minified program (a failing
-program's minified version is saved next to it as <kind>.minified.${ext}).
+- Your team's private workspace is the current directory. README.md explains every file and tool.
+- Your programs are clover.${x}, orchid.${x} and bee.${x}. Nothing reaches the game until you submit it:
+  \`python3 tools/submit.py <kind>\`. In the lobby submitting is free. While the game runs a submission goes live at once and
+  pays its change cost; if you can't afford it yet it is refused and you're told when you can. \`tools/check.py\` (size, cost
+  now, a quick runtime test) and \`tools/try.py\` (run it on the game's real runner) are free. \`tools/status.py\` shows the clock,
+  your change budgets and the scores right now.
+- Games are short (this one: ${durationText(config.minutes)}), and a session is slow by comparison: a game may well end before
+  your session does, and then the session is stopped. What reacts during a game is what you prepared: programs that adapt by
+  themselves (a bee learns as it goes), and any script you start in your session, for example one that follows the stream
+  and calls tools/submit.py by itself (README.md shows how). Such a script may run in the background while your session lasts;
+  everything your session started is stopped when it ends.
+- The action stream: every bee action is public the moment it happens, and stream/actions.jsonl holds them all, one JSON
+  object per line, growing about once a second (stream/SCHEMA.md). It can get big: read it with code (tools/stream.py), never
+  print it whole. The same stream is on the game's public API, which needs no login: ${apiBase}/events (Server-Sent Events) and
+  ${apiBase}/actions?after=<seq>.
+- ${sizeText()} So write readable code, and keep prose in comments (docstrings are strings).
+- ${changeText()} Your programs run minified, so error messages refer to the minified program (\`tools/check.py <kind> --json\`
+  shows it).
 
-# Fair play (breaking these disqualifies your team for the round)
+# Fair play (breaking these ends your session at once; anything you try to submit after that is refused)
 - Use only the files in this workspace. Do not read, list or write any other directory (not even /tmp).
-- Do not access the database, the network, the game server, or other teams' data.
-- Do not log in as anyone, and do not print or inspect environment variables.
+- Do not write to stream/: those files are kept by the game runner and shared.
+- Do not access the database or the network, except to read (GET) the game's public API at ${apiBase.replace(/\/rooms\/.*$/, "/rooms/...")}.
+  Do not log in as anyone, send credentials, or try to read other teams' private data.
+- Do not print or inspect environment variables.
 
 # The rules (also in RULES.md)
-${rules()}`;
+${rules()}
+
+# This game's settings (also in config.json)
+${settingsText(config, teams)}`;
+}
+
+/** The lobby brief: write (or rework) all three programs, test them, submit them. */
+export function lobbyBrief({ config, teamName, generation, maxTurns, carried, startsWith = null, fix = null, examples = null }) {
+  const x = ext(config);
+  if (fix) {
+    return `These programs are not submitted yet, so your team can't play:\n${fix}\n\nFix them and submit each one with ` +
+      `\`python3 tools/submit.py <kind>\` (check first with tools/check.py; its --json output shows the minified program the errors ` +
+      `refer to). Be quick: at most ${maxTurns} tool calls. Finish with a one-line summary.`;
+  }
+  const b = config.budgets;
+  const parts = [`# Game ${generation}: the lobby. You are team "${teamName}".`];
+  if (carried) {
+    parts.push(`Your program files hold your final programs from game ${generation - 1}; you may rewrite them freely. previous-games/ has ` +
+      `every earlier game of this arena, revealed: every team's final code, the standings, every team's change timeline, and what the ` +
+      `interview panel said about you.`);
+  } else {
+    parts.push(`This is your first game: the program files are empty. Write all three from scratch (interface.txt and RULES.md say ` +
+      `what each must define; there is no starter code).`);
+  }
+  if (examples) parts.push(`Shared examples: every team in this garden received the same example files in examples/ (${examples.join(", ")}). ` +
+    `Every team has exactly these files and was told the same thing.`);
+  parts.push(`Writing is free in the lobby: only the size budgets apply (clover ${n0(b.clover.size)}, orchid ${n0(b.orchid.size)}, bee ` +
+    `${n0(b.bee.size)} nodes). Test with tools/check.py and tools/try.py, then submit all three with \`python3 tools/submit.py <kind>\`: ` +
+    `a team needs all three submitted to play. ${startsWith ? startsWith : ""}`.trim());
+  parts.push(`When every team is done, the game starts and runs for ${durationText(config.minutes)} of game time, without stopping. As it starts ` +
+    `you get another session, while it runs. The game won't wait for you, and it will likely be over before that session ends. ` +
+    `Change budgets during the game: clover ${n0(b.clover.perMinute)}, orchid ${n0(b.orchid.perMinute)} and bee ${n0(b.bee.perMinute)} ` +
+    `nodes a minute, banking at most ${n0(b.clover.cap)} / ${n0(b.orchid.cap)} / ${n0(b.bee.cap)}. So whatever should react during the ` +
+    `game must be ready now: programs that adapt by themselves, and any script you'll want to start at once in that session ` +
+    `(for example one that follows stream/actions.jsonl and submits changes with tools/submit.py). Keep such scripts in your workspace.`);
+  parts.push(`Update notebook.md (it carries over to your next sessions and games), then end with a one-paragraph summary of what you ` +
+    `wrote and why. You have at most about ${maxTurns} tool calls.`);
+  return parts.join("\n\n");
+}
+
+/** The brief of a session while the game runs (or is about to start): headline numbers only. */
+export function gameBrief({ config, teamName, generation, sessionNo, status, clockMs, budgets, standing, head, drafts = [], maxTurns, scripts = [] }) {
+  const x = ext(config);
+  const endMs = config.minutes * 60000;
+  const parts = [];
+  if (status === "lobby") parts.push(`# Game ${generation} starts in a few seconds and lasts ${durationText(config.minutes)}. You are team "${teamName}". Session ${sessionNo}.`);
+  else parts.push(`# Game ${generation} is running: ${mmss(clockMs)} of ${mmss(endMs)} played. You are team "${teamName}". Session ${sessionNo}.`);
+  const lines = [];
+  if (standing) lines.push(`Your fitness so far: ${standing.fitness.toFixed(2)} (#${standing.rank} of ${standing.of}; par is 1.00).`);
+  if (head && head.actions) {
+    const bee = head.bee;
+    lines.push(`So far: ${n0(head.actions)} actions. Your bee: ${bee.asks} asks, ${bee.feeds} feeds, ${bee.nectar} nectar. ` +
+      `Your clover: ${head.clover.feeds} feeds from ${head.clover.bees} bee${head.clover.bees === 1 ? "" : "s"}; your orchid: ${head.orchid.feeds} feeds from ${head.orchid.bees}.`);
+  }
+  if (budgets) lines.push(`Your change budgets now: ${KINDS.map((k) => `${k} ${n0(budgets[k].available)} of ${n0(budgets[k].cap)} (+${n0(budgets[k].perMinute)}/min)`).join(", ")}.`);
+  if (lines.length) parts.push(lines.join("\n"));
+  parts.push(`Your program files are the versions playing now. stream/actions.jsonl is the live stream (growing; read it with code: ` +
+    `tools/stream.py, stream/SCHEMA.md); stream/mine.jsonl has your own bee's printouts. \`python3 tools/status.py\` shows the clock, ` +
+    `your budgets and the scores right now.`);
+  if (drafts.length) parts.push(`Edits from an earlier session that were never submitted: drafts/${drafts.map((k) => `${k}.${x}`).join(", drafts/")}.`);
+  if (scripts.length) parts.push(`Scripts in your workspace you might start: ${scripts.join(", ")}.`);
+  parts.push(`Submit whenever you like: \`python3 tools/submit.py <kind>\` goes live at once and pays its change cost. Nothing is submitted ` +
+    `for you. When the game ends this session is stopped, and so is everything it started. Update notebook.md as you go (it ` +
+    `carries over to the next game), and end with a one-paragraph summary. At most about ${maxTurns} tool calls.`);
+  return parts.join("\n\n");
 }
 
 /** System prompt of the post-game interview (a single model call, no tools). */
@@ -95,24 +188,18 @@ export function interviewSystem(persona, fixed = false) {
 ${rules()}`;
 }
 
-export function interviewPrompt(view, persona, ctx) {
-  const myId = view.me.teamId;
-  const c = view.game.config;
-  const last = view.rounds[view.rounds.length - 1];
-  const progs = last.programs[myId];
-  const names = Object.fromEntries(view.teams.map((t) => [t.id, t.name]));
-  const standings = [...(view.final || last.totals)].sort((a, b) => b.fitness - a.fitness)
-    .map((s, i) => `${i + 1}. ${names[s.teamId]}${s.teamId === myId ? " (you)" : ""}: fitness ${s.fitness.toFixed(2)}`).join("\n");
-  return `# The game is over. Interview time!
+/** final: { standings: [{name, fitness, me}], programs: {kind: code}, changes: n, config } */
+export function interviewPrompt({ standings, programs, changes, config, notebook }) {
+  return `# The game is over (${durationText(config.minutes)}). Interview time!
 
 ## Final standings
-${standings}
+${standings.map((s, i) => `${i + 1}. ${s.name}${s.me ? " (you)" : ""}: fitness ${s.fitness.toFixed(2)}`).join("\n")}
 
-## Your final programs
-${KINDS.map((k) => `### ${k}\n${codeBlock(c.language, progs[k].code || view.myTeam.previous[k] || "")}`).join("\n")}
+## Your final programs${changes ? ` (you changed them ${changes} time${changes === 1 ? "" : "s"} during the game)` : ""}
+${KINDS.map((k) => `### ${k}\n${codeBlock(config.language, programs[k])}`).join("\n")}
 
 ## Your notebook
-${ctx.notebook || "(empty)"}
+${notebook || "(empty)"}
 
 ## What to do
 A panel of players aged 10-14 now asks you: "Teach us your code!" They'll read your three programs next to your explanation,
@@ -122,103 +209,14 @@ best idea in your code. Aim it at smart 10-14-year-olds. At most about 250 words
 Reply with <explanation>...</explanation>`;
 }
 
-/** The change turns of a game as text, from server/lib/schedule.js: "the bee before rounds 2 and 5, ...". */
-function turnsText(rounds) {
-  const by = {};
-  for (let r = 2; r <= rounds; r++) for (const k of changeable(r)) (by[k] ||= []).push(r);
-  const and = (xs) => (xs.length > 1 ? `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}` : `${xs[0]}`);
-  return Object.entries(by).sort((a, b) => a[1][0] - b[1][0]).map(([k, rs]) => `the ${k} before round${rs.length > 1 ? "s" : ""} ${and(rs)}`).join(", ");
-}
-
-/** Round-1 notices an arena can name in settings.cohort.notices ({game: name}): text, or a function of the game config.
- * Neutral: what changed, no strategy. */
-export const NOTICES = {
-  "v3-rules": (config) => `RULES CHANGED since your last game (RULES.md and interface.txt have the details):
-- Flowers are still stateless: the whole program runs fresh for every question and keeps nothing between calls. But each
-  call now gets fresh randomness (random is newly seeded on every call) and the clock (import time). GAME["ms"] is your
-  program's own compute budget per call, in milliseconds; a flower that runs out of time gives no answer.
-- The server no longer stores one answer per challenge per round: every ask runs the flower again, so the same challenge
-  can get a different answer each time.
-- ${sizeText(config)} Budgets are in those ${unitOf(config)} (the numbers are in config.json).
-- Games have ${config.rounds} rounds. After round 1 the three programs take turns to change, one per round: ${turnsText(config.rounds)}.
-  ${changeMeasureText(config)}
-- Programs run in minified form, so names don't exist at runtime. A bee keeps only its top-level variable keep from one
-  round to the next: MEMORY[k] is the value keep had at the end of round k+1 (read-only). Bees that read named variables
-  from MEMORY must change; round 1 of this game allows full rewrites.`,
-};
-
-/** What everyone can see after each round, in one neutral sentence (both log variants get one). */
-export const logsText = (config) => config.publicLogs
-  ? `Logs in this game are public: after each round every team sees every visit in the garden, including which flower (clover or orchid) ` +
-    `was visited, the challenges and responses, the feeds and the nectar (logs/round-N/visits.jsonl). Code, bee logs, flower errors, ` +
-    `compute use and MEMORY stay private.`
-  : `Logs in this game are private: after each round you see your own bee's visits and the visits to your own patch in full ` +
-    `(challenges, responses, which flower); for other teams' visits you see only who visited whom and what happened.`;
-
-/** The round-1 notice for the examples treatment: plain common knowledge, no code. */
-export const examplesNotice = (files) => `Shared examples: every team in this garden received the same two example flowers and checkers, in examples/ ` +
-  `(${files.join(", ")}). Every team has exactly these files and was told the same thing.`;
-
-const listKinds = (ks) => ks.length > 1 ? `${ks.slice(0, -1).join(", ")} and ${ks[ks.length - 1]}` : ks[0];
-
-/** Which program may change before this round, as neutral rule text. `nextTurns`: {kind: next round it may change}. */
-export function changeText(roundNo, changeable, budgets, nextTurns = {}, unit = "characters") {
-  if (roundNo === 1) return `Before round 1 you write all three programs (no change budget, only the size budgets).`;
-  const locked = KINDS.filter((k) => !changeable.includes(k));
-  const next = locked.filter((k) => nextTurns[k]).map((k) => `your ${k}'s next turn is before round ${nextTurns[k]}`);
-  return `Before round ${roundNo} it is your ${listKinds(changeable)}'s turn to change (change budget: ` +
-    changeable.map((k) => `${budgets[k].changes} ${unit}`).join(", ") + `). Your ${listKinds(locked)} ${locked.length > 1 ? "are" : "is"} locked ` +
-    `and play${locked.length > 1 ? "" : "s"} round ${roundNo} unchanged${next.length ? `; ${next.join(", ")}` : ""}. ` +
-    `(After round 1 the three programs take turns to change, one per round.)`;
-}
-
-/** The per-round brief (the session's user message). */
-export function roundBrief({ view, entry, generation, roundNo, maxTurns, ext, fix, forked, notices = [], changeable = KINDS, nextTurns = {}, restored = [] }) {
-  const c = view.game.config;
-  const names = Object.fromEntries(view.teams.map((t) => [t.id, t.name]));
-  const files = (ks) => ks.map((k) => `${k}.${ext}`).join(", ");
-  if (fix) {
-    return `Your programs failed the server's checks for round ${roundNo}:\n${fix}\n\nFix the failing files (you may change ${files(changeable)} this round), ` +
-      `keeping changes small, and finish with a one-line summary. Error messages refer to the minified program, which is saved next to ` +
-      `each failing file as <kind>.minified.${ext}. Be quick: at most ${maxTurns} tool calls.`;
-  }
-  const parts = [`# Game ${generation}, round ${roundNo} of ${c.rounds} is next. You are team "${entry.team_name}".`];
-  if (roundNo === 1 && forked) {
-    // A forked arena (cohort experiment or continuation) starts from game 0's programs.
-    parts.push(`A new game starts. Your program files hold your final programs from the previous game, and you may rewrite them freely. ` +
-      `previous-games/game-${generation - 1}/ has the standings and the final code of the top 2 teams (top2/), your own logs (own/) ` +
-      `and the panel's feedback (panel.md).`);
-  } else if (roundNo === 1 && generation === 1) {
-    parts.push(`This is the first round of the first game: there are no logs yet. The program files are empty; write all three from scratch ` +
-      `(see interface.txt and RULES.md).`);
-  } else if (roundNo === 1) {
-    parts.push(`A new game starts. Your program files hold your final programs from game ${generation - 1} (or are empty if you're new), ` +
-      `and you may rewrite them freely. previous-games/ has every team's revealed final code and full logs from earlier games in this ` +
-      `arena: study what worked.`);
-  } else {
-    const last = view.rounds[view.rounds.length - 1];
-    const sb = [...last.totals].sort((a, b) => b.fitness - a.fitness).map((s, i) => `${i + 1}. ${names[s.teamId]}${s.teamId === view.me.teamId ? " (you)" : ""}: ` +
-      `total ${s.fitness.toFixed(2)}, round ${last.no} ${last.scores.find((x) => x.teamId === s.teamId)?.fitness.toFixed(2)}`).join("\n");
-    parts.push(`Round ${last.no} just finished. New: logs/round-${last.no}/ (the raw round: round.json, visits.jsonl, my-bee.jsonl, my-patch.jsonl), ` +
-      `logs/game.json (scores and ledgers), memory/round-${last.no}.txt (what your bee kept). Your program files are exactly what played ` +
-      `round ${last.no}.\n\nScoreboard after round ${last.no}:\n${sb}`);
-  }
-  parts.push(changeText(roundNo, changeable, c.budgets, nextTurns, unitOf(c)));
-  if (restored.length) parts.push(`Last round you edited ${files(restored)} while ${restored.length > 1 ? "they were" : "it was"} locked: ` +
-    `those edits were not submitted, and the file${restored.length > 1 ? "s were" : " was"} restored to the version that played.`);
-  if (roundNo === 1) parts.push(logsText(c));
-  for (const n of roundNo === 1 ? notices : []) parts.push(n);
-  parts.push(`Update the program files you may change (they're checked and submitted when you finish), update notebook.md, and end with a ` +
-    `one-paragraph summary of what you changed and why. You have at most about ${maxTurns} tool calls, so be efficient.`);
-  return parts.join("\n\n");
-}
-
 // ---------------------------------------------------------------- judges
 
 export const GAME_SUMMARY = `Darwinian Beauty Contest: each team writes three programs. A clover is an honest flower (bees that feed there get nectar).
 An orchid is a trick flower (bees that feed there get nothing, but the orchid's team still gets the credit for the visit).
-A bee visits flowers one at a time; it can ask a flower a question (a "challenge", costs 1 turn) and see its answer, then feed
-(costs several turns) or leave. Flowers keep nothing from one question to the next and can't tell who's asking.
+A bee visits flowers one at a time; it can ask a flower a question (a "challenge") and see its answer, then feed or leave.
+Flowers keep nothing from one question to the next and can't tell who's asking. A game is one short continuous stretch of play
+(a minute or two): the bees take turns nonstop, everything they do is public at once, and teams may change their programs while
+it runs, paying from a change budget that refills with time.
 A team scores when bees from many different teams feed at its flowers, and when its own bee finds real nectar at many different teams' clovers.`;
 
 export function judgeSystem(judge) {
@@ -269,7 +267,7 @@ export function judgePrompt({ config, teams, ideas, arenaLabel }) {
   const lang = config.language;
   const parts = [
     `# Game just finished (${arenaLabel})`,
-    `Settings: ${lang}, challenges are ${config.challengeType}, answers are ${config.responseType}, ${config.turnsPerFlower * 2 * teams.length} turns per bee per round, feeding costs ${config.feedCost} turns.`,
+    `Settings: ${lang}, challenges are ${config.challengeType}, answers are ${config.responseType}, a game of ${durationText(config.minutes)}, a feeding bee sits out ${config.feedCost} rounds.`,
     `## Idea ledger (ideas already seen in earlier games)\n${ledgerText(ideas)}`,
     `## The teams (${teams.length})`,
   ];

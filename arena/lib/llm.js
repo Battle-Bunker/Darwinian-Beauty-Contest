@@ -11,6 +11,8 @@ import { ARENA_DIR, one, q } from "./db.js";
 export const MODELS = ["opus", "sonnet", "haiku"];
 
 const EMPTY_CWD = path.join(ARENA_DIR, "runs", "cwd"); // no CLAUDE.md, no repo: nothing leaks into prompts
+// The CLI to run (tests point it at a stub that makes no model calls).
+const CLAUDE = process.env.ARENA_CLAUDE_BIN || "claude";
 fs.mkdirSync(EMPTY_CWD, { recursive: true });
 
 export class BudgetError extends Error {}
@@ -39,7 +41,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export const llmStats = () => ({ active, waiting: waiters.length, maxConcurrent });
 
 // ---------- budget ----------
-const GLOBAL_CAP = Number(process.env.ARENA_BUDGET_USD || 300);
+export const GLOBAL_CAP = Number(process.env.ARENA_BUDGET_USD || 300);
 const arenaCaps = new Map(); // arenaId -> usd
 export function setArenaCap(arenaId, usd) { if (usd) arenaCaps.set(arenaId, usd); }
 
@@ -60,7 +62,7 @@ function runCli({ model, system, prompt, effort, timeoutMs }) {
   return new Promise((resolve) => {
     const args = ["-p", "--model", model, "--tools", "", "--system-prompt", system, "--output-format", "json", "--no-session-persistence"];
     if (effort) args.push("--effort", effort);
-    const child = spawn("claude", args, { cwd: EMPTY_CWD, stdio: ["pipe", "pipe", "pipe"], env: process.env });
+    const child = spawn(CLAUDE, args, { cwd: EMPTY_CWD, stdio: ["pipe", "pipe", "pipe"], env: process.env });
     let out = "", err = "", done = false;
     const timer = setTimeout(() => { if (!done) { err += "\n[arena] timeout"; child.kill("SIGKILL"); } }, timeoutMs);
     child.stdout.on("data", (d) => (out += d));
@@ -242,7 +244,7 @@ export function capModel(model, maxModel) {
   return order.indexOf(model) > order.indexOf(maxModel) ? maxModel : model;
 }
 
-function runSessionCli({ model, cwd, appendSystem, prompt, maxTurns, maxBudgetUsd, transcriptFile, timeoutMs, python = true, control }) {
+function runSessionCli({ model, cwd, appendSystem, prompt, maxTurns, maxBudgetUsd, transcriptFile, timeoutMs, python = true, control, env = {} }) {
   return new Promise((resolve) => {
     const args = ["-p", "--model", model, "--tools", "Bash,Read,Write,Edit,Glob,Grep", "--permission-mode", "acceptEdits",
       // The user explicitly approved a Python interpreter for team agents (this container is isolated and
@@ -256,7 +258,7 @@ function runSessionCli({ model, cwd, appendSystem, prompt, maxTurns, maxBudgetUs
     if (maxBudgetUsd) args.push("--max-budget-usd", String(maxBudgetUsd));
     fs.mkdirSync(path.dirname(transcriptFile), { recursive: true });
     const out = fs.createWriteStream(transcriptFile);
-    const child = spawn("claude", args, { cwd, stdio: ["pipe", "pipe", "pipe"], env: { HOME: process.env.HOME || "/root", PATH: SESSION_PATH, LANG: "C.UTF-8" } });
+    const child = spawn(CLAUDE, args, { cwd, stdio: ["pipe", "pipe", "pipe"], env: { HOME: process.env.HOME || "/root", PATH: SESSION_PATH, LANG: "C.UTF-8", ...env } });
     const lines = [];
     let buf = "", last = null, err = "", limitText = null, killed = null, closed = false;
     if (control) {
@@ -288,7 +290,17 @@ function runSessionCli({ model, cwd, appendSystem, prompt, maxTurns, maxBudgetUs
     });
     child.stderr.on("data", (d) => (err += d));
     child.on("error", (e) => (err += String(e)));
-    child.on("close", (code) => { closed = true; clearTimeout(timer); out.end(); resolve({ code, result: last, err, limitText, killed, lines }); });
+    let done = false;
+    const finish = (code) => {
+      if (done) return;
+      done = true; closed = true;
+      clearTimeout(timer);
+      out.end();
+      resolve({ code, result: last, err, limitText, killed, lines });
+    };
+    child.on("close", finish);
+    // A process the session left running may still hold the CLI's stdout: don't wait for it once the CLI has exited.
+    child.on("exit", (code) => setTimeout(() => { if (!done) { child.stdout.destroy(); child.stderr.destroy(); finish(code); } }, 3000).unref());
     child.stdin.on("error", () => {});
     child.stdin.end(prompt);
   });
@@ -299,9 +311,10 @@ function runSessionCli({ model, cwd, appendSystem, prompt, maxTurns, maxBudgetUs
  * `control` (optional, filled in here): { lines, child, kill(reason) } so the caller can audit the live transcript
  * and stop the session (game over, fair-play violation). A stopped session's cost is estimated from its usage.
  * Usage-limit failures pause the runner and the session is re-run unchanged after resume (not an attempt), unless
- * `holdOnLimit` is false (sessions in a running game: the moment has passed, so the caller decides).
+ * `holdOnLimit` is false (sessions in a running game: the moment has passed, so the caller decides). `env`: extra
+ * environment (a session tag, so the runner can find what the session left running).
  */
-export async function runSession({ model, cwd, appendSystem, prompt, maxTurns = 30, maxBudgetUsd = null, transcriptFile, timeoutMs = 40 * 60_000, python = true, ctx = {}, control = null, holdOnLimit = true }) {
+export async function runSession({ model, cwd, appendSystem, prompt, maxTurns = 30, maxBudgetUsd = null, transcriptFile, timeoutMs = 40 * 60_000, python = true, ctx = {}, control = null, holdOnLimit = true, env = {} }) {
   if (!MODELS.includes(model)) throw new Error("unknown model " + model);
   for (let hold = 0; ; hold++) {
     await waitIfPaused();
@@ -312,7 +325,7 @@ export async function runSession({ model, cwd, appendSystem, prompt, maxTurns = 
     const t0 = Date.now();
     let r;
     try {
-      r = await runSessionCli({ model, cwd, appendSystem, prompt, maxTurns, maxBudgetUsd, python, control, transcriptFile: hold ? transcriptFile.replace(/\.jsonl$/, `.hold${hold}.jsonl`) : transcriptFile, timeoutMs });
+      r = await runSessionCli({ model, cwd, appendSystem, prompt, maxTurns, maxBudgetUsd, python, control, env, transcriptFile: hold ? transcriptFile.replace(/\.jsonl$/, `.hold${hold}.jsonl`) : transcriptFile, timeoutMs });
     } finally {
       release();
     }

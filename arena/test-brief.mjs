@@ -1,50 +1,58 @@
 #!/usr/bin/env node
-// Dry-run check of round briefs (no model calls, no server): round 1 of a fresh arena and of a forked one (cohorts
-// and continuations, whose game 0 is the source game), the round-1 notices, and the change turns of later rounds.
+// The prompts (no model calls, no server): the system prompt describes the continuous game, the tools and the fair-play
+// rules; the lobby and in-game briefs carry headline numbers only (never actions or logs); interview and judge prompts.
 //   node arena/test-brief.mjs
-import { NOTICES, examplesNotice, roundBrief } from "./lib/prompts.js";
-import { changeable, nextChangeRound } from "../server/lib/schedule.js";
+import fs from "node:fs";
+import { gameBrief, interviewPrompt, judgePrompt, lobbyBrief, settingsText, toolSystem } from "./lib/prompts.js";
 
-const budgets = { clover: { changes: 70 }, orchid: { changes: 490 }, bee: { changes: 700 } };
-const view = { game: { config: { rounds: 6, budgets } }, teams: [{ id: "t", name: "Test Team" }], me: { teamId: "t" }, rounds: [] };
-const base = { view, entry: { team_name: "Test Team" }, roundNo: 1, maxTurns: 30, ext: "py" };
 let failed = 0;
-const check = (name, ok) => { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) failed++; };
+const check = (name, ok, extra = "") => { console.log(`${ok ? "ok  " : "FAIL"} ${name}${ok || !extra ? "" : `: ${String(extra).slice(0, 400)}`}`); if (!ok) failed++; };
+const config = { language: "python", minutes: 0.5, feedCost: 10, challengeType: "int", responseType: "int", maxLen: 64, maxNodes: 512,
+  budgets: { clover: { size: 1100, perMinute: 220, cap: 220, ms: 150 }, orchid: { size: 2200, perMinute: 1540, cap: 1540, ms: 50 }, bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 25 } } };
+const persona = { persona_prompt: "You are Luna, 12.", team_name: "Moonpetal" };
+const apiBase = "http://localhost:4000/api/rooms/R/games/G";
 
-const fresh = roundBrief({ ...base, generation: 1, forked: false });
-check("fresh arena, game 1: told the files are empty", /program files are empty/.test(fresh));
-check("fresh arena, game 1: all three programs are written", /write all three programs/.test(fresh));
+const sys = toolSystem(persona, config, "/home/user/arena-ws/a/luna", { apiBase, teams: 3 });
+check("system: the tools", ["tools/submit.py", "tools/check.py", "tools/try.py", "tools/status.py", "tools/stream.py"].every((t) => sys.includes(t)));
+check("system: submissions go live at once and cost change budget", /goes live at once/.test(sys) && /pays its change cost/.test(sys));
+check("system: the live stream is a file read with code, and the public API", /stream\/actions\.jsonl/.test(sys) && /never\s+print it whole/.test(sys) && sys.includes(`${apiBase}/events`));
+check("system: scripts may run during the session, and stop with it", /background while your session lasts/.test(sys) && /everything your session started is stopped/.test(sys));
+check("system: the game is short", /30 seconds/.test(sys));
+check("system: fair play allows reading the public API, nothing else", /except to read \(GET\) the game's public API/.test(sys) && /Do not write to stream\//.test(sys) && /not even \/tmp/.test(sys));
+check("system: RULES.md in full (the continuous rules)", /## The garden never stops/.test(sys) && /## What everyone can see/.test(sys));
+check("system: this game's settings with per-minute change budgets and caps", /\| clover \| 1,100 \| 220 \| 220 \| 150 \|/.test(sys) && /sits out the next 10 rounds/.test(sys));
+check("system: no round-based leftovers (MEMORY, turns_left, change turns)", !/MEMORY|turns_left|before each round|turn to change|change turn/.test(sys));
+const devSecret = fs.existsSync(new URL("./runs/.dev-secret", import.meta.url)) ? fs.readFileSync(new URL("./runs/.dev-secret", import.meta.url), "utf8").trim() : "no-secret-file";
+check("system: no secrets, tokens or database URLs", !sys.includes(devSecret) && !/postgres:|Bearer |DATABASE_URL|DEV_LOGIN|\.dev-secret/i.test(sys));
+check("settings: what a program earns over the game", /clover 110, orchid 770, bee 1,100 nodes of change/.test(settingsText(config, 3)), settingsText(config, 3));
 
-const v3 = NOTICES["v3-rules"]({ rounds: 6 });
-const forked = roundBrief({ ...base, generation: 1, forked: true, notices: [v3] });
-check("forked arena, game 1: NOT told the files are empty", !/program files are empty/.test(forked));
-check("forked arena, game 1: pointed at previous-games/game-0", /previous-games\/game-0\//.test(forked));
-check("forked arena, game 1: the v3 rules notice is shown", forked.includes(v3.split("\n")[0]));
-check("v3 notice: the turn order follows server/lib/schedule.js", /the bee before rounds 2 and 5, the orchid before rounds 3 and 6, the clover before round 4/.test(v3));
-check("round 1: hidden logs described", /Logs in this game are private/.test(forked));
-const open1 = roundBrief({ ...base, view: { ...view, game: { config: { ...view.game.config, publicLogs: true } } }, generation: 1, forked: true });
-check("round 1: public logs described", /Logs in this game are public/.test(open1));
+const fresh = lobbyBrief({ config, teamName: "Moonpetal", generation: 1, maxTurns: 30, carried: false });
+check("lobby (first game): write all three from scratch, no starter code", /program files are empty/.test(fresh) && /no starter code/.test(fresh));
+check("lobby: free, check/try, submit all three", /Writing is free in the lobby/.test(fresh) && /submit all three/.test(fresh));
+check("lobby: the game won't wait; prepare what should react", /won't wait for you/.test(fresh) && /must be ready now/.test(fresh) && /220, orchid 1,540 and bee 2,200 nodes a minute/.test(fresh));
+const carried = lobbyBrief({ config: { ...config, minutes: 2 }, teamName: "Moonpetal", generation: 3, maxTurns: 30, carried: true });
+check("lobby (later game): starts from last game's final programs; previous-games/", /final programs from game 2/.test(carried) && /previous-games\//.test(carried) && /2 minutes/.test(carried));
+const ex = lobbyBrief({ config, teamName: "M", generation: 1, maxTurns: 30, carried: false, examples: ["paley_clover.py", "checkers.py"] });
+check("lobby (examples arena): names the shared examples", /every team in this garden received the same example files/.test(ex) && /paley_clover\.py/.test(ex));
+const fix = lobbyBrief({ config, teamName: "M", generation: 1, maxTurns: 10, carried: false, fix: "- bee: Syntax error" });
+check("lobby fix: the errors, and submit", /bee: Syntax error/.test(fix) && /tools\/submit\.py/.test(fix) && /--json/.test(fix));
 
-const files = ["a_clover.py", "b_clover.py", "checkers.py", "README.md"];
-for (const g of [1, 2, 3]) {
-  const t = roundBrief({ ...base, generation: g, forked: true, notices: [examplesNotice(files)] });
-  check(`examples cohort, game ${g}: the examples notice lists every file`, files.every((f) => t.includes(f)) && /every team in this garden/i.test(t));
-}
+const budgets = { clover: { available: 44, perMinute: 220, cap: 220 }, orchid: { available: 308, perMinute: 1540, cap: 1540 }, bee: { available: 440, perMinute: 2200, cap: 2200 } };
+const head = { actions: 1234, bee: { asks: 40, feeds: 8, nectar: 6 }, clover: { feeds: 5, bees: 2 }, orchid: { feeds: 2, bees: 1 } };
+const gb = gameBrief({ config: { ...config, minutes: 2 }, teamName: "Moonpetal", generation: 2, sessionNo: 1, status: "running", clockMs: 12000, budgets,
+  standing: { fitness: 1.05, rank: 2, of: 3 }, head, drafts: ["orchid"], maxTurns: 30, scripts: ["follow.py"] });
+check("game brief: time played, team, session", /Game 2 is running: 0:12 of 2:00 played\. You are team "Moonpetal"\. Session 1\./.test(gb), gb);
+check("game brief: headline numbers only", /fitness so far: 1\.05 \(#2 of 3/.test(gb) && /1,234 actions/.test(gb) && /clover 44 of 220 \(\+220\/min\)/.test(gb));
+check("game brief: drafts and scripts it might start", /drafts\/orchid\.py/.test(gb) && /follow\.py/.test(gb));
+check("game brief: submit any time; stopped when the game ends", /goes live at once/.test(gb) && /When the game ends this session is stopped/.test(gb));
+check("game brief: short (no actions, no logs)", gb.length < 2000 && !/"seq"|"atMs"|\{"action"/.test(gb), gb.length);
+const warm = gameBrief({ config, teamName: "M", generation: 1, sessionNo: 1, status: "lobby", clockMs: 0, budgets: null, standing: null, head: null, maxTurns: 30 });
+check("game brief before the start: starts in a few seconds", /starts in a few seconds and lasts 30 seconds/.test(warm), warm);
 
-// Later rounds: whose turn it is, what is locked, and the restored-file note.
-const played = { ...view, rounds: [{ no: 1, totals: [{ teamId: "t", fitness: 1 }], scores: [{ teamId: "t", fitness: 1 }] }] };
-for (const r of [2, 3, 4, 5, 6]) {
-  const open = changeable(r), locked = ["clover", "orchid", "bee"].filter((k) => !open.includes(k));
-  const nextTurns = Object.fromEntries(locked.map((k) => [k, nextChangeRound(k, r)]));
-  const t = roundBrief({ ...base, view: played, generation: 1, roundNo: r, forked: true, changeable: open, nextTurns, notices: [examplesNotice(files)] });
-  check(`round ${r}: says it is the ${open.join("/")}'s turn and the others are locked`, t.includes(`it is your ${open[0]}`) && locked.every((k) => new RegExp(`your [a-z ,]*${k}`).test(t)) && /locked/.test(t));
-  check(`round ${r}: no round-1 notices`, !/Shared examples|RULES CHANGED|Logs in this game/.test(t));
-}
-const restored = roundBrief({ ...base, view: played, generation: 1, roundNo: 2, forked: true, changeable: changeable(2), restored: ["clover"] });
-// (clover is locked before round 2 in every schedule so far)
-check("restored note names the locked file", /edited clover\.py while it was locked/.test(restored));
-const fix = roundBrief({ ...base, view: played, generation: 1, roundNo: 2, forked: true, changeable: changeable(2), fix: "- orchid: too big" });
-check("fix brief: lists only the open files and points at the minified copy", fix.includes(`you may change ${changeable(2)[0]}.py`) && /minified/.test(fix));
+const ip = interviewPrompt({ standings: [{ name: "A", fitness: 1.2, me: true }, { name: "B", fitness: 0.8 }], programs: { clover: "def flower(c): return c", orchid: "", bee: "" }, changes: 3, config, notebook: "n" });
+check("interview: standings, final programs, changes during the game", /1\. A \(you\): fitness 1\.20/.test(ip) && /changed them 3 times during the game/.test(ip) && /<explanation>/.test(ip));
+const jp = judgePrompt({ config, teams: [{ name: "A", explanation: "x", code: { clover: "c", orchid: "o", bee: "b" } }], ideas: [], arenaLabel: "arena t, game 1" });
+check("judge prompt: a 30 seconds game, feeding sits out rounds", /a game of 30 seconds, a feeding bee sits out 10 rounds/.test(jp));
 
 console.log(failed ? `${failed} check(s) failed` : "all brief checks passed");
 process.exit(failed ? 1 : 0);
