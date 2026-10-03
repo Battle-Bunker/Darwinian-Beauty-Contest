@@ -1,30 +1,60 @@
 // The live action stream of one arena game, as the runner keeps it for the teams.
 //
-//   <WS_ROOT>/<arena>/.shared/g<gen>/actions.jsonl   the PUBLIC stream (what GET .../actions shows anyone, no
-//                                                   credentials): one JSON object per line, append-only, kept up to
-//                                                   date about once a second. Hard-linked into every workspace as
-//                                                   stream/actions.jsonl, so it is never copied per team.
+//   <WS_ROOT>/<arena>/.shared/g<gen>/actions.jsonl   the PUBLIC stream: what GET .../actions shows anyone, fetched
+//                                                   with no credentials, so it holds public fields only (arrivals,
+//                                                   challenges, responses, feeds). One JSON object per line,
+//                                                   append-only, about once a second. Hard-linked into every workspace
+//                                                   as stream/actions.jsonl, so it is never copied per team.
 //   <WS_ROOT>/<arena>/.runner/g<gen>/actions.jsonl   the runner's private master copy. If a team damages the shared
 //                                                   file through its link, it is rewritten in place from this one.
-//   <workspace>/stream/mine.jsonl                    per team: the actions of its own bee and at its own patch as that
-//                                                   team sees them (GET .../actions?mine=1 with its token): with what
-//                                                   only it sees during play (its programs' timings and versions, its
-//                                                   bee's printouts). The server decides what that is.
+//   <workspace>/stream/ledger.jsonl                  per team: its TEAM LEDGER (GET .../ledger with its token), one
+//                                                   entry per finished turn, exactly what its programs get: public
+//                                                   fields for every turn, plus its own private ones (percent, energy,
+//                                                   ms and surplus at its flower; nectar where it fed or was fed at).
+//   <workspace>/stream/mine.jsonl                    per team: the actions of its own bee and at its own flower as that
+//                                                   team sees them (GET .../actions?mine=1): with its bee's printouts,
+//                                                   decision times, errors and versions.
+// No team's file ever holds another team's private fields: the server decides what each request may see.
 //
-// Agents read these files with code at their own cadence (tools/stream.py); nothing from the stream goes into a
-// prompt except a few headline numbers (headline()).
+// Agents read these files with code at their own cadence (tools/stream.py, tools/ledger.py); nothing from the stream
+// goes into a prompt except a few headline numbers (headline()).
 import fs from "node:fs";
 import path from "node:path";
 import { Api } from "./api.js";
 
 const BUCKET_MS = 5000;
 
+/** Append-only per-team file kept in step with a paged API (after=<seq>). */
+class Tracked {
+  constructor(file, fetch) {
+    this.file = file;
+    this.fetch = fetch;
+    this.lastSeq = 0;
+    if (fs.existsSync(file)) {
+      const text = fs.readFileSync(file, "utf8").trimEnd();
+      const last = text.slice(text.lastIndexOf("\n") + 1);
+      try { this.lastSeq = last ? JSON.parse(last).seq : 0; } catch { fs.writeFileSync(file, ""); }
+    }
+  }
+  async poll(key) {
+    for (;;) {
+      const page = await this.fetch(this.lastSeq);
+      const rows = (page[key] || []).filter((a) => a.seq > this.lastSeq);
+      if (!rows.length) return;
+      fs.mkdirSync(path.dirname(this.file), { recursive: true });
+      fs.appendFileSync(this.file, rows.map((a) => JSON.stringify(a)).join("\n") + "\n");
+      this.lastSeq = rows[rows.length - 1].seq;
+      if ((page[key] || []).length < 5000) return;
+    }
+  }
+}
+
 export class GameStream {
   /**
-   * root: <WS_ROOT>/<arena>; gen: game number; gPath: API path of the game; gameUuid: the game's id (for mine.jsonl);
-   * teams: [{id, name}] (participants). fetchPage(after) defaults to the public API (no token).
+   * root: <WS_ROOT>/<arena>; gen: game number; gPath: API path of the game; teams: [{id, name}] (participants).
+   * fetchPage(after) defaults to the public API (no token); fetchMine(tok, after) and fetchLedger(tok, after) use a team's.
    */
-  constructor({ root, gen, gPath, gameUuid, teams, fetchPage, fetchMine, log = () => {} }) {
+  constructor({ root, gen, gPath, gameUuid, teams, fetchPage, fetchMine, fetchLedger, log = () => {} }) {
     this.sharedFile = path.join(root, ".shared", `g${gen}`, "actions.jsonl");
     this.masterFile = path.join(root, ".runner", `g${gen}`, "actions.jsonl");
     this.gPath = gPath;
@@ -32,14 +62,14 @@ export class GameStream {
     this.teams = teams;
     this.fetchPage = fetchPage || ((after) => Api.actions(null, gPath, after, 5000));
     this.fetchMine = fetchMine || ((tok, after) => Api.actions(tok, gPath, after, 5000, { mine: true }));
+    this.fetchLedger = fetchLedger || ((tok, after) => Api.ledger(tok, gPath, after, 5000));
     this.log = log;
     this.lastSeq = 0;
     this.bytes = 0;
     this.clockMs = 0;
     this.status = null;
     this.buckets = new Map(); // bucket -> Map(key -> count)
-    this.lastVisit = new Map(); // bee -> last visit number seen
-    this.mine = new Map(); // teamId -> { file, lastSeq }
+    this.tracked = new Map(); // teamId -> { mine: Tracked, ledger: Tracked }
     this.timer = null;
     this.polling = null;
     for (const f of [this.sharedFile, this.masterFile]) fs.mkdirSync(path.dirname(f), { recursive: true });
@@ -61,7 +91,7 @@ export class GameStream {
     return this;
   }
 
-  /** Fetch everything new (page after page) and append it. Returns the number of new actions. */
+  /** Fetch everything new (page after page) and append it; then each team's own files. Returns the new public actions. */
   async poll() {
     if (this.polling) return this.polling;
     this.polling = (async () => {
@@ -82,7 +112,10 @@ export class GameStream {
         }
         if ((page.actions || []).length < 5000) break;
       }
-      await this.#pollMine().catch((e) => this.log(`stream: mine.jsonl update failed: ${e.message}`));
+      for (const [teamId, t] of this.tracked) {
+        await t.ledger.poll("entries").catch((e) => this.log(`stream: ledger.jsonl of ${teamId} not updated: ${e.message}`));
+        await t.mine.poll("actions").catch((e) => this.log(`stream: mine.jsonl of ${teamId} not updated: ${e.message}`));
+      }
       return n;
     })().finally(() => { this.polling = null; });
     return this.polling;
@@ -105,7 +138,6 @@ export class GameStream {
     let st = null;
     try { st = fs.statSync(this.sharedFile); } catch {}
     if (!force && st && st.size === this.bytes) return;
-    if (st && st.size === this.bytes && !force) return;
     if (st && st.size !== this.bytes) this.log(`stream: the shared copy was ${st.size} bytes, expected ${this.bytes}: rewriting it from the master`);
     if (!fs.existsSync(this.masterFile)) fs.writeFileSync(this.masterFile, "");
     fs.copyFileSync(this.masterFile, this.sharedFile); // O_TRUNC on the same inode: every hard link sees it
@@ -120,32 +152,15 @@ export class GameStream {
     catch (e) { fs.copyFileSync(this.sharedFile, file); this.log(`stream: could not hard-link (${e.code}); copied instead (it won't update during the session)`); }
   }
 
-  /** Keep <workspace>/stream/mine.jsonl up to date for a team (tok: its login, which never leaves the runner). */
-  trackMine(teamId, file, tok) {
-    const cur = this.mine.get(teamId);
-    if (cur && cur.file === file) { cur.tok = tok || cur.tok; return; }
-    let lastSeq = 0;
-    if (fs.existsSync(file)) {
-      const text = fs.readFileSync(file, "utf8").trimEnd();
-      const last = text.slice(text.lastIndexOf("\n") + 1);
-      try { lastSeq = last ? JSON.parse(last).seq : 0; } catch { fs.writeFileSync(file, ""); }
-    }
-    this.mine.set(teamId, { file, lastSeq, tok });
-  }
-
-  async #pollMine() {
-    for (const [, m] of this.mine) {
-      if (!m.tok) continue;
-      for (;;) {
-        const page = await this.fetchMine(m.tok, m.lastSeq);
-        const rows = (page.actions || []).filter((a) => a.seq > m.lastSeq);
-        if (!rows.length) break;
-        fs.mkdirSync(path.dirname(m.file), { recursive: true });
-        fs.appendFileSync(m.file, rows.map((a) => JSON.stringify(a)).join("\n") + "\n");
-        m.lastSeq = rows[rows.length - 1].seq;
-        if ((page.actions || []).length < 5000) break;
-      }
-    }
+  /** Keep a team's own files up to date: <sdir>/ledger.jsonl and <sdir>/mine.jsonl (tok: its login, which never
+   * leaves the runner). */
+  track(teamId, sdir, tok) {
+    const cur = this.tracked.get(teamId);
+    if (cur && cur.dir === sdir) { if (tok) cur.tok = tok; return; }
+    const t = { dir: sdir, tok };
+    t.ledger = new Tracked(path.join(sdir, "ledger.jsonl"), (after) => this.fetchLedger(t.tok, after));
+    t.mine = new Tracked(path.join(sdir, "mine.jsonl"), (after) => this.fetchMine(t.tok, after));
+    this.tracked.set(teamId, t);
   }
 
   #count(a) {
@@ -153,14 +168,12 @@ export class GameStream {
     const b = Math.floor(a.atMs / BUCKET_MS);
     let m = this.buckets.get(b);
     if (!m) this.buckets.set(b, (m = new Map()));
-    const inc = (what) => { const k = `${a.bee}|${a.patch}|${a.kind ?? "?"}|${what}`; m.set(k, (m.get(k) || 0) + 1); };
-    if (this.lastVisit.get(a.bee) !== a.visit) { this.lastVisit.set(a.bee, a.visit); inc("visit"); }
-    inc(a.action);
-    if (a.action === "feed" && a.nectar) inc("nectar");
-    if (a.error && a.by === "flower") inc("flowerError");
+    const inc = (what) => { const k = `${a.bee}|${a.flower}|${what}`; m.set(k, (m.get(k) || 0) + 1); };
+    inc(a.action); // arrive | feed | leave
+    if (a.action !== "arrive" && ("r" in a) && a.r === null) inc("noResponse");
   }
 
-  /** Counts over [fromMs, toMs): { "<bee>|<patch>|<kind>|<what>": n }. */
+  /** Counts over [fromMs, toMs): { "<bee>|<flower>|<what>": n }. */
   counts(fromMs = 0, toMs = Infinity) {
     const out = new Map();
     for (const [b, m] of this.buckets) {
@@ -170,27 +183,26 @@ export class GameStream {
     return out;
   }
 
-  /** Compact headline numbers for one team over a stretch of game time (for briefs: a few numbers, no events). */
+  /** Compact public headline numbers for one team over a stretch of game time (for briefs: a few numbers, no events). */
   headline(teamId, fromMs = 0, toMs = Infinity) {
     const c = this.counts(fromMs, toMs);
-    const h = { actions: 0, bee: { visits: 0, asks: 0, feeds: 0, nectar: 0, errors: 0, rivalFeeds: 0, rivalNectar: 0 }, patch: { visits: 0, feeds: 0, bees: new Set() },
-      cosmos: { feeds: 0, bees: new Set() }, orchid: { feeds: 0, bees: new Set() } };
+    const h = { turns: 0, bee: { turns: 0, feeds: 0, ownFeeds: 0, flowers: new Set() }, flower: { turns: 0, feeds: 0, ownFeeds: 0, noResponse: 0, bees: new Set() } };
     for (const [k, n] of c) {
-      const [bee, patch, kind, what] = k.split("|");
-      if (["ask", "feed", "leave", "error"].includes(what)) h.actions += n;
+      const [bee, flower, what] = k.split("|");
+      const ended = what === "feed" || what === "leave";
+      if (ended) h.turns += n;
       if (bee === teamId) {
-        if (what === "visit") h.bee.visits += n;
-        if (what === "ask") h.bee.asks += n;
-        if (what === "feed") { h.bee.feeds += n; if (patch !== teamId) h.bee.rivalFeeds += n; }
-        if (what === "nectar") { h.bee.nectar += n; if (patch !== teamId) h.bee.rivalNectar += n; }
-        if (what === "error") h.bee.errors += n;
+        if (ended) h.bee.turns += n;
+        if (what === "feed") { h.bee.feeds += n; h.bee.flowers.add(flower); if (flower === teamId) h.bee.ownFeeds += n; }
       }
-      if (patch === teamId) {
-        if (what === "visit") h.patch.visits += n;
-        if (what === "feed") { h.patch.feeds += n; h.patch.bees.add(bee); if (h[kind]) { h[kind].feeds += n; h[kind].bees.add(bee); } }
+      if (flower === teamId) {
+        if (ended) h.flower.turns += n;
+        if (what === "noResponse") h.flower.noResponse += n;
+        if (what === "feed") { h.flower.feeds += n; h.flower.bees.add(bee); if (bee === teamId) h.flower.ownFeeds += n; }
       }
     }
-    for (const x of [h.patch, h.cosmos, h.orchid]) x.bees = x.bees.size;
+    h.bee.flowers = h.bee.flowers.size;
+    h.flower.bees = h.flower.bees.size;
     return h;
   }
 }

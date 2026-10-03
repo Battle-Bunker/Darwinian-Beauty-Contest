@@ -9,12 +9,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { ARENA_DIR, all, one } from "./db.js";
+import { Api, gamePath } from "./api.js";
 import { rules } from "./prompts.js";
 
 export const WS_ROOT = process.env.ARENA_WS_ROOT || "/home/user/arena-ws";
 export const TRANSCRIPTS = path.join(ARENA_DIR, "runs", "transcripts");
 const TOOLS_SRC = path.join(ARENA_DIR, "tools");
-const KINDS = ["cosmos", "orchid", "bee"];
+const KINDS = ["flower", "bee"];
 export const wsDir = (arenaId, slug) => path.join(WS_ROOT, arenaId, slug);
 export const extOf = (config) => (config.language === "typescript" ? "ts" : "py");
 const write = (file, data) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, data); };
@@ -39,15 +40,16 @@ export function readme({ ext, apiBase, examples, common = null }) {
 |---|---|
 | RULES.md | the game's rules (exactly what every player sees) |
 | interface.txt | the function signatures and this game's types |
-| config.json | this game's settings: types, minutes, budgets, feed cost, teams, the public API address |
-| cosmos.${ext}, orchid.${ext}, bee.${ext} | YOUR PROGRAMS. While the game runs they hold the versions that were playing when this session started. Editing a file changes nothing in the game: only \`tools/submit.py\` does |
+| config.json | this game's settings: types, minutes, budgets, feed cost, the teams in index order, the public API address |
+| flower.${ext}, bee.${ext} | YOUR PROGRAMS. While the game runs they hold the versions that were playing when this session started. Editing a file changes nothing in the game: only \`tools/submit.py\` does |
 | drafts/ | edits from an earlier session that were never submitted |
 | history/ | every version your team submitted in this game (\`<kind>/v1.${ext}\`, ...) and versions.md: when each went live, its size, its change cost |
 | status.txt | what \`tools/status.py\` said when this session started |
 | notebook.md | your private notes: they carry over to your next sessions and games |
-| stream/actions.jsonl | THE LIVE ACTION STREAM: every bee action in this game so far, one JSON object per line, oldest first. The runner appends new ones about once a second while the game runs. Read it with code; never write to it |
-| stream/mine.jsonl | the actions of your own bee and at your own patch as your team sees them (with your programs' timings, versions and your bee's printouts) |
-| stream/teams.json, stream/SCHEMA.md | team ids and names; what a line holds and how to read the stream |
+| stream/ledger.jsonl | YOUR TEAM LEDGER: one entry per finished turn, oldest first, exactly what your programs get (public fields for every turn, plus your own private ones). The runner appends new entries about once a second while the game runs. Read it with code; never write to it |
+| stream/actions.jsonl | the public action stream: every arrival and every turn's end as anyone sees it (no private fields) |
+| stream/mine.jsonl | your own bee's and flower's actions as your team sees them, with your bee's printouts (\`log\`), decision times and errors |
+| stream/teams.json, stream/SCHEMA.md | team ids, names and ledger indices; what each line holds |
 | tools/ | the tools below |
 | previous-games/ | earlier games in this arena, revealed: every team's final code, the standings, everyone's change timeline, and what the interview panel said about you |
 ${examples ? `| examples/ | example programs; every team in this garden has the same files (${examples.join(", ")}) |\n` : ""}${common ? `| common/ | common knowledge: every team in this garden has exactly these files and knows that every other team has them (${common.join(", ")}). Read only: the runner restores them at every game |\n` : ""}
@@ -55,80 +57,94 @@ ${examples ? `| examples/ | example programs; every team in this garden has the 
 
 | command | what |
 |---|---|
-| \`python3 tools/status.py [--afford N]\` | the clock and time left, your change budgets right now (available, rate, cap; when you could afford N nodes), the scores (whole game and last 5 minutes), your versions playing now |
+| \`python3 tools/status.py [--afford N]\` | the clock and time left, your change budgets right now (available, rate, cap; when you could afford N nodes), the live scores, your versions playing now |
 | \`python3 tools/check.py <kind> [file]\` | free: size against the budget, what submitting would cost now and whether you can afford it, a quick runtime test |
-| \`python3 tools/try.py <kind> [file] [challenge ...]\` | free: run a flower on challenges, or your bee on your own two flowers, on the game's real runner |
+| \`python3 tools/try.py flower [file] [challenge ...]\` | free: run a flower on challenges on the game's real runner: response, percent, energy and compute time for each |
+| \`python3 tools/try.py bee [file] [--flower FILE] [--rounds N]\` | free: run your bee for N rounds in a garden of just your own flower (FILE, else your latest submitted flower) |
 | \`python3 tools/submit.py <kind> [file]\` | submit: in the lobby it's free; during the game it goes live at once and pays its change cost |
-| \`python3 tools/stream.py summary\\|tail\\|answers\\|sql ...\` | read the stream: per-bee and per-flower counts, the latest actions, what each flower answered to a challenge, SQL |
+| \`python3 tools/ledger.py summary\\|tail\\|mine\\|live ...\` | your team ledger: per flower team and per bee team counts, your flower's percent, energy and surplus, your bee's nectar |
+| \`python3 tools/stream.py summary\\|tail\\|answers\\|sql ...\` | the public stream: who visited whom, what each flower answered to a challenge, SQL over the turns |
 
-\`<kind>\` is cosmos, orchid or bee; \`[file]\` defaults to \`<kind>.${ext}\`. Your own scripts can use the same tools:
+\`<kind>\` is flower or bee; \`[file]\` defaults to \`<kind>.${ext}\`. Your own scripts can use the same tools:
 
 \`\`\`python
 import sys; sys.path.insert(0, "tools")
-from _runner import call            # call("submit", kind="orchid", code=src) -> {"ok", "text", "cost", "available", ...}
-from stream import Stream           # Stream().actions(since_ms=...), .follow() (waits for new actions), .mine()
+from _runner import call            # call("submit", kind="flower", code=src) -> {"ok", "text", "cost", "available", ...}
+from stream import Stream           # Stream().turns() (your ledger), .actions() (public), .follow(), .mine()
 \`\`\`
 
-A script you start (for example one that follows the stream and submits changes by itself) may run in the background
-while your session lasts: start it with the Bash tool's \`run_in_background\` option and send its output to a file here,
-e.g. \`python3 follow.py > follow.log 2>&1\` (a trailing \`&\` is refused). Everything your session started is stopped
-when the session ends.
+A script you start may run in the background while your session lasts: start it with the Bash tool's
+\`run_in_background\` option and send its output to a file here, e.g. \`python3 follow.py > follow.log 2>&1\` (a trailing
+\`&\` is refused). Everything your session started is stopped when the session ends; only your scaffold outlives sessions.
 
-## The live stream over HTTP
+## The game's public API
 
-The game's public API needs no login, and you may read it (GET only) at ${apiBase}:
-- \`GET ${apiBase}/events?after=<seq>\`: Server-Sent Events, lines \`data: {...}\` with \`{actions, lastSeq, clockMs}\` as they
-  happen (a few times a second), \`{clockMs, lastSeq}\` when nothing is new, \`{version}\` when the game's public state changed
+The public API needs no login, and you may read it (GET only) at ${apiBase}. It shows public fields only (your private
+ones are in stream/ledger.jsonl and stream/mine.jsonl, or ask the runner: \`call("ledger", after=seq)\`):
+- \`GET ${apiBase}/events?after=<seq>\`: Server-Sent Events, lines \`data: {...}\` with \`{actions, lastSeq, clockMs, round, status}\`
+  as they happen
 - \`${apiBase.replace(/^http/, "ws")}/ws?after=<seq>\`: the same messages over a WebSocket, one JSON text frame each. Python's
   standard library has no WebSocket client and your own code may not open raw sockets, so from Python use the events above
   (\`garden.follow_live()\` does)
-- \`GET ${apiBase}/actions?after=<seq>&limit=<n ≤ 5000>\`: a page of actions, \`{actions, lastSeq, clockMs, status}\`
-- \`GET ${apiBase}/scores\`: just the live numbers, cheap to poll: clock, round, scores (whole game and last 5 minutes),
-  and the feed and nectar ledgers (who fed where, who got nectar where)
+- \`GET ${apiBase}/actions?after=<seq>&limit=<n ≤ 5000>\`: a page of actions
+- \`GET ${apiBase}/scores\`: the live scoreboard, cheap to poll
 - \`GET ${apiBase}\`: the game view (status, clock, scores)
 
-stream/actions.jsonl holds the same actions, so you rarely need this. Read at most a few times a second.
+Read at most a few times a second.
 `;
 }
 
-export const SCHEMA = `# The action stream
+export const SCHEMA = `# The streams
 
-\`stream/actions.jsonl\`: one action per line, oldest first, exactly as the game's public API shows it to anyone.
-The runner appends new actions about once a second while the game runs; a line is complete once it ends in a newline.
+## stream/ledger.jsonl: your team ledger
+
+One entry per finished turn, oldest first: exactly what your bee and flower get as \`ledger\`, plus \`seq\` (the turn's
+number in the public stream). Teams are indices \`0\` to \`N - 1\` (stream/teams.json maps them to names; yours is
+\`GAME["team"]\` in your programs, \`"myIndex"\` in teams.json).
 
 | field | what |
 |---|---|
-| seq | the action's number: 1, 2, 3, ... |
-| atMs | game time when it happened, in milliseconds |
-| round | the round it happened in (a round is 200 ms of game time: one action slot for every bee) |
-| bee | the team id of the bee |
-| patch, kind | the team id of the patch, and which of its flowers: cosmos or orchid (public to every team; bees never learn it) |
-| visit | the bee's visit number: a visit is everything one bee does at one flower until it moves on |
-| action | arrive (the bee was just dealt this flower: public at once, before its first ask), ask, feed, leave or error |
-| c, r, ms, after | ask: the challenge, the response (null if the flower failed: see error), how long the flower took in ms, true if asked after feeding |
-| nectar | feed: true at a cosmos, false at an orchid |
-| error, by | what went wrong, and whose fault: bee, challenge or flower |
+| seq, round | the turn's place in the public stream, and its round (a round is 200 ms of game time) |
+| bee, flower | whose bee visited whose flower (team indices) |
+| challenge, response | what the bee asked and what the flower answered (null if the flower failed) |
+| fed | whether the bee fed |
+| nectar | what the bee got: only on turns where your bee fed or a bee fed at your flower (else null) |
+| percent, energy, ms, surplus | at your own flower only (else null): the percent it offered, the turn's excess energy E, its compute time, what your surplus got |
 
-While the game runs some fields are your own team's business: which versions played (\`beeVersion\`, \`flowerVersion\`), how
-long each program actually took (\`ms\` for a flower's answer, \`beeMs\` for a bee's decision), what a bee printed (\`log\`),
-and why the game ended a bee's visit (\`by: "engine"\`). \`stream/mine.jsonl\` has every action of your bee and at your patch
-as your team sees it, with those fields, under the same \`seq\` as in actions.jsonl. Once the game is over everything is
-public. (A field the server doesn't show you is simply missing from a line.)
+## stream/actions.jsonl: the public stream
 
-\`stream/teams.json\`: \`{"teams": {id: name}, "me": your team id, "participants": [ids]}\`.
+Every action as anyone may see it, oldest first; a line is complete once it ends in a newline. A turn makes two
+actions: its \`arrive\` (written at once) and its end, \`feed\` or \`leave\`.
 
-Reading it:
+| field | what |
+|---|---|
+| seq, atMs, round | order, game time in ms, round |
+| turn | the bee's turn number: (bee, turn) identifies a turn |
+| bee, flower | team ids: whose bee, whose flower |
+| action | arrive, feed or leave |
+| c, r | on feed and leave: the challenge and the response (null if the flower failed) |
+
+## stream/mine.jsonl: your own team's actions
+
+The actions of your bee and at your flower as your team sees them (same \`seq\`), with your private fields: at your
+flower \`percent\`, \`energy\`, \`ms\`, \`surplus\`, \`flowerError\`, \`flowerVersion\`; for your bee \`beeMs\` (decision time),
+\`beeError\`, \`beeVersion\` and \`log\` (what it printed); \`nectar\` where your bee fed or a bee fed at your flower. A field
+you may not see is simply missing. Once the game is over everything is public.
+
+\`stream/teams.json\`: \`{"teams": {id: name}, "me": your team id, "participants": [ids in index order], "names": [names in
+index order], "myIndex": your index}\`.
+
+Reading them:
 
 \`\`\`python
 import sys; sys.path.insert(0, "tools")
 from stream import Stream
 s = Stream()
-recent = list(s.actions(since_ms=s.last()["atMs"] - 30000))   # the last 30 seconds
-for a in s.follow():                                            # new actions as they arrive
-    ...
+for e in s.turns(): ...          # your team ledger
+for e in s.follow(): ...         # new ledger entries as they arrive
 \`\`\`
 
-or \`python3 tools/stream.py summary --since 0.5\`, \`tail -n 20\`, \`answers 42\`, \`sql "SELECT bee_name, count(*) FROM actions GROUP BY 1"\`.
+or \`python3 tools/ledger.py summary\`, \`python3 tools/stream.py tail -n 20\`, \`python3 tools/stream.py answers 42\`.
 `;
 
 /** Install the workspace tools (always the runner's own copy: a team's edits to them don't persist). */
@@ -184,10 +200,11 @@ export async function prepareWorkspace({ arena, gameRow, persona, view, stream, 
   installTools(dir);
   const it = view.interface;
   write(path.join(dir, "interface.txt"), `challenge: ${it.types.challenge} (${it.types.challengeMeans})\nresponse: ${it.types.response} (${it.types.responseMeans})\n` +
-    `rules: ${(it.types.rules || []).join(" ")}\n\ncosmos and orchid:\n${it.flower}\n\nbee:\n${it.bee}\n`);
-  const teams = (view.participants || view.teams.map((t) => t.id)).map((id) => view.teams.find((t) => t.id === id)).filter(Boolean);
-  write(path.join(dir, "config.json"), json({ ...config, game: gameRow.generation, your_team: view.myTeam?.name, teams: teams.map((t) => t.name), flowers: 2 * teams.length,
-    file_extension: ext, size_unit: "nodes", public_api: apiBase, sample_challenges: sampleFor(config) }));
+    `rules: ${(it.types.rules || []).join(" ")}\n\nflower:\n${it.flower}\n\nbee:\n${it.bee}\n`);
+  const order = view.participants || view.teams.map((t) => t.id);
+  const teams = order.map((id) => view.teams.find((t) => t.id === id)).filter(Boolean);
+  write(path.join(dir, "config.json"), json({ ...config, game: gameRow.generation, your_team: view.myTeam?.name, your_index: order.indexOf(me) >= 0 ? order.indexOf(me) : null,
+    teams: teams.map((t) => t.name), flowers: teams.length, file_extension: ext, size_unit: "nodes", public_api: apiBase, sample_challenges: sampleFor(config) }));
   write(path.join(dir, "notebook.md"), (await one("SELECT notebook FROM arena.personas WHERE id = $1", [persona.id]))?.notebook || "");
 
   // Programs: in play, exactly the versions playing now; a new game starts from the team's final programs of the
@@ -207,13 +224,15 @@ export async function prepareWorkspace({ arena, gameRow, persona, view, stream, 
   writeHistory(dir, ext, view, me);
   if (statusText) write(path.join(dir, "status.txt"), statusText);
 
-  // The stream: the shared public copy (hard link), the team's private view, names.
+  // The streams: the shared public copy (hard link); the team's own ledger and actions (its token, kept by the runner).
   const sdir = path.join(dir, "stream");
   if (stream) {
     stream.linkInto(path.join(sdir, "actions.jsonl"));
-    stream.trackMine(me, path.join(sdir, "mine.jsonl"), tok);
+    stream.track(me, sdir, tok);
   }
-  write(path.join(sdir, "teams.json"), json({ teams: Object.fromEntries(view.teams.map((t) => [t.id, t.name])), me, participants: view.participants || null }));
+  const name = Object.fromEntries(view.teams.map((t) => [t.id, t.name]));
+  write(path.join(sdir, "teams.json"), json({ teams: name, me, participants: view.participants || null,
+    names: view.participants ? view.participants.map((id) => name[id]) : null, myIndex: view.participants ? view.participants.indexOf(me) : null }));
   write(path.join(sdir, "SCHEMA.md"), SCHEMA);
 
   await writePreviousGames(arena, dir, gameRow.generation, persona.id);
