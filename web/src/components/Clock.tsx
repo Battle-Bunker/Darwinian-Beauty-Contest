@@ -9,13 +9,13 @@ import { Progress } from "./ui";
 /** Short games (two minutes or less) show tenths of a second. */
 export const showTenths = (endMs: number) => endMs <= 120_000;
 
-/** The round length: the flower window (the cosmos's limit) plus the bees' decision window. */
-export const roundMsOf = (view: GameView) => view.game.config.budgets.cosmos.ms + view.game.config.budgets.bee.ms;
+/** The round length: the flower window plus the bees' decision window. */
+export const roundMsOf = (view: GameView) => view.game.config.budgets.flower.ms + view.game.config.budgets.bee.ms;
 
 /** One line on how a round works, for the clock and the settings. */
 export const roundLine = (view: GameView) => {
   const b = view.game.config.budgets;
-  return `A round is ${b.cosmos.ms + b.bee.ms} ms of game time: every bee acts at once, flowers have ${b.cosmos.ms} ms to answer (orchids ${b.orchid.ms}), then bees have ${b.bee.ms} ms to decide.`;
+  return `A round is ${b.flower.ms + b.bee.ms} ms of game time: every bee that isn't feeding visits a random flower, the flower has ${b.flower.ms} ms to answer, then the bee has ${b.bee.ms} ms to feed or leave. A feed sits it out ${view.game.config.feedCost} rounds.`;
 };
 
 export function GameClock({ store, view }: { store: LiveStore; view: GameView }) {

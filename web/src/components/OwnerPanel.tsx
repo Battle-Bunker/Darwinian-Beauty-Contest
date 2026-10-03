@@ -8,7 +8,7 @@ import { fmtClock } from "../lib/format";
 
 const TYPES = ["int", "float", "bool", "str", "any", "list[int]", "list[float]", "list[bool]", "list[str]", "tree[int]", "graph", "digraph", "graph[any]", "graph[int]", "digraph[any]"];
 
-/** Whether a team has written all three programs (it plays if the game starts now). */
+/** Whether a team has written both programs (it plays if the game starts now). */
 export const isReady = (t: Team) => !!t.ready && KINDS.every((k) => t.ready![k]);
 
 export function OwnerControls({ view, base }: { view: GameView; base: string }) {
@@ -34,12 +34,12 @@ export function OwnerControls({ view, base }: { view: GameView; base: string }) 
             <button className="btn btn-big btn-honey" onClick={() => call("start", "/start")} disabled={busy !== null || ready.length < 2}>
               <PlayIcon /> {busy === "start" ? "Starting…" : "Start the game"}
             </button>
-            <span className="small muted">{fmtClock(g.endMs)} of game time. Settings lock once it starts; teams that haven't written all three programs sit it out.</span>
+            <span className="small muted">{fmtClock(g.endMs)} of game time. Settings lock once it starts; teams that haven't written both programs sit it out.</span>
           </div>
           <div className="who-plays">
             <div><b>{ready.length ? `${ready.length} ${ready.length === 1 ? "team" : "teams"} will play:` : "Nobody is ready yet."}</b> {ready.map((t) => <TeamChip key={t.id} team={t} />)}</div>
             {notReady.length > 0 && <div className="small muted">Not ready (missing a program): {notReady.map((t) => <span key={t.id} className="not-ready">{t.name} <span className="mono">({KINDS.filter((k) => !t.ready?.[k]).join(", ")})</span></span>)}</div>}
-            {ready.length < 2 && <div className="small warn-text">The game needs at least 2 teams with all three programs written.</div>}
+            {ready.length < 2 && <div className="small warn-text">The game needs at least 2 teams with both programs written.</div>}
           </div>
         </>
       )}
@@ -99,7 +99,8 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
     </select>
   );
   const seconds = Math.round(draft.minutes * 60);
-  const roundMs = draft.budgets.cosmos.ms + draft.budgets.bee.ms;
+  const roundMs = draft.budgets.flower.ms + draft.budgets.bee.ms;
+  const cap = draft.budgets.flower.size;
 
   return (
     <form className="settings" onSubmit={save}>
@@ -111,7 +112,7 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
           </select>
         </label>
         <label className="field"><span>Length (minutes)</span>{num(draft.minutes, (v) => set("minutes", v), 0.1, 1440, "Game length in minutes", "any")}</label>
-        <label className="field"><span>Feeding sits out (rounds)</span>{num(draft.feedCost, (v) => set("feedCost", v), 0, 1000, "Rounds a feeding bee sits out")}</label>
+        <label className="field"><span>Feed cost (rounds sat out)</span>{num(draft.feedCost, (v) => set("feedCost", v), 0, 1000, "Feed cost: rounds a bee sits out after it feeds")}</label>
         <label className="field"><span>Challenge type</span>{typeSelect(draft.challengeType, (v) => set("challengeType", v), "Challenge type")}</label>
         <label className="field"><span>Response type</span>{typeSelect(draft.responseType, (v) => set("responseType", v), "Response type")}</label>
         <label className="field"><span>Max string/list length</span>{num(draft.maxLen, (v) => set("maxLen", v), 1, 1024, "Max string or list length")}</label>
@@ -120,8 +121,9 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
       <p className="small muted settings-hint">
         {Number.isFinite(seconds) && Number.isFinite(roundMs) && roundMs > 0
           ? <>The game runs for <b>{fmtClock(seconds * 1000)}</b> of game time: <b>{Math.round((seconds * 1000) / roundMs).toLocaleString()}</b> rounds of <b>{roundMs} ms</b> (the clock stops while paused). </> : null}
-        In a round every bee acts at once: flowers have <b>{draft.budgets.cosmos.ms} ms</b> to answer (a cosmos the whole window, an orchid <b>{Math.min(draft.budgets.orchid.ms, draft.budgets.cosmos.ms)} ms</b>; every answer reaches the bee at {draft.budgets.cosmos.ms} ms), then bees have <b>{draft.budgets.bee.ms} ms</b> to decide.
+        Each round every bee that isn't feeding visits a random flower: the flower has <b>{draft.budgets.flower.ms} ms</b> to answer (every answer reaches the bee at {draft.budgets.flower.ms} ms), then the bee has <b>{draft.budgets.bee.ms} ms</b> to feed or leave.
         A bee that feeds sits out the next <b>{Number.isFinite(draft.feedCost) ? draft.feedCost : "?"}</b> rounds.
+        A flower's excess energy per visit is E = ({Number.isFinite(cap) ? cap.toLocaleString() : "?"} − its size) × max(0, {draft.budgets.flower.ms} − its CPU ms): the flower's size budget is also the energy cap, so a {Number.isFinite(cap) ? Math.round(cap / 2).toLocaleString() : "?"}-node flower answering in 10 ms makes up to {Number.isFinite(cap) ? (Math.round(cap / 2) * Math.max(0, draft.budgets.flower.ms - 10)).toLocaleString() : "?"} node·ms a visit.
       </p>
       <div className="settings-checks">
         <label className="check"><input type="checkbox" checked={draft.revealOnFinish} onChange={(e) => set("revealOnFinish", e.target.checked)} /> Reveal all code and every bee's prints when the game ends</label>
@@ -132,10 +134,10 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
             <span className="budget-note">
               Size is in weighted syntax-tree nodes of the minified program (comments, spacing and name lengths are free; every byte of a literal counts).
               Change budget fills by <i>per minute</i> nodes a minute of game time, up to <i>cap</i>; a change costs its node edits from the version playing.
-              The budgets are lopsided on purpose: the cosmos is small but has strong compute, the orchid changes fast, the bee carries a big kit with little time per decision.
+              The flower's size is also the cap in its energy formula and its time is the flower window; the bee's time is its decision window. A round is the two windows together.
             </span>
           </caption>
-          <thead><tr><th className="left">Program</th><th>Size (nodes)</th><th>Change per minute</th><th>Change cap</th><th title="Cosmos: the flower window (every answer is delivered at its end). Orchid: its own limit, at most the cosmos's. Bee: the decision window.">Time limit (ms)</th></tr></thead>
+          <thead><tr><th className="left">Program</th><th>Size (nodes)</th><th>Change per minute</th><th>Change cap</th><th title="Flower: the flower window (every answer is delivered at its end; its CPU time within it sets the energy). Bee: the decision window.">Time limit (ms)</th></tr></thead>
           <tbody>
             {KINDS.map((k) => (
               <tr key={k}>
@@ -164,9 +166,10 @@ export function SettingsSummary({ cfg }: { cfg: GameConfig }) {
       <div className="chips">
         <span className="chip">{cfg.language === "python" ? "Python" : "TypeScript"}</span>
         <span className="chip">{fmtClock(cfg.minutes * 60000)} of game time</span>
-        <span className="chip" title={`Every bee acts at once each round: flowers answer within ${cfg.budgets.cosmos.ms} ms, then bees decide within ${cfg.budgets.bee.ms} ms`}>rounds of {cfg.budgets.cosmos.ms + cfg.budgets.bee.ms} ms</span>
-        <span className="chip">cosmos {cfg.budgets.cosmos.ms} ms · orchid {cfg.budgets.orchid.ms} ms · bee {cfg.budgets.bee.ms} ms</span>
-        <span className="chip">feeding sits out {cfg.feedCost} rounds</span>
+        <span className="chip" title={`Each round every bee that isn't feeding visits a random flower: it answers within ${cfg.budgets.flower.ms} ms, then the bee decides within ${cfg.budgets.bee.ms} ms`}>rounds of {cfg.budgets.flower.ms + cfg.budgets.bee.ms} ms</span>
+        <span className="chip">flower {cfg.budgets.flower.ms} ms · bee {cfg.budgets.bee.ms} ms</span>
+        <span className="chip">a feed costs {cfg.feedCost} rounds</span>
+        <span className="chip" title="E = (flower size cap − flower size) × max(0, flower ms − CPU ms)">energy cap {cfg.budgets.flower.size.toLocaleString()} nodes</span>
         <span className="chip mono">{cfg.challengeType} → {cfg.responseType}</span>
         {[cfg.challengeType, cfg.responseType].some((t) => /str|list|any/i.test(t)) && <span className="chip">max length {cfg.maxLen}</span>}
         {[cfg.challengeType, cfg.responseType].some((t) => /tree|graph/i.test(t)) && <span className="chip">max {cfg.maxNodes} nodes</span>}

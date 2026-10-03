@@ -17,7 +17,7 @@ export const SIDE_PAD = 16;
 /** Ground point → flower head. */
 export const HEAD_Y = -62;
 const HOVER_R = 54;
-const LAND_R = 13;
+const LAND_R = 19;
 const LABEL_MS = 1300;
 export const FX_MS = 900;
 
@@ -34,13 +34,17 @@ export interface Layout {
 /** Pick a grid that keeps the garden roughly 2:1 and readable at this container width. */
 export function layoutGarden(n: number, containerWidth: number): Layout {
   n = Math.max(1, n);
-  const maxCols = Math.max(2, Math.floor((containerWidth || 900) / 150));
+  const w = containerWidth || 900;
+  // Wide screens: about 2:1. Phones: closer to square (more, smaller flowers per row, fewer rows).
+  const narrow = w < 600;
+  const maxCols = Math.max(2, Math.floor(w / (narrow ? 100 : 150)));
+  const target = narrow ? 1 : 2;
   let best = { cols: 1, score: Infinity };
   for (let cols = 1; cols <= Math.min(n, maxCols); cols++) {
     const rows = Math.ceil(n / cols);
     const aspect = (cols * CELL_W + 2 * SIDE_PAD) / (rows * CELL_H + TOP_PAD);
     const empty = rows * cols - n;
-    const score = Math.abs(Math.log(aspect / 2)) + 0.25 * empty;
+    const score = Math.abs(Math.log(aspect / target)) + 0.25 * empty;
     if (score < best.score) best = { cols, score };
   }
   const cols = best.cols;
@@ -73,9 +77,11 @@ export const hoverPt = (layout: Layout, t: Turn): Pt => {
   return { x: h.x + HOVER_R * Math.cos(a), y: h.y + HOVER_R * Math.sin(a) * 0.92 };
 };
 
+/** Where a feeding bee sits: on the flower head, at its own angle (the golden angle apart, bee by bee), so
+ *  bees feeding at one flower from different rounds don't sit on top of each other. */
 export const landPt = (layout: Layout, t: Turn): Pt => {
-  const h = headOf(layout, t.flower), a = slotAngle(t.slot, t.of);
-  return { x: h.x + LAND_R * Math.cos(a), y: h.y + LAND_R * Math.sin(a) - 2 };
+  const h = headOf(layout, t.flower), a = -Math.PI / 2 + t.bee * 2.39996;
+  return { x: h.x + LAND_R * Math.cos(a), y: h.y + LAND_R * 0.8 * Math.sin(a) - 2 };
 };
 
 /** A bee's home: beside its own flower, low on the left. */
@@ -97,6 +103,7 @@ export interface BeeDraw {
   bubbleKind: BubbleKind;
   pop: number;        // 0..1, the bubble's pop
   ring: "mine" | "visitor" | null;
+  named: boolean;     // show its name even when names are off (the followed team's bee)
 }
 
 /** A feed: a drop and sparkles, with the nectar it paid when known (public on every feed). */
@@ -155,7 +162,7 @@ export function computeFrame(idx: TurnIndex, layout: Layout, p: FrameParams, now
   const fx: FxDraw[] = [];
   const labels: LabelDraw[] = [];
   let trail: Frame["trail"] = null;
-  let readT: Turn | null = null;
+  let readT: Turn | null = null as Turn | null;
   const bees: BeeDraw[] = [];
 
   for (let b = 0; b < n; b++) {
@@ -165,7 +172,7 @@ export function computeFrame(idx: TurnIndex, layout: Layout, p: FrameParams, now
     const bob = p.moving ? Math.sin(now / 160 + b * 1.7) * 1.2 : 0;
     const flap = p.moving ? 0.35 + 0.65 * Math.abs(Math.sin(now / 30 + b * 0.7)) : 1;
     if (k < 0) {
-      bees.push({ x: home.x, y: home.y + (p.resting ? 0 : bob), flip: false, tilt: 0, flap: p.resting ? 1 : flap, mode: "home", bubble: null, bubbleKind: "ask", pop: 0, ring: b === p.focus ? "mine" : null });
+      bees.push({ x: home.x, y: home.y + (p.resting ? 0 : bob), flip: false, tilt: 0, flap: p.resting ? 1 : flap, mode: "home", bubble: null, bubbleKind: "ask", pop: 0, ring: b === p.focus ? "mine" : null, named: b === p.focus });
       continue;
     }
     const T = list[k], P = k > 0 ? list[k - 1] : null;
@@ -233,14 +240,15 @@ export function computeFrame(idx: TurnIndex, layout: Layout, p: FrameParams, now
       if (T.flower === p.focus && isFed && end && typeof end.surplus === "number" && u >= DEC && u < DEC + LABEL_MS) {
         labels.push({ x: head.x + 38, y: head.y + 22 + T.slot * 13, text: `+${fmtE(end.surplus)} kept`, kind: "kept", u: (u - DEC) / LABEL_MS });
       }
-      for (const t of P ? [T, P] : [T]) {
-        if (t.flower === p.focus && t.end && (typeof t.end.energy === "number" || t.end.flowerError) && p.D - t.t0 >= DEC && (!readT || t.t0 > readT.t0)) readT = t;
-      }
     }
 
-    bees.push({ x: pos.x, y: pos.y, flip, tilt, flap: mode === "feed" ? 1 : flap, mode, bubble, bubbleKind: kind, pop, ring });
+    bees.push({ x: pos.x, y: pos.y, flip, tilt, flap: mode === "feed" ? 1 : flap, mode, bubble, bubbleKind: kind, pop, ring, named: b === p.focus });
   }
 
+  // The focus flower's latest visit whose details the viewer can see (unfed visits: its own team only).
+  if (p.focus !== null && !p.resting) {
+    readT = idx.latestAt(p.focus, p.D - DEC, (t) => !!t.end && (typeof t.end.energy === "number" || !!t.end.flowerError));
+  }
   let readout: Readout | null = null;
   if (readT && readT.end) {
     const e = readT.end;

@@ -97,7 +97,7 @@ function TeamCard({ view, t, mine }: { view: GameView; t: Team; mine: boolean })
           ))}
         </div>
       )}
-      {lobby && <div className={`small ${ready ? "ok-text" : "muted"}`}>{ready ? "Ready to play" : "Needs all three programs to play"}</div>}
+      {lobby && <div className={`small ${ready ? "ok-text" : "muted"}`}>{ready ? "Ready to play" : "Needs both programs to play"}</div>}
       {!lobby && t.participant === false && <div className="small muted">Sitting this game out (it wasn't ready at the start)</div>}
       {!lobby && t.participant && t.programs && (
         <div className="submit-ticks">

@@ -88,15 +88,15 @@ export interface Action {
   // feed and leave, public:
   c?: unknown;
   r?: unknown;              // null if the flower failed
-  // the flower's team (everyone after finish):
+  surplus?: number | null;  // what the turn added to the flower team's surplus: (1 − percent/100) × E on a feed, 0 on a leave
+  nectar?: number | null;   // feed only: percent/100 × E
+  // public on a feed; on a leave the flower's team only (everyone after finish):
   percent?: number | null;
   energy?: number | null;   // E, node·ms
+  // the flower's team (everyone after finish):
   ms?: number | null;       // the flower's CPU time
-  surplus?: number | null;  // what this turn added to the flower team's surplus (0 unless the bee fed)
   flowerError?: string | null;
   flowerVersion?: number | null;
-  // the bee's team and the flower's team:
-  nectar?: number | null;   // feed only
   // the bee's team:
   beeMs?: number | null;
   beeError?: string | null;
@@ -112,7 +112,7 @@ export interface LedgerEntry {
   challenge: unknown; response: unknown; fed: boolean;
   nectar: number | null;
   percent: number | null; energy: number | null;
-  ms: number | null; surplus: number | null;
+  ms: number | null; surplus: number | null;   // surplus: 0 on a leave
 }
 
 export interface LedgerPage {
@@ -122,10 +122,7 @@ export interface LedgerPage {
   lastSeq: number; round: number; status: GameStatus;
 }
 
-/**
- * Whole-game numbers per team. Feeds and allure are public; the rest may be null where the server
- * keeps them private (shares and fitness until the end in the original contract).
- */
+/** Whole-game numbers per team: the scoreboard, live and public. (Null only defensively: shown as "–".) */
 export interface TeamScore {
   teamId: string;
   allure: number; feedsReceived: number; feedsGiven: number; pollinators: number;
@@ -134,8 +131,12 @@ export interface TeamScore {
   allureShare: number | null; forageShare: number | null; surplusShare: number | null; fitness: number | null;
 }
 
-/** feeds[bee team][flower team], nectar[bee][flower], surplus[flower], in participants order. */
-export interface Ledgers { feeds: number[][]; nectar: (number | null)[][]; surplus: (number | null)[] }
+/**
+ * Whole-game ledgers, public, rows = bee team, columns = flower team, in participants order: feeds[b][f]
+ * (times b's bee fed at f's flower), nectar[b][f] (nectar b's bee got there), surplus[b][f] (what f's
+ * flower kept from b's bee's feeds).
+ */
+export interface Ledgers { feeds: number[][]; nectar: (number | null)[][]; surplus: (number | null)[][] }
 
 /** GET .../scores: the live numbers, cheap enough to poll. Scores, ledgers and lastSeq are from one moment. */
 export interface ScoresView {

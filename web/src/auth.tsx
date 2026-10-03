@@ -87,10 +87,10 @@ function Login({ me, onDone }: { me: MeResponse; onDone: () => void }) {
         <div className="login-art" aria-hidden>
           <FlowerHead color="#e4572e" size={44} />
           <BeeGlyph color="#f2a541" size={50} />
-          <FlowerHead color="#9b5de5" size={44} />
+          <FlowerHead color="#0072b2" petals={8} size={44} />
         </div>
         <h1>Darwinian Beauty Contest</h1>
-        <p className="muted">Write a flower that bees love, a flower that fools them, and a bee that can tell the difference.</p>
+        <p className="muted">Write a flower that bees want to feed at, and a bee that knows where the nectar is.</p>
         {redirect ? (
           <button className="btn btn-big" type="submit">Log in to play</button>
         ) : (

@@ -28,11 +28,23 @@ export function indexAfter(actions: Action[], after: number): number {
   return lo;
 }
 
+/** Index of the first turn in `list` (sorted by t0) arriving after game time t. */
+function firstAfterIn(list: Turn[], t: number): number {
+  let lo = 0, hi = list.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (list[mid].t0 <= t) lo = mid + 1; else hi = mid;
+  }
+  return lo;
+}
+
 export class TurnIndex {
   readonly order: string[];
   readonly flowerMs: number;
   /** Per bee (participant index), its turns, oldest first. */
   readonly bees: Turn[][];
+  /** Per flower (participant index), the turns at it, oldest first. */
+  readonly flowers: Turn[][];
   /** The last seq taken in. */
   cursor = 0;
   /** Bumps whenever a turn is added or completed. */
@@ -51,6 +63,7 @@ export class TurnIndex {
     this.keep = keep;
     order.forEach((id, i) => this.pos.set(id, i));
     this.bees = order.map(() => []);
+    this.flowers = order.map(() => []);
   }
 
   indexOf(teamId: string): number { return this.pos.get(teamId) ?? -1; }
@@ -77,6 +90,10 @@ export class TurnIndex {
       if (!list.length || list[list.length - 1].t0 <= t0) list.push(t);
       else list.splice(this.firstAfter(b, t0), 0, t);
       if (t0 > this.lastT) this.lastT = t0;
+      const fl = this.flowers[f];
+      if (!fl.length || fl[fl.length - 1].t0 <= t0) fl.push(t);
+      else fl.splice(firstAfterIn(fl, t0), 0, t);
+      if (fl.length > this.keep * 4) fl.splice(0, fl.length - this.keep * 2);
       const gk = `${a.round}:${f}`;
       const g = this.groups.get(gk);
       if (g) {
@@ -102,13 +119,15 @@ export class TurnIndex {
 
   /** Index of bee b's first turn arriving after game time t. */
   private firstAfter(b: number, t: number): number {
-    const list = this.bees[b];
-    let lo = 0, hi = list.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (list[mid].t0 <= t) lo = mid + 1; else hi = mid;
-    }
-    return lo;
+    return firstAfterIn(this.bees[b], t);
+  }
+
+  /** The latest turn at flower f that arrived by game time t and passes `ok` (looking back at most `scan` turns). */
+  latestAt(f: number, t: number, ok: (x: Turn) => boolean, scan = 64): Turn | null {
+    const list = this.flowers[f];
+    if (!list) return null;
+    for (let k = firstAfterIn(list, t) - 1, n = 0; k >= 0 && n < scan; k--, n++) if (ok(list[k])) return list[k];
+    return null;
   }
 
   /** Index of bee b's latest turn that has arrived by game time t (-1: none). */

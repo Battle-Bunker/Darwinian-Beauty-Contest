@@ -194,7 +194,7 @@ export class GardenPainter {
     c.set(n.visitor, "display", b.ring === "visitor" ? "inline" : "none");
     c.set(n.pose, "transform", `rotate(${b.tilt.toFixed(0)}) scale(${b.flip ? -1 : 1} 1)`);
     c.set(n.wings, "transform", b.flap < 1 ? `translate(0 -5) scale(1 ${b.flap.toFixed(2)}) translate(0 5)` : "");
-    c.set(n.name, "display", names ? "inline" : "none");
+    c.set(n.name, "display", names || b.named ? "inline" : "none");
     if (!b.bubble) { c.set(n.bubble, "display", "none"); return; }
     const w = 12 + b.bubble.length * 6.6;
     c.set(n.bubble, "display", "inline");
