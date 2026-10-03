@@ -484,7 +484,7 @@ export const turnOf = (a, idx) => ({
 });
 
 /** entryFor, or every field (ti === null: the game is over). */
-function ledgerEntry(t, ti) {
+export function ledgerEntry(t, ti) {
   if (ti !== null) return entryFor(t, ti);
   return { round: t.round, bee: t.bee, flower: t.flower, challenge: t.c, response: t.r, fed: t.fed, percent: t.percent, energy: t.energy,
     nectar: t.fed ? t.nectar : null, surplus: t.fed ? t.surplus : 0, ms: t.ms };

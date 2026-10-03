@@ -1,316 +1,395 @@
-// The continuous garden (server/engine.js): lockstep rounds of one action slot per bee, queued
-// challenges, answers delivered at the end of the flower window, the bees' 50 ms decision deadline with
-// late replies and re-requests, stateless flowers, bees that keep their state until replaced, instant
-// swaps, pacing and the game clock.
+// The garden (server/engine.js), one flower per team: lockstep rounds of one turn per bee, queued
+// challenges, flowers drawn at random, [response, percent] within 150 ms and excess energy from CPU time,
+// responses delivered at 150 ms, the bees' 50 ms decision deadline with late replies and re-requests, the
+// nectar/surplus split and feedCost, the team ledger delivered between turns, stateless flowers, bees that
+// keep their state until replaced, versions pinned per turn, pacing and the game clock.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { Garden, tryBee, tryFlower } from "../server/engine.js";
+import crypto from "node:crypto";
+import { Garden, entryFor, tryBee, tryFlower } from "../server/engine.js";
 import { starters } from "./fixtures/programs.js";
 import { play } from "./fixtures/garden.js";
-import { DEFAULT_CONFIG, available, normalizeConfig, roundMs } from "../server/lib/gameConfig.js";
+import { DEFAULT_CONFIG, available, excessEnergy, normalizeConfig, roundMs } from "../server/lib/gameConfig.js";
+import { size } from "../server/lib/measure.js";
 
-const SLOT = new Set(["ask", "feed"]);
+const ends = (actions) => actions.filter((a) => a.action === "feed" || a.action === "leave");
 const byBee = (actions, b) => actions.filter((a) => a.bee === b);
-const slots = (actions, b) => byBee(actions, b).filter((a) => SLOT.has(a.action));
-const tooSlow = (a) => a.action === "error" && /too slow/.test(a.error);
-const busy = (ms) => `t = time.perf_counter()\n        while time.perf_counter() - t < ${ms / 1000}:\n            pass\n`;
-const flowers = { cosmos: `def flower(c):\n    return c + 1\n`, orchid: `def flower(c):\n    return c + 2\n` };
-const tsFlowers = { cosmos: `function flower(c: number) { return c + 1; }`, orchid: `function flower(c: number) { return c + 2; }` };
-// Flowers are picked at random, so a test that needs both kinds plays until it has them: a `during` hook
-// that stops the garden once done(actions so far) holds (or the garden runs out of rounds).
+const arrivals = (actions, b) => byBee(actions, b).filter((a) => a.action === "arrive");
+const tooSlow = (a) => a.action === "leave" && /too slow/.test(a.beeError || "");
+const busy = (ms) => `t = time.perf_counter()\n    while time.perf_counter() - t < ${ms / 1000}:\n        pass\n`;
+const flower = (expr, pct = 50) => `def flower(c, ledger):\n    return ${expr}, ${pct}\n`;
+const leaver = (next = "1") => `def first(ledger):\n    return 1\ndef decide(c, r, ledger):\n    return "leave", ${next}\n`;
+const close = (a, b, eps = 1e-6) => assert.ok(Math.abs(a - b) <= eps * Math.max(1, Math.abs(b)), `${a} != ${b}`);
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+// Stop the garden once done(actions so far) holds (or it runs out of rounds).
 const stopWhen = (done) => async (garden) => {
-  while (!garden.closed && !done(garden.out)) await new Promise((r) => setTimeout(r, 5));
+  while (!garden.closed && !done(garden.out)) await wait(5);
   await garden.stop();
 };
-const askedBoth = (acts) => ["cosmos", "orchid"].every((k) => acts.some((a) => a.kind === k && a.action === "ask"));
 
-test("defaults: 150 ms flower window, an orchid limit below it, 50 ms bee decisions, 200 ms rounds", () => {
-  const { cosmos, orchid, bee } = DEFAULT_CONFIG.budgets;
-  assert.deepEqual([cosmos.ms, orchid.ms, bee.ms], [150, 100, 50]);
+test("defaults: a 1,100-node flower with 150 ms, an 11,000-node bee with 50 ms, 200 ms rounds, feedCost 10", () => {
+  const { flower: f, bee } = DEFAULT_CONFIG.budgets;
+  assert.deepEqual(f, { size: 1100, perMinute: 220, cap: 220, ms: 150 });
+  assert.deepEqual(bee, { size: 11000, perMinute: 2200, cap: 2200, ms: 50 });
   assert.equal(roundMs(DEFAULT_CONFIG), 200);
   assert.equal(DEFAULT_CONFIG.feedCost, 10);
   assert.equal(DEFAULT_CONFIG.minutes, 2);
-  // the orchid's limit is clamped to the cosmos's
-  assert.equal(normalizeConfig({ budgets: { orchid: { ms: 500 } } }).budgets.orchid.ms, 150);
-  assert.equal(normalizeConfig({ budgets: { cosmos: { ms: 80 } } }).budgets.orchid.ms, 80);
-  assert.equal(normalizeConfig({ budgets: { orchid: { ms: 60 } } }).budgets.orchid.ms, 60);
+  // all configurable
+  const c = normalizeConfig({ feedCost: 3, budgets: { flower: { size: 900, perMinute: 100, cap: 50, ms: 120 }, bee: { size: 5000, ms: 30 } } });
+  assert.deepEqual(c.budgets.flower, { size: 900, perMinute: 100, cap: 50, ms: 120 });
+  assert.deepEqual(c.budgets.bee, { size: 5000, perMinute: 2200, cap: 2200, ms: 30 });
+  assert.equal(roundMs(c), 150);
+  assert.equal(c.feedCost, 3);
+  assert.ok(!("cosmos" in c.budgets) && !("orchid" in c.budgets));
+});
+
+test("excess energy: E = (size cap − size) × max(0, 150 − CPU ms)", () => {
+  const config = normalizeConfig({});
+  assert.equal(excessEnergy(config, 300, 20), 800 * 130);
+  assert.equal(excessEnergy(config, 1100, 1), 0, "a flower at the size cap has nothing to give");
+  assert.equal(excessEnergy(config, 100, 150), 0);
+  assert.equal(excessEnergy(config, 100, 400), 0, "never negative");
+  assert.equal(excessEnergy(normalizeConfig({ budgets: { flower: { size: 2000, ms: 100 } } }), 500, 40), 1500 * 60);
 });
 
 for (const language of ["python", "typescript"]) {
-  test(`${language}: lockstep: at most one ask or feed per bee per round; a feed sits the bee out for exactly feedCost rounds`, async () => {
+  test(`${language}: lockstep: one turn per bee per round; a feed sits the bee out for exactly feedCost rounds`, async () => {
     const config = normalizeConfig({ language, feedCost: 4 });
-    const s = starters(config);
-    const out = await play(config, [s, s, s, s], 120);
-    assert.equal(out.rounds, 120);
-    assert.equal(out.round, 120);
-    assert.equal(out.clockMs, 120 * 200, "game time is rounds × 200 ms");
+    const teams = [0, 1, 2, 3].map((i) => starters(config, `t${i}`));
+    const out = await play(config, teams, 60);
+    assert.equal(out.rounds, 60);
+    assert.equal(out.round, 60);
+    assert.equal(out.clockMs, 60 * 200, "game time is rounds × 200 ms");
     assert.deepEqual(out.problems, []);
     for (let b = 0; b < 4; b++) {
-      const mine = slots(out.actions, b);
-      assert.ok(mine.length > 30, `bee ${b} acted ${mine.length} times`);
-      const rounds = mine.map((a) => a.round);
-      assert.equal(new Set(rounds).size, rounds.length, "one action slot per round");
-      // Every round it isn't feeding, it acts: these bees always have a challenge queued in time.
+      const mine = byBee(out.actions, b);
+      const arr = mine.filter((a) => a.action === "arrive"), end = ends(mine);
+      assert.ok(arr.length > 15, `bee ${b} took ${arr.length} turns`);
+      assert.equal(arr.length, end.length, "every turn that starts is settled");
+      // The starters always have a challenge queued in time, so a bee plays every round it isn't feeding.
       let expect = 1;
-      for (const a of mine) {
-        assert.equal(a.round, expect, `bee ${b}: ${a.action} in round ${a.round}`);
-        expect = a.round + 1 + (a.action === "feed" ? config.feedCost : 0);
-        if (a.action === "feed") assert.equal(a.nectar, a.kind === "cosmos");
+      for (const [i, a] of arr.entries()) {
+        assert.equal(a.round, expect, `bee ${b}: turn ${a.turn} in round ${a.round}`);
+        assert.equal(a.turn, i + 1);
+        const e = end[i];
+        assert.deepEqual([e.round, e.turn, e.flower], [a.round, a.turn, a.flower], "a turn ends in the round it began, at the same flower");
+        expect = a.round + 1 + (e.action === "feed" ? config.feedCost : 0);
       }
     }
-    // Arrivals and slot actions happen at the round's start; leaves are decided at the end of the flower window.
-    for (const a of out.actions) assert.equal(a.atMs, (a.round - 1) * 200 + (SLOT.has(a.action) || a.action === "arrive" ? 0 : 150), JSON.stringify(a));
-    // Every visit starts with the bee's arrival, and its first ask comes right after, in the same round.
-    for (let b = 0; b < 4; b++) {
-      const visits = new Map();
-      for (const a of byBee(out.actions, b)) (visits.get(a.visit) || visits.set(a.visit, []).get(a.visit)).push(a);
-      for (const [no, acts] of visits) {
-        assert.equal(acts[0].action, "arrive", `bee ${b} visit ${no}`);
-        assert.equal(acts.filter((a) => a.action === "arrive").length, 1);
-        if (acts[1]) assert.ok(acts[1].action === "ask" && acts[1].round === acts[0].round && acts[1].kind === acts[0].kind && acts[1].patch === acts[0].patch);
-      }
-    }
-    assert.ok(out.actions.every((a, i) => i === 0 || a.atMs >= out.actions[i - 1].atMs));
+    for (const a of out.actions) assert.equal(a.atMs, (a.round - 1) * 200 + (a.action === "arrive" ? 0 : 150), JSON.stringify(a));
     const seqs = out.actions.map((a) => a.seq);
     assert.deepEqual(seqs, seqs.map((_, i) => i + 1), "actions are numbered in order");
+    // The ledgers add up to the turns.
     const feeds = out.actions.filter((a) => a.action === "feed");
-    assert.equal(out.feeds.flat().reduce((a, b) => a + b, 0), feeds.length);
-    assert.equal(out.nectar.flat().reduce((a, b) => a + b, 0), feeds.filter((a) => a.nectar).length);
+    assert.equal(out.feeds.flat().reduce((x, y) => x + y, 0), feeds.length);
+    close(out.nectar.flat().reduce((x, y) => x + y, 0), feeds.reduce((s, a) => s + a.nectar, 0));
+    close(out.surplus.flat().reduce((x, y) => x + y, 0), feeds.reduce((s, a) => s + a.surplus, 0));
   });
 }
 
-test("every new visit is at a flower picked at random: every flower comes up, in roughly equal shares", async () => {
-  // Three patches, six flowers; each bee moves on after every ask, so every round is a new visit.
-  const bee = `def forage(seen, visit):\n    return ["leave", 1]\n`;
-  const out = await play(normalizeConfig({}), [0, 1, 2].map(() => ({ ...flowers, bee })), 300);
-  const asks = out.actions.filter((a) => a.action === "ask");
-  assert.equal(asks.length, 900);
-  const counts = new Map();
-  for (const a of asks) counts.set(`${a.patch}:${a.kind}`, (counts.get(`${a.patch}:${a.kind}`) || 0) + 1);
-  assert.equal(counts.size, 6, "every flower comes up");
-  // 150 expected each, standard deviation about 11: far outside ±50 only if the draw isn't uniform.
-  for (const [flower, n] of counts) assert.ok(n > 100 && n < 200, `${flower}: ${n} of 900 visits`);
+test("every turn draws a flower uniformly at random among all N, the bee's own included", async () => {
+  const out = await play(normalizeConfig({}), [0, 1, 2].map(() => ({ flower: flower("c"), bee: leaver() })), 300);
+  const turns = ends(out.actions);
+  assert.equal(turns.length, 900);
+  const counts = [0, 1, 2].map((f) => turns.filter((a) => a.flower === f).length);
+  // 300 expected each, standard deviation about 14: far outside ±70 only if the draw isn't uniform.
+  for (const n of counts) assert.ok(n > 230 && n < 370, `${counts}`);
   for (let b = 0; b < 3; b++) {
-    const mine = slots(asks, b).map((a) => `${a.patch}:${a.kind}`);
-    assert.ok(mine.some((f, i) => i > 0 && f === mine[i - 1]), "no laps: the same flower can come up twice in a row");
-    // In each stretch of 6 visits, a deck would have dealt all 6 flowers; a random draw rarely does.
-    const full = mine.slice(0, 294).filter((_, i) => i % 6 === 0).map((_, j) => new Set(mine.slice(6 * j, 6 * j + 6)).size === 6);
-    assert.ok(full.filter(Boolean).length < full.length / 2, `bee ${b}: ${full.filter(Boolean).length} of ${full.length} laps`);
+    const mine = turns.filter((a) => a.bee === b).map((a) => a.flower);
+    assert.ok(mine.filter((f) => f === b).length > 60, `bee ${b} visits its own flower too`);
+    assert.ok(mine.some((f, i) => i > 0 && f === mine[i - 1]), "the same flower can come up twice in a row");
   }
 });
 
-test("a bee can keep asking after it feeds; feeding again just moves on", async () => {
-  const bee = `def forage(seen, visit):
-    if not visit["fed"]:
-        return ["ask", 1] if not seen else "feed"
-    if len(seen) < 3:
-        return ["ask", len(seen) + 10]
-    return "feed" if visit["nectar"] is False else "leave"
-`;
-  const config = normalizeConfig({ feedCost: 5 });
-  const fedAndLeft = (acts, kind) => {
-    const f = acts.find((a) => a.kind === kind && a.action === "feed");
-    return f && acts.some((a) => a.visit === f.visit && a.action === "leave");
+test("energy is counted in CPU time: a busy flower spends it, a sleeping one doesn't; late or malformed answers give none", async () => {
+  const config = normalizeConfig({ responseType: "any" });
+  const cases = {
+    busy60: `import time\ndef flower(c, ledger):\n    ${busy(60)}    return c, 40\n`,
+    sleep60: `import time\ndef flower(c, ledger):\n    time.sleep(0.06)\n    return c, 40\n`,
+    late: `import time\ndef flower(c, ledger):\n    ${busy(200)}    return c, 40\n`,
+    bare: `def flower(c, ledger):\n    return c\n`,
+    badPercent: `def flower(c, ledger):\n    return c, "half"\n`,
+    nanPercent: `def flower(c, ledger):\n    return c, float("nan")\n`,
+    crash: `def flower(c, ledger):\n    return 1 / 0, 40\n`,
+    high: `def flower(c, ledger):\n    return c, 250\n`,
+    low: `def flower(c, ledger):\n    return c, -3.5\n`,
+    oneArg: `def flower(c):\n    return [c, c], 12.5\n`,
   };
-  const out = await play(config, [{ ...flowers, bee }], 2000, stopWhen((acts) => fedAndLeft(acts, "cosmos") && fedAndLeft(acts, "orchid")));
-  for (const kind of ["cosmos", "orchid"]) {
-    const visit = out.actions.find((a) => a.kind === kind && a.action === "feed").visit;
-    const steps = out.actions.filter((a) => a.visit === visit);
-    assert.deepEqual(steps.map((a) => [a.action, a.c ?? null, !!a.after]),
-      [["arrive", null, false], ["ask", 1, false], ["feed", null, false], ["ask", 11, true], ["ask", 12, true], ["leave", null, false]]);
-    assert.equal(steps[2].nectar, kind === "cosmos");
-    assert.equal(steps[2].round, steps[1].round + 1);
-    assert.equal(steps[3].round, steps[2].round + 1 + config.feedCost, "after feeding, the bee sits out feedCost rounds");
+  const bee = `def first(ledger):\n    return 7\ndef decide(c, r, ledger):\n    return "feed", 7\n`;
+  const got = {};
+  for (const [name, code] of Object.entries(cases)) { // one at a time, so a busy flower has a core to itself
+    const out = await play(normalizeConfig({ responseType: "any", feedCost: 0 }), [{ flower: code, bee }], 3);
+    got[name] = { turns: ends(out.actions), size: (await size("python", code)).size, problems: out.problems };
+  }
+  for (const name of ["busy60", "sleep60", "high", "low", "oneArg"]) {
+    const { turns, size: s } = got[name];
+    assert.equal(turns.length, 3, name);
+    for (const t of turns) {
+      assert.equal(t.flowerError, null, `${name}: ${t.flowerError}`);
+      assert.equal(typeof t.ms, "number");
+      assert.equal(t.energy, excessEnergy(config, s, t.ms), `${name}: E = (1100 − ${s}) × (150 − ${t.ms})`);
+      assert.ok(t.energy > 0);
+    }
+  }
+  for (const t of got.busy60.turns) assert.ok(t.ms > 40 && t.ms < 100, `busy for 60 ms: ${t.ms} ms of CPU`);
+  for (const t of got.sleep60.turns) assert.ok(t.ms < 20, `asleep for 60 ms: only ${t.ms} ms of CPU`);
+  assert.ok(got.sleep60.turns[0].energy > got.busy60.turns[0].energy * 1.4, "sleeping costs no energy, working does");
+  assert.deepEqual(got.high.turns.map((t) => t.percent), [100, 100, 100], "percent is clamped to 0–100");
+  assert.deepEqual(got.low.turns.map((t) => t.percent), [0, 0, 0]);
+  assert.deepEqual(got.oneArg.turns.map((t) => [t.r, t.percent]), [[[7, 7], 12.5], [[7, 7], 12.5], [[7, 7], 12.5]], "the ledger argument is optional");
+  for (const [name, pattern] of [["late", /Timeout/], ["bare", /must return \[response, percent\]/], ["badPercent", /percent must be a number/],
+    ["nanPercent", /not plain data|percent/], ["crash", /ZeroDivisionError/]]) {
+    const { turns, problems } = got[name];
+    assert.ok(turns.length >= 1, name);
+    for (const t of turns) {
+      assert.equal(t.r, null, `${name}: the response is null`);
+      assert.equal(t.energy, 0, `${name}: E = 0`);
+      assert.equal(t.percent, null);
+      assert.match(t.flowerError, pattern, name);
+      assert.equal(t.action, "feed", "the bee may still feed");
+      assert.equal(t.nectar, 0);
+      assert.equal(t.surplus, 0);
+    }
+    assert.match(problems.find((p) => p.kind === "flower").error, pattern);
+  }
+  for (const t of got.late.turns) assert.ok(t.ms >= 140, `stopped at its limit: ${t.ms} ms of CPU`);
+});
+
+test("typescript: energy from CPU time, and a late flower gives none", async () => {
+  const config = normalizeConfig({ language: "typescript" });
+  const busyTs = (ms) => `function flower(c: number, ledger: readonly unknown[]): [number, number] { const t = Date.now(); while (Date.now() - t < ${ms}) {} return [c, 30]; }`;
+  const bee = `function first(ledger: unknown[]) { return 3; }\nfunction decide(c: number, r: number | null, ledger: unknown[]) { return ["leave", 3]; }`;
+  const runs = [];
+  for (const code of [busyTs(40), busyTs(200)]) {
+    const out = await play(config, [{ flower: code, bee }], 2);
+    runs.push({ turns: ends(out.actions), size: (await size("typescript", code)).size });
+  }
+  const [fast, late] = runs;
+  for (const t of fast.turns) {
+    assert.ok(t.ms > 25 && t.ms < 90, `${t.ms}`);
+    assert.equal(t.energy, excessEnergy(config, fast.size, t.ms));
+    assert.equal(t.r, 3);
+  }
+  for (const t of late.turns) {
+    assert.equal(t.r, null);
+    assert.equal(t.energy, 0);
+    assert.match(t.flowerError, /Timeout/);
   }
 });
 
-for (const language of ["python", "typescript"]) {
-  test(`${language}: ["leave", c] asks c first at the next flower, without losing a slot`, async () => {
-    // Its challenges encode how many steps it has seen at this flower: the runner's `seen` starts afresh
-    // at every flower, whether the bee got there by ["leave", c] or by a request for a first challenge.
-    const bee = language === "python"
-      ? `n = 0\ndef forage(seen, visit):\n    global n\n    n += 1\n    if not seen:\n        return ["ask", 1000 + n]\n    if len(seen) < 2:\n        return ["ask", 100 * len(seen) + n]\n    return ["leave", 100 * len(seen) + n]\n`
-      : `let n = 0;\nfunction forage(seen: any[], visit: any) {\n  n += 1;\n  if (!seen.length) return ["ask", 1000 + n];\n  if (seen.length < 2) return ["ask", 100 * seen.length + n];\n  return ["leave", 100 * seen.length + n];\n}\n`;
-    const out = await play(normalizeConfig({ language }), [{ ...(language === "python" ? flowers : tsFlowers), bee }], 12);
-    const asks = out.actions.filter((a) => a.action === "ask");
-    assert.deepEqual(asks.map((a) => a.c), [1001, 102, 203, 104, 205, 106, 207, 108, 209, 110, 211, 112]);
-    assert.deepEqual(asks.map((a) => a.round), asks.map((_, i) => i + 1), "a slot every round");
-    const visits = [...new Set(asks.map((a) => a.visit))];
-    assert.equal(visits.length, 6);
-    for (const v of visits) assert.equal(asks.filter((a) => a.visit === v).length, 2);
-    const leaves = out.actions.filter((a) => a.action === "leave");
-    assert.equal(leaves.length, 6);
-    assert.ok(leaves.every((a) => a.c === null && !a.error), "the next challenge stays secret until it's asked");
-  });
-}
+test("nectar and surplus: a feed splits E by percent; a turn without a feed pays nobody", async () => {
+  const bee = `n = 0\ndef first(ledger):\n    return 1\ndef decide(c, r, ledger):\n    global n\n    n += 1\n    return ("feed" if n % 2 else "leave"), n\n`;
+  const out = await play(normalizeConfig({ feedCost: 1 }), [{ flower: flower("c", 30), bee }], 40);
+  const turns = ends(out.actions);
+  const fed = turns.filter((a) => a.action === "feed"), left = turns.filter((a) => a.action === "leave");
+  assert.ok(fed.length >= 10 && left.length >= 10);
+  for (const a of fed) {
+    assert.ok(a.energy > 0);
+    close(a.nectar, 0.3 * a.energy);
+    close(a.surplus, 0.7 * a.energy);
+    close(a.nectar + a.surplus, a.energy);
+  }
+  for (const a of left) {
+    assert.ok(a.energy > 0, "the energy was there");
+    assert.equal(a.nectar, null, "but no nectar");
+    assert.equal(a.surplus, 0, "and no surplus");
+  }
+  assert.equal(out.feeds[0][0], fed.length);
+  close(out.nectar[0][0], fed.reduce((s, a) => s + a.nectar, 0));
+  close(out.surplus[0][0], fed.reduce((s, a) => s + a.surplus, 0));
+});
 
-test("a plain \"leave\" loses a slot unless the re-request answers in time (paced)", async () => {
-  // Bee 0 answers its re-requests at once; bee 1 takes 120 ms, missing the next round's start.
-  const fast = `def forage(seen, visit):\n    return "leave" if seen else ["ask", 1]\n`;
-  const slow = `import time\ndef forage(seen, visit):\n    if seen:\n        return "leave"\n    time.sleep(0.12)\n    return ["ask", 2]\n`;
-  const out = await play(normalizeConfig({}), [{ ...flowers, bee: fast }, { ...flowers, bee: slow }], 12, null, { paced: true });
+test("feedCost: a bee that feeds sits out exactly feedCost rounds, then plays the challenge it queued", async () => {
+  for (const feedCost of [0, 7]) {
+    const bee = `def first(ledger):\n    return 0\ndef decide(c, r, ledger):\n    return "feed", c + 1\n`;
+    const out = await play(normalizeConfig({ feedCost }), [{ flower: flower("c"), bee }], 30);
+    const arr = arrivals(out.actions, 0).map((a) => a.round);
+    assert.deepEqual(arr, arr.map((_, i) => 1 + i * (feedCost + 1)), `feedCost ${feedCost}: ${arr}`);
+    assert.deepEqual(ends(out.actions).map((a) => a.c), arr.map((_, i) => i));
+  }
+});
+
+test("neither side learns its counterpart until the turn is over: the ledger holds only finished turns", async () => {
+  // Every flower answers with what its ledger holds; every bee prints what its ledger holds as it decides.
+  const config = normalizeConfig({ responseType: "any", feedCost: 2 });
+  const fl = `def flower(c, ledger, *rest):\n    return [len(ledger), max([e["round"] for e in ledger] or [0]), len(rest), sorted(GAME)], 50\n`;
+  const bee = `import json
+def first(*args):
+    return 1
+def decide(c, r, ledger, *rest):
+    print(json.dumps([len(ledger), max([e["round"] for e in ledger] or [0]), len(rest)]))
+    return ("feed" if c % 3 == 0 else "leave"), c + 1
+`;
+  const out = await play(config, [0, 1, 2].map(() => ({ flower: fl, bee })), 40);
+  const turns = ends(out.actions);
+  const finishedBefore = (r) => out.history.filter((t) => t.round < r).length;
+  assert.ok(turns.length > 60);
+  for (const a of turns) {
+    const [len, maxRound, extra, gameKeys] = a.r;
+    assert.equal(len, finishedBefore(a.round), "the flower's ledger: every turn finished before this round, none of this one");
+    assert.ok(maxRound < a.round);
+    assert.equal(extra, 0, "flower(challenge, ledger): nothing about the bee that asked");
+    assert.deepEqual(gameKeys, ["challenge_type", "feed_cost", "flower_ms", "flower_size_cap", "max_len", "max_nodes", "ms", "response_type", "round_ms", "size", "team", "teams"]);
+    const [blen, bmax, bextra] = JSON.parse(a.log);
+    assert.equal(blen, finishedBefore(a.round), "the bee decides without its own turn in its ledger");
+    assert.ok(bmax < a.round);
+    assert.equal(bextra, 0, "decide(challenge, response, ledger): nothing about the flower");
+  }
+  // After the turn, both sides find it in their ledgers, counterpart included.
+  const t = turns.find((a) => a.round < 30);
+  const later = turns.find((a) => a.bee === t.bee && a.round > t.round);
+  assert.ok(later.r[0] > out.history.indexOf(out.history.find((h) => h.round === t.round && h.bee === t.bee)));
+  const entry = entryFor(out.history.find((h) => h.round === t.round && h.bee === t.bee), t.bee);
+  assert.equal(entry.flower, t.flower, "the bee's team learns whose flower it was");
+  assert.equal(entryFor(out.history.find((h) => h.round === t.round && h.bee === t.bee), t.flower).bee, t.bee, "and the flower's team whose bee");
+});
+
+test("the team ledger: every turn's public fields, plus the team's own private details", () => {
+  const fed = { round: 5, bee: 0, flower: 1, c: 3, r: 4, fed: true, percent: 25, energy: 1000, nectar: 250, surplus: 750, ms: 12 };
+  const left = { round: 5, bee: 2, flower: 1, c: 7, r: null, fed: false, percent: 60, energy: 800, nectar: null, surplus: 0, ms: 3 };
+  // A feed: public, but the flower's CPU time is its own team's.
+  for (const ti of [0, 2]) assert.deepEqual(entryFor(fed, ti), { round: 5, bee: 0, flower: 1, challenge: 3, response: 4, fed: true, percent: 25, energy: 1000, nectar: 250, surplus: 750, ms: null });
+  assert.equal(entryFor(fed, 1).ms, 12);
+  // No feed: surplus 0, no nectar; the percent and energy are the flower's team's.
+  for (const ti of [0, 2]) assert.deepEqual(entryFor(left, ti), { round: 5, bee: 2, flower: 1, challenge: 7, response: null, fed: false, percent: null, energy: null, nectar: null, surplus: 0, ms: null });
+  assert.deepEqual(entryFor(left, 1), { round: 5, bee: 2, flower: 1, challenge: 7, response: null, fed: false, percent: 60, energy: 800, nectar: null, surplus: 0, ms: 3 });
+});
+
+test("python: every team's programs get exactly its own view of the ledger, delivered incrementally", async () => {
+  // Bees and flowers print/return a digest of their whole ledger; it must equal the engine's view for the team.
+  const config = normalizeConfig({ responseType: "str", feedCost: 1, maxLen: 64 });
+  const digest = `json.dumps(ledger, separators=(",", ":"))`;
+  const fl = (pct) => `import hashlib, json\ndef flower(c, ledger):\n    return hashlib.sha256(${digest}.encode()).hexdigest()[:40], ${pct}\n`;
+  const bee = `import hashlib, json
+def first(ledger):
+    return 0
+def decide(c, r, ledger):
+    print(len(ledger), hashlib.sha256(${digest}.encode()).hexdigest()[:40])
+    return ("feed" if c % 2 else "leave"), c + 1
+`;
+  const out = await play(config, [10, 50, 90].map((p) => ({ flower: fl(p), bee })), 30);
+  const sha = (x) => crypto.createHash("sha256").update(x).digest("hex").slice(0, 40);
+  const view = (ti, round) => JSON.stringify(out.history.filter((t) => t.round < round).map((t) => entryFor(t, ti)));
+  const turns = ends(out.actions);
+  assert.ok(turns.length > 40);
+  for (const a of turns) {
+    if (a.r !== null) assert.equal(a.r, sha(view(a.flower, a.round)), `flower ${a.flower}, round ${a.round}`);
+    const [len, h] = a.log.trim().split(" ");
+    assert.equal(Number(len), out.history.filter((t) => t.round < a.round).length);
+    assert.equal(h, sha(view(a.bee, a.round)), `bee ${a.bee}, round ${a.round}`);
+  }
+  // The views differ by team: each sees the percent of its own unfed turns only.
+  const last = out.round + 1;
+  assert.notEqual(view(0, last), view(1, last));
+});
+
+test("typescript: a flower's ledger is frozen and shared safely; nothing it does survives the call", async () => {
+  const config = normalizeConfig({ language: "typescript", responseType: "any" });
+  const fl = `function flower(c: number, ledger: any[]): [any, number] {
+  const out: any[] = [ledger.length, Object.isFrozen(ledger), ledger.length ? Object.isFrozen(ledger[0]) : true];
+  try { (ledger as any).push(1); } catch { out.push("no push"); }
+  try { ledger.constructor.constructor("return 1")(); out.push("compiled"); } catch { out.push("no compile"); }
+  try { (ledger as any).__proto__.stash = ((ledger as any).__proto__.stash || 0) + 1; } catch {}
+  out.push((ledger as any).stash ?? null);
+  return [out, 50];
+}`;
+  const bee = `function first(l: any[]) { return 1; }\nfunction decide(c: number, r: any, l: any[]) { return ["leave", 1]; }`;
+  const out = await play(config, [{ flower: fl, bee }], 6);
+  const rs = ends(out.actions).map((a) => a.r);
+  assert.deepEqual(rs.map((r) => r[0]), [0, 1, 2, 3, 4, 5], "one more entry each round");
+  for (const r of rs) assert.deepEqual(r.slice(1), [true, true, "no push", "no compile", null]);
+});
+
+test("a bare \"leave\" gets first() asked at once: in time it makes the next round, slower costs a round (paced)", async () => {
+  const fast = `def first(ledger):\n    return 1\ndef decide(c, r, ledger):\n    return "leave"\n`;
+  const slow = `import time\nn = 0\ndef first(ledger):\n    global n\n    n += 1\n    if n > 1:\n        time.sleep(0.12)\n    return 2\ndef decide(c, r, ledger):\n    return "leave"\n`;
+  const out = await play(normalizeConfig({}), [{ flower: flower("c"), bee: fast }, { flower: flower("c"), bee: slow }], 12, null, { paced: true });
   assert.deepEqual(out.problems, []);
-  const r0 = slots(out.actions, 0).map((a) => a.round), r1 = slots(out.actions, 1).map((a) => a.round);
+  const r0 = arrivals(out.actions, 0).map((a) => a.round), r1 = arrivals(out.actions, 1).map((a) => a.round);
   assert.ok(r0.length >= 9 && r1.length >= 4, `${r0} / ${r1}`);
   assert.deepEqual(r0.slice(1).map((r, i) => r - r0[i]), r0.slice(1).map(() => 1), `bee 0 plays every round: ${r0}`);
   assert.deepEqual(r1.slice(1).map((r, i) => r - r1[i]), r1.slice(1).map(() => 2), `bee 1 misses every other round: ${r1}`);
-  assert.ok(byBee(out.actions, 0).filter((a) => a.action === "leave").every((a) => a.atMs === (a.round - 1) * 200 + 150));
+  assert.ok(ends(out.actions).every((a) => a.action === "leave" && !a.beeError), "a bare leave is a leave, not an error");
 });
 
-test("flowers get their own time limits: an orchid over 100 ms gets null, a cosmos taking 120 ms answers", async () => {
-  const slowFlower = `import time\ndef flower(c):\n    ${busy(120)}    return c * 2\n`;
-  const bee = `def forage(seen, visit):\n    return ["leave", 3]\n`;
-  const out = await play(normalizeConfig({}), [{ cosmos: slowFlower, orchid: slowFlower, bee }], 200, stopWhen(askedBoth));
-  const asks = out.actions.filter((a) => a.action === "ask");
-  const cosmos = asks.filter((a) => a.kind === "cosmos"), orchid = asks.filter((a) => a.kind === "orchid");
-  assert.ok(cosmos.length && orchid.length);
-  for (const a of cosmos) {
-    assert.equal(a.r, 6, JSON.stringify(a));
-    assert.ok(a.ms >= 115 && a.ms < 150, `cosmos took ${a.ms} ms`);
-  }
-  for (const a of orchid) {
-    assert.equal(a.r, null);
-    assert.equal(a.by, "flower");
-    assert.match(a.error, /Timeout/);
-    assert.ok(a.ms >= 95 && a.ms < 140, `orchid stopped at ${a.ms} ms`);
-  }
-  assert.match(out.problems.find((p) => p.kind === "orchid").error, /Timeout/);
+test("a bad next challenge: the feed still counts, then first() supplies the next one", async () => {
+  const bee = `n = 0\ndef first(ledger):\n    return 1000\ndef decide(c, r, ledger):\n    global n\n    n += 1\n    return ("feed", "seven") if n == 2 else ("leave", n)\n`;
+  const out = await play(normalizeConfig({ feedCost: 0 }), [{ flower: flower("c"), bee }], 6);
+  const turns = ends(out.actions);
+  assert.deepEqual(turns.map((a) => [a.action, a.c]), [["leave", 1000], ["feed", 1], ["leave", 1000], ["leave", 3], ["leave", 4], ["leave", 5]]);
+  assert.match(turns[1].beeError, /next challenge must be an int/);
 });
 
-for (const language of ["python", "typescript"]) {
-  test(`${language}: GAME: each program's own time limit as ms, and the round length`, async () => {
-    const config = normalizeConfig({ language });
-    const p = language === "python"
-      ? { flower: `def flower(c):\n    return GAME["ms"] * 1000 + GAME["round_ms"]\n`, bee: `def forage(seen, visit):\n    return ["leave", GAME["ms"] * 1000 + GAME["round_ms"]]\n` }
-      : { flower: `function flower(c: number) { return GAME.ms * 1000 + GAME.round_ms; }`, bee: `function forage(seen: any[]) { return ["leave", GAME.ms * 1000 + GAME.round_ms]; }` };
-    const out = await play(config, [{ cosmos: p.flower, orchid: p.flower, bee: p.bee }], 200, stopWhen(askedBoth));
-    const asks = out.actions.filter((a) => a.action === "ask");
-    assert.ok(askedBoth(asks) && asks.every((a) => a.c === 50200));
-    for (const a of asks) assert.equal(a.r, a.kind === "cosmos" ? 150200 : 100200);
-  });
-}
-
-test("bees are kept in the dark: forage sees only its challenges, the answers, and fed / nectar / flowers", async () => {
-  const bee = `import json
-def forage(seen, visit):
-    print(json.dumps([sorted(visit), sorted(GAME), [len(x) for x in seen]]))
-    return ["ask", 4] if len(seen) < 2 else ["leave", 4]
-`;
-  const out = await play(normalizeConfig({}), [{ ...flowers, bee }, { ...flowers, bee }], 6);
-  const logs = out.actions.filter((a) => a.log).map((a) => JSON.parse(a.log));
-  assert.ok(logs.length > 4);
-  for (const [visitKeys, gameKeys, steps] of logs) {
-    assert.deepEqual(visitKeys, ["fed", "flowers", "nectar"], "nothing about whose patch or which flower");
-    assert.deepEqual(gameKeys, ["challenge_type", "feed_cost", "max_len", "max_nodes", "ms", "response_type", "round_ms"]);
-    assert.ok(steps.every((n) => n === 2), "seen holds [challenge, response] pairs only");
-  }
-});
-
-test("answers can't reveal timing: every answer reaches the bee at the end of the flower window (paced)", async () => {
-  // The cosmos works for 120 ms, the orchid answers at once. The bee times the gap between its calls.
-  const slowCosmos = `import time\ndef flower(c):\n    ${busy(120)}    return c\n`;
-  const bee = `import time
-last = 0.0
-def forage(seen, visit):
-    global last
-    t = time.perf_counter()
-    if seen and last:
-        print(round((t - last) * 1000, 1))
-    last = time.perf_counter()
-    return ["leave", 1]
-`;
-  const gapsOf = (acts) => {
-    const gaps = { cosmos: [], orchid: [] };
-    // (The first gap runs from the bee's first call, while it loaded, so it doesn't count.)
-    for (const a of acts.filter((x) => x.action === "leave" && x.log).slice(1)) gaps[a.kind].push(Number(a.log));
-    return gaps;
-  };
-  const enough = (acts) => { const g = gapsOf(acts); return g.cosmos.length >= 4 && g.orchid.length >= 4; };
-  const out = await play(normalizeConfig({}), [{ cosmos: slowCosmos, orchid: `def flower(c):\n    return c\n`, bee }], 80, stopWhen(enough), { paced: true });
-  const asks = out.actions.filter((a) => a.action === "ask");
-  const mean = (xs) => xs.reduce((s, x) => s + x, 0) / xs.length;
-  assert.ok(mean(asks.filter((a) => a.kind === "cosmos").map((a) => a.ms)) > 110);
-  assert.ok(mean(asks.filter((a) => a.kind === "orchid").map((a) => a.ms)) < 30);
-  const gaps = gapsOf(out.actions);
-  assert.ok(gaps.cosmos.length >= 3 && gaps.orchid.length >= 3, JSON.stringify(gaps));
-  for (const g of [...gaps.cosmos, ...gaps.orchid]) assert.ok(g > 185 && g < 225, `${g} ms between decisions`);
-  assert.ok(Math.abs(mean(gaps.cosmos) - mean(gaps.orchid)) < 15, JSON.stringify(gaps));
-});
-
-test("a bee that takes 80 ms misses its next slot; its late [\"leave\", c] is the first ask at the next flower (paced)", async () => {
+test("a late [\"leave\", c] queues c, though the turn is settled without it; the bee loses a round (paced)", async () => {
   const bee = `import time
 n = 0
-def forage(seen, visit):
+def first(ledger):
+    return 1
+def decide(c, r, ledger):
     global n
     n += 1
-    if n == 4:
-        ${busy(80)}        return ["leave", 777]
-    return ["leave", n]
+    if n == 3:
+        ${busy(80).replaceAll("\n    ", "\n        ")}        return "leave", 777
+    return "feed" if n == 99 else "leave", 100 + n
 `;
-  const out = await play(normalizeConfig({}), [{ ...flowers, bee }], 10, null, { paced: true });
+  const out = await play(normalizeConfig({}), [{ flower: flower("c"), bee }], 10, null, { paced: true });
   const mine = byBee(out.actions, 0);
-  const late = mine.find(tooSlow);
+  const turns = ends(mine);
+  const late = turns.find(tooSlow);
   assert.ok(late, JSON.stringify(mine));
-  assert.equal(late.by, "bee");
   assert.equal(late.atMs, (late.round - 1) * 200 + 150);
-  const asks = mine.filter((a) => a.action === "ask");
-  assert.deepEqual(asks.map((a) => a.c).slice(0, 5), [1, 2, 3, 777, 5]);
-  const a777 = asks.find((a) => a.c === 777);
-  assert.equal(late.round, asks.find((a) => a.c === 3).round, "too slow deciding after asking 3");
-  // The round after: it is assigned its next flower, but has nothing queued, so it loses the slot.
-  const next = mine.filter((a) => a.round === late.round + 1);
-  assert.deepEqual(next.map((a) => a.action), ["arrive"], "the round after: an arrival, no slot");
-  assert.equal(a777.round, late.round + 2);
-  assert.equal(a777.visit, next[0].visit, "asked at the flower it was assigned");
-  assert.ok(a777.visit > late.visit, "at the next flower");
-  assert.equal(mine.filter((a) => a.action === "leave").length, asks.length - 1, "every decision but the late one is a leave");
+  assert.equal(late.beeMs, null);
+  assert.deepEqual(turns.map((a) => a.c).slice(0, 5), [1, 101, 102, 777, 104]);
+  const a777 = turns.find((a) => a.c === 777);
+  assert.equal(late.c, 102, "too slow deciding after asking 102");
+  assert.equal(a777.round, late.round + 2, "the round after, its call was still running: no turn");
+  assert.ok(!mine.some((a) => a.round === late.round + 1));
 });
 
-test("a late [\"ask\", c] is never asked: the bee is asked again, and that challenge opens its next flower (paced)", async () => {
+test("a late reply never feeds: a late [\"feed\", c] is a leave, c is never asked, and first() supplies the next (paced)", async () => {
   const bee = `import time
 n = 0
-def forage(seen, visit):
+k = 0
+def first(ledger):
+    global k
+    k += 1
+    return 500 + k
+def decide(c, r, ledger):
     global n
     n += 1
-    if n == 4:
-        ${busy(80)}        return ["ask", 7]
-    if not seen:
-        return ["ask", 500 + n]
-    return ["leave", 100 * len(seen) + n]
+    if n == 3:
+        ${busy(80).replaceAll("\n    ", "\n        ")}        return "feed", 7
+    return "leave", 100 + n
 `;
-  const out = await play(normalizeConfig({}), [{ ...flowers, bee }], 10, null, { paced: true });
-  const mine = byBee(out.actions, 0);
-  const late = mine.find(tooSlow);
-  assert.ok(late, JSON.stringify(mine));
-  assert.ok(!out.actions.some((a) => a.c === 7), "the late ask's challenge is never asked");
-  const asks = mine.filter((a) => a.action === "ask");
-  // 501 (a first challenge), 102, 103, then too slow; the re-request (n = 5) gives 505; 106 after it.
-  assert.deepEqual(asks.map((a) => a.c).slice(0, 5), [501, 102, 103, 505, 106]);
-  const next = asks.find((a) => a.c === 505);
-  assert.equal(next.round, late.round + 2);
-  assert.ok(next.visit > late.visit, "at the next flower");
-  assert.equal(asks.find((a) => a.c === 106).visit, next.visit + 1, "106 was decided with one step seen there");
+  const out = await play(normalizeConfig({}), [{ flower: flower("c"), bee }], 10, null, { paced: true });
+  const turns = ends(byBee(out.actions, 0));
+  const late = turns.find(tooSlow);
+  assert.ok(late, JSON.stringify(turns));
+  assert.equal(late.action, "leave");
+  assert.ok(!out.actions.some((a) => a.action === "feed"), "nothing fed");
+  assert.equal(out.feeds[0][0], 0);
+  assert.ok(!turns.some((a) => a.c === 7), "the late feed's challenge is never asked");
+  assert.deepEqual(turns.map((a) => a.c).slice(0, 5), [501, 101, 102, 502, 104]);
+  assert.equal(turns[3].round, late.round + 2);
 });
 
 for (const language of ["python", "typescript"]) {
-  test(`${language}: a bee that runs over 2 s: too slow at 50 ms, a Timeout at 2 s, then asked again (paced)`, async () => {
+  test(`${language}: a bee that runs over 2 s: too slow at 50 ms, a Timeout at 2 s, then first() (paced)`, async () => {
     const bee = language === "python"
-      ? `n = 0\ndef forage(seen, visit):\n    global n\n    n += 1\n    if n == 3:\n        while True:\n            pass\n    return ["leave", n]\n`
-      : `let n = 0;\nfunction forage(seen: any[]) { n += 1; if (n === 3) { while (true) {} } return ["leave", n]; }\n`;
-    const other = language === "python" ? `def forage(seen, visit):\n    return ["leave", 9]\n` : `function forage(seen: any[]) { return ["leave", 9]; }`;
-    const f = language === "python" ? flowers : tsFlowers;
-    const config = normalizeConfig({ language });
-    const out = await play(config, [{ ...f, bee }, { ...f, bee: other }], 18, null, { paced: true });
+      ? `n = 0\ndef first(ledger):\n    return 1000\ndef decide(c, r, ledger):\n    global n\n    n += 1\n    if n == 3:\n        while True:\n            pass\n    return "leave", n\n`
+      : `let n = 0;\nfunction first(l: any[]) { return 1000; }\nfunction decide(c: number, r: any, l: any[]) { n += 1; if (n === 3) { while (true) {} } return ["leave", n]; }\n`;
+    const other = language === "python" ? leaver("9") : `function first(l: any[]) { return 9; }\nfunction decide(c: number, r: any, l: any[]) { return ["leave", 9]; }`;
+    const fl = language === "python" ? flower("c") : `function flower(c: number, l: any[]) { return [c, 50]; }`;
+    const out = await play(normalizeConfig({ language }), [{ flower: fl, bee }, { flower: fl, bee: other }], 18, null, { paced: true });
     const mine = byBee(out.actions, 0);
     const late = mine.find(tooSlow);
     assert.ok(late, JSON.stringify(mine));
-    const after = mine.filter((a) => a.round > late.round && a.action !== "arrive");
-    assert.ok(after.length && after[0].action === "ask" && after[0].c === 4, JSON.stringify(after[0]));
+    const after = ends(mine).filter((a) => a.round > late.round);
+    assert.ok(after.length && after[0].c === 1000, JSON.stringify(after[0]));
     assert.ok(after[0].round >= late.round + 9 && after[0].round <= late.round + 13, `back in round ${after[0].round} (late in ${late.round})`);
-    assert.ok(out.problems.some((p) => p.team === 0 && p.kind === "bee"), "the first problem is kept");
-    // The other bee played on at the usual pace meanwhile.
-    const others = slots(out.actions, 1).filter((a) => a.round > late.round && a.round < after[0].round);
-    assert.ok(others.length >= after[0].round - late.round - 2, `${others.length} slots`);
+    assert.ok(out.problems.some((p) => p.team === 0 && p.kind === "bee"));
+    const others = arrivals(out.actions, 1).filter((a) => a.round > late.round && a.round < after[0].round);
+    assert.ok(others.length >= after[0].round - late.round - 2, "the other bee played on");
     assert.ok(out.wallMs < 18 * 200 + 1500, `${Math.round(out.wallMs)} ms`);
   });
 }
@@ -318,7 +397,9 @@ for (const language of ["python", "typescript"]) {
 test("a hung bee is killed and starts afresh", async () => {
   // It swallows the runner's timeout, so the runner never replies: the process is killed and restarted.
   const bee = `n = 0
-def forage(seen, visit):
+def first(ledger):
+    return 0
+def decide(c, r, ledger):
     global n
     n += 1
     if n == 3:
@@ -328,123 +409,95 @@ def forage(seen, visit):
                     pass
             except BaseException:
                 pass
-    return ["leave", n]
+    return "leave", n
 `;
-  const out = await play(normalizeConfig({}), [{ ...flowers, bee }], 40, async (garden) => {
-    while (!garden.out.some((a) => a.c === 1 && a.seq > 3) && garden.rounds < 40) await new Promise((r) => setTimeout(r, 50));
+  const out = await play(normalizeConfig({}), [{ flower: flower("c"), bee }], 40, async (garden) => {
+    while (garden.history.filter((t) => t.c === 1).length < 2 && garden.rounds < 40) await wait(50);
     await garden.stop();
   }, { paced: true });
-  const asks = out.actions.filter((a) => a.action === "ask").map((a) => a.c);
-  assert.deepEqual(asks.slice(0, 3), [1, 2, 1], "it starts again from n = 0");
+  const cs = ends(out.actions).map((a) => a.c);
+  assert.deepEqual(cs.slice(0, 3), [0, 1, 2]);
+  assert.ok(cs.slice(3).includes(0), "it starts again from first()");
   assert.ok(out.actions.some(tooSlow));
 });
 
-// A garden that plays no rounds, holding a cosmos whose pool of processes a test asks directly. Running
-// the garden just closes it, which kills every flower process.
-async function cosmosPool(code) {
-  const garden = new Garden({ config: normalizeConfig({}), teams: 1, maxRounds: 0, paced: false });
-  await garden.setProgram(0, "cosmos", code, 1);
-  const pool = garden.flowers[0].pool;
-  assert.equal((await pool.ready).ok, true);
-  return { garden, pool, ask: async (c) => (await pool.call({ c })).res };
-}
-const exited = (p) => new Promise((resolve) => {
-  if (p.child.exitCode !== null || p.child.signalCode !== null) return resolve(true);
-  p.child.once("exit", () => resolve(true));
-  setTimeout(() => resolve(false), 3000).unref();
-});
-const died = async (p) => {
-  p.kill();
-  while (!p.dead) await new Promise((r) => setTimeout(r, 2));
-};
-
-test("a flower process that stops responding is replaced: later asks are answered again, by the same version", async () => {
-  const { garden, pool, ask } = await cosmosPool(flowers.cosmos);
-  const seen = new Set(pool.procs);
-  try {
-    assert.deepEqual(await ask(1), { v: 2 });
-    // A visit is pinned to version 1 while version 2 goes live, so version 1's pool stays up for it.
-    pool.users++;
-    await garden.setProgram(0, "cosmos", `def flower(c):\n    return c + 100\n`, 2);
-    assert.ok(garden.retiring.has(pool));
-    // One of its processes stops responding: proc.js kills it after 2 × 150 + 1500 ms, and that ask is lost.
-    const hung = pool.procs[0];
-    hung.child.kill("SIGSTOP");
-    const lost = await ask(2);
-    assert.equal(lost.dead, true);
-    assert.match(lost.e, /stopped responding/);
-    assert.ok(await exited(hung), "the hung process is gone");
-    // The asks after it are answered again, by a fresh process running version 1's code.
-    for (let c = 3; c < 10; c++) assert.deepEqual(await ask(c), { v: c + 1 });
-    assert.notEqual(pool.procs[0], hung);
-    assert.deepEqual((await garden.flowers[0].pool.call({ c: 3 })).res, { v: 103 }, "version 2 answers its own visits");
-    for (const p of [...pool.procs, ...garden.flowers[0].pool.procs]) seen.add(p);
-  } finally {
-    await garden.run();
-  }
-  for (const p of seen) assert.ok(await exited(p), "closing the garden kills every process, respawned ones too");
-});
-
-test("a flower whose processes keep dying is respawned at most once a second per process, not at every ask", async () => {
-  const { garden, pool, ask } = await cosmosPool(flowers.cosmos);
-  try {
-    const n = pool.procs.length;
-    const seen = new Set(pool.procs);
-    const answers = [];
-    const t0 = performance.now();
-    // Every process dies before every ask: each slot is respawned once, and after that its asks fail at once.
-    for (let c = 0; c < 20; c++) {
-      for (const p of pool.procs) await died(p);
-      answers.push(await ask(c));
-      for (const p of pool.procs) seen.add(p);
-    }
-    assert.ok(performance.now() - t0 < 1000, "all within a second");
-    assert.equal(seen.size, 2 * n, "one respawn per slot");
-    assert.deepEqual(answers.slice(0, n), answers.slice(0, n).map((_, c) => ({ v: c + 1 })));
-    assert.ok(answers.slice(n).every((a) => a.dead), JSON.stringify(answers));
-    // A second later a slot may respawn again, and the flower answers again.
-    await new Promise((r) => setTimeout(r, 1000));
-    assert.deepEqual(await ask(7), { v: 8 });
-  } finally {
-    await garden.run();
-  }
+test("responses can't reveal timing: every response reaches the bee at the end of the flower window (paced)", async () => {
+  // Two flowers, one working 120 ms, one answering at once. The bee times the gap between its decisions.
+  const slow = `import time\ndef flower(c, ledger):\n    ${busy(120)}    return 1, 50\n`;
+  const quick = flower("2");
+  const bee = `import time
+last = 0.0
+def first(ledger):
+    return 1
+def decide(c, r, ledger):
+    global last
+    t = time.perf_counter()
+    if last:
+        print(round((t - last) * 1000, 1))
+    last = time.perf_counter()
+    return "leave", 1
+`;
+  const gapsOf = (acts) => {
+    const gaps = { 1: [], 2: [] };
+    for (const a of ends(acts).filter((x) => x.bee === 0 && x.log)) gaps[a.r]?.push(Number(a.log));
+    return gaps;
+  };
+  const enough = (acts) => { const g = gapsOf(acts); return g[1].length >= 4 && g[2].length >= 4; };
+  const out = await play(normalizeConfig({}), [{ flower: slow, bee }, { flower: quick, bee: leaver() }], 80, stopWhen(enough), { paced: true });
+  const gaps = gapsOf(out.actions);
+  assert.ok(gaps[1].length >= 3 && gaps[2].length >= 3, JSON.stringify(gaps));
+  for (const g of [...gaps[1], ...gaps[2]]) assert.ok(g > 185 && g < 225, `${g} ms between decisions`);
+  const mean = (xs) => xs.reduce((s, x) => s + x, 0) / xs.length;
+  assert.ok(Math.abs(mean(gaps[1]) - mean(gaps[2])) < 15, JSON.stringify(gaps));
 });
 
 for (const language of ["python", "typescript"]) {
-  test(`${language}: flowers are stateless: fresh randomness, a clock, their own budget, no answer cache`, async () => {
+  test(`${language}: GAME: the team, the time limits, the size cap and the flower's own size`, async () => {
+    const config = normalizeConfig({ language, responseType: "any", challengeType: "any" });
+    const p = language === "python"
+      ? { flower: `def flower(c, ledger):\n    return [GAME["team"], GAME["teams"], GAME["ms"], GAME["round_ms"], GAME["flower_size_cap"], GAME["size"]], 1\n`,
+        bee: `def first(ledger):\n    return [GAME["team"], GAME["ms"], GAME["flower_ms"], GAME["feed_cost"]]\ndef decide(c, r, ledger):\n    return "leave", c\n` }
+      : { flower: `function flower(c: any, l: any[]) { return [[GAME.team, GAME.teams, GAME.ms, GAME.round_ms, GAME.flower_size_cap, GAME.size], 1]; }`,
+        bee: `function first(l: any[]) { return [GAME.team, GAME.ms, GAME.flower_ms, GAME.feed_cost]; }\nfunction decide(c: any, r: any, l: any[]) { return ["leave", c]; }` };
+    const out = await play(config, [p, p], 10);
+    const s = (await size(language, p.flower)).size;
+    for (const a of ends(out.actions)) {
+      assert.deepEqual(a.c, [a.bee, 50, 150, 10]);
+      assert.deepEqual(a.r, [a.flower, 2, 150, 200, 1100, s]);
+    }
+  });
+}
+
+for (const language of ["python", "typescript"]) {
+  test(`${language}: flowers are stateless: fresh randomness, a clock, no answer cache`, async () => {
     const config = normalizeConfig({ language });
     const py = {
-      counter: `import math\nn = 0\ndef flower(c):\n    global n\n    n += 1\n    math.k = getattr(math, "k", 0) + 1\n    return n * 1000 + math.k\n`,
-      // An anytime search: keep drawing until most of the budget is gone, return the best draw.
-      anytime: `import random, time\ndef flower(c):\n    t0 = time.perf_counter()\n    best = 0\n    while time.perf_counter() - t0 < 0.6 * GAME["ms"] / 1000:\n        best = max(best, random.randint(0, 10**9))\n    return best\n`,
-      bee: `def forage(seen):\n    return ["ask", 7] if len(seen) < 3 else "leave"\n`,
+      counter: `import math\nn = 0\ndef flower(c, ledger):\n    global n\n    n += 1\n    math.k = getattr(math, "k", 0) + 1\n    return n * 1000 + math.k, 1\n`,
+      anytime: `import random, time\ndef flower(c, ledger):\n    t0 = time.perf_counter()\n    best = 0\n    while time.perf_counter() - t0 < 0.3 * GAME["ms"] / 1000:\n        best = max(best, random.randint(0, 10**9))\n    return best, 1\n`,
     };
     const ts = {
-      counter: `let n = 0;\nfunction flower(c: number): number { n += 1; (Math as any).k = ((Math as any).k || 0) + 1; return n * 1000 + (Math as any).k; }\n`,
-      anytime: `function flower(c: number): number {\n  const t0 = Date.now(); let best = 0;\n  while (Date.now() - t0 < 0.6 * GAME.ms) best = Math.max(best, Math.floor(Math.random() * 1e9));\n  return best;\n}\n`,
-      bee: `function forage(seen: any[]) { return seen.length < 3 ? ["ask", 7] : "leave"; }\n`,
+      counter: `let n = 0;\nfunction flower(c: number, l: any[]): [number, number] { n += 1; (Math as any).k = ((Math as any).k || 0) + 1; return [n * 1000 + (Math as any).k, 1]; }\n`,
+      anytime: `function flower(c: number, l: any[]): [number, number] {\n  const t0 = Date.now(); let best = 0;\n  while (Date.now() - t0 < 0.3 * GAME.ms) best = Math.max(best, Math.floor(Math.random() * 1e9));\n  return [best, 1];\n}\n`,
     };
     const p = language === "python" ? py : ts;
-    const asksAt = (acts, kind) => acts.filter((a) => a.kind === kind && a.action === "ask").length;
-    const out = await play(config, [{ cosmos: p.counter, orchid: p.anytime, bee: p.bee }], 1000,
-      stopWhen((acts) => asksAt(acts, "orchid") >= 6 && asksAt(acts, "cosmos") >= 3));
-    const asks = out.actions.filter((a) => a.action === "ask");
-    for (const a of asks) assert.equal(a.error, null, a.error);
-    for (const a of asks.filter((a) => a.kind === "cosmos")) assert.equal(a.r, 1001, "nothing survives between calls");
-    const orchid = asks.filter((a) => a.kind === "orchid");
-    assert.ok(orchid.length >= 6);
-    assert.ok(new Set(orchid.map((a) => a.r)).size >= orchid.length - 1, "the same question gets a fresh answer every call");
-    assert.ok(orchid.reduce((s, a) => s + a.ms, 0) / orchid.length >= 50, "the orchid searched for most of its 100 ms");
+    const bee = language === "python" ? leaver("7") : `function first(l: any[]) { return 7; }\nfunction decide(c: number, r: any, l: any[]) { return ["leave", 7]; }`;
+    const out = await play(config, [{ flower: p.counter, bee }, { flower: p.anytime, bee }], 16);
+    const turns = ends(out.actions);
+    for (const a of turns) assert.equal(a.flowerError, null, a.flowerError);
+    for (const a of turns.filter((a) => a.flower === 0)) assert.equal(a.r, 1001, "nothing survives between calls");
+    const anytime = turns.filter((a) => a.flower === 1);
+    assert.ok(anytime.length >= 6);
+    assert.ok(new Set(anytime.map((a) => a.r)).size >= anytime.length - 1, "the same question gets a fresh answer every call");
+    assert.ok(anytime.reduce((s, a) => s + a.ms, 0) / anytime.length >= 35, "it searched for its share of the 150 ms");
   });
 }
 
 test("programs run minified: the names they define can't carry data", async () => {
   const config = normalizeConfig({ responseType: "any" });
-  const helper = (name) => `def ${name}():\n    return 0\ndef flower(c):\n    return [len(${name}.__name__), sorted(k for k in globals() if not k.startswith("__"))]\n`;
-  const bee = `def forage(seen):\n    return ["ask", 1] if not seen else "leave"\n`;
+  const helper = (name) => `def ${name}():\n    return 0\ndef flower(c, ledger):\n    return [len(${name}.__name__), sorted(k for k in globals() if not k.startswith("__"))], 1\n`;
   const answers = async (code) => {
-    const out = await play(config, [{ cosmos: code, orchid: code, bee }], 6);
-    return new Set(out.actions.filter((a) => a.action === "ask").map((a) => JSON.stringify(a.r)));
+    const out = await play(config, [{ flower: code, bee: leaver() }], 4);
+    return new Set(ends(out.actions).map((a) => JSON.stringify(a.r)));
   };
   const long = await answers(helper("a_helper_with_a_very_long_and_meaningful_name"));
   assert.equal(long.size, 1);
@@ -454,134 +507,171 @@ test("programs run minified: the names they define can't carry data", async () =
   assert.deepEqual([...await answers(helper("h"))], [...long]);
 });
 
-test("compute budgets are per program: a cosmos can be given far more compute than an orchid", async () => {
-  // Works for 120 ms by the clock (a loop count would depend on how fast the machine is).
-  const busyFlower = `import time\ndef flower(c):\n    t = time.perf_counter()\n    x = 0\n    while time.perf_counter() - t < 0.12:\n        x = (x + c) % 1000003\n    return x\n`;
-  const bee = `def forage(seen):\n    return "leave" if seen else ["ask", 3]\n`;
-  const config = normalizeConfig({ budgets: { cosmos: { ms: 400 }, orchid: { ms: 50 } } });
-  const out = await play(config, [{ cosmos: busyFlower, orchid: busyFlower, bee }], 200, stopWhen(askedBoth));
-  const byKind = Object.fromEntries(out.actions.filter((a) => a.action === "ask").map((a) => [a.kind, a]));
-  assert.equal(typeof byKind.cosmos.r, "number", JSON.stringify(byKind.cosmos));
-  assert.match(String(byKind.orchid.error), /Timeout/, JSON.stringify(out.actions));
-  assert.equal(byKind.orchid.by, "flower");
-  assert.ok(byKind.cosmos.ms > 115);
-  assert.ok(byKind.orchid.ms < 100);
-});
-
 for (const language of ["python", "typescript"]) {
-  test(`${language}: a bee keeps its state until new code replaces it; the new code goes live at once`, async () => {
+  test(`${language}: a bee keeps its state until new code replaces it; between turns, new code goes live at once`, async () => {
     const config = normalizeConfig({ language });
     const py = {
-      cosmos: (k) => `def flower(c):\n    return ${k}\n`,
-      bee: `n = 0\ndef forage(seen):\n    global n\n    if seen:\n        return "leave"\n    n += 1\n    return ["ask", n]\n`,
+      flower: (k) => flower(String(k)),
+      bee: `n = 0\ndef first(ledger):\n    global n\n    n += 1\n    return n\ndef decide(c, r, ledger):\n    global n\n    n += 1\n    return "leave", n\n`,
     };
     const ts = {
-      cosmos: (k) => `function flower(c: number) { return ${k}; }`,
-      bee: `let n = 0;\nfunction forage(seen: any[]) { if (seen.length) return "leave"; n += 1; return ["ask", n]; }\n`,
+      flower: (k) => `function flower(c: number, l: any[]) { return [${k}, 50]; }`,
+      bee: `let n = 0;\nfunction first(l: any[]) { n += 1; return n; }\nfunction decide(c: number, r: any, l: any[]) { n += 1; return ["leave", n]; }\n`,
     };
     const p = language === "python" ? py : ts;
-    const out = await play(config, [{ cosmos: p.cosmos(1), orchid: p.cosmos(2), bee: p.bee }], 60, async (garden) => {
-      while (garden.rounds < 20) await new Promise((r) => setTimeout(r, 5));
-      await garden.setProgram(0, "cosmos", p.cosmos(3), 2);
+    const out = await play(config, [{ flower: p.flower(1), bee: p.bee }], 60, async (garden) => {
+      while (garden.rounds < 20) await wait(5);
+      await garden.setProgram(0, "flower", p.flower(3), 2);
       await garden.setProgram(0, "bee", p.bee, 2);
     });
-    const asks = out.actions.filter((a) => a.action === "ask");
-    const v1 = asks.filter((a) => a.beeVersion === 1), v2 = asks.filter((a) => a.beeVersion === 2);
+    const turns = ends(out.actions);
+    const v1 = turns.filter((a) => a.beeVersion === 1), v2 = turns.filter((a) => a.beeVersion === 2);
     assert.ok(v1.length > 5 && v2.length > 5, `${v1.length} then ${v2.length}`);
     assert.deepEqual(v1.map((a) => a.c), v1.map((_, i) => i + 1), "the bee remembers between calls");
     assert.deepEqual(v2.map((a) => a.c), v2.map((_, i) => i + 1), "new code starts afresh");
     assert.ok(v1.every((a) => a.round < v2[0].round));
-    const cosmos = asks.filter((a) => a.kind === "cosmos");
-    assert.ok(cosmos.some((a) => a.flowerVersion === 1 && a.r === 1) && cosmos.some((a) => a.flowerVersion === 2 && a.r === 3));
-    assert.ok(cosmos.every((a) => a.r === (a.flowerVersion === 1 ? 1 : 3)), "each answer comes from the version it's labelled with");
-    const swap = out.actions.find((a) => a.by === "engine");
-    if (swap) assert.equal(swap.action, "leave", "the visit the old bee was on ends");
+    assert.ok(turns.some((a) => a.flowerVersion === 1 && a.r === 1) && turns.some((a) => a.flowerVersion === 2 && a.r === 3));
+    assert.ok(turns.every((a) => a.r === (a.flowerVersion === 1 ? 1 : 3)), "each response comes from the version it's labelled with");
   });
 }
 
-test("a flower swap reaches only visits that start after it: a bee at the flower keeps its version", async () => {
-  // The bee stays 30 asks at every flower. The cosmos is replaced while the bee is a few asks into a visit there.
-  const bee = `def forage(seen, visit):\n    return ["ask", len(seen)] if len(seen) < 30 else ["leave", 0]\n`;
-  let swapSeq = null, retiredDuring = null, retiredAfter = null;
-  const atCosmos = (acts) => {
-    const last = acts.at(-1);
-    return last && last.kind === "cosmos" && last.action === "ask" && last.c >= 2 && last.c <= 5;
-  };
-  const out = await play(normalizeConfig({}), [{ cosmos: `def flower(c):\n    return 1\n`, orchid: `def flower(c):\n    return 2\n`, bee }], 2000, async (garden) => {
-    while (!garden.closed && !atCosmos(garden.out)) await new Promise((r) => setTimeout(r, 1));
-    await garden.setProgram(0, "cosmos", `def flower(c):\n    return 3\n`, 2);
-    swapSeq = garden.seq;
-    retiredDuring = garden.retiring.size; // the old version, still answering the bee that's there
-    // Then play on until the bee has visited the cosmos again.
-    while (!garden.closed && !garden.out.some((a) => a.seq > swapSeq && a.kind === "cosmos" && a.action === "arrive")) await new Promise((r) => setTimeout(r, 5));
-    while (!garden.closed && !garden.out.some((a) => a.seq > swapSeq && a.kind === "cosmos" && a.action === "ask" && a.flowerVersion === 2)) await new Promise((r) => setTimeout(r, 5));
-    retiredAfter = garden.retiring.size;
-    await garden.stop();
+// Wait for a turn that has begun and isn't settled yet (its flower is working), then run `swap`.
+const midTurn = (swap, done) => async (garden) => {
+  const open = () => garden.out.some((a) => a.action === "arrive" && !garden.out.some((e) => e.action !== "arrive" && e.bee === a.bee && e.turn === a.turn));
+  while (!garden.closed && !(open() && garden.round >= 3)) await wait(1);
+  const at = garden.seq;
+  await swap(garden);
+  while (!garden.closed && !done(garden.out)) await wait(5);
+  await garden.stop();
+  return at;
+};
+
+test("versions are pinned per turn: a flower swap reaches turns that start after it", async () => {
+  const slowFlower = (v) => `import time\ndef flower(c, ledger):\n    time.sleep(0.1)\n    return ${v}, 50\n`;
+  let at = null, retiredDuring = null;
+  const out = await play(normalizeConfig({}), [{ flower: slowFlower(1), bee: leaver() }], 200, async (garden) => {
+    at = await midTurn(async (g) => { await g.setProgram(0, "flower", slowFlower(3), 2); retiredDuring = g.retiring.size; },
+      (acts) => acts.filter((a) => a.action === "leave" && a.flowerVersion === 2).length >= 2)(garden);
   });
-  const cosmos = out.actions.filter((a) => a.kind === "cosmos");
-  const pinned = cosmos.find((a) => a.action === "ask" && a.seq > swapSeq).visit; // the visit in progress at the swap
-  const spanning = cosmos.filter((a) => a.visit === pinned && a.action === "ask");
-  assert.ok(spanning.some((a) => a.seq < swapSeq) && spanning.some((a) => a.seq > swapSeq), "a visit spanned the swap");
-  assert.ok(spanning.every((a) => a.flowerVersion === 1 && a.r === 1), "the visit kept the version it started with");
-  const later = cosmos.filter((a) => a.visit > pinned);
-  assert.ok(later.length && later.every((a) => a.flowerVersion === 2), "visits that start later get the new version");
-  assert.ok(later.filter((a) => a.action === "ask").every((a) => a.r === 3));
-  assert.equal(retiredDuring, 1, "the old version stays up while a visit is pinned to it");
-  assert.equal(retiredAfter, 0, "and goes once no visit uses it");
-  for (const a of cosmos.filter((x) => x.action === "arrive")) {
-    assert.ok(cosmos.filter((x) => x.visit === a.visit).every((x) => x.flowerVersion === a.flowerVersion), "one version per visit");
+  const spanning = out.actions.find((a) => a.action === "arrive" && a.seq <= at && !out.actions.some((e) => e.action === "leave" && e.turn === a.turn && e.seq <= at));
+  const end = out.actions.find((e) => e.action === "leave" && e.turn === spanning.turn);
+  assert.ok(end.seq > at, "the turn was in progress at the swap");
+  assert.deepEqual([end.flowerVersion, end.r], [1, 1], "it kept the version it started with");
+  const later = ends(out.actions).filter((a) => a.turn > spanning.turn);
+  assert.ok(later.length && later.every((a) => a.flowerVersion === 2 && a.r === 3));
+  assert.equal(retiredDuring, 1, "the old version stays up while a turn is pinned to it");
+  for (const a of out.actions.filter((x) => x.action === "arrive")) {
+    assert.equal(out.actions.find((e) => e.action !== "arrive" && e.turn === a.turn).flowerVersion, a.flowerVersion, "one version per turn");
   }
 });
 
-test("a bee swap during a visit takes effect when the visit ends; its queued challenge is dropped", async () => {
-  // Version 1 asks 8 times at each flower and leaves with ["leave", 999]; version 2 opens with 5000.
-  const v1 = `def forage(seen, visit):\n    if not seen:\n        return ["ask", 100]\n    return ["ask", 100 + len(seen)] if len(seen) < 8 else ["leave", 999]\n`;
-  const v2 = `def forage(seen, visit):\n    return ["ask", 5000 + len(seen)] if len(seen) < 3 else ["leave", 5000]\n`;
-  let swapSeq = null;
-  const midVisit = (acts) => { const l = acts.at(-1); return l && l.action === "ask" && l.c >= 101 && l.c <= 104; };
-  const out = await play(normalizeConfig({}), [{ ...flowers, bee: v1 }], 2000, async (garden) => {
-    while (!garden.closed && !midVisit(garden.out)) await new Promise((r) => setTimeout(r, 1));
-    await garden.setProgram(0, "bee", v2, 2);
-    swapSeq = garden.seq;
-    while (!garden.closed && garden.out.filter((a) => a.beeVersion === 2 && a.action === "ask").length < 4) await new Promise((r) => setTimeout(r, 5));
-    await garden.stop();
+test("versions are pinned per turn: a bee swap takes over when the turn is settled; the old bee's feed counts, its queued challenge goes", async () => {
+  const slowFlower = `import time\ndef flower(c, ledger):\n    time.sleep(0.1)\n    return c, 50\n`;
+  const v1 = `def first(ledger):\n    return 100\ndef decide(c, r, ledger):\n    return "feed", 999\n`;
+  const v2 = `def first(ledger):\n    return 5000\ndef decide(c, r, ledger):\n    return "leave", 5001\n`;
+  const config = normalizeConfig({ feedCost: 3 });
+  let at = null;
+  const out = await play(config, [{ flower: slowFlower, bee: v1 }], 300, async (garden) => {
+    at = await midTurn((g) => g.setProgram(0, "bee", v2, 2), (acts) => acts.filter((a) => a.action === "leave" && a.beeVersion === 2).length >= 2)(garden);
   });
-  const visit = out.actions.find((a) => a.seq > swapSeq && a.action === "ask").visit; // the visit in progress at the swap
-  const spanning = out.actions.filter((a) => a.visit === visit);
-  assert.ok(spanning.some((a) => a.seq > swapSeq && a.action === "ask"), "the old bee kept asking after the swap");
-  assert.ok(spanning.every((a) => a.beeVersion === 1), "the old bee finished its visit");
-  assert.equal(spanning.at(-1).action, "leave");
-  assert.equal(spanning.filter((a) => a.action === "ask").length, 8, "all of it: its first ask and 7 more");
-  assert.ok(!out.actions.some((a) => a.by === "engine"), "no visit was cut short");
-  const later = out.actions.filter((a) => a.visit > visit);
-  assert.ok(later.every((a) => a.beeVersion === 2), "the new bee from the next visit on");
-  assert.ok(!out.actions.some((a) => a.c === 999 && a.action === "ask" && a.seq > swapSeq), "the old bee's queued challenge was dropped");
-  assert.equal(later.find((a) => a.action === "ask").c, 5000, "the new bee opened with its own first challenge");
+  const turns = ends(out.actions);
+  const spanning = turns.find((a) => a.seq > at);
+  assert.ok(out.actions.some((a) => a.action === "arrive" && a.turn === spanning.turn && a.seq <= at), "the turn was in progress at the swap");
+  assert.deepEqual([spanning.beeVersion, spanning.action], [1, "feed"], "the old bee decided it, and its feed counts");
+  const next = turns.find((a) => a.turn === spanning.turn + 1);
+  assert.equal(next.beeVersion, 2);
+  assert.equal(next.c, 5000, "the new bee opens with its own first challenge: the old bee's 999 is dropped");
+  assert.equal(next.round, spanning.round + 1 + config.feedCost, "and the feed's rounds are still sat out");
+  assert.ok(!turns.some((a) => a.c === 999 && a.beeVersion === 2));
 });
 
-test("a broken bee: mistakes end the visit and the bee is asked again; a bee that can't load sits out", async () => {
-  const config = normalizeConfig({});
-  // n counts flowers: the mistakes come at the 3rd, 6th and 9th.
-  const bee = `n = 0\ndef forage(seen):\n    global n\n    if not seen:\n        n += 1\n        return ["ask", n]\n    if n == 3:\n        return "dance"\n    if n == 6:\n        return ["ask", "seven"]\n    if n == 9:\n        raise ValueError("oops")\n    return "leave"\n`;
-  const out = await play(config, [{ ...flowers, bee }], 30);
-  const errors = out.actions.filter((a) => a.action === "error");
-  assert.match(errors[0].error, /forage must return/);
-  assert.equal(errors[0].by, "bee");
-  assert.equal(errors[1].by, "challenge");
-  assert.match(errors[2].error, /ValueError: oops/);
-  assert.ok(!out.actions.some((a) => a.c === "seven"));
-  assert.ok(out.actions.filter((a) => a.action === "ask").length > 10, "it carries on");
+test("a broken bee: errors and bad replies are leaves, and first() is asked again; a bee that can't load sits out", async () => {
+  const bee = `n = 0\ndef first(ledger):\n    return 0\ndef decide(c, r, ledger):\n    global n\n    n += 1\n    if n == 2:\n        return "dance"\n    if n == 4:\n        raise ValueError("oops")\n    return "feed" if n == 6 else "leave", n\n`;
+  const out = await play(normalizeConfig({ feedCost: 0 }), [{ flower: flower("c"), bee }], 12);
+  const turns = ends(out.actions);
+  assert.match(turns[1].beeError, /decide must return/);
+  assert.match(turns[3].beeError, /ValueError: oops/);
+  assert.equal(turns[1].action, "leave");
+  assert.deepEqual(turns.map((a) => a.c).slice(0, 6), [0, 1, 0, 3, 0, 5], "after a bad reply, first() opens the next turn");
   assert.ok(out.problems.some((p) => p.kind === "bee"));
-  // A bee that can't even load sits out until its team sends new code.
-  const dud = await play(config, [{ ...flowers, bee: `import os\n` + bee }], 5);
+  const dud = await play(normalizeConfig({}), [{ flower: flower("c"), bee: `import os\n` + bee }], 5);
   assert.equal(dud.actions.length, 0);
   assert.match(dud.problems[0].error, /not allowed/);
+  const missing = await play(normalizeConfig({}), [{ flower: flower("c"), bee: `def first(ledger):\n    return 1\n` }], 3);
+  assert.match(missing.problems[0].error, /must define first\(ledger\) and decide/);
+});
+
+// A garden that plays no rounds, holding a flower whose pool of processes a test asks directly. Running
+// the garden just closes it, which kills every flower process.
+async function flowerPool(code) {
+  const garden = new Garden({ config: normalizeConfig({}), teams: 1, maxRounds: 0, paced: false });
+  await garden.setProgram(0, "flower", code, 1);
+  const pool = garden.flowers[0].pool;
+  assert.equal((await pool.ready).ok, true);
+  return { garden, pool, ask: async (c) => { const { cpu, ...res } = await pool.call(c); return res; } };
+}
+const exited = (p) => new Promise((resolve) => {
+  if (p.child.exitCode !== null || p.child.signalCode !== null) return resolve(true);
+  p.child.once("exit", () => resolve(true));
+  setTimeout(() => resolve(false), 3000).unref();
+});
+const died = async (p) => {
+  p.kill();
+  while (!p.dead) await wait(2);
+};
+
+test("a flower process that stops responding is replaced: later calls are answered again, by the same version", async () => {
+  const { garden, pool, ask } = await flowerPool(flower("c + 1"));
+  const seen = new Set(pool.procs);
+  try {
+    assert.deepEqual(await ask(1), { v: [2, 50] });
+    pool.users++; // a turn is pinned to version 1 while version 2 goes live
+    await garden.setProgram(0, "flower", flower("c + 100"), 2);
+    assert.ok(garden.retiring.has(pool));
+    const hung = pool.procs[0];
+    hung.child.kill("SIGSTOP");
+    const lost = await ask(2);
+    assert.equal(lost.dead, true);
+    assert.match(lost.e, /stopped responding/);
+    assert.ok(await exited(hung), "the hung process is gone");
+    for (let c = 3; c < 10; c++) assert.deepEqual(await ask(c), { v: [c + 1, 50] });
+    assert.notEqual(pool.procs[0], hung);
+    assert.deepEqual((await garden.flowers[0].pool.call(3)).v, [103, 50], "version 2 answers its own turns");
+    for (const p of [...pool.procs, ...garden.flowers[0].pool.procs]) seen.add(p);
+  } finally {
+    await garden.run();
+  }
+  for (const p of seen) assert.ok(await exited(p), "closing the garden kills every process, respawned ones too");
+});
+
+test("a flower whose processes keep dying is respawned at most once a second per process, with the ledger so far", async () => {
+  const { garden, pool, ask } = await flowerPool(`def flower(c, ledger):\n    return len(ledger), 50\n`);
+  try {
+    garden.history.push({ round: 1, bee: 0, flower: 0, c: 1, r: 1, fed: false, nectar: null, percent: 50, energy: 1, ms: 1, surplus: 0 });
+    garden.delivered = 1; // as if delivered at the last round boundary: a respawned process starts with it
+    const n = pool.procs.length;
+    const seen = new Set(pool.procs);
+    const answers = [];
+    const t0 = performance.now();
+    for (let c = 0; c < 20; c++) {
+      for (const p of pool.procs) await died(p);
+      answers.push(await ask(c));
+      for (const p of pool.procs) seen.add(p);
+    }
+    assert.ok(performance.now() - t0 < 1000, "all within a second");
+    assert.equal(seen.size, 2 * n, "one respawn per slot");
+    assert.deepEqual(answers.slice(0, n), answers.slice(0, n).map(() => ({ v: [1, 50] })), "respawned with the ledger so far");
+    assert.ok(answers.slice(n).every((a) => a.dead), JSON.stringify(answers));
+    await wait(1000);
+    assert.deepEqual(await ask(7), { v: [1, 50] });
+  } finally {
+    await garden.run();
+  }
 });
 
 test("paced: a round takes at least 200 ms of wall time", async () => {
   const config = normalizeConfig({});
-  const s = starters(config);
-  const out = await play(config, [s, s, s], 10, null, { paced: true });
+  const out = await play(config, [0, 1, 2].map((i) => starters(config, i)), 10, null, { paced: true });
   assert.equal(out.round, 10);
   assert.equal(out.clockMs, 2000);
   assert.ok(out.wallMs >= 10 * 200 - 1, `${out.wallMs} ms`);
@@ -590,16 +680,15 @@ test("paced: a round takes at least 200 ms of wall time", async () => {
 
 test("the clock: game time is rounds × 200 ms; it stands still while paused, and ends the game", async () => {
   const config = normalizeConfig({ feedCost: 1 });
-  const s = starters(config);
   const garden = new Garden({ config, teams: 2, endMs: 1200 });
-  await Promise.all([0, 1].flatMap((ti) => Object.entries(s).map(([k, code]) => garden.setProgram(ti, k, code, 1))));
+  await Promise.all([0, 1].flatMap((ti) => Object.entries(starters(config, ti)).map(([k, code]) => garden.setProgram(ti, k, code, 1))));
   const t0 = Date.now();
   const run = garden.run();
-  await new Promise((r) => setTimeout(r, 300));
+  await wait(300);
   garden.pause();
-  await new Promise((r) => setTimeout(r, 250)); // the round in progress finishes
+  await wait(250); // the round in progress finishes
   const paused = garden.clockMs(), round = garden.round;
-  await new Promise((r) => setTimeout(r, 400));
+  await wait(400);
   assert.equal(garden.clockMs(), paused, "the clock stands still while paused");
   assert.equal(garden.round, round);
   assert.equal(paused, round * 200);
@@ -610,50 +699,59 @@ test("the clock: game time is rounds × 200 ms; it stands still while paused, an
   assert.equal(rounds, 6);
   assert.ok(Date.now() - t0 >= 1200 + 400, "the pause didn't count");
   assert.ok(actions.length > 6);
-  assert.ok(actions.every((a, i) => i === 0 || a.atMs >= actions[i - 1].atMs));
   assert.ok(actions.every((a) => a.round <= 6 && a.atMs < 1200));
 });
 
-test("adoption: a garden carries on from the stored round and clock", async () => {
-  const config = normalizeConfig({});
-  const s = starters(config);
-  const garden = new Garden({ config, teams: 1, round: 40, clockMs: 8000, lastSeq: 77, endMs: 9000, paced: false });
-  await Promise.all(Object.entries(s).map(([k, code]) => garden.setProgram(0, k, code, 1)));
+test("adoption: a garden carries on from the stored round, clock, turn counts, ledgers and team ledger", async () => {
+  const config = normalizeConfig({ feedCost: 4 });
+  const history = [
+    { round: 37, bee: 0, flower: 0, c: 5, r: 5, fed: false, nectar: null, percent: 50, energy: 10, ms: 1, surplus: 0 },
+    { round: 38, bee: 0, flower: 0, c: 5, r: 5, fed: true, nectar: 5, percent: 50, energy: 10, ms: 1, surplus: 5 },
+  ];
+  const bee = `def first(ledger):\n    print(len(ledger), ledger[-1]["fed"])\n    return 1\ndef decide(c, r, ledger):\n    return "leave", 1\n`;
+  const garden = new Garden({
+    config, teams: 1, round: 40, clockMs: 8000, lastSeq: 77, endMs: 9200, paced: false, history, turns: [12],
+    ledgers: { feeds: [[1]], nectar: [[5]], surplus: [[5]] },
+  });
+  await garden.setProgram(0, "flower", flower("c"), 3);
+  await garden.setProgram(0, "bee", bee, 2);
   await garden.run();
   const d = garden.drain();
-  assert.equal(d.round, 45);
-  assert.equal(d.clockMs, 9000);
+  assert.equal(d.round, 46);
+  assert.equal(d.clockMs, 9200);
   assert.equal(d.actions[0].seq, 78);
-  assert.ok(d.actions.every((a) => a.round > 40 && a.atMs >= 8000 && a.atMs === 8000 + (a.round - 41) * 200 + (SLOT.has(a.action) || a.action === "arrive" ? 0 : 150)));
+  assert.equal(d.actions[0].turn, 13, "turn numbers carry on");
+  assert.equal(d.actions[0].round, 43, "the feed in round 38 still sits the bee out until round 43");
+  assert.equal(ends(d.actions)[0].log.trim(), "2 True", "the new bee's ledger starts with the stored turns");
+  assert.ok(d.actions.every((a) => a.atMs === 8000 + (a.round - 41) * 200 + (a.action === "arrive" ? 0 : 150)));
+  assert.deepEqual(d.feeds, [[1]]);
+  assert.equal(d.surplus[0][0], 5);
 });
 
 test("change budgets accrue per minute of game time up to a cap", () => {
-  const { cosmos, orchid, bee } = DEFAULT_CONFIG.budgets;
-  assert.equal(cosmos.size * 2, orchid.size);
-  assert.equal(bee.size, 5 * orchid.size);
-  assert.equal(orchid.perMinute, 7 * cosmos.perMinute);
-  for (const b of [cosmos, orchid, bee]) assert.equal(b.cap, b.perMinute, "a minute's worth");
-  // Over a default game: 40% of a full-size cosmos or bee, 140% of an orchid.
-  const total = (b) => b.perMinute * DEFAULT_CONFIG.minutes;
-  assert.deepEqual([cosmos, orchid, bee].map((b) => total(b) / b.size), [0.4, 1.4, 0.4]);
-  assert.equal(available(cosmos, { bank: 0, atMs: 0 }, 30000), 110);
-  assert.equal(available(cosmos, { bank: 5, atMs: 30000 }, 45000), 60);
-  assert.equal(available(cosmos, { bank: 0, atMs: 0 }, 3600000), 220);
+  const { flower: f, bee } = DEFAULT_CONFIG.budgets;
+  for (const b of [f, bee]) assert.equal(b.cap, b.perMinute, "a minute's worth");
+  assert.equal(available(f, { bank: 0, atMs: 0 }, 30000), 110);
+  assert.equal(available(f, { bank: 5, atMs: 30000 }, 45000), 60);
+  assert.equal(available(f, { bank: 0, atMs: 0 }, 3600000), 220);
+  assert.equal(available(bee, { bank: 0, atMs: 0 }, 30000), 1100);
 });
 
-test("try a flower: answers and timings", async () => {
+test("try a flower: responses, percent, energy and CPU time", async () => {
   const config = normalizeConfig({});
-  const r = await tryFlower({ config, kind: "cosmos", code: `def flower(c):\n    return c + 1\n`, challenges: [1, 2, "x"] });
+  const r = await tryFlower({ config, code: `def flower(c, ledger):\n    return c + len(ledger), 40\n`, challenges: [1, 2, "x"], ledger: [{ round: 1 }] });
   assert.deepEqual(r.results.map((x) => x.r), [2, 3, null]);
+  assert.deepEqual(r.results.map((x) => x.percent), [40, 40, null]);
+  assert.ok(r.results[0].energy > 0 && typeof r.results[0].ms === "number");
+  assert.equal(r.results[0].energy, excessEnergy(config, r.size, r.results[0].ms));
   assert.ok(r.results[2].error);
 });
 
-test("try a bee: unpaced, in a garden of its own two flowers", async () => {
+test("try a bee: unpaced, in a garden of its own flower", async () => {
   const config = normalizeConfig({});
-  const s = starters(config);
   const t0 = performance.now();
-  const r = await tryBee({ config, programs: s, rounds: 100 });
+  const r = await tryBee({ config, programs: starters(config), rounds: 100 });
   assert.equal(r.rounds, 100);
-  assert.ok(performance.now() - t0 < 100 * 200 / 2, "much faster than real time");
-  assert.ok(r.actions.length > 20 && r.feeds > 0);
+  assert.ok(performance.now() - t0 < (100 * 200) / 2, "much faster than real time");
+  assert.ok(r.actions.length > 20 && r.feeds > 0 && r.nectar > 0 && r.surplus > 0);
 });
