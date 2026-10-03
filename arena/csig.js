@@ -98,6 +98,7 @@ async function labelGame(G) {
 
 const REPLAY_CACHE = path.join(ARENA_DIR, "runs", "csig-replay.json");
 let replayCache = null;
+let replayCalls = 0;
 const sig = (r) => (r && typeof r === "object" ? `${r.nodes}|${Array.isArray(r.edges) ? r.edges.length : "-"}|${Array.isArray(r.labels) ? typeof r.labels[0] : "-"}|${"edgeLabels" in r}` : typeof r);
 const canon = (v) => JSON.stringify(v, (k, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map((key) => [key, x[key]])) : x));
 
@@ -124,6 +125,8 @@ async function replayGame(G, prev) {
       for (const C of cosmosSets.filter((c) => c.persona !== t.persona)) {
         const k = `${crypto.createHash("sha1").update(o.code).digest("hex").slice(0, 16)}|${C.uuid}|${C.team}|${C.version}`;
         if (!replayCache[k]) {
+          // A garden that starts meanwhile gets the CPU back: stop replaying (the rest is done next time; results are cached).
+          if (++replayCalls % 5 === 0 && (await one("SELECT count(*)::int AS n FROM games WHERE status = 'running'")).n) { G.replaySkipped = true; return; }
           const r = await tryFlower({ config: { ...G.config }, code: o.code, kind: "orchid", challenges: C.samples.map((s) => (typeof s.c === "string" ? JSON.parse(s.c) : s.c)) });
           let exact = 0, shape = 0;
           C.samples.forEach((s, i) => { const x = r.results[i]; if (x && x.r != null) { if (canon(x.r) === canon(s.r)) exact++; if (sig(x.r) === sig(s.r)) shape++; } });
@@ -210,6 +213,8 @@ function gameSummary(G, seen) {
     spread: fitness.length ? Math.max(...fitness) - Math.min(...fitness) : null,
     sessionChanges: G.changes.filter((c) => c.atMs > 0 && c.source === "session").length, scaffoldChanges: G.changes.filter((c) => c.atMs > 0 && c.source === "scaffold").length,
     timeouts: sum(cosmos.map((c) => c.timeouts)) + sum(orchids.map((o) => o.timeouts)), tooSlow: G.feeds.too_slow,
+    cosmosNoAnswer: sum(cosmos.map((c) => c.asks)) ? sum(cosmos.map((c) => c.none)) / sum(cosmos.map((c) => c.asks)) : null,
+    orchidNoAnswer: (() => { const n = sum(orchids.map((o) => G.astats.get(`${o.team.teamId}:orchid:${o.version}`)?.n || 0)); return n ? sum(orchids.map((o) => G.astats.get(`${o.team.teamId}:orchid:${o.version}`)?.none || 0)) / n : null; })(),
     fresh, newIdeas: G.newIdeas,
     exactCopies: orchids.filter((o) => o.rep?.exactCopies?.length).map((o) => `${o.team.name} orchid v${o.version} = ${o.rep.exactCopies.map((x) => `${x.team} cosmos (game ${x.game})`).join(", ")}`),
   };
@@ -236,7 +241,8 @@ function trajectoryWord(levels) {
 async function cohortReport(arenaId) {
   const arena = await one("SELECT * FROM arena.arenas WHERE id = $1", [arenaId]);
   if (!arena) { p(`(no arena ${arenaId})`); return null; }
-  const rows = await all("SELECT * FROM arena.games WHERE arena_id = $1 AND stage IN ('judged', 'done', 'interviewed', 'played') ORDER BY generation", [arenaId]);
+  const upTo = Number(args.upto || 99);
+  const rows = (await all("SELECT * FROM arena.games WHERE arena_id = $1 AND stage IN ('judged', 'done', 'interviewed', 'played') ORDER BY generation", [arenaId])).filter((r) => r.generation <= upTo);
   const s = arena.settings || {};
   p(`## ${arenaId}${s.experiment ? ` (arm: ${s.experiment.arm})` : ""}`);
   p(`${s.description || arena.preset}. Common knowledge: ${s.common ? `\`${s.common.dir}\`` : "none"}. ${rows.length} game(s) played.`);
@@ -253,11 +259,11 @@ async function cohortReport(arenaId) {
   }
   if (!sums.length) return { arenaId, sums };
   table(["game", "teams (bred)", "cosmos mechanisms at the end", "level: mean / feed-weighted / max", "costly cosmos teams", "cosmos p90 compute (median / max)", "orchid p90 compute", "answer nodes cosmos / orchid", "bees that verify", "bee p90 ms",
-    "rival cosmos / orchid fed (gap)", "precision", "nectar per bee-round", "fitness spread", "changes: sessions / scaffolds", "dominant mechanism (share of rival nectar)", "winner's mechanism", "new this game", "new ideas (judges)", "timeouts / too slow"],
+    "rival cosmos / orchid fed (gap)", "precision", "nectar per bee-round", "fitness spread", "changes: sessions / scaffolds", "dominant mechanism (share of rival nectar)", "winner's mechanism", "new this game", "new ideas (judges)", "timeouts / too slow", "no answer: cosmos / orchid asks"],
   sums.map((x) => [x.G.gen, `${x.G.teams.length} (${x.G.teams.filter((t) => t.bred).length})`, x.mix || "-", `${f2(x.meanLevel)} / ${f2(x.feedLevel)} / ${x.maxLevel}`, `${x.costlyTeams}/${x.G.teams.length}`,
     `${pct(x.cosmosCompute)} / ${pct(x.maxCosmosCompute)}`, pct(x.orchidCompute), `${x.cosmosNodes ?? "-"} / ${x.orchidNodes ?? "-"}`, `${x.verifying}/${x.G.teams.length}`, f2(x.beeP90),
     `${pct(x.cosmosFed)} / ${pct(x.orchidFed)} (${f2(x.gap)})`, f2(x.precision), x.nectarPerBeeRound?.toFixed(3) ?? "-", f2(x.spread), `${x.sessionChanges} / ${x.scaffoldChanges}`,
-    x.dominant ? `${x.dominant.mechanism} (${pct(x.dominant.share)})` : "-", x.winnerMechanism || "-", x.fresh.join(", ") || "-", x.newIdeas, `${x.timeouts} / ${x.tooSlow}`]));
+    x.dominant ? `${x.dominant.mechanism} (${pct(x.dominant.share)})` : "-", x.winnerMechanism || "-", x.fresh.join(", ") || "-", x.newIdeas, `${x.timeouts} / ${x.tooSlow}`, `${pct(x.cosmosNoAnswer)} / ${pct(x.orchidNoAnswer)}`]));
 
   p("Cosmos versions (rival fed = share of other teams' visits that ended in a feed):");
   table(["game", "team", "v", "mechanism", "tags", "difficulty / summary", "level", "p90 ms", "nodes", "rival visits", "rival fed", "label from"],
@@ -316,6 +322,7 @@ async function main() {
       ["new mechanisms or tags by game", ...per((x) => x.fresh.length)],
       ["new ideas (judges) by game", ...per((x) => x.newIdeas)],
       ["fitness spread by game", ...per((x) => f2(x.spread))],
+      ["cosmos asks with no answer by game", ...per((x) => pct(x.cosmosNoAnswer))],
       ["trajectory", ...ok.map((r) => trajectoryWord(r.sums.map((x) => x.feedLevel)))],
     ]);
     void n;
