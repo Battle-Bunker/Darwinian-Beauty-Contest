@@ -134,17 +134,24 @@ function callFlower(req) {
   const c = newContext();
   vm.runInContext(PRELUDE(setup.game), c);
   c.__ledger = flowerLedger.snapshot();
+  vm.runInContext(`globalThis.__c = ${jsonArg(req.c)};`, c);
   const t0 = performance.now(), cpu0 = process.cpuUsage();
+  let cpu = null;
   try {
+    // The flower's compute: its program, then flower(challenge, ledger). Encoding the reply isn't counted
+    // (as in the Python runner).
     script.runInContext(c, { timeout: setup.ms });
     if (vm.runInContext("typeof __fns.flower", c) !== "function") throw new Error("program must define function flower(challenge, ledger)");
     const left = Math.max(1, Math.round(setup.ms - (performance.now() - t0)));
-    const r = JSON.parse(vm.runInContext(encodeCall("flower", `[${jsonArg(req.c)}, globalThis.__ledger]`), c, { timeout: left }));
-    const cpu = cpuMs(cpu0);
-    if (r.s && r.s.length > maxChars()) return out({ e: `flower returned something too large (over ${maxChars()} characters)`, cpu });
-    return out({ v: JSON.parse(r.s), cpu });
+    vm.runInContext(`globalThis.__r = __fns.flower(__c, __ledger);`, c, { timeout: left });
+    cpu = cpuMs(cpu0);
+    const s = vm.runInContext(`(() => { const r = globalThis.__r;
+      if (r !== undefined && r !== null && typeof r === "object" && typeof r.then === "function") throw new Error("flower must not be async");
+      try { return JSON.stringify(r === undefined ? null : r); } catch (e) { throw new Error("flower returned something that is not plain data"); } })()`, c, { timeout: setup.ms });
+    if (s.length > maxChars()) return out({ e: `flower returned something too large (over ${maxChars()} characters)`, cpu });
+    return out({ v: JSON.parse(s), cpu });
   } catch (e) {
-    return out({ e: timedOut(e) ? "Timeout: took too long" : short(e), cpu: cpuMs(cpu0) });
+    return out({ e: timedOut(e) ? "Timeout: took too long" : short(e), cpu: cpu ?? cpuMs(cpu0) });
   }
 }
 
