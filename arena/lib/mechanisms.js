@@ -81,7 +81,9 @@ export function keywordBee(code) {
 
 // Labels are cached by skeleton (ARENA_MECH_CACHE overrides the file, e.g. for tests).
 const cacheFile = () => process.env.ARENA_MECH_CACHE || path.join(ARENA_DIR, "runs", "mechanisms-cache.json");
-const PROMPT_VERSION = 2;
+// Bump a kind's version when its definitions change: its labels are classified again. Cosmos 3: "adaptive" excludes a
+// search that simply runs until its time limit (that is "time-bounded").
+const KIND_VERSION = { cosmos: 3, orchid: 2, bee: 2 };
 let cache = null;
 function loadCache() {
   if (cache) return cache;
@@ -97,9 +99,9 @@ there gives nothing) and a BEE. Flowers answer an integer challenge with a graph
 
 const take = (s, n) => (s.length > n ? s.slice(0, n) + "\n# ... (cut)" : s);
 
-/** The prompt for one team's programs in one game: versions = [{ kind, version, code }] (distinct skeletons only). */
+/** The prompt for a batch of programs: versions = [{ kind, version, code }] (distinct skeletons only), numbered in order. */
 export function classifierPrompt(versions) {
-  const blocks = versions.map((v) => `## ${v.kind.toUpperCase()} v${v.version}\n\`\`\`python\n${take(v.code, v.kind === "bee" ? 14000 : 9000)}\n\`\`\``).join("\n\n");
+  const blocks = versions.map((v, i) => `## [${i + 1}] ${v.kind.toUpperCase()} v${v.version}\n\`\`\`python\n${take(v.code, v.kind === "bee" ? 14000 : 9000)}\n\`\`\``).join("\n\n");
   return `Classify each program below.
 
 For each COSMOS: "mechanism", one of:
@@ -111,10 +113,11 @@ For each COSMOS: "mechanism", one of:
 - "anytime": an optimisation whose answer quality grows with time, graded by a score a bee can compute
 - "other"
 (for an answer that combines several kinds of proof, the costliest one, with the tag "combined")
-and "tags" (any that apply): "time-bounded" (uses the clock to spend most of its time limit), "adaptive" (the amount of
-work proved or demanded changes with the challenge, the time left or over the game; a rule merely seeded by the challenge
-is not adaptive), "combined" (two or more different kinds of costly proof in one answer; a cheap badge next to a proof
-doesn't count), "secret"
+and "tags" (any that apply): "time-bounded" (uses the clock to spend most of its time limit: a search that runs until its
+time is up, doing as much work as fits), "adaptive" (the program deliberately sets how much work it proves, e.g. a
+difficulty or target chosen per challenge or changed from what it has seen during the game; NOT just running until the
+time limit, which is "time-bounded", and NOT a rule seeded by the challenge), "combined" (two or more different kinds of
+costly proof in one answer; a cheap badge next to a proof doesn't count), "secret"
 (relies on hidden constants only its own bee knows), "own-bee-handshake" (a private signal for its own bee),
 "challenge-tied" (the work depends on the challenge), plus "puzzle:<name>" for a certificate or anytime puzzle
 (e.g. "puzzle:paley-clique", "puzzle:graceful", "puzzle:hashcash"). Add "difficulty": a short phrase (e.g. "10 zero bits,
@@ -134,8 +137,8 @@ For each BEE: "checks", one of: "none", "shape-stats" (learns or counts answer s
 
 Every item also gets "summary": one sentence.
 
-Reply with JSON only: {"items": [{"kind": "cosmos"|"orchid"|"bee", "version": <number>, ...}]}, one item per program below,
-in the same order.
+Reply with JSON only: {"items": [{"n": <its [number]>, "kind": "cosmos"|"orchid"|"bee", "version": <number>, ...}]}, one item
+per program below, in the same order.
 
 ${blocks}`;
 }
@@ -164,35 +167,52 @@ function normalise(label, kind) {
   return { ...label, mechanism: /hashcash|hash|nonce|pow/.test(puzzle) ? "hash-pow" : "certificate", tags: [...new Set([...tags, "combined"])] };
 }
 
-/**
- * Classify one team's programs of one game. versions: [{ kind, version, code }]. Versions sharing a skeleton are
- * classified once (the latest of them is shown). Returns Map("kind:version" -> label), each label with keyword evidence
- * attached ({ kw }). callModel: lib/llm.js callModel (null: cached labels and keyword evidence only); ctx: its ledger context.
- */
-export async function classifyTeamGame(versions, { callModel, ctx = {}, model = "haiku", log = () => {} } = {}) {
-  if (/fable/i.test(model)) throw new Error("never a Fable model");
+const keyOf = (v) => `${KIND_VERSION[v.kind] ?? 1}:${v.kind}:${skeletonHash(v.code)}`;
+
+/** Programs still to classify (distinct skeletons without a cached label of their kind's current version). */
+export function unlabelled(versions) {
   const store = loadCache();
   const bySkel = new Map();
-  for (const v of versions) bySkel.set(`${v.kind}:${skeletonHash(v.code)}`, v); // later versions win
-  const keyOf = (v) => `${PROMPT_VERSION}:${v.kind}:${skeletonHash(v.code)}`;
-  const todo = callModel ? [...bySkel.values()].filter((v) => !store[keyOf(v)]) : []; // no model: cached labels and keywords only
-  for (let i = 0; i < todo.length; i += 6) {
-    const batch = todo.slice(i, i + 6);
+  for (const v of versions) bySkel.set(keyOf(v), v); // later versions win
+  return [...bySkel.entries()].filter(([k]) => !store[k]).map(([, v]) => v);
+}
+
+/**
+ * Classify programs (any teams, any kinds) in batches of up to 8 programs or ~40k characters. versions:
+ * [{ kind, version, code, ... }]. Returns a function label(v) -> label with keyword evidence ({ kw }) attached.
+ * callModel: lib/llm.js callModel (null: cached labels and keyword evidence only); ctx: its ledger context.
+ */
+export async function classifyPrograms(versions, { callModel, ctx = {}, model = "haiku", log = () => {} } = {}) {
+  if (/fable/i.test(model)) throw new Error("never a Fable model");
+  const store = loadCache();
+  const todo = callModel ? unlabelled(versions) : [];
+  const batches = [];
+  for (const v of todo) {
+    const size = Math.min(v.code.length, v.kind === "bee" ? 14000 : 9000);
+    const last = batches[batches.length - 1];
+    if (last && last.items.length < 8 && last.chars + size <= 40000) { last.items.push(v); last.chars += size; } else batches.push({ items: [v], chars: size });
+  }
+  await Promise.all(batches.map(async ({ items: batch }) => {
     let items = null;
     for (let attempt = 0; attempt < 2 && !items; attempt++) {
       const r = await callModel({ model, system: CLASSIFIER_SYSTEM, prompt: classifierPrompt(batch) + (attempt ? "\n\nReply with the JSON object only." : ""), ctx: { purpose: "classifier", ...ctx } });
       const j = parseJson(r.text);
       if (j && Array.isArray(j.items) && j.items.length === batch.length) items = j.items;
     }
-    if (!items) { log(`  classifier: no usable reply for ${batch.map((b) => `${b.kind} v${b.version}`).join(", ")}`); continue; }
-    batch.forEach((v, k) => { store[keyOf(v)] = clean({ ...items[k], kind: v.kind }); });
+    if (!items) { log(`  classifier: no usable reply for ${batch.map((b) => `${b.kind} v${b.version}`).join(", ")}`); return; }
+    const byN = new Map(items.filter((it) => Number.isInteger(it.n)).map((it) => [it.n, it]));
+    batch.forEach((v, k) => { const it = byN.get(k + 1) || items[k]; store[keyOf(v)] = clean({ ...it, kind: v.kind }); });
     saveCache();
-  }
-  const out = new Map();
-  for (const v of versions) {
+  }));
+  return (v) => {
     const llm = normalise(store[keyOf(v)] || null, v.kind);
     const kw = v.kind === "bee" ? keywordBee(v.code) : keywordCosmos(v.code);
-    out.set(`${v.kind}:${v.version}`, { ...(llm || {}), llm: !!llm, kw, skeleton: skeletonHash(v.code) });
-  }
-  return out;
+    return { ...(llm || {}), llm: !!llm, kw, skeleton: skeletonHash(v.code) };
+  };
+}
+
+/** One team's programs of one game: Map("kind:version" -> label). */
+export async function classifyTeamGame(versions, opts = {}) {
+  const label = await classifyPrograms(versions, opts);
+  return new Map(versions.map((v) => [`${v.kind}:${v.version}`, label(v)]));
 }

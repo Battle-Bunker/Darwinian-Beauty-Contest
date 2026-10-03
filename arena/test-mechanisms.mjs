@@ -69,14 +69,15 @@ check("level: rule 0, hash-pow 2, adaptive certificate 4", levelOf({ mechanism: 
 
 const versions = [{ kind: "cosmos", version: 1, code: pow }, { kind: "orchid", version: 1, code: rule }, { kind: "bee", version: 1, code: bee1 }, { kind: "bee", version: 2, code: bee2 }];
 const prompt = classifierPrompt(versions);
-check("prompt: every program, in order", /## COSMOS v1/.test(prompt) && /## ORCHID v1/.test(prompt) && /## BEE v2/.test(prompt) && prompt.indexOf("COSMOS v1") < prompt.indexOf("ORCHID v1"));
+check("prompt: every program, numbered, in order", /## \[1\] COSMOS v1/.test(prompt) && /## \[2\] ORCHID v1/.test(prompt) && /## \[4\] BEE v2/.test(prompt) && prompt.indexOf("COSMOS v1") < prompt.indexOf("ORCHID v1"));
+check("prompt: a search that runs until its time limit is time-bounded, not adaptive", /NOT just running until the\s+time limit/.test(prompt));
 
 // A fake model: replies per item; counts calls (a scaffold's retuned bee shares its skeleton: classified once).
 let calls = 0;
 const fake = async ({ model, prompt }) => {
   calls++;
   if (/fable/i.test(model)) throw new Error("fable");
-  const items = [...prompt.matchAll(/## (COSMOS|ORCHID|BEE) v(\d+)/g)].map(([, k, v]) => ({ kind: k.toLowerCase(), version: Number(v),
+  const items = [...prompt.matchAll(/## \[(\d+)\] (COSMOS|ORCHID|BEE) v(\d+)/g)].reverse().map(([, n, k, v]) => ({ n: Number(n), kind: k.toLowerCase(), version: Number(v),
     ...(k === "COSMOS" ? { mechanism: "hash-pow", tags: ["time-bounded", "challenge-tied"], difficulty: "10 bits" } : k === "ORCHID" ? { strategy: "look-alike", imitates: "a ring" } : { checks: "work-count", threshold: "adaptive" }), summary: "x" }));
   return { text: "Here you go: " + JSON.stringify({ items }) };
 };

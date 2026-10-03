@@ -15,7 +15,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { ARENA_DIR, all, one, pool } from "./lib/db.js";
 import { callModel } from "./lib/llm.js";
-import { BASE_LEVEL, classifyTeamGame, keywordBee, keywordCosmos, levelOf } from "./lib/mechanisms.js";
+import { BASE_LEVEL, classifyPrograms, keywordCosmos, levelOf, unlabelled } from "./lib/mechanisms.js";
 import { EXPERIMENTS } from "./lib/presets.js";
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((acc, a, i, arr) => {
@@ -74,24 +74,22 @@ async function loadGame(arena, row) {
 
 async function labelGame(G) {
   G.labels = new Map(); // `${teamId}:${kind}:${version}` -> label
-  // Teams in parallel (the model calls share lib/llm.js's concurrency limit).
-  await Promise.all(G.teams.map(async (t) => {
-    const versions = G.programs.filter((x) => x.team_id === t.teamId).map((x) => ({ kind: x.kind, version: x.version, code: x.code }));
-    if (!versions.length) return;
-    const ls = await classifyTeamGame(versions, {
-      callModel: args.classify ? callModel : null, ctx: { arenaId: `analysis:${G.arena.id}`, gameId: G.row.id, personaId: t.persona },
-      log: (m) => console.error(`[${G.arena.id} g${G.gen} ${t.name}]${m}`),
-    });
-    for (const [k, l] of ls) {
-      const [kind, version] = k.split(":");
-      const label = kind === "bee"
-        ? { checks: l.checks ?? (l.kw.checks.find((c) => c !== "learns" && c !== "random-challenges") || (l.kw.checks.includes("learns") ? "shape-stats" : "none")), threshold: l.threshold ?? (l.kw.threshold ? "fixed" : "none"), tags: l.tags ?? l.kw.checks, summary: l.summary || "", llm: l.llm, kw: l.kw }
-        : kind === "cosmos"
-          ? { mechanism: l.mechanism ?? l.kw.mechanism, tags: l.tags ?? l.kw.tags, difficulty: l.difficulty || "", summary: l.summary || "", llm: l.llm, kw: l.kw }
-          : { strategy: l.strategy ?? "?", imitates: l.imitates || "", tags: l.tags ?? [], summary: l.summary || "", llm: l.llm, kw: l.kw };
-      G.labels.set(`${t.teamId}:${kind}:${version}`, label);
-    }
-  }));
+  const versions = G.programs.filter((x) => G.teams.some((t) => t.teamId === x.team_id)).map((x) => ({ team: x.team_id, kind: x.kind, version: x.version, code: x.code }));
+  if (args.count) { const u = unlabelled(versions); G.unlabelled = u; return; }
+  // One game's programs in shared batches (up to 8 programs a call), so few calls per game.
+  const label = await classifyPrograms(versions, {
+    callModel: args.classify ? callModel : null, ctx: { arenaId: `analysis:${G.arena.id}`, gameId: G.row.id },
+    log: (m) => console.error(`[${G.arena.id} g${G.gen}]${m}`),
+  });
+  for (const v of versions) {
+    const l = label(v);
+    const lb = v.kind === "bee"
+      ? { checks: l.checks ?? (l.kw.checks.find((c) => c !== "learns" && c !== "random-challenges") || (l.kw.checks.includes("learns") ? "shape-stats" : "none")), threshold: l.threshold ?? (l.kw.threshold ? "fixed" : "none"), tags: l.tags ?? l.kw.checks, summary: l.summary || "", llm: l.llm, kw: l.kw }
+      : v.kind === "cosmos"
+        ? { mechanism: l.mechanism ?? l.kw.mechanism, tags: l.tags ?? l.kw.tags, difficulty: l.difficulty || "", summary: l.summary || "", llm: l.llm, kw: l.kw }
+        : { strategy: l.strategy ?? "?", imitates: l.imitates || "", tags: l.tags ?? [], summary: l.summary || "", llm: l.llm, kw: l.kw };
+    G.labels.set(`${v.team}:${v.kind}:${v.version}`, lb);
+  }
 }
 
 // ---------------------------------------------------------------- replay
@@ -303,6 +301,19 @@ async function main() {
   p();
   p(`Levels: 0 a cheap rule or badge, 1 work a bee can't check, 2 hash proof of work, 3 a checkable puzzle, sequential work or graded anytime optimisation, +1 for adaptive difficulty or combined proofs (at most 4). Labels: ${args.classify ? "haiku classifier (cached), keyword evidence where it had no reply" : "cached classifier labels where present, else keyword evidence"}.`);
   p();
+  if (args.count) {
+    let n = { cosmos: 0, orchid: 0, bee: 0 }, chars = 0;
+    for (const id of ids) {
+      const arena = await one("SELECT * FROM arena.arenas WHERE id = $1", [id]);
+      for (const row of await all("SELECT * FROM arena.games WHERE arena_id = $1 AND stage IN ('judged', 'done', 'interviewed', 'played') ORDER BY generation", [id])) {
+        const G = await loadGame(arena, row);
+        await labelGame(G);
+        for (const v of G.unlabelled) { n[v.kind]++; chars += Math.min(v.code.length, v.kind === "bee" ? 14000 : 9000); }
+      }
+    }
+    console.log(`to classify: ${JSON.stringify(n)}, ${chars} characters of code`);
+    return;
+  }
   const reports = [];
   for (const id of ids) reports.push(await cohortReport(id));
   const ok = reports.filter((r) => r?.sums?.length);
