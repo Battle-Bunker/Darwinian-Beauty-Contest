@@ -200,8 +200,8 @@ export function requestHandler(ctx) {
           const challenges = Array.isArray(req.challenges) && req.challenges.length ? req.challenges : sampleChallenges(config);
           const t = await api.tryFlower(tok, gPath, req.code, challenges, Array.isArray(req.ledger) ? req.ledger : undefined);
           const res = t.results || [];
-          out = { ok: !t.error && res.every((r) => !r.error), error: t.error, results: res,
-            text: t.error ? `fails to load: ${t.error}` : res.map((r) => `flower(${JSON.stringify(r.c).slice(0, 50)}) -> ${r.error ? `ERROR ${r.error}` : `${JSON.stringify(r.r).slice(0, 160)}, percent ${r.percent}`}` +
+          out = { ok: !t.error && res.every((r) => !r.error), error: t.error, results: res, size: t.size ?? null,
+            text: t.error ? `fails to load: ${t.error}` : (t.size != null ? `size ${n0(t.size)} nodes\n` : "") + res.map((r) => `flower(${JSON.stringify(r.c).slice(0, 50)}) -> ${r.error ? `ERROR ${r.error}` : `${JSON.stringify(r.r).slice(0, 160)}, percent ${r.percent}`}` +
               `  (energy ${r.energy != null ? n0(r.energy) : "-"}, ${r.ms ?? "?"} ms CPU)`).join("\n") };
         } else {
           const opts = { rounds: Number.isFinite(req.rounds) ? req.rounds : undefined, flower: typeof req.flower === "string" ? req.flower : undefined };

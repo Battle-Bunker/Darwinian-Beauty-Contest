@@ -23,7 +23,7 @@ import { WS_ROOT, diskBytes, killLeftovers, wsDir } from "./lib/workspace.js";
 import { publicGameUrl } from "./lib/api.js";
 import { GameStream } from "./lib/stream.js";
 import { syncPause } from "./lib/gamecontrol.js";
-import { computeGameMetrics } from "./lib/metrics.js";
+import { computeGameMetrics, scaffoldsOf, submitsOf } from "./lib/metrics.js";
 import { FOUNDERS } from "./lib/personas.js";
 import { breed, decideRetirements, retire, seedBreeders } from "./lib/population.js";
 import { DEFAULT_SESSION, EXPERIMENTS, PRESETS } from "./lib/presets.js";
@@ -360,18 +360,8 @@ async function playGame(arena, ctx, log) {
 
 async function analyseGame(arena, ctx, log) {
   const { gameRow } = ctx;
-  // Who submitted each version (a session, the scaffold, or the runner's lobby fallback): arena.requests.
-  const submits = await all(`SELECT e.team_id, r.kind, r.version, r.refused, r.source, s.no AS session_no FROM arena.requests r LEFT JOIN arena.sessions s ON s.id = r.session_id
-                               JOIN arena.entries e ON e.game_id = r.game_id AND e.persona_id = r.persona_id
-                              WHERE r.game_id = $1 AND r.op = 'submit' AND r.ok AND r.version IS NOT NULL`, [gameRow.id]);
-  const m = await computeGameMetrics(ctx.gPath, { submits });
-  // Scaffolds: who ran one, how often it started, crashed or was refused, its CPU, and what it submitted.
-  m.scaffolds = await all(`SELECT e.team_id, e.team_name AS team, count(*)::int AS starts, count(*) FILTER (WHERE sc.status = 'crashed')::int AS crashes,
-        count(*) FILTER (WHERE sc.status = 'refused')::int AS refused, coalesce(sum(sc.cpu_seconds), 0) AS cpu_seconds, coalesce(sum(sc.throttled_ms), 0)::bigint AS throttled_ms,
-        (SELECT count(*)::int FROM arena.requests r WHERE r.game_id = sc.game_id AND r.persona_id = sc.persona_id AND r.source = 'scaffold' AND r.op = 'submit' AND r.ok) AS submits,
-        (SELECT count(*)::int FROM arena.requests r WHERE r.game_id = sc.game_id AND r.persona_id = sc.persona_id AND r.source = 'scaffold' AND r.op = 'submit' AND NOT r.ok) AS refused_submits,
-        min(sc.clock_start) AS first_start_ms
-      FROM arena.scaffolds sc JOIN arena.entries e ON e.game_id = sc.game_id AND e.persona_id = sc.persona_id WHERE sc.game_id = $1 GROUP BY 1, 2, sc.game_id, sc.persona_id`, [gameRow.id]);
+  const m = await computeGameMetrics(ctx.gPath, { submits: await submitsOf(all, gameRow.id) });
+  m.scaffolds = await scaffoldsOf(all, gameRow.id);
   // Storage: the stream files and the arena's workspaces (hard links counted once).
   const seen = new Set();
   const sharedBytes = diskBytes(path.join(WS_ROOT, arena.id, ".shared", `g${gameRow.generation}`), seen);

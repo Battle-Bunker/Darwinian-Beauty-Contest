@@ -1,12 +1,13 @@
-// What signalling mechanism a team's programs use (for the costly-signalling experiments, §22): deterministic keyword
-// checks on the code, and a haiku classifier (cached on disk by program skeleton) that reads a team's cosmos, orchid and
-// bee versions of one game together. Never a Fable model.
+// What a team's programs do (one flower per team): deterministic keyword checks on the code, and a haiku classifier (cached
+// on disk by program skeleton) that reads a team's flower and bee versions of one game together. In this variant a costly
+// signal costs the flower energy (E = (size cap − size) × max(0, 150 − CPU ms)), so the labels say both what a flower
+// proves and how it pays for it: its signalling mechanism and its percent policy. Never a Fable model.
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { ARENA_DIR } from "./db.js";
 
-/** Cosmos mechanisms, roughly from cheapest to most elaborate. */
+/** Flower signalling mechanisms, roughly from cheapest to most elaborate. */
 export const MECHANISMS = ["rule", "work-unchecked", "hash-pow", "sequential", "certificate", "anytime", "other"];
 /** Sophistication level: 0 a cheap rule or badge; 1 work a bee can't check; 2 hash proof of work; 3 a checkable search
  * puzzle, sequential work or graded anytime optimisation; +1 (at most 4) for adaptive difficulty or combined proofs. */
@@ -17,8 +18,10 @@ export function levelOf(label) {
   const extra = base >= 2 && (label.tags || []).some((t) => t === "adaptive" || t === "combined") ? 1 : 0;
   return Math.min(4, base + extra);
 }
-export const ORCHID_STRATEGIES = ["copy-rule", "corner-cut", "partial-work", "look-alike", "decoy", "other"];
-export const BEE_CHECKS = ["none", "shape-stats", "exact-rule", "work-count", "certificate-check", "mixed"];
+/** How a flower sets its percent (the share of the turn's excess energy it gives a feeding bee). */
+export const PERCENT_POLICIES = ["fixed", "by-challenge", "by-ledger", "by-visitor", "random", "other"];
+export const BEE_CHECKS = ["none", "shape-stats", "exact-rule", "work-count", "certificate-check", "ledger-value", "mixed"];
+export const BEE_FEEDS = ["always", "never", "by-check", "by-learned-value", "handshake-only", "random", "mixed"];
 
 /** Code without comments and docstrings (prose mentions mechanisms it doesn't use). */
 export function stripProse(code) {
@@ -49,8 +52,8 @@ const SEQ = /for\s+\w+\s+in\s+range\([^)]*\):\s*\n?\s*\w+\s*=\s*(?:hashlib\.\w+|
 const SCORE = /\bbest\b|\bscore\b|improv|anneal|climb|\btemperature\b/i;
 const ADAPT = /(?:difficulty|bits|target|zeros?)\s*=\s*[^\n]*(?:\bc\b|challenge|elapsed|remaining|left|time\.)/i;
 
-/** Keyword evidence for a cosmos (or any flower): { mechanism, tags } from the code alone. */
-export function keywordCosmos(code) {
+/** Keyword evidence for a flower: { mechanism, tags, percent } from the code alone. */
+export function keywordFlower(code) {
   const c = stripProse(code);
   const tags = [];
   const timed = TIME.test(c) && BUDGET.test(c);
@@ -63,7 +66,12 @@ export function keywordCosmos(code) {
   if (kinds.length > 1) tags.push("combined?");
   let mechanism = kinds[0] || (timed ? "work-unchecked" : "rule");
   if (puzzle && timed && SCORE.test(c) && !hash) mechanism = /cliq|paley|factori|prime/i.test(c) ? "certificate" : "anytime";
-  return { mechanism, tags };
+  if (/\bledger\b/.test(c.replace(/def\s+flower\s*\([^)]*\)/, ""))) tags.push("reads-ledger");
+  if (/GAME\s*\[\s*["']team["']\s*\]/.test(c)) tags.push("knows-own-team");
+  // The percent: the last item of every pair returned is a constant, or it is computed.
+  const rets = [...c.matchAll(/^[ \t]*return[ \t]*\(?(.+),[ \t]*([^,\n()]+?)[ \t]*\)?[ \t]*$/gm)].map((m) => m[2]);
+  const percent = rets.length && rets.every((x) => /^\d+(?:\.\d+)?$/.test(x)) ? "fixed" : /random\./.test(c) && /percent|pct/i.test(c) ? "random?" : tags.includes("reads-ledger") ? "by-ledger?" : "computed";
+  return { mechanism, tags, percent };
 }
 
 /** Keyword evidence for a bee: does it re-check work (hashes, certificates) or rules, or only learn from shapes? */
@@ -72,7 +80,7 @@ export function keywordBee(code) {
   const checks = [];
   if (HASH.test(c)) checks.push("work-count");
   if (PUZZLE.test(c)) checks.push("certificate-check");
-  if (/tasted|nectar/.test(c) && /\{\s*\}|dict\(|defaultdict|Counter/.test(c)) checks.push("learns");
+  if (/nectar|ledger/.test(c) && /\{\s*\}|dict\(|defaultdict|Counter/.test(c)) checks.push("learns");
   if (/random\.(?:randint|randrange|getrandbits|random)\(/.test(c)) checks.push("random-challenges");
   return { checks, threshold: /\b(?:T|THRESH\w*|threshold|need|enough|min_\w+)\s*=\s*\d/.test(c) };
 }
@@ -81,9 +89,8 @@ export function keywordBee(code) {
 
 // Labels are cached by skeleton (ARENA_MECH_CACHE overrides the file, e.g. for tests).
 const cacheFile = () => process.env.ARENA_MECH_CACHE || path.join(ARENA_DIR, "runs", "mechanisms-cache.json");
-// Bump a kind's version when its definitions change: its labels are classified again. Cosmos 3: "adaptive" excludes a
-// search that simply runs until its time limit (that is "time-bounded").
-const KIND_VERSION = { cosmos: 3, orchid: 2, bee: 2 };
+// Bump a kind's version when its definitions change: its labels are classified again.
+const KIND_VERSION = { flower: 1, bee: 1 };
 let cache = null;
 function loadCache() {
   if (cache) return cache;
@@ -93,9 +100,11 @@ function loadCache() {
 function saveCache() { fs.mkdirSync(path.dirname(cacheFile()), { recursive: true }); fs.writeFileSync(cacheFile(), JSON.stringify(cache)); }
 
 export const CLASSIFIER_SYSTEM = `You classify programs from a coding game. Reply with JSON only, no prose.
-The game: each team writes a COSMOS flower (honest: a bee that feeds there gets nectar), an ORCHID flower (a fake: feeding
-there gives nothing) and a BEE. Flowers answer an integer challenge with a graph {nodes, edges, labels, ...}. A cosmos has
-150 ms per answer, an orchid 100 ms, a bee 50 ms per decision. Bees can't see whose flower they are at, only the answers.`;
+The game: each team writes a FLOWER and a BEE. Every round each bee asks a flower drawn at random (its own team's too) a
+challenge. The flower returns [response, percent] within 150 ms; the bee then has 50 ms to feed or leave. The flower's excess
+energy for the turn is E = (1100 - its size in nodes) x max(0, 150 - its CPU ms): small, fast flowers have more to give. If
+the bee feeds, it gets percent% of E as nectar and the flower's team keeps the rest as surplus; if not, E is lost. Bees and
+flowers aren't told whose counterpart they met until the turn is over, but both read a ledger of earlier turns.`;
 
 const take = (s, n) => (s.length > n ? s.slice(0, n) + "\n# ... (cut)" : s);
 
@@ -104,40 +113,34 @@ export function classifierPrompt(versions) {
   const blocks = versions.map((v, i) => `## [${i + 1}] ${v.kind.toUpperCase()} v${v.version}\n\`\`\`python\n${take(v.code, v.kind === "bee" ? 14000 : 9000)}\n\`\`\``).join("\n\n");
   return `Classify each program below.
 
-For each COSMOS: "mechanism", one of:
-- "rule": a cheap rule or recognisable badge (formula, seeded pattern, fixed shape, degree labels); no costly work
-- "work-unchecked": spends time (e.g. a search until a deadline) but a bee can't check how much work was done
+For each FLOWER: "mechanism" (what its response proves), one of:
+- "rule": a cheap rule or recognisable badge (formula, seeded pattern, fixed shape, echo); no costly work
+- "work-unchecked": spends CPU time (e.g. a search until a deadline) but a bee can't check how much work was done
 - "hash-pow": hash proof of work (nonces or partial preimages whose hash has a rare property tied to the challenge)
 - "sequential": sequential work that can't be split up (chained hashes, repeated squaring) with checkpoints a bee can spot-check
-- "certificate": a hard search puzzle built from the challenge, answered with a solution that is quick to check (clique, colouring, labelling, factorisation...)
+- "certificate": a hard search puzzle built from the challenge, answered with a solution that is quick to check
 - "anytime": an optimisation whose answer quality grows with time, graded by a score a bee can compute
 - "other"
 (for an answer that combines several kinds of proof, the costliest one, with the tag "combined")
-and "tags" (any that apply): "time-bounded" (uses the clock to spend most of its time limit: a search that runs until its
-time is up, doing as much work as fits), "adaptive" (the program deliberately sets how much work it proves, e.g. a
-difficulty or target chosen per challenge or changed from what it has seen during the game; NOT just running until the
-time limit, which is "time-bounded", and NOT a rule seeded by the challenge), "combined" (two or more different kinds of
-costly proof in one answer; a cheap badge next to a proof doesn't count), "secret"
-(relies on hidden constants only its own bee knows), "own-bee-handshake" (a private signal for its own bee),
-"challenge-tied" (the work depends on the challenge), plus "puzzle:<name>" for a certificate or anytime puzzle
-(e.g. "puzzle:paley-clique", "puzzle:graceful", "puzzle:hashcash"). Add "difficulty": a short phrase (e.g. "10 zero bits,
-as many nonces as fit in 135 ms") or "".
+"percent_policy", one of: "fixed" (a constant), "by-challenge" (depends on the challenge), "by-ledger" (adapts to what the
+ledger shows, e.g. how often bees fed), "by-visitor" (guesses who is asking, e.g. its own bee, and pays differently),
+"random", "other"; "percent": its typical percent as a number, or null if it varies;
+and "tags" (any that apply): "time-bounded" (spends most of its time limit: energy it gives up), "lean" (written to keep size
+and CPU small, for energy), "adaptive" (deliberately sets how much work it proves per challenge or from the ledger; NOT just
+running until the time limit), "combined" (two or more kinds of costly proof), "own-bee-handshake" (a private signal between
+its own bee and flower), "secret" (relies on hidden constants), "challenge-tied", "reads-ledger", plus "puzzle:<name>".
+Add "difficulty": a short phrase (e.g. "10 zero bits, as many nonces as fit in 40 ms") or "".
 
-For each ORCHID: "strategy", one of: "copy-rule" (reproduces a rival cosmos's rule exactly), "corner-cut" (the same kind of
-work as a costly cosmos but less of it, or a faster/approximate version), "partial-work" (some real work hoping to clear a
-low threshold), "look-alike" (imitates the look of a cosmos without the work), "decoy" (deliberately junk or easy to spot),
-"other"; "imitates": what it imitates, briefly; "tags": any of "own-bee-tell" (a mark its own bee uses to avoid it),
-"alternating" (switches between imitations).
-
-For each BEE: "checks", one of: "none", "shape-stats" (learns or counts answer shapes/fingerprints, no verification),
-"exact-rule" (recomputes a known rule and compares), "work-count" (verifies proof-of-work items and counts them),
-"certificate-check" (verifies a puzzle solution or grades its quality), "mixed" (several of these); "threshold": "none",
-"fixed" or "adaptive" (moves with what it sees); "tags": any of "learns" (updates from nectar), "random-challenges",
-"handshake" (recognises its own team's flowers).
+For each BEE: "checks", one of: "none", "shape-stats" (learns or counts answer shapes), "exact-rule" (recomputes a known rule
+and compares), "work-count" (verifies proof-of-work items and counts them), "certificate-check" (verifies a puzzle solution
+or grades its quality), "ledger-value" (estimates from the ledger how much nectar answers like this pay), "mixed";
+"feeds", one of: "always", "never", "by-check", "by-learned-value", "handshake-only", "random", "mixed";
+"threshold": "none", "fixed" or "adaptive"; "tags": any of "learns" (updates from the ledger or nectar), "reads-ledger",
+"random-challenges", "handshake" (recognises its own team's flower), "avoids-own-flower", "prefers-own-flower".
 
 Every item also gets "summary": one sentence.
 
-Reply with JSON only: {"items": [{"n": <its [number]>, "kind": "cosmos"|"orchid"|"bee", "version": <number>, ...}]}, one item
+Reply with JSON only: {"items": [{"n": <its [number]>, "kind": "flower"|"bee", "version": <number>, ...}]}, one item
 per program below, in the same order.
 
 ${blocks}`;
@@ -153,14 +156,15 @@ function parseJson(text) {
 /** Normalise one classifier item. */
 function clean(it) {
   const tags = Array.isArray(it.tags) ? it.tags.map((t) => String(t).toLowerCase().slice(0, 40)) : [];
-  if (it.kind === "cosmos") return { mechanism: MECHANISMS.includes(it.mechanism) ? it.mechanism : "other", tags, difficulty: String(it.difficulty || "").slice(0, 120), summary: String(it.summary || "").slice(0, 300) };
-  if (it.kind === "orchid") return { strategy: ORCHID_STRATEGIES.includes(it.strategy) ? it.strategy : "other", imitates: String(it.imitates || "").slice(0, 160), tags, summary: String(it.summary || "").slice(0, 300) };
-  return { checks: BEE_CHECKS.includes(it.checks) ? it.checks : "none", threshold: ["none", "fixed", "adaptive"].includes(it.threshold) ? it.threshold : "none", tags, summary: String(it.summary || "").slice(0, 300) };
+  if (it.kind === "flower") return { mechanism: MECHANISMS.includes(it.mechanism) ? it.mechanism : "other", percentPolicy: PERCENT_POLICIES.includes(it.percent_policy) ? it.percent_policy : "other",
+    percent: Number.isFinite(Number(it.percent)) && it.percent !== null ? Number(it.percent) : null, tags, difficulty: String(it.difficulty || "").slice(0, 120), summary: String(it.summary || "").slice(0, 300) };
+  return { checks: BEE_CHECKS.includes(it.checks) ? it.checks : "none", feeds: BEE_FEEDS.includes(it.feeds) ? it.feeds : "mixed",
+    threshold: ["none", "fixed", "adaptive"].includes(it.threshold) ? it.threshold : "none", tags, summary: String(it.summary || "").slice(0, 300) };
 }
 
-/** A combined cosmos answer gets the mechanism of its costliest proof (the classifier sometimes says "other"). */
+/** A combined flower answer gets the mechanism of its costliest proof (the classifier sometimes says "other"). */
 function normalise(label, kind) {
-  if (!label || kind !== "cosmos" || label.mechanism !== "other") return label;
+  if (!label || kind !== "flower" || label.mechanism !== "other") return label;
   const tags = label.tags || [];
   const puzzle = tags.find((t) => t.startsWith("puzzle:"));
   if (!puzzle) return label;
@@ -206,7 +210,7 @@ export async function classifyPrograms(versions, { callModel, ctx = {}, model = 
   }));
   return (v) => {
     const llm = normalise(store[keyOf(v)] || null, v.kind);
-    const kw = v.kind === "bee" ? keywordBee(v.code) : keywordCosmos(v.code);
+    const kw = v.kind === "bee" ? keywordBee(v.code) : keywordFlower(v.code);
     return { ...(llm || {}), llm: !!llm, kw, skeleton: skeletonHash(v.code) };
   };
 }

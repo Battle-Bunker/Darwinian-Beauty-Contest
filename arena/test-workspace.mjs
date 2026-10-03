@@ -1,13 +1,14 @@
 #!/usr/bin/env node
-// Workspaces, the shared stream and the fair-play audit (no server, no model calls; uses the arena schema in dbc_live
-// for a throwaway arena row):
+// Workspaces, the streams and the fair-play audit (no server, no model calls; uses the arena schema in dbc_one for a
+// throwaway arena row):
 //   node arena/test-workspace.mjs
 // 1. prepareWorkspace writes the files a team needs (rules, interface, config, tools, its own versions, status), the
-//    live stream as a hard link to the runner's shared copy, and nothing secret; other teams' versions never appear.
-// 2. The shared stream grows in every workspace at once, a team damaging it through its link gets it repaired, and
-//    stream/mine.jsonl carries only the team's own private details. tools/stream.py reads it (summary, answers, sql).
+//    public stream as a hard link to the runner's shared copy, and nothing secret; other teams' versions never appear.
+// 2. The shared stream grows in every workspace at once, a team damaging it through its link gets it repaired;
+//    stream/ledger.jsonl and stream/mine.jsonl carry the team's own private fields and nobody else's.
+//    tools/ledger.py and tools/stream.py read them.
 // 3. The audit: reading the game's public API on localhost is fine; logins, credentials, writes, other hosts and
-//    ports, paths outside the workspace and writes into stream/ are violations.
+//    ports, raw sockets, paths outside the workspace and writes into stream/ are violations.
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -15,12 +16,13 @@ import path from "node:path";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "arena-ws-test-"));
 process.env.ARENA_WS_ROOT = root;
-const { prepareWorkspace, audit, allowedUrl, escapesWorkspace, wsDir } = await import("./lib/workspace.js");
+const { prepareWorkspace, audit, allowedUrl, escapesWorkspace } = await import("./lib/workspace.js");
 const { GameStream } = await import("./lib/stream.js");
-const { migrate, pool, q } = await import("./lib/db.js");
+const { DB_URL, migrate, pool, q } = await import("./lib/db.js");
 await migrate();
 let failed = 0;
 const check = (name, ok, extra = "") => { console.log(`${ok ? "ok  " : "FAIL"} ${name}${ok || !extra ? "" : `: ${String(extra).slice(0, 600)}`}`); if (!ok) failed++; };
+check("database: dbc_one, never dbc or dbc_live", /\/dbc_one(\?|$)/.test(DB_URL) || !/\/(dbc|dbc_live)(\?|$)/.test(DB_URL), DB_URL);
 
 const AID = `test-ws-${process.pid}`;
 await q("INSERT INTO arena.arenas (id, preset, settings, owner_name) VALUES ($1, 'test', $2, 'owner')", [AID, { config: {} }]);
@@ -32,126 +34,201 @@ const arena = { id: AID, settings: { config: {} } };
 const gameRow = { id: -1, generation: 1, game_short_id: "G" };
 
 const config = { language: "python", minutes: 2, feedCost: 10, challengeType: "int", responseType: "int", maxLen: 64, maxNodes: 512, revealOnFinish: true,
-  budgets: { cosmos: { size: 1100, perMinute: 220, cap: 220, ms: 150 }, orchid: { size: 2200, perMinute: 1540, cap: 1540, ms: 50 }, bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 25 } } };
+  budgets: { flower: { size: 1100, perMinute: 220, cap: 220, ms: 150 }, bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 50 } } };
 const viewFor = (me) => ({
-  game: { status: "running", clockMs: 30000, endMs: 120000, round: 400, config },
+  game: { status: "running", clockMs: 30000, endMs: 120000, round: 150, config },
   me: { teamId: me }, myTeam: { name: me === "T1" ? "Moonpetal" : "Show Your Work" }, participants: ["T1", "T2"],
-  interface: { types: { challenge: "int", response: "int", challengeMeans: "an integer", responseMeans: "an integer", rules: ["ints: whole numbers."] }, flower: "def flower(challenge): ...", bee: "def forage(seen, visit): ..." },
+  interface: { types: { challenge: "int", response: "int", challengeMeans: "an integer", responseMeans: "an integer", rules: ["ints: whole numbers."] },
+    flower: "def flower(challenge, ledger): ...", bee: "def first(ledger): ...\ndef decide(challenge, response, ledger): ..." },
   teams: [
-    { id: "T1", name: "Moonpetal", programs: me === "T1" ? { cosmos: [{ version: 1, size: 40, cost: 0, atMs: 0, code: "def flower(c):\n    return c\n" }, { version: 2, size: 41, cost: 2, atMs: 20000, code: "def flower(c):\n    return c + 1\n" }],
-      orchid: [{ version: 1, size: 30, cost: 0, atMs: 0, code: "def flower(c):\n    return 0\n" }], bee: [{ version: 1, size: 300, cost: 0, atMs: 0, code: "def forage(seen, visit):\n    return 'leave'\n" }] } : null, banks: null },
-    { id: "T2", name: "Show Your Work", programs: me === "T2" ? { cosmos: [{ version: 1, size: 40, cost: 0, atMs: 0, code: "SECRET_CODE_OF_T2 = 1\n" }], orchid: [], bee: [] } : null, banks: null },
+    { id: "T1", name: "Moonpetal", programs: me === "T1" ? { flower: [{ version: 1, size: 40, cost: 0, atMs: 0, code: "def flower(c, l):\n    return c, 50\n" }, { version: 2, size: 41, cost: 2, atMs: 20000, code: "def flower(c, l):\n    return c + 1, 50\n" }],
+      bee: [{ version: 1, size: 300, cost: 0, atMs: 0, code: "def first(l):\n    return 1\n\ndef decide(c, r, l):\n    return 'leave', 1\n" }] } : null, banks: null },
+    { id: "T2", name: "Show Your Work", programs: me === "T2" ? { flower: [{ version: 1, size: 40, cost: 0, atMs: 0, code: "SECRET_CODE_OF_T2 = 1\n" }], bee: [] } : null, banks: null },
   ],
   scores: [{ teamId: "T1", fitness: 1.1 }, { teamId: "T2", fitness: 0.9 }],
 });
 
-// A fake public stream: pages of actions.
+// A fake game: every turn with all its fields; the API pages show each team what it may see (RULES.md).
+const IDS = ["T1", "T2"];
+const turns = [];
 const acts = [];
-const addActs = (n) => { for (let i = 0; i < n; i++) { const seq = acts.length + 1; acts.push({ seq, atMs: seq * 100, round: seq, bee: seq % 2 ? "T1" : "T2", visit: Math.ceil(seq / 4), patch: seq % 3 ? "T2" : "T1",
-  kind: seq % 4 ? "cosmos" : "orchid", action: seq % 5 === 0 ? "feed" : "ask", ...(seq % 5 === 0 ? { nectar: seq % 4 !== 0 } : { c: seq % 7, r: (seq % 7) * 3, ms: 2.5 }) }); } };
-addActs(50);
+const addTurns = (n) => {
+  for (let i = 0; i < n; i++) {
+    const k = turns.length + 1, bee = IDS[k % 2], flower = IDS[Math.floor(k / 2) % 2], fed = k % 3 === 0, percent = 10 * (k % 7), energy = 1000 * k;
+    const t = { k, round: k, bee, flower, c: k % 5, r: (k % 5) * 3, fed, percent, energy, ms: 1.5, beeMs: 3, log: `hi ${k}` };
+    turns.push(t);
+    acts.push({ seq: acts.length + 1, atMs: (k - 1) * 200, round: k, turn: k, bee, flower, action: "arrive", _t: t });
+    acts.push({ seq: acts.length + 1, atMs: (k - 1) * 200 + 150, round: k, turn: k, bee, flower, action: fed ? "feed" : "leave", _t: t });
+    t.seq = acts.length;
+  }
+};
+const publicOf = (a) => {
+  const { _t: t, ...x } = a;
+  if (a.action === "arrive") return x;
+  return { ...x, c: t.c, r: t.r, surplus: t.fed ? (1 - t.percent / 100) * t.energy : 0, ...(t.fed ? { nectar: (t.percent / 100) * t.energy, percent: t.percent, energy: t.energy } : {}) };
+};
+const mineOf = (a, me) => {
+  const x = publicOf(a), t = a._t;
+  if (t.flower === me && a.action !== "arrive") Object.assign(x, { percent: t.percent, energy: t.energy, ms: t.ms, flowerVersion: 1 });
+  if (t.bee === me && a.action !== "arrive") Object.assign(x, { beeMs: t.beeMs, log: t.log, beeVersion: 1 });
+  return x;
+};
+const entryOf = (t, me) => ({ seq: t.seq, round: t.round, bee: IDS.indexOf(t.bee), flower: IDS.indexOf(t.flower), challenge: t.c, response: t.r, fed: t.fed,
+  nectar: t.fed ? (t.percent / 100) * t.energy : null, surplus: t.fed ? (1 - t.percent / 100) * t.energy : 0,
+  percent: t.fed || t.flower === me ? t.percent : null, energy: t.fed || t.flower === me ? t.energy : null, ms: t.flower === me ? t.ms : null });
+addTurns(25);
+const meOf = (tok) => tok.replace("tok-", "");
 const stream = new GameStream({ root: path.join(root, AID), gen: 1, gPath: "/x", gameUuid: null, teams: [{ id: "T1", name: "Moonpetal" }, { id: "T2", name: "Show Your Work" }],
-  fetchPage: async (after) => ({ actions: acts.filter((a) => a.seq > after).slice(0, 5000), lastSeq: acts.length, clockMs: acts.length * 100, status: "running" }),
-  // ?mine=1 with a team's token: its own bee's actions and those at its patch, with its private fields.
-  fetchMine: async (tok, after) => { const me = tok.replace("tok-", ""); return { actions: acts.filter((a) => a.seq > after && (a.bee === me || a.patch === me)).map((a) => ({ ...a, ...(a.bee === me ? { beeMs: 3, log: "hi" } : {}), ...(a.patch === me && a.ms ? { flowerVersion: 1 } : {}) })) }; } }).load();
-await stream.poll();
+  fetchPage: async (after) => ({ actions: acts.filter((a) => a.seq > after).slice(0, 5000).map(publicOf), lastSeq: acts.length, clockMs: turns.length * 200, status: "running" }),
+  // ?mine=1 with a team's token: its own bee's turns and those at its flower, with its private fields.
+  fetchMine: async (tok, after) => ({ actions: acts.filter((a) => a.seq > after && (a.bee === meOf(tok) || a.flower === meOf(tok))).map((a) => mineOf(a, meOf(tok))) }),
+  // The team ledger with a team's token: every finished turn, private fields only at its own flower.
+  fetchLedger: async (tok, after) => ({ participants: IDS, team: IDS.indexOf(meOf(tok)), entries: turns.filter((t) => t.seq > after).map((t) => entryOf(t, meOf(tok))) }) }).load();
 
-const apiBase = "http://localhost:4000/api/rooms/R/games/G";
+const apiBase = "http://localhost:4100/api/rooms/R/games/G";
 const p1 = { id: `${AID}/luna`, slug: "luna" }, p2 = { id: `${AID}/tess`, slug: "tess" };
 const { dir } = await prepareWorkspace({ arena, gameRow, persona: p1, view: viewFor("T1"), stream, apiBase, statusText: "Game running: 0:30 of 2:00\n", tok: "tok-T1" });
 const { dir: dir2 } = await prepareWorkspace({ arena, gameRow, persona: p2, view: viewFor("T2"), stream, apiBase, tok: "tok-T2" });
+await stream.poll();
 const has = (f) => fs.existsSync(path.join(dir, f));
-check("workspace: rules, interface, config, README, notebook, status", ["RULES.md", "interface.txt", "config.json", "README.md", "notebook.md", "status.txt"].every(has));
+check("workspace: rules, interface, config, README, notebook, status, schema", ["RULES.md", "interface.txt", "config.json", "README.md", "notebook.md", "status.txt", "stream/SCHEMA.md"].every(has));
 check("workspace: the notebook comes from the persona", fs.readFileSync(path.join(dir, "notebook.md"), "utf8") === "notes of luna");
-check("workspace: the tools", ["tools/_runner.py", "tools/submit.py", "tools/check.py", "tools/try.py", "tools/status.py", "tools/stream.py"].every(has));
-check("workspace: program files are the versions playing now", fs.readFileSync(path.join(dir, "cosmos.py"), "utf8").includes("return c + 1"));
-check("workspace: its own version history", has("history/cosmos/v1.py") && has("history/cosmos/v2.py") && /\| 0:20 \| cosmos \| v2 \| 41 \| 2 \|/.test(fs.readFileSync(path.join(dir, "history/versions.md"), "utf8")));
+check("workspace: the tools", ["tools/_runner.py", "tools/submit.py", "tools/check.py", "tools/try.py", "tools/status.py", "tools/stream.py", "tools/ledger.py", "tools/garden.py", "tools/scaffold.py"].every(has));
+check("workspace: the program files are the versions playing now", fs.readFileSync(path.join(dir, "flower.py"), "utf8").includes("return c + 1, 50") && has("bee.py") && !has("cosmos.py") && !has("orchid.py"));
+check("workspace: interface.txt has both programs", /flower:\ndef flower\(challenge, ledger\)/.test(fs.readFileSync(path.join(dir, "interface.txt"), "utf8")) && /bee:\ndef first/.test(fs.readFileSync(path.join(dir, "interface.txt"), "utf8")));
+check("workspace: its own version history", has("history/flower/v1.py") && has("history/flower/v2.py") && /\| 0:20 \| flower \| v2 \| 41 \| 2 \|/.test(fs.readFileSync(path.join(dir, "history/versions.md"), "utf8")));
 const cfg = JSON.parse(fs.readFileSync(path.join(dir, "config.json"), "utf8"));
-check("config.json: the settings, the teams and the public API", cfg.minutes === 2 && cfg.feedCost === 10 && cfg.teams.length === 2 && cfg.public_api === apiBase);
+check("config.json: the settings, the teams in index order, your index, the public API", cfg.minutes === 2 && cfg.feedCost === 10 && cfg.teams.join() === "Moonpetal,Show Your Work" && cfg.your_index === 0
+  && cfg.flowers === 2 && cfg.public_api === apiBase && cfg.budgets.flower.size === 1100);
 const st1 = fs.statSync(path.join(dir, "stream/actions.jsonl")), st2 = fs.statSync(path.join(dir2, "stream/actions.jsonl"));
-check("stream: one shared file, hard-linked into each workspace", st1.ino === st2.ino && st1.ino === fs.statSync(stream.sharedFile).ino && st1.nlink >= 3);
+check("stream: one shared public file, hard-linked into each workspace", st1.ino === st2.ino && st1.ino === fs.statSync(stream.sharedFile).ino && st1.nlink >= 3);
 check("stream: the public lines as the API gave them", fs.readFileSync(path.join(dir, "stream/actions.jsonl"), "utf8").trim().split("\n").length === 50);
 const teamsJson = JSON.parse(fs.readFileSync(path.join(dir, "stream/teams.json"), "utf8"));
-check("stream/teams.json: names and which team is yours", teamsJson.me === "T1" && teamsJson.teams.T2 === "Show Your Work");
-addActs(30);
+check("stream/teams.json: names, indices and which team is yours", teamsJson.me === "T1" && teamsJson.teams.T2 === "Show Your Work" && teamsJson.myIndex === 0 && teamsJson.names[1] === "Show Your Work");
+addTurns(15);
 await stream.poll();
 check("stream: new actions appear in every workspace at once", fs.readFileSync(path.join(dir2, "stream/actions.jsonl"), "utf8").trim().split("\n").length === 80);
 fs.truncateSync(path.join(dir2, "stream/actions.jsonl"), 10); // a team damages its link
-addActs(5);
+addTurns(5);
 await stream.poll();
 const lines = fs.readFileSync(path.join(dir, "stream/actions.jsonl"), "utf8").trim().split("\n");
-check("stream: damage through a link is repaired from the master copy", lines.length === 85 && lines.every((l) => JSON.parse(l).seq));
+check("stream: damage through a link is repaired from the master copy", lines.length === 90 && lines.every((l) => JSON.parse(l).seq));
 // Nothing secret, nothing of other teams' code or versions.
-// Actual credentials: the dev-login secret's value, bearer tokens, database URLs; and another team's code.
 const devSecret = fs.existsSync(new URL("./runs/.dev-secret", import.meta.url)) ? fs.readFileSync(new URL("./runs/.dev-secret", import.meta.url), "utf8").trim() : "no-dev-secret-file";
-const all = (d) => spawnSync("grep", ["-rIlF", "-e", devSecret, "-e", "Bearer ", "-e", "postgres://", "-e", "DEV_LOGIN_SECRET", "-e", "SECRET_CODE_OF_T2", d], { encoding: "utf8" }).stdout.trim();
-check("workspace: no credentials, database URLs or other teams' code", all(dir) === "", all(dir));
+const grep = (d) => spawnSync("grep", ["-rIlF", "-e", devSecret, "-e", "Bearer ", "-e", "postgres://", "-e", "DEV_LOGIN_SECRET", "-e", "SECRET_CODE_OF_T2", "-e", "tok-T", d], { encoding: "utf8" }).stdout.trim();
+check("workspace: no credentials, tokens, database URLs or other teams' code", grep(dir) === "", grep(dir));
 check("workspace: other teams' versions aren't shown during play", !fs.readFileSync(path.join(dir, "history/versions.md"), "utf8").includes("Show Your Work"));
 
-// mine.jsonl: each team's own actions as it sees them (?mine=1 with its token), with its private fields.
-const mine1 = fs.readFileSync(path.join(dir, "stream/mine.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
-const mine2 = fs.readFileSync(path.join(dir2, "stream/mine.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
-check("mine.jsonl: only the team's own bee's actions and those at its patch", mine1.length && mine1.every((a) => a.bee === "T1" || a.patch === "T1") && mine2.every((a) => a.bee === "T2" || a.patch === "T2"));
-check("mine.jsonl: with its private fields (timings, printouts), up to date with the stream", mine1.some((a) => a.beeMs === 3 && a.log === "hi") && mine1[mine1.length - 1].seq >= 80);
-check("the shared stream never carries private fields", !/beeMs|"log"/.test(fs.readFileSync(stream.sharedFile, "utf8")));
+// The team ledger and mine.jsonl: each team's own private fields, nobody else's.
+const rd = (d, f) => fs.readFileSync(path.join(d, "stream", f), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+const led1 = rd(dir, "ledger.jsonl"), led2 = rd(dir2, "ledger.jsonl");
+check("ledger.jsonl: every finished turn, kept up to date", led1.length === 45 && led2.length === 45 && led1[led1.length - 1].seq === 90, led1.length);
+check("ledger.jsonl: compute time only at your own flower", led1.every((e) => (e.flower === 0) === (e.ms != null)) && led2.every((e) => (e.flower === 1) === (e.ms != null)));
+check("ledger.jsonl: percent and energy on every feed, and on turns without a feed only at your own flower",
+  led1.every((e) => (e.fed || e.flower === 0) === (e.percent != null && e.energy != null)) && led2.some((e) => !e.fed && e.flower === 0 && e.percent == null));
+check("ledger.jsonl: nectar and surplus on feeds; surplus 0 otherwise", led1.every((e) => (e.fed ? e.nectar != null : e.nectar == null && e.surplus === 0)));
+const mine1 = rd(dir, "mine.jsonl"), mine2 = rd(dir2, "mine.jsonl");
+check("mine.jsonl: only the team's own bee's turns and those at its flower", mine1.length && mine1.every((a) => a.bee === "T1" || a.flower === "T1") && mine2.every((a) => a.bee === "T2" || a.flower === "T2"));
+check("mine.jsonl: with its private fields (compute time, printouts), up to date with the stream", mine1.some((a) => a.beeMs === 3 && a.log) && mine1.some((a) => a.flower === "T1" && a.ms === 1.5)
+  && !mine1.some((a) => a.flower !== "T1" && a.ms != null) && mine1[mine1.length - 1].seq >= 85);
+const shared = fs.readFileSync(stream.sharedFile, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+check("the shared stream never carries private fields", shared.every((a) => !("ms" in a) && !("beeMs" in a) && !("log" in a) && !(a.action === "leave" && ("percent" in a || "energy" in a))));
 
-// tools/stream.py on the workspace's stream.
-const py = (...a) => spawnSync("python3", ["tools/stream.py", ...a], { cwd: dir, encoding: "utf8" });
-let r = py("summary");
-check("stream.py summary: per-bee and per-flower counts with names", r.status === 0 && /85 actions/.test(r.stdout) && /\* Moonpetal/.test(r.stdout) && /Show Your Work\s+cosmos/.test(r.stdout), r.stdout + r.stderr);
-r = py("summary", "--since", "0.1");
-check("stream.py summary --since: only the recent stretch", r.status === 0 && /26 actions, game time 0:06-0:08/.test(r.stdout), r.stdout + r.stderr);
-r = py("answers", "3");
-check("stream.py answers: what each flower answered", r.status === 0 && /9  x\d+/.test(r.stdout), r.stdout + r.stderr);
-r = py("sql", "SELECT action, count(*) FROM actions GROUP BY 1 ORDER BY 1");
-check("stream.py sql: a local SQLite copy", r.status === 0 && /ask\t68/.test(r.stdout) && /feed\t17/.test(r.stdout) && fs.existsSync(path.join(dir, "cache/stream.sqlite")), r.stdout + r.stderr);
-r = spawnSync("python3", ["-c", "import sys; sys.path.insert(0,'tools'); from stream import Stream; s=Stream(); print(len(list(s.actions(since_ms=8000))), s.last()['seq'], s.name('T2'))"], { cwd: dir, encoding: "utf8" });
-check("stream.py as a library: actions(since_ms), last(), names", r.stdout.trim() === "6 85 Show Your Work", r.stdout + r.stderr);
+// tools/ledger.py and tools/stream.py on the workspace's files.
+const py = (tool, ...a) => spawnSync("python3", [`tools/${tool}.py`, ...a], { cwd: dir, encoding: "utf8" });
+let r = py("ledger", "summary");
+check("ledger.py summary: per flower team and per bee team, yours marked, your flower's private numbers", r.status === 0 && /^45 turns/.test(r.stdout) && /\* Moonpetal/.test(r.stdout)
+  && /your flower: \d+ visits, \d+ feeds; mean percent/.test(r.stdout) && /compute mean 1\.50 ms/.test(r.stdout), r.stdout + r.stderr);
+r = py("ledger", "summary", "--since", "0.1");
+check("ledger.py summary --since: only the recent stretch", r.status === 0 && /^16 turns from round 30/.test(r.stdout), r.stdout + r.stderr);
+r = py("ledger", "mine");
+check("ledger.py mine: your flower and your bee by flower", r.status === 0 && /your bee: +\d+ turns/.test(r.stdout) && /at Show Your Work/.test(r.stdout), r.stdout + r.stderr);
+r = py("ledger", "tail", "-n", "3");
+check("ledger.py tail: the latest entries", r.status === 0 && r.stdout.trim().split("\n").length === 3 && /#90 round 45/.test(r.stdout), r.stdout + r.stderr);
+r = py("stream", "tail", "-n", "4");
+check("stream.py tail: the latest public actions", r.status === 0 && r.stdout.trim().split("\n").length === 4 && /arrive|feed|leave/.test(r.stdout), r.stdout + r.stderr);
+r = py("stream", "answers", "3");
+check("stream.py answers: what each flower answered", r.status === 0 && /9  x\d+, fed \d+/.test(r.stdout), r.stdout + r.stderr);
+r = py("stream", "sql", "SELECT count(*), sum(fed) FROM turns");
+check("stream.py sql: your ledger as a local SQLite table", r.status === 0 && /45\t15/.test(r.stdout) && fs.existsSync(path.join(dir, "cache/stream.sqlite")), r.stdout + r.stderr);
+r = py("stream", "sql", "SELECT action, count(*) FROM actions GROUP BY 1 ORDER BY 1");
+check("stream.py sql: the public stream as a table", r.status === 0 && /arrive\t45/.test(r.stdout) && /feed\t15/.test(r.stdout) && /leave\t30/.test(r.stdout), r.stdout + r.stderr);
+r = spawnSync("python3", ["-c", "import sys; sys.path.insert(0,'tools'); from stream import Stream; s=Stream(); print(len(list(s.turns(since_round=40))), s.last()['seq'], s.name(1), s.my_index, s.n)"], { cwd: dir, encoding: "utf8" });
+check("stream.py as a library: turns(since_round), last(), names, your index", r.stdout.trim() === "6 90 Show Your Work 0 2", r.stdout + r.stderr);
+r = spawnSync("python3", ["-c", "import garden; print(garden.MY_INDEX, garden.N, garden.name(1), len(list(garden.turns())), garden.API)"], { cwd: dir, encoding: "utf8", env: { PATH: process.env.PATH, PYTHONPATH: path.join(dir, "tools") } });
+check("garden.py imports with tools/ on the path: your index, the teams, the ledger", r.stdout.trim() === `0 2 Show Your Work 45 ${apiBase}`, r.stdout + r.stderr);
+
+// A workspace prepared in the lobby has no ledger indices yet (participants are fixed at the start): the stream adds
+// them once the game runs, and a scaffold already running (garden.MY_INDEX) sees them without restarting.
+const { spawn } = await import("node:child_process");
+let lobbyStarted = false;
+const stream2 = new GameStream({ root: path.join(root, AID), gen: 2, gPath: "/y", teams: [{ id: "T1", name: "Moonpetal" }, { id: "T2", name: "Show Your Work" }],
+  fetchPage: async () => ({ actions: [], lastSeq: 0, clockMs: 0, status: lobbyStarted ? "running" : "lobby" }), fetchMine: async () => ({ actions: [] }),
+  fetchLedger: async () => ({ participants: lobbyStarted ? IDS : null, team: lobbyStarted ? 0 : null, entries: [] }) }).load();
+const lobbyView = { ...viewFor("T1"), participants: null, game: { ...viewFor("T1").game, status: "lobby", clockMs: 0 } };
+await prepareWorkspace({ arena, gameRow: { ...gameRow, generation: 2 }, persona: p1, view: lobbyView, stream: stream2, apiBase, tok: "tok-T1" });
+const tj = () => JSON.parse(fs.readFileSync(path.join(dir, "stream/teams.json"), "utf8"));
+check("lobby: teams.json has no indices yet; the team files exist before the first turn", tj().myIndex === null && tj().me === "T1"
+  && fs.readFileSync(path.join(dir, "stream/ledger.jsonl"), "utf8") === "" && fs.existsSync(path.join(dir, "stream/mine.jsonl")));
+const waiter = spawn("python3", ["-c", "import time, garden\nprint('lobby', garden.MY_INDEX, garden.N, flush=True)\nt = time.time()\nwhile garden.MY_INDEX is None and time.time() - t < 10:\n    time.sleep(0.05)\nprint('started', garden.MY_INDEX, garden.N, garden.name(1), flush=True)"],
+  { cwd: dir, env: { PATH: process.env.PATH, PYTHONPATH: path.join(dir, "tools") } });
+let wout = "";
+waiter.stdout.on("data", (d) => (wout += d));
+waiter.stderr.on("data", (d) => (wout += d));
+await stream2.poll();
+await new Promise((r) => setTimeout(r, 400));
+lobbyStarted = true;
+await stream2.poll();
+await new Promise((r) => waiter.on("close", r));
+check("game start: the stream writes the indices into teams.json", tj().myIndex === 0 && tj().participants.join() === "T1,T2" && tj().names[1] === "Show Your Work", JSON.stringify(tj()));
+check("game start: a scaffold started in the lobby learns its index without restarting", /lobby None 0/.test(wout) && /started 0 2 Show Your Work/.test(wout), wout);
 
 // ---------------------------------------------------------------- the audit
 const tr = (...tools) => tools.map((t, i) => JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: `t${i}`, name: t[0], input: t[1] }] } }));
-const sev = (...tools) => { const f = audit(tr(...tools), dir, AID, "luna", { port: 4000 }); return f.some((x) => x.severity === "violation") ? "violation" : f.length ? "warning" : "ok"; };
+const sev = (...tools) => { const f = audit(tr(...tools), dir, AID, "luna", { port: 4100 }); return f.some((x) => x.severity === "violation") ? "violation" : f.length ? "warning" : "ok"; };
 const bash = (command) => ["Bash", { command }];
 const writePy = (content) => ["Write", { file_path: path.join(dir, "follow.py"), content }];
 check("audit: python urllib GET of the public API on localhost is fine", sev(bash(`python3 -c "import urllib.request; print(urllib.request.urlopen('${apiBase}/actions?after=0&limit=10').read()[:200])"`)) === "ok");
 check("audit: a script following the SSE stream is fine", sev(writePy(`import json, urllib.request\nURL = "${apiBase}/events?after=0"\nfor line in urllib.request.urlopen(URL):\n    if line.startswith(b"data: "):\n        print(json.loads(line[6:]))\n`)) === "ok");
-check("audit: a script calling tools/submit.py via subprocess is fine", sev(writePy(`import subprocess\nsubprocess.run(["python3", "tools/submit.py", "orchid"])\n`)) === "ok");
+check("audit: a script calling tools/submit.py via subprocess is fine", sev(writePy(`import subprocess\nsubprocess.run(["python3", "tools/submit.py", "flower"])\n`)) === "ok");
 check("audit: running such a script in the background is fine", sev(bash("python3 follow.py > follow.log 2>&1 &")) === "ok" && sev(["Bash", { command: "python3 follow.py > follow.log 2>&1", run_in_background: true }]) === "ok");
 const { taskDir } = await import("./lib/workspace.js");
 check("audit: reading the output file of its own background task is fine", sev(["Read", { file_path: path.join(taskDir(dir), "tasks", "b1.output") }]) === "ok" && sev(bash(`tail ${taskDir(dir)}/tasks/b1.output`)) === "ok");
 check("audit: another session's task output is not", sev(["Read", { file_path: path.join(taskDir(dir2), "tasks", "b1.output") }]) === "violation");
-check("audit: the game's WebSocket on localhost:4000 is fine, another port's isn't", sev(writePy(`URL = "ws://localhost:4000/api/rooms/R/games/G/ws?after=0"\n`)) === "ok"
+check("audit: the game's WebSocket on localhost:4100 is fine, another port's isn't", sev(writePy(`URL = "ws://localhost:4100/api/rooms/R/games/G/ws?after=0"\n`)) === "ok"
   && sev(writePy(`URL = "ws://localhost:5432/"\n`)) === "violation");
-check("audit: logging in is a violation", sev(bash(`python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:4000/api/auth/dev/login')"`)) === "violation");
+check("audit: logging in is a violation", sev(bash(`python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:4100/api/auth/dev/login')"`)) === "violation");
 check("audit: a POST to the API is a violation", sev(writePy(`import urllib.request\nurllib.request.urlopen(urllib.request.Request("${apiBase}/programs", data=b"{}", method="POST"))\n`)) === "violation");
 check("audit: credentials in a request are a violation", sev(writePy(`import urllib.request\nreq = urllib.request.Request("${apiBase}", headers={"Authorization": "Bearer x"})\n`)) === "violation");
-check("audit: another port (the database, another server) is a violation", sev(bash(`python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:3401/api/rooms/X')"`)) === "violation");
+check("audit: another port (the database, another server) is a violation", sev(bash(`python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:3401/api/rooms/X')"`)) === "violation"
+  && sev(bash(`python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:4000/api/rooms/X')"`)) === "violation");
 check("audit: another host is a violation", sev(bash(`python3 -c "import urllib.request; urllib.request.urlopen('https://example.com/')"`)) === "violation");
 check("audit: raw sockets are a violation", sev(writePy(`import socket\ns = socket.socket()\n`)) === "violation");
 check("audit: curl is a violation unless it reads the public API", sev(bash(`curl -s ${apiBase}/actions?after=0`)) === "ok" && sev(bash(`curl -s -X POST ${apiBase}/programs -d '{}'`)) === "violation");
 check("audit: writing to stream/ is a violation", sev(["Write", { file_path: path.join(dir, "stream/actions.jsonl"), content: "" }]) === "violation"
-  && sev(bash("echo x >> stream/actions.jsonl")) === "violation" && sev(writePy(`open("stream/actions.jsonl", "w").write("")\n`)) === "violation");
+  && sev(bash("echo x >> stream/actions.jsonl")) === "violation" && sev(writePy(`open("stream/actions.jsonl", "w").write("")\n`)) === "violation"
+  && sev(writePy(`open("stream/ledger.jsonl", "a").write("")\n`)) === "violation" && sev(bash("truncate -s 0 stream/ledger.jsonl")) === "violation");
 check("audit: reading stream/ is fine", sev(bash("tail -n 5 stream/actions.jsonl")) === "ok" && sev(writePy(`for l in open("stream/actions.jsonl"):\n    pass\n`)) === "ok" && sev(bash("cp stream/actions.jsonl copy.jsonl")) === "ok");
 check("audit: paths outside the workspace are violations", sev(bash("cat /etc/hostname")) === "violation" && sev(["Read", { file_path: "/etc/hostname" }]) === "violation" && sev(bash("ls ../")) === "violation");
-check("audit: another team's workspace is a violation", sev(bash(`cat ${root}/${AID}/tess/cosmos.py`.replace(root, "/home/user/arena-ws"))) === "violation");
+check("audit: another team's workspace is a violation", sev(bash(`cat ${root}/${AID}/tess/flower.py`.replace(root, "/home/user/arena-ws"))) === "violation");
 check("audit: environment and database access are violations", sev(bash("env | head")) === "violation" && sev(bash("psql -c 'select 1'")) === "violation");
-check("audit: allowedUrl", allowedUrl(`${apiBase}/events?after=3`) && allowedUrl("http://127.0.0.1:4000/api/rooms/X") && !allowedUrl("http://localhost:4000/api/auth/dev/login") && !allowedUrl("http://localhost:5432/"));
+check("audit: allowedUrl", allowedUrl(`${apiBase}/events?after=3`) && allowedUrl("http://127.0.0.1:4100/api/rooms/X") && !allowedUrl("http://localhost:4100/api/auth/dev/login") && !allowedUrl("http://localhost:5432/") && !allowedUrl("http://localhost:4000/api/rooms/X"));
 check("audit: a Python variable called nc is not netcat; netcat still is", sev(writePy(`nc = sum(1 for x in small if x)\nif nc >= 3 and no <= 0.1 * (nc + no):\n    nc += 1\n`)) === "ok" && sev(writePy(`import os\nos.system("cat f | nc localhost 80")\n`)) === "violation");
-check("audit: '..' inside the workspace is fine, leaving it isn't", !escapesWorkspace("cat history/cosmos/../orchid/v1.py", dir) && escapesWorkspace("cat ../../x", dir));
+check("audit: '..' inside the workspace is fine, leaving it isn't", !escapesWorkspace("cat history/flower/../bee/v1.py", dir) && escapesWorkspace("cat ../../x", dir));
 // csig-a game 4: Mallory's lobby was stopped for a ".." in a Python comment inside a heredoc.
 const malloryCmd = "python3 - <<'EOF'\nsrc = open(\"bee.py\").read()\no = open(\"orchid.py\").read()\n# take shared recipe code from the orchid (ring .. recipe), minus knight/chain generators\nstart = o.index(\"def ring(\")\nend = o.index(\"def flower(\")\nshared = o[start:end]\na = shared.index(\"JUMPS = \")\nb = shared.index(\"def recipe(\")\nshared = shared[:a] + 'JUMPS = [(1, 2), (2, 1), (-1, 2), (-2, 1), (1, -2), (2, -1), (-1, -2), (-2, -1)]\\n\\n\\n' + shared[b:]\n# in the bee, km and chain are checked, not cooked\nshared = shared.replace('    if name == \"km\":\\n        return knight(c)\\n    if name == \"chain\":\\n        return chain(c)\\n', '')\nopen(\"_shared.txt\", \"w\").write(shared)\nprint(len(shared))\nEOF";
 const W = (c) => escapesWorkspace(c, dir);
 check("audit: '..' in prose (a comment in a python heredoc) isn't a path", !W(malloryCmd) && !W(`python3 - <<'EOF'\n# ring .. recipe\nx = 1  # a .. b\nprint("ring .. recipe", ...)\nEOF`));
 check("audit: python's ... and a '..' placeholder aren't paths", !W(`python3 - <<'EOF'\ndef f(x: int) -> int: ...\nk = {a: (x if x else '..') for a in b}\nEOF`) && !W(`python3 -c "print(...)"`));
 check("audit: shell comments and echo don't count; shell escapes still do",
-  !W(`ls # see .. later`) && !W(`echo ..`) && W(`cd ..`) && W(`cat ../x`) && W(`ls ${dir}/..`) && W(`ln -s .. up`) && W(`ln -s ../../other x`) && W(`python3 tools/try.py cosmos ../other/cosmos.py`));
+  !W(`ls # see .. later`) && !W(`echo ..`) && W(`cd ..`) && W(`cat ../x`) && W(`ls ${dir}/..`) && W(`ln -s .. up`) && W(`ln -s ../../other x`) && W(`python3 tools/try.py flower ../other/flower.py`));
 check("audit: escapes in python programs still count (heredoc and -c)",
   W(`python3 - <<'EOF'\nopen("../x").read()\nEOF`) && W(`python3 - <<'EOF'\nimport os\nos.chdir("..")\nEOF`) && W(`python3 - <<'EOF'\nfrom pathlib import Path\nPath("..").iterdir()\nEOF`)
   && W(`python3 -c "import os; os.chdir('..')"`) && W(`python3 - <<'EOF'\nimport os\nos.listdir(os.path.join('.', '..'))\nEOF`) && W(`python3 - <<'EOF'\nos.symlink("../../kenji", "k")\nEOF`)
-  && !W(`python3 - <<'EOF'\nopen("history/cosmos/../orchid/v1.py").read()\nEOF`));
+  && !W(`python3 - <<'EOF'\nopen("history/flower/../bee/v1.py").read()\nEOF`));
 check("audit: '..' in a sed replacement isn't a path; a file argument or a non-sed command still is",
-  !escapesWorkspace(`cd ${dir}; python3 tools/try.py cosmos cosmos.py 5 77 2>&1 | sed -E 's/"edges".*"labels"/../' | cut -c1-60`, dir)
-  && !escapesWorkspace(`sed -e "s/x/../g" cosmos.py`, dir) && !escapesWorkspace(`perl -pe 's#a#../..#' f`, dir)
+  !escapesWorkspace(`cd ${dir}; python3 tools/try.py flower flower.py 5 77 2>&1 | sed -E 's/"edges".*"labels"/../' | cut -c1-60`, dir)
+  && !escapesWorkspace(`sed -e "s/x/../g" flower.py`, dir) && !escapesWorkspace(`perl -pe 's#a#../..#' f`, dir)
   && escapesWorkspace(`sed 's/a/b/' ../../x`, dir) && escapesWorkspace(`ls 's/../../'`, dir) && escapesWorkspace(`sed 's/a/b/' 's/../../x'`, dir));
 
 await q("DELETE FROM arena.personas WHERE arena_id = $1", [AID]);

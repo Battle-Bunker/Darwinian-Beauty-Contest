@@ -40,6 +40,7 @@ class Tracked {
   async poll(key) {
     for (;;) {
       const page = await this.fetch(this.lastSeq);
+      this.meta = page;
       const rows = (page[key] || []).filter((a) => a.seq > this.lastSeq);
       if (!rows.length) return;
       fs.mkdirSync(path.dirname(this.file), { recursive: true });
@@ -71,6 +72,7 @@ export class GameStream {
     this.status = null;
     this.buckets = new Map(); // bucket -> Map(key -> count)
     this.tracked = new Map(); // teamId -> { mine: Tracked, ledger: Tracked }
+    this.participants = null; // team ids in ledger-index order, once the game has started
     this.timer = null;
     this.polling = null;
     for (const f of [this.sharedFile, this.masterFile]) fs.mkdirSync(path.dirname(f), { recursive: true });
@@ -116,6 +118,9 @@ export class GameStream {
       for (const [teamId, t] of this.tracked) {
         await t.ledger.poll("entries").catch((e) => this.log(`stream: ledger.jsonl of ${teamId} not updated: ${e.message}`));
         await t.mine.poll("actions").catch((e) => this.log(`stream: mine.jsonl of ${teamId} not updated: ${e.message}`));
+        const parts = t.ledger.meta?.participants;
+        if (parts?.length && !this.participants) this.participants = parts;
+        if (this.participants && t.indexed !== this.participants) { this.writeTeams(teamId, t.dir); t.indexed = this.participants; }
       }
       return n;
     })().finally(() => { this.polling = null; });
@@ -158,10 +163,24 @@ export class GameStream {
   track(teamId, sdir, tok) {
     const cur = this.tracked.get(teamId);
     if (cur && cur.dir === sdir) { if (tok) cur.tok = tok; return; }
-    const t = { dir: sdir, tok };
+    const t = { dir: sdir, tok, indexed: null };
+    fs.mkdirSync(sdir, { recursive: true });
+    for (const f of ["ledger.jsonl", "mine.jsonl"]) if (!fs.existsSync(path.join(sdir, f))) fs.writeFileSync(path.join(sdir, f), ""); // there before the first turn
     t.ledger = new Tracked(path.join(sdir, "ledger.jsonl"), (after) => this.fetchLedger(t.tok, after));
     t.mine = new Tracked(path.join(sdir, "mine.jsonl"), (after) => this.fetchMine(t.tok, after));
     this.tracked.set(teamId, t);
+  }
+
+  /** <sdir>/teams.json: ids, names and, once the game has started, the ledger indices (participants are fixed then). A
+   * workspace prepared in the lobby gets its indices here, so a scaffold started in the lobby learns them too. */
+  writeTeams(teamId, sdir, participants = this.participants) {
+    const name = Object.fromEntries(this.teams.map((t) => [t.id, t.name]));
+    const data = { teams: name, me: teamId, participants: participants || null, names: participants ? participants.map((id) => name[id] ?? String(id).slice(0, 8)) : null,
+      myIndex: participants ? participants.indexOf(teamId) : null };
+    fs.mkdirSync(sdir, { recursive: true });
+    const tmp = path.join(sdir, `.teams.${process.pid}.tmp`);
+    fs.writeFileSync(tmp, JSON.stringify(data, null, 1));
+    fs.renameSync(tmp, path.join(sdir, "teams.json"));
   }
 
   #count(a) {

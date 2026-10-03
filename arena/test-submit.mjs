@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // The workspace tools and the runner, end to end, with a fake game API and a stub `claude` (no model calls, no server):
 //   node arena/test-submit.mjs
-// 1. tools/*.py hand requests to the runner (lib/broker.js) and print its answers: submit, check, try, status;
+// 1. tools/*.py hand requests to the runner (lib/broker.js) and print its answers: submit, check, try (flower and bee),
+//    status, ledger live;
 //    nothing secret ever reaches the workspace; a refused or failed submission exits non-zero.
 // 2. A stub session (runSession with a session tag) submits through the tool while it "runs", leaves a background
 //    process behind, and the runner stops it afterwards (killLeftovers finds it by its ARENA_SESSION tag).
@@ -32,22 +33,28 @@ const SECRET = "tok-SECRET-1234567890";
 // ---------------------------------------------------------------- a fake game API (records what the runner sent)
 const calls = [];
 const config = { language: "python", minutes: 2, feedCost: 10, challengeType: "int", responseType: "int", maxLen: 64, maxNodes: 512,
-  budgets: { cosmos: { size: 1100, perMinute: 220, cap: 220, ms: 150 }, orchid: { size: 2200, perMinute: 1540, cap: 1540, ms: 50 }, bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 25 } } };
-let gameOver = false, noFlowersYet = false;
+  budgets: { flower: { size: 1100, perMinute: 220, cap: 220, ms: 150 }, bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 50 } } };
+let gameOver = false, noFlowerYet = false;
 const fakeApi = {
   view: async (tok) => { calls.push(["view", tok]); return {
-    game: { status: "running", clockMs: 30000, endMs: 120000, round: 1234, config },
-    teams: [{ id: "T1", name: "Moonpetal", banks: { cosmos: { bank: 10, atMs: 0 }, orchid: { bank: 0, atMs: 0 }, bee: { bank: 0, atMs: 0 } },
-      programs: { cosmos: [{ version: 1, size: 40, atMs: 0, code: "x" }], orchid: [{ version: 1, size: 30, atMs: 0 }], bee: [{ version: 2, size: 300, atMs: 20000 }] } },
+    game: { status: "running", clockMs: 30000, endMs: 120000, round: 150, config },
+    teams: [{ id: "T1", name: "Moonpetal", banks: { flower: { bank: 10, atMs: 0 }, bee: { bank: 0, atMs: 0 } },
+      programs: { flower: [{ version: 1, size: 40, atMs: 0, code: "x" }], bee: [{ version: 2, size: 300, atMs: 20000 }] } },
       { id: "T2", name: "Rival", banks: null, programs: null }],
-    scores: [{ teamId: "T1", fitness: 1.2 }, { teamId: "T2", fitness: 0.8 }], recent: { fromMs: 0, toMs: 30000, scores: [{ teamId: "T1", fitness: 1.2 }, { teamId: "T2", fitness: 0.8 }] },
+    scores: [{ teamId: "T1", fitness: 1.2, allure: 2, forage: 150, surplus: 300000, allureShare: 0.5, forageShare: 0.6, surplusShare: 0.5, pollinators: 2 },
+      { teamId: "T2", fitness: 0.8, allure: 2, forage: 100, surplus: 300000, allureShare: 0.5, forageShare: 0.4, surplusShare: 0.5, pollinators: 2 }],
   }; },
   check: async (tok, g, kind, code) => { calls.push(["check", tok, kind, code]); return { ok: true, size: 42, budget: config.budgets[kind], distance: 3, cost: 3, available: 120, minified: code, errors: [] }; },
-  try: async (tok, g, kind, code, challenges, flowers) => { calls.push(["try", tok, kind, code, flowers]);
-    if (kind === "bee" && noFlowersYet && !flowers) throw Object.assign(new Error("Your bee needs flowers to visit"), { status: 409 });
-    if (kind === "bee") return { rounds: 300, feeds: 20, nectar: 10, problems: [], actions: [{ kind: "cosmos", action: "ask", c: 1, r: 2 }, { kind: "cosmos", action: "feed", nectar: true }] };
-    if (code.includes("CRASH")) return { results: (challenges || [1]).map((c) => ({ c, r: null, error: "ZeroDivisionError: division by zero", ms: 1 })) };
-    return { results: (challenges || [1]).map((c) => ({ c, r: c * 3 + 1, ms: 1.5 })) }; },
+  tryFlower: async (tok, g, code, challenges, ledger) => { calls.push(["try", tok, "flower", code, ledger]);
+    if (code.includes("CRASH")) return { results: (challenges || [1]).map((c) => ({ c, r: null, percent: null, energy: 0, error: "ZeroDivisionError: division by zero", ms: 1 })) };
+    return { results: (challenges || [1]).map((c) => ({ c, r: c * 3 + 1, percent: 40, energy: 158000, ms: 1.5 })) }; },
+  tryBee: async (tok, g, code, { flower, rounds } = {}) => { calls.push(["try", tok, "bee", code, flower, rounds]);
+    if (noFlowerYet && !flower) throw Object.assign(new Error("Your bee needs a flower to visit"), { status: 409 });
+    return { rounds: rounds ?? 300, feeds: 1, nectar: 10, surplus: 20, problems: [], actions: [{ action: "arrive" }, { action: "feed", c: 1, r: 4, percent: 33, energy: 30, nectar: 10, beeMs: 2 },
+      { action: "arrive" }, { action: "leave", c: 2, r: 7, percent: 50, energy: 40, beeMs: 3 }] }; },
+  ledger: async (tok, g, after, limit) => { calls.push(["ledger", tok, after, limit]);
+    return { participants: ["T1", "T2"], team: 0, entries: [{ seq: 4, round: 1, bee: 1, flower: 0, challenge: 1, response: 4, fed: false, nectar: null, surplus: 0, percent: 40, energy: 1000, ms: 1.2 }],
+      lastSeq: 4, round: 2, status: "running" }; },
   submit: async (tok, g, kind, code) => { calls.push(["submit", tok, kind, code]);
     return gameOver ? { ok: false, errors: ["Game over"] } : { ok: true, submitted: true, version: 2, size: 42, distance: 3, cost: 3, available: 117, errors: [] }; },
 };
@@ -56,9 +63,10 @@ const fakeApi = {
 const ws = path.join(process.env.ARENA_WS_ROOT, "A", "luna");
 fs.mkdirSync(ws, { recursive: true });
 installTools(ws);
-fs.writeFileSync(path.join(ws, "cosmos.py"), "def flower(c):\n    return c * 3 + 1\n");
-fs.writeFileSync(path.join(ws, "orchid.py"), "def flower(c):\n    return 1 // 0  # CRASH\n");
-fs.writeFileSync(path.join(ws, "bee.py"), "def forage(seen, visit):\n    return 'feed' if seen else ['ask', 1]\n");
+fs.writeFileSync(path.join(ws, "flower.py"), "def flower(c, ledger):\n    return c * 3 + 1, 40\n");
+fs.writeFileSync(path.join(ws, "crash.py"), "def flower(c, ledger):\n    return 1 // 0, 40  # CRASH\n");
+fs.writeFileSync(path.join(ws, "bee.py"), "def first(ledger):\n    return 1\n\ndef decide(c, r, ledger):\n    return 'feed', 1\n");
+fs.writeFileSync(path.join(ws, "led.jsonl"), JSON.stringify({ round: 1, bee: 0, flower: 1, challenge: 1, response: 2, fed: true }) + "\n");
 const records = [];
 let gateRefusal = null;
 const broker = new Broker({ dir: ws, handle: requestHandler({ api: fakeApi, tok: SECRET, gPath: "/rooms/R/games/G", config, teamId: "T1", dir: ws,
@@ -72,38 +80,49 @@ const tool = (...a) => new Promise((resolve) => {
   c.on("close", (status) => resolve({ status, stdout, stderr }));
 });
 
-let r = await tool("tools/submit.py", "cosmos");
-check("submit: exit 0 and says it's live", r.status === 0 && /cosmos v2 submitted: it cost 3 nodes of change, 117 left/.test(r.stdout), r.stdout + r.stderr);
+let r = await tool("tools/submit.py", "flower");
+check("submit: exit 0 and says it's live", r.status === 0 && /flower v2 submitted: it cost 3 nodes of change, 117 left/.test(r.stdout), r.stdout + r.stderr);
 check("submit: the runner sent the file's code with the team's token", calls.some((c) => c[0] === "submit" && c[1] === SECRET && c[3].includes("c * 3 + 1")));
 check("submit: a runtime test ran first", calls.findIndex((c) => c[0] === "try") < calls.findIndex((c) => c[0] === "submit"));
 check("submit: recorded for the audit (op, kind, code, version, cost)", records.some((x) => x.op === "submit" && x.ok && x.version === 2 && x.cost === 3 && x.code.includes("c * 3")));
-r = await tool("tools/submit.py", "orchid");
-check("submit: a program that crashes in the runtime test is not submitted (exit 1)", r.status === 1 && /runtime test failed/.test(r.stdout) && !calls.some((c) => c[0] === "submit" && c[2] === "orchid"), r.stdout);
-r = await tool("tools/submit.py", "orchid", "--force");
-check("submit --force skips the runtime test", r.status === 0 && calls.some((c) => c[0] === "submit" && c[2] === "orchid"));
-r = await tool("tools/check.py", "cosmos");
-check("check: size, cost now and what's available", r.status === 0 && /42 of 1,100 nodes\. Submitting now would cost 3 of the 120 you have/.test(r.stdout), r.stdout);
-r = await tool("tools/try.py", "cosmos", "cosmos.py", "5", "7");
-check("try (flower): answers to the given challenges", r.status === 0 && /flower\(5\) -> 16/.test(r.stdout) && /flower\(7\) -> 22/.test(r.stdout), r.stdout);
-r = await tool("tools/try.py", "bee");
-check("try (bee): a summary of the forage", /300 rounds in a garden of just your own two flowers: 1 asks, 20 feeds \(10 nectar\)/.test(r.stdout), r.stdout + r.stderr);
+r = await tool("tools/submit.py", "flower", "crash.py");
+check("submit: a program that crashes in the runtime test is not submitted (exit 1)", r.status === 1 && /runtime test failed/.test(r.stdout) && !calls.some((c) => c[0] === "submit" && c[3].includes("CRASH")), r.stdout);
+r = await tool("tools/submit.py", "flower", "crash.py", "--force");
+check("submit --force skips the runtime test", r.status === 0 && calls.some((c) => c[0] === "submit" && c[3].includes("CRASH")));
+r = await tool("tools/check.py", "flower");
+check("check: size, cost now and what's available, and the flower's energy", r.status === 0 && /42 of 1,100 nodes\. Submitting now would cost 3 of the 120 you have/.test(r.stdout)
+  && /\(1,100 − 42\) × 150 = 158,700 node·ms/.test(r.stdout), r.stdout);
+r = await tool("tools/try.py", "flower", "flower.py", "5", "7");
+check("try (flower): response, percent, energy and CPU time per challenge", r.status === 0 && /flower\(5\) -> 16, percent 40\s+\(energy 158,000, 1\.5 ms CPU\)/.test(r.stdout) && /flower\(7\) -> 22/.test(r.stdout), r.stdout + r.stderr);
+r = await tool("tools/try.py", "flower", "--ledger", "led.jsonl", "3");
+check("try (flower) --ledger: the ledger goes with the challenges", r.status === 0 && calls.filter((c) => c[0] === "try" && c[2] === "flower").pop()?.[4]?.[0]?.response === 2, r.stdout + r.stderr);
+r = await tool("tools/try.py", "bee", "--rounds", "100");
+check("try (bee): a summary of the garden of your own flower", r.status === 0 && /100 rounds in a garden of just your own flower: 2 turns, 1 feeds, 1 leaves; your bee got 10 nectar and your flower kept 20 surplus/.test(r.stdout)
+  && /feed c=1 r=4 percent=33 energy=30 nectar=10/.test(r.stdout), r.stdout + r.stderr);
+r = await tool("tools/try.py", "bee", "--flower", "flower.py");
+check("try (bee) --flower: plays the named flower file", calls.filter((c) => c[0] === "try" && c[2] === "bee").pop()?.[4]?.includes("c * 3 + 1"), r.stdout + r.stderr);
 r = await tool("tools/status.py", "--afford", "1000");
-check("status: clock, time left, budgets with rate and cap", /Game running: 0:30 of 2:00 played \(1:30 left\), round 1234/.test(r.stdout) && /cosmos\s+120 available, \+220\/min, cap 220/.test(r.stdout), r.stdout);
-check("status: when a change of N nodes is affordable", /cosmos.*1,000 nodes: never \(cap 220/.test(r.stdout) && /orchid.*1,000 nodes: in 0:09/.test(r.stdout) && /bee.*1,000 nodes: now/.test(r.stdout), r.stdout);
-check("status: whole-game and last-5-minutes scores, and the versions playing", /Scores, whole game: 1\. Moonpetal \(you\) 1\.20/.test(r.stdout) && /bee v2 \(live since 0:20/.test(r.stdout), r.stdout);
-noFlowersYet = true;
+check("status: clock, time left, budgets with rate and cap", /Game running: 0:30 of 2:00 played \(1:30 left\), round 150/.test(r.stdout) && /flower\s+120 available, \+220\/min, cap 220/.test(r.stdout), r.stdout);
+check("status: when a change of N nodes is affordable", /flower.*1,000 nodes: never \(cap 220/.test(r.stdout) && /bee.*1,000 nodes: now/.test(r.stdout), r.stdout);
+check("status: the live scoreboard with the three shares, and the versions playing", /1\. Moonpetal \(you\): fitness 1\.20; allure 2\.00 \(share 0\.50, fed by 2 bee teams\), forage 150\.0 \(share 0\.60\)/.test(r.stdout)
+  && /bee v2 \(live since 0:20/.test(r.stdout) && /Your flower's size 40 of 1,100/.test(r.stdout), r.stdout);
+r = await tool("tools/ledger.py", "live", "--after", "3");
+check("ledger live: fresh team ledger entries through the runner", r.status === 0 && /1 ledger entries after seq 3/.test(r.stdout) && calls.some((c) => c[0] === "ledger" && c[1] === SECRET && c[2] === 3), r.stdout + r.stderr);
+noFlowerYet = true;
 r = await tool("tools/submit.py", "bee");
 const beeTry = calls.filter((c) => c[0] === "try" && c[2] === "bee").pop();
-check("submit (bee, no flowers submitted yet): the runtime test forages the workspace's flower files", r.status === 0 && beeTry?.[4]?.cosmos?.includes("c * 3 + 1"), r.stdout);
-noFlowersYet = false;
+check("submit (bee, no flower submitted yet): the runtime test plays the workspace's flower file", r.status === 0 && beeTry?.[4]?.includes("c * 3 + 1"), r.stdout);
+noFlowerYet = false;
 gameOver = true;
-r = await tool("tools/submit.py", "cosmos");
+r = await tool("tools/submit.py", "flower");
 check("submit after the game ended: refused cleanly", r.status === 1 && /the game is over/.test(r.stdout) && records.some((x) => x.refused === "game over"), r.stdout);
 gameOver = false;
 gateRefusal = "fair-play violation (test): this session is over";
-r = await tool("tools/submit.py", "cosmos");
+r = await tool("tools/submit.py", "flower");
 check("a refusal from the fair-play gate reaches the tool", r.status === 1 && /refused: fair-play violation/.test(r.stdout), r.stdout);
 gateRefusal = null;
+r = await tool("tools/submit.py", "cosmos");
+check("only flower and bee are kinds", r.status !== 0 && /flower or bee/.test(r.stdout + r.stderr), r.stdout + r.stderr);
 const leaked = spawnSync("grep", ["-rl", SECRET, ws], { encoding: "utf8" }).stdout.trim();
 check("the team's token is nowhere in the workspace (requests, answers)", leaked === "", leaked);
 await broker.stop();
@@ -125,7 +144,7 @@ def bash(i, cmd, run=True):
 out({"type": "system", "subtype": "init"})
 if mode == "violation":
     bash(1, "cat /etc/hostname", run=False)
-res = bash(2, "python3 tools/submit.py cosmos")
+res = bash(2, "python3 tools/submit.py flower")
 open("submit-output.txt", "w").write(res)
 subprocess.Popen(["sleep", "60"], start_new_session=True)   # a script the session leaves running
 if mode == "hang":
@@ -156,7 +175,7 @@ async function stubSession(mode, { killAfterMs = null } = {}) {
 }
 
 let x = await stubSession("ok");
-check("stub session: the submission made during the session went through the runner", /cosmos v2 submitted/.test(x.out), x.out);
+check("stub session: the submission made during the session went through the runner", /flower v2 submitted/.test(x.out), x.out);
 check("stub session: finished normally with the CLI's reported cost", !x.s.killed && Math.abs(x.s.cost - 0.0123) < 1e-9 && !x.s.estimated);
 check("stub session: what it left running carries its tag", x.leftBefore.length >= 1);
 check("stub session: the runner stopped it afterwards", x.killed.length >= 1 && x.after.length === 0);
@@ -168,7 +187,7 @@ check("game over mid-session: the session is stopped", x.s.killed === "game over
 check("game over mid-session: its cost is estimated from the usage in the transcript", x.s.estimated && x.s.cost > 0, JSON.stringify(x.s));
 check("game over mid-session: its leftovers are stopped too", x.after.length === 0);
 const st = statusOf(await fakeApi.view("t"), "T1");
-check("statusOf: budgets computed from bank + rate × time (capped)", st.budgets.cosmos.available === 120 && st.budgets.orchid.available === 770 && st.budgets.bee.available === 1100);
+check("statusOf: budgets computed from bank + rate × time (capped)", st.budgets.flower.available === 120 && st.budgets.bee.available === 1100 && Object.keys(st.budgets).join() === "flower,bee");
 
 await q("DELETE FROM arena.llm_calls WHERE arena_id = 'test-submit'");
 await pool.end();

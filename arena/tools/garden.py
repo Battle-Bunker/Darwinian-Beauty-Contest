@@ -1,26 +1,26 @@
 """The garden, for your scaffold: a program of your own that runs outside the game engine for the rest of the game and
-reacts to what happens by changing your programs itself (start it with tools/scaffold.py). Sessions can use it too.
+reacts to what happens by changing your programs itself (start it with tools/scaffold.py; tools/ is on its import path,
+so `import garden` works). Sessions can use it too (after sys.path.insert(0, "tools")).
 
-    import sys; sys.path.insert(0, "tools")
     import garden
 
-    for a in garden.follow():                       # each new action as it happens (waits between them)
-        if a["action"] == "ask" and a["kind"] == "cosmos" and a["patch"] != garden.ME:
-            ...                                     # a rival cosmos answered a["r"] to a["c"]
-    s = garden.status()                             # clock, round, scores; YOUR budgets (exact) and versions
-    m = garden.measure("orchid", code)              # free: {"ok", "size", "cost", "available", "errors"}
-    r = garden.submit("orchid", code)               # live at once if affordable; else r["ok"] is False and
+    for e in garden.follow():                       # each new entry of your team ledger as it arrives (about once a second)
+        if e["fed"] and e["flower"] == garden.MY_INDEX:
+            ...                                     # a bee fed at your flower: e["percent"], e["energy"], e["nectar"], e["surplus"]
+    s = garden.status()                             # clock, round, live scores; YOUR budgets (exact) and versions
+    m = garden.measure("flower", code)              # free: {"ok", "size", "cost", "available", "errors"}
+    r = garden.submit("flower", code)               # live at once if affordable; else r["ok"] is False and
                                                     # r["wait_s"] says how long until it is (None: never, too big)
-    garden.wait_for_budget("orchid", 300)           # sleep until 300 nodes of change are available
-    code = garden.live("orchid")                    # the source of your orchid playing now
+    garden.wait_for_budget("bee", 300)              # sleep until 300 nodes of change are available
+    code = garden.live("bee")                       # the source of your bee playing now
 
 The change budget is enforced by the server: a submission you can't afford is refused, nothing else happens.
 Everything goes through the game runner (tools/_runner.py): no password or token is ever needed here.
 
-Actions are dicts (stream/SCHEMA.md): seq, atMs, round, bee, patch, kind (cosmos/orchid), visit, action
-(arrive/ask/feed/leave/error), c and r for an ask, nectar for a feed. An "arrive" says which flower a bee was just
-dealt, before its first ask. Your team sees all of it; your bee sees none of it unless
-you put it into its code. Team ids: garden.ME is yours, garden.TEAMS maps ids to names.
+Ledger entries are dicts (stream/SCHEMA.md): seq, round, bee, flower (team indices 0..N-1), challenge, response, fed,
+nectar, percent, energy, ms, surplus; a field your team may not see is None. garden.MY_INDEX is your index, garden.N the
+number of teams, garden.name(i) a team's name. follow_live() yields the public actions (arrive, feed, leave; teams as
+ids, garden.ME is yours) straight from the game's public API.
 """
 import json
 import os
@@ -33,9 +33,18 @@ from _runner import ROOT, call  # noqa: E402
 from stream import Stream  # noqa: E402
 
 _s = Stream(ROOT)
-ME = _s.me
-TEAMS = _s.teams
-KINDS = ("cosmos", "orchid", "bee")
+
+
+def __getattr__(attr):
+    """garden.ME (your team id), garden.MY_INDEX (your index in the ledger), garden.N (the number of teams) and
+    garden.TEAMS (ids -> names). In the lobby MY_INDEX is None and N is 0: the indices are fixed when the game starts,
+    and from then on these give them (a scaffold started in the lobby needn't restart)."""
+    if attr in ("ME", "MY_INDEX", "N", "TEAMS"):
+        return {"ME": lambda: _s.me, "MY_INDEX": lambda: _s.my_index, "N": lambda: _s.n, "TEAMS": lambda: _s.teams}[attr]()
+    raise AttributeError("module 'garden' has no attribute %r" % attr)
+
+
+KINDS = ("flower", "bee")
 try:
     with open(os.path.join(ROOT, "config.json")) as _f:
         CONFIG = json.load(_f)
@@ -44,38 +53,49 @@ except (OSError, ValueError):
 API = CONFIG.get("public_api")
 
 
-def name(team_id):
-    """A team's name from its id."""
-    return TEAMS.get(team_id, str(team_id)[:8])
+def name(team):
+    """A team's name from its ledger index or its id."""
+    return _s.name(team)
 
 
-# ---------------------------------------------------------------- the stream
+# ---------------------------------------------------------------- the ledger and the stream
 
-def mine():
-    """Your own bee's and patch's actions as your team sees them (with kind, your timings, versions, printouts)."""
-    return _s.mine()
-
-
-def actions(after=0, since_ms=None):
-    """Every action so far with seq > after (or from game time since_ms on), oldest first."""
-    return _s.actions(since_ms=since_ms, since_seq=after or None)
+def turns(since_round=None):
+    """Your team ledger so far (from stream/ledger.jsonl), oldest first."""
+    return _s.turns(since_round=since_round)
 
 
 def last():
-    """The latest action, or None."""
+    """The latest ledger entry, or None."""
     return _s.last()
 
 
 def follow(after=None, poll=0.1):
-    """Yield each new action as the runner appends it to stream/actions.jsonl (about once a second). Starts after
+    """Yield each new ledger entry as the runner appends it to stream/ledger.jsonl (about once a second). Starts after
     seq `after`, or at the end of what's there now. Never returns: break out of it yourself."""
     if after is None:
-        a = _s.last()
-        after = a["seq"] if a else 0
-    for a in _s.follow(poll=poll, from_start=True):
-        if a["seq"] > after:
-            after = a["seq"]
-            yield a
+        e = _s.last()
+        after = e["seq"] if e else 0
+    for e in _s.follow(poll=poll, from_start=True):
+        if e.get("seq", 0) > after:
+            after = e["seq"]
+            yield e
+
+
+def ledger(after=0):
+    """Ledger entries with seq > after, fresh from the game through the runner (the file can be a second behind).
+    {"ok", "entries", "lastSeq", "round", "status", "participants", "team"}."""
+    return call("ledger", after=after)
+
+
+def actions(after=0, since_ms=None):
+    """The public stream so far (stream/actions.jsonl) with seq > after, or from game time since_ms on."""
+    return _s.actions(since_ms=since_ms, since_seq=after or None)
+
+
+def mine():
+    """Your own bee's and flower's actions as your team sees them (with your timings, versions, printouts)."""
+    return _s.mine()
 
 
 def _sse_messages(after):
@@ -86,11 +106,13 @@ def _sse_messages(after):
 
 
 def follow_live(after=None):
-    """Like follow(), but straight from the game's public API (Server-Sent Events): lower latency than the file (a few
-    times a second). Reconnects if the connection drops. (The API also has a WebSocket, API + "/ws?after=<seq>", with the
-    same messages; Python's standard library has no client for it, and raw sockets aren't allowed here.)"""
+    """The public actions (arrive, feed, leave) straight from the game's public API (Server-Sent Events), as they happen.
+    Reconnects if the connection drops. (The API also has a WebSocket, API + "/ws?after=<seq>", with the same messages;
+    Python's standard library has no client for it, and raw sockets aren't allowed here.)"""
     if after is None:
-        a = _s.last()
+        a = None
+        for a in _s.actions():
+            pass
         after = a["seq"] if a else 0
     while True:
         try:
@@ -104,7 +126,7 @@ def follow_live(after=None):
 
 
 def scores():
-    """The live numbers from the public API: status, clockMs, endMs, round, scores, recent (last 5 minutes), ledgers."""
+    """The live scoreboard from the public API: status, clockMs, endMs, round, scores, ledgers."""
     with urllib.request.urlopen(API + "/scores", timeout=10) as resp:
         return json.loads(resp.read())
 
@@ -121,7 +143,7 @@ def game_over():
 
 def status(afford=None):
     """{"status", "clockMs", "endMs", "leftMs", "round", "budgets": {kind: {"available", "exact", "perMinute", "cap", ...}},
-    "scores", "recent", "versions": {kind: {"version", "size", "atMs", ...}}, "text"}"""
+    "scores" (the live scoreboard), "versions": {kind: {"version", "size", "atMs", ...}}, "text"}"""
     return call("status", afford=afford)
 
 
@@ -145,9 +167,16 @@ def measure(kind, code):
     return {k: r.get(k) for k in ("ok", "size", "cost", "available", "errors", "budget")}
 
 
-def try_program(kind, code, challenges=None):
-    """Run it on the game's real runner without submitting: a flower on challenges, a bee on your own flowers."""
-    return call("try", kind=kind, code=code, challenges=challenges)
+def try_flower(code, challenges=None, ledger=None):
+    """Run a flower on challenges on the game's real runner without submitting it: {"ok", "results": [{"c", "r",
+    "percent", "energy", "ms", "error"}]}. ledger: what it gets as its ledger (default [])."""
+    return call("try", kind="flower", code=code, challenges=challenges, ledger=ledger)
+
+
+def try_bee(code, rounds=None, flower=None):
+    """Run a bee for `rounds` rounds in a garden of just your own flower (`flower` code, else your latest submitted one):
+    {"ok", "feeds", "nectar", "surplus", "rounds", "actions", "problems"}."""
+    return call("try", kind="bee", code=code, rounds=rounds, flower=flower)
 
 
 def submit(kind, code, force=False):

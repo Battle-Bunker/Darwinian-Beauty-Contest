@@ -49,6 +49,8 @@ if kind == "flower":
             ledger = json.loads(text)
         except ValueError:
             ledger = [json.loads(line) for line in text.splitlines() if line.strip()]
+        if isinstance(ledger, dict):
+            ledger = [ledger]  # a .jsonl file of one entry
     r = call("try", kind=kind, code=code, challenges=challenges or None, ledger=ledger)
 else:
     flower = read_code("flower", opt("--flower")) if opt("--flower") else None

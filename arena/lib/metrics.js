@@ -11,6 +11,8 @@
 //                  earned
 //   selfFeeding    per team: its bee at its own flower vs elsewhere; handshake: whether its flower treats its own bee
 //                  differently (percent, feed rate) in a way that suggests the two recognise each other
+//   handshakes     per (bee team, flower team) pair: feed rate there vs that bee elsewhere, percent offered to that bee
+//                  vs to other bees; mutual = two teams whose bees and flowers both favour each other
 //   discrimination do bees feed more where the offer is generous? feed rate by percent bucket and by the nectar on offer
 //                  (percent × E), per bee team: the mean offer at turns it fed vs turns it left
 //   copies         how fast flowers copy each other's answers: a flower's first answer r to challenge c after another
@@ -115,6 +117,26 @@ export function computeMetrics({ view, actions, submits = [], windowMs }) {
     };
   }
 
+  // Handshakes between teams: per (bee b, flower f), does b feed at f more than b feeds elsewhere, and does f offer b more
+  // than it offers other bees? A pair where both hold, in both directions, looks like two teams recognising each other.
+  const pairs = [];
+  for (const b of ids) for (const f of ids) {
+    const ts = turns.filter((t) => t.bee === b && t.flower === f);
+    if (ts.length < 5) continue;
+    const rest = turns.filter((t) => t.bee === b && t.flower !== f), toOthers = turns.filter((t) => t.flower === f && t.bee !== b);
+    const rate = ts.filter((t) => t.action === "feed").length / ts.length;
+    const restRate = rest.length ? rest.filter((t) => t.action === "feed").length / rest.length : null;
+    const pct = mean(ts.map((t) => t.percent).filter((x) => x != null)), pctOthers = mean(toOthers.map((t) => t.percent).filter((x) => x != null));
+    const flag = (restRate != null && rate - restRate >= 0.3) || (pct != null && pctOthers != null && pct - pctOthers >= 15);
+    pairs.push({ bee: name[b], beeId: b, flower: name[f], flowerId: f, self: b === f, turns: ts.length, feedRate: r3(rate), feedRateElsewhere: r3(restRate),
+      percent: r3(pct), percentToOtherBees: r3(pctOthers), flag });
+  }
+  const flagged = (b, f) => pairs.find((x) => x.beeId === b && x.flowerId === f)?.flag;
+  const mutual = [];
+  for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) {
+    if (flagged(ids[i], ids[j]) && flagged(ids[j], ids[i])) mutual.push([name[ids[i]], name[ids[j]]]);
+  }
+
   // Flower versions: size and compute against energy.
   const versions = [];
   const byVersion = new Map();
@@ -191,7 +213,7 @@ export function computeMetrics({ view, actions, submits = [], windowMs }) {
       failures: turns.filter((t) => t.r == null).length, selfFeeds: fedTurns.filter((t) => t.bee === t.flower).length },
     windows: win,
     distributions: { percent: q5(answered.map((t) => t.percent)), energy: q5(turns.map((t) => t.energy || 0)), nectar: q5(fedTurns.map((t) => t.nectar || 0)), surplus: q5(fedTurns.map((t) => t.surplus || 0)) },
-    teams, versions, discrimination,
+    teams, handshakes: { pairs, mutual }, versions, discrimination,
     copies: { matches: copies.length, copies: att.length, medianLatencyMs: median(att.map((x) => x.latencyMs)), byCopier },
     changes, final,
     config: { minutes: config.minutes, feedCost: config.feedCost, challengeType: config.challengeType, responseType: config.responseType, budgets: config.budgets },
@@ -219,3 +241,16 @@ export async function computeGameMetrics(gPath, { api = Api, submits = [], windo
   const actions = await fetchActions(api, gPath);
   return computeMetrics({ view, actions, submits, windowMs });
 }
+
+/** Who submitted each version of a game (a session, the scaffold, or the runner's lobby fallback): arena.requests. */
+export const submitsOf = (all, gameId) => all(`SELECT e.team_id, r.kind, r.version, r.refused, r.source, s.no AS session_no FROM arena.requests r
+      LEFT JOIN arena.sessions s ON s.id = r.session_id JOIN arena.entries e ON e.game_id = r.game_id AND e.persona_id = r.persona_id
+     WHERE r.game_id = $1 AND r.op = 'submit' AND r.ok AND r.version IS NOT NULL`, [gameId]);
+
+/** Scaffolds of a game: who ran one, how often it started, crashed or was refused, its CPU, and what it submitted. */
+export const scaffoldsOf = (all, gameId) => all(`SELECT e.team_id, e.team_name AS team, count(*)::int AS starts, count(*) FILTER (WHERE sc.status = 'crashed')::int AS crashes,
+      count(*) FILTER (WHERE sc.status = 'refused')::int AS refused, coalesce(sum(sc.cpu_seconds), 0) AS cpu_seconds, coalesce(sum(sc.throttled_ms), 0)::bigint AS throttled_ms,
+      (SELECT count(*)::int FROM arena.requests r WHERE r.game_id = sc.game_id AND r.persona_id = sc.persona_id AND r.source = 'scaffold' AND r.op = 'submit' AND r.ok) AS submits,
+      (SELECT count(*)::int FROM arena.requests r WHERE r.game_id = sc.game_id AND r.persona_id = sc.persona_id AND r.source = 'scaffold' AND r.op = 'submit' AND NOT r.ok) AS refused_submits,
+      min(sc.clock_start) AS first_start_ms
+    FROM arena.scaffolds sc JOIN arena.entries e ON e.game_id = sc.game_id AND e.persona_id = sc.persona_id WHERE sc.game_id = $1 GROUP BY 1, 2, sc.game_id, sc.persona_id`, [gameId]);
