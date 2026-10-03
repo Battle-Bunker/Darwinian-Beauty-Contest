@@ -91,9 +91,10 @@ export function programInterface(config) {
     rules: typeRules(cT, rT, limitsOf(config)),
   };
   const entry = (C, R) => `{ round: number; bee: number; flower: number; challenge: ${C}; response: ${R} | null; fed: boolean;\n` +
-    `  nectar: number | null; percent: number | null; energy: number | null; ms: number | null; surplus: number | null }`;
-  const entryNote = (cm) => `${cm} Ledger entry: bee and flower are team indices (GAME.team is yours). nectar: your turns only; percent, energy,\n` +
-    `${cm} ms (your flower's CPU time) and surplus: turns at your own flower only. Hidden fields are null.`;
+    `  percent: number | null; energy: number | null; nectar: number | null; surplus: number; ms: number | null }`;
+  const entryNote = (cm) => `${cm} Ledger entry: bee and flower are team indices (GAME.team is yours). On a feed, percent, energy, nectar and\n` +
+    `${cm} surplus are public; without a feed, surplus is 0, nectar null, and percent and energy are your own flower's only.\n` +
+    `${cm} ms (the flower's CPU time): your own flower only. Hidden fields are null.`;
   if (config.language === "typescript") {
     const C = tsType(cT), R = tsType(rT);
     const aliases = [
@@ -109,7 +110,7 @@ export function programInterface(config) {
         `function decide(challenge: ${C}, response: ${R} | null, ledger: readonly Entry[]): ["feed" | "leave", ${C}]   // [decision, next challenge]\n${beeNotes(true, config)}`,
     };
   }
-  const pyEntry = `# ledger: a list of dicts {"round", "bee", "flower", "challenge", "response", "fed", "nectar", "percent", "energy", "ms", "surplus"}\n` +
+  const pyEntry = `# ledger: a list of dicts {"round", "bee", "flower", "challenge", "response", "fed", "percent", "energy", "nectar", "surplus", "ms"}\n` +
     entryNote("#").replaceAll("GAME.team", 'GAME["team"]').replace("# Ledger entry: ", "# ").replace("are null", "are None");
   return {
     types,

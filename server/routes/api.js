@@ -43,7 +43,7 @@ export function apiRouter() {
   r.get(base, wrap(async (req, res) => res.json(await G.viewGame(req.room, req.game, req.user))));
   r.get(`${base}/actions`, wrap(async (req, res) => res.json(await G.viewActions(req.game, req.user, { after: req.query.after, before: req.query.before, limit: req.query.limit, mine: req.query.mine }))));
   r.get(`${base}/ledger`, wrap(async (req, res) => res.json(await G.viewLedger(req.game, req.user, { after: req.query.after, limit: req.query.limit }))));
-  r.get(`${base}/scores`, wrap(async (req, res) => res.json(await G.viewScores(req.game, req.user))));
+  r.get(`${base}/scores`, wrap(async (req, res) => res.json(await G.viewScores(req.game))));
   r.get(`${base}/events`, wrap(async (req, res) => gameStream(req, res, {
     gameId: req.game.id, teamId: await G.myTeamId(req.game, req.user), version: req.game.version,
     after: Number(req.query.after ?? req.game.last_seq) || 0,

@@ -55,16 +55,17 @@ export function gameInfo(config, team, teams) {
 }
 
 /**
- * One finished turn as team `ti`'s programs (and operators) see it: the public part of every turn, plus
- * the nectar of the team's own turns and the private details of turns at its own flower. Hidden: null.
+ * One finished turn as team `ti`'s programs (and operators) see it. Public: the arrival, challenge,
+ * response and whether the bee fed; on a feed also the percent, energy, nectar and surplus (on a turn
+ * without a feed, surplus is 0 and nectar null). The flower's own team also sees the percent and energy of
+ * turns without a feed, and the flower's CPU time (ms) of every turn. Hidden: null.
  */
 export function entryFor(t, ti) {
-  const ours = t.bee === ti || t.flower === ti, atOurFlower = t.flower === ti;
+  const own = t.flower === ti;
   return {
     round: t.round, bee: t.bee, flower: t.flower, challenge: t.c, response: t.r, fed: t.fed,
-    nectar: ours && t.fed ? t.nectar : null,
-    percent: atOurFlower ? t.percent : null, energy: atOurFlower ? t.energy : null,
-    ms: atOurFlower ? t.ms : null, surplus: atOurFlower ? t.surplus : null,
+    percent: t.fed || own ? t.percent : null, energy: t.fed || own ? t.energy : null,
+    nectar: t.fed ? t.nectar : null, surplus: t.fed ? t.surplus : 0, ms: own ? t.ms : null,
   };
 }
 

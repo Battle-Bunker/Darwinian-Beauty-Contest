@@ -43,7 +43,7 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 | GET | `base` | anyone | | the **game view** (below), filtered for the viewer |
 | GET | `base/actions` | anyone | `?after=<seq>&limit=<n ≤ 5000>`, or `?before=<seq>&limit=<n>`; `&mine=1` (team members) for only turns of your bee or at your flower | `{ actions: [action], lastSeq, clockMs, round, status }`: the actions after `after`, oldest first; or the last `limit` before `before`, oldest first (`before = lastSeq + 1` gives the latest) |
 | GET | `base/ledger` | anyone | `?after=<seq>&limit=<n ≤ 5000>` | `{ participants, team, entries: [entry], lastSeq, round, status }`: the **team ledger**, exactly what your programs get (below). `team` is your team's index in `participants` (null for a spectator, who gets the public fields only) |
-| GET | `base/scores` | anyone | | `{ status, clockMs, endMs, round, lastSeq, participants, scores, ledgers }`: the live scoreboard (public) and the ledgers (filtered for the viewer); cheap enough to poll every second |
+| GET | `base/scores` | anyone | | `{ status, clockMs, endMs, round, lastSeq, participants, scores, ledgers }`: the live scoreboard and ledgers (public); cheap enough to poll every second |
 | GET | `base/events` | anyone | `?after=<seq>` | Server-Sent Events: `{version}` when the view should be refetched; `{programs: true}` when your own team's programs changed (refetch too); `{actions, lastSeq, clockMs, round, status}` as the garden writes them (from `after`, in order, page after page until caught up); `{lastSeq, clockMs, round, status}` when there is nothing new |
 | GET (WebSocket) | `base/ws` | anyone | `?after=<seq>` | The same feed as `base/events` over a WebSocket: exactly the same messages, one JSON text frame each, filtered for the viewer the same way (a session cookie or `Authorization: Bearer` token for a team member's private fields). Server to client only; reconnect with `?after=` the last `seq` you got. `ws://`, or `wss://` behind https |
 | PATCH | `base/config` | owner, in the lobby | `{ config: {...partial} }` | `{ config, clearedPrograms }` (changing the language or types, or shrinking a size budget, clears the programs written so far) |
@@ -100,18 +100,17 @@ Types: `int`, `float`, `bool`, `str`, `any`, `list[T]`, `tree[T]`, `graph`, `dig
 | Field | During play | After finish |
 |---|---|---|
 | arrivals (`bee` → `flower`), `c`, `r`, fed or not (`action`), `turn`, `round`, `atMs` | everyone, spectators included, as it happens | everyone |
-| `percent`, `energy`, `ms` (the flower's CPU time), `flowerError`, `surplus`, `flowerVersion` | the flower's team | everyone |
-| `nectar` | the bee's team and the flower's team | everyone |
+| on a `feed`: `percent`, `energy`, `nectar`, `surplus` | everyone | everyone |
+| on a `leave`: `surplus` (always 0) | everyone | everyone |
+| on a `leave`: `percent`, `energy` | the flower's team | everyone |
+| `ms` (the flower's CPU time), `flowerError`, `flowerVersion` | the flower's team | everyone |
 | `beeMs`, `beeError`, `beeVersion` | the bee's team | everyone |
 | `log` (what the bee printed) | the bee's team | everyone if `revealOnFinish` |
 | code | own team | everyone if `revealOnFinish` |
 | program versions, sizes, costs, change budgets, problems | own team | everyone |
-| scores: every team's totals (allure, forage, surplus, shares, fitness, feed and nectar counts), live | everyone | everyone |
-| `ledgers.feeds` | everyone | everyone |
-| `ledgers.nectar[b][f]` | teams b and f (own row and column) | everyone |
-| `ledgers.surplus[b][f]` | team f (own column) | everyone |
+| the scoreboard (every team's totals, shares and fitness) and `ledgers` (feeds, nectar, surplus) | everyone, live | everyone |
 
-A field you may not see is **absent** from actions, and **null** in ledger entries, scores and ledgers.
+A field you may not see is **absent** from actions, and **null** in ledger entries.
 Every way of reading actions (pages, `before=`, `mine=1`, the SSE and WebSocket streams) and the team
 ledger apply these rules, so programs reading the API see exactly what the web page shows. Submissions
 don't bump the public `game.version`, so other teams can't tell when a team changes its code.
@@ -137,7 +136,7 @@ don't bump the public `game.version`, so other teams can't tell when a team chan
   "myTeam": { "id", "name", "joinCode", "index" } | null,
   "interface": { "flower", "bee", "types": { "challenge", "response", "challengeMeans", "responseMeans", "rules": [..] } },
   "scores": [teamScore] | null,
-  "ledgers": { "feeds": [[int]], "nectar": [[number | null]], "surplus": [[number | null]] } | null
+  "ledgers": { "feeds": [[int]], "nectar": [[number]], "surplus": [[number]] } | null
 }
 ```
 
@@ -146,10 +145,9 @@ oldest first; `atMs` = game time it went live, 0 for the lobby; `problem` = the 
 `programs` and `banks` are your own team's during play (others: null), everyone's after finish; `code`
 only where you may see it.
 
-`ledgers` (row = bee team, column = flower team, participants order; whole game so far): `feeds[b][f]` (times
-b's bee fed at f's flower) is public; `nectar[b][f]` (nectar b's bee got there) is shown to teams b and f;
-`surplus[b][f]` (what f's flower kept from b's bee's feeds) to team f; hidden cells are null. Everything after
-finish.
+`ledgers` (row = bee team, column = flower team, participants order; whole game so far; public): `feeds[b][f]`
+(times b's bee fed at f's flower), `nectar[b][f]` (nectar b's bee got there) and `surplus[b][f]` (what f's
+flower kept from b's bee's feeds).
 
 ## Actions
 
@@ -164,16 +162,16 @@ A turn makes two actions: its **arrival**, written to the stream at once, and it
   "action": "arrive|feed|leave", // feed = the bee fed; leave = it didn't (left, was late, or broke)
   // on feed and leave, public:
   "c", "r",                      // the challenge and the response (null if the flower failed)
-  // the flower's team (everyone after finish):
+  "surplus",                     // what the turn added to the flower team's surplus: (1 − percent/100) × E on
+                                 // a feed, 0 on a leave
+  "nectar",                      // feed only: what the bee got, percent/100 × E
+  // on a feed public; on a leave the flower's team only (everyone after finish):
   "percent",                     // 0–100 (null if the flower failed)
   "energy",                      // E, node·ms (0 if the flower failed)
+  // the flower's team (everyone after finish):
   "ms",                          // the flower's CPU time for the call
-  "surplus",                     // what this turn added to the flower team's surplus: (1 − percent/100) × E
-                                 // on a feed, 0 on a leave
   "flowerError",                 // why the response is null (a timeout, an error, a malformed return)
   "flowerVersion",               // also on arrive
-  // the bee's team and the flower's team (everyone after finish):
-  "nectar",                      // feed only
   // the bee's team (everyone after finish):
   "beeMs",                       // how long the bee took to decide
   "beeError",                    // e.g. "too slow: no reply within 50 ms", a crash, a bad next challenge
@@ -191,9 +189,10 @@ plus `seq` (the turn's `feed`/`leave` action) for paging. Team numbers are indic
 
 ```jsonc
 { "seq": 812, "round": 41, "bee": 2, "flower": 0, "challenge": 17, "response": 52, "fed": true,
-  "nectar": 30871.5,                 // null unless your bee fed or a bee fed at your flower (and it fed)
-  "percent": 25, "energy": 123486.0, // null except at your own flower
-  "ms": 2.1, "surplus": 92614.5 }    // null except at your own flower; surplus is 0 when the bee didn't feed
+  "percent": 25, "energy": 123486.0, // public on a feed; on a leave null except at your own flower
+  "nectar": 30871.5,                 // on a feed; null on a leave
+  "surplus": 92614.5,                // on a feed; 0 on a leave
+  "ms": 2.1 }                        // null except at your own flower
 ```
 
 Once the game is over, `GET base/ledger` fills in every field for everyone. Programs get these entries

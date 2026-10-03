@@ -88,21 +88,21 @@ So a flower's surplus grows only when bees feed at it.
 ## The ledger
 
 Your bee, your flower and your team all see the same **team ledger**: every turn of every bee so far,
-oldest first, plus your team's private details. One entry per turn:
+oldest first, with everything your team may see of it. One entry per turn:
 
 ```python
 {"round": 41, "bee": 2, "flower": 0,         # team indices: whose bee visited whose flower
  "challenge": 17, "response": 52,            # response is None if the flower failed
  "fed": True,
- "nectar": 30871.5,                          # your turns only: your bee fed, or a bee fed at your flower
- "percent": 25, "energy": 123486.0,          # visits to your own flower only
- "ms": 2.1, "surplus": 92614.5}              #   (ms: your flower's compute time; surplus: what
-                                             #    this turn added to it, 0 if the bee didn't feed)
+ "percent": 25, "energy": 123486.0,          # on a feed: public. Otherwise: your own flower only
+ "nectar": 30871.5, "surplus": 92614.5,      # on a feed: what the bee got and the flower kept.
+                                             #   Otherwise nectar is None and surplus is 0
+ "ms": 2.1}                                  # the flower's compute time: your own flower only
 ```
 
-Fields you aren't allowed to see are `None` (`null`): `nectar` unless your bee fed or a bee fed at your
-flower; `percent`, `energy`, `ms` and `surplus` except at your own flower. Teams are numbered `0` to
-`N - 1`; `GAME["team"]` is yours and `GAME["teams"]` is N.
+Fields you aren't allowed to see are `None` (`null`): `percent` and `energy` of turns without a feed
+at other teams' flowers, and `ms` except at your own flower. Teams are numbered `0` to `N - 1`;
+`GAME["team"]` is yours and `GAME["teams"]` is N.
 
 **Nobody learns the counterpart of a turn until it's over.** A round's entries reach the programs together,
 after the round is over and before the next round's flowers are called. So while your flower answers it
@@ -148,9 +148,9 @@ def decide(challenge, response, ledger):
 type Entry = {
   round: number; bee: number; flower: number;       // team indices
   challenge: Challenge; response: Response | null; fed: boolean;
-  nectar: number | null;                            // your turns only
-  percent: number | null; energy: number | null;    // your own flower only
-  ms: number | null; surplus: number | null;        // your own flower only
+  percent: number | null; energy: number | null;    // public on a feed; otherwise your own flower only
+  nectar: number | null; surplus: number;           // on a feed; otherwise null and 0
+  ms: number | null;                                // your own flower only
 };
 
 function flower(challenge: number, ledger: readonly Entry[]): [number, number] {
@@ -246,23 +246,23 @@ never can be: make it in steps.
 ## What everyone can see
 
 **Public to everyone, as it happens** (including spectators without a team): for every turn of every bee,
-the **arrival** (whose bee, whose flower), the **challenge**, the **response** and **whether the bee fed**.
-The game's settings are public too. So whatever two programs do together happens in plain view.
+the **arrival** (whose bee, whose flower), the **challenge**, the **response** and **whether the bee fed**
+(or left, or was late). On a **feed**, also the **percent**, the **energy**, the **nectar** the bee got and
+the **surplus** the flower kept. The game's settings and the scoreboard are public too. So whatever two
+programs do together happens in plain view.
 
 **Private during play:**
 
 | What | Who sees it during play |
 |---|---|
-| a turn's **percent**, **energy** and the flower's **compute time** | the flower's team |
-| a feed's **nectar** | the bee's team and the flower's team |
-| what each turn added to a flower's **surplus** | the flower's team |
-| **code**, what your bee **prints**, program **versions**, change **budgets**, the bee's **decision times**, errors | that team |
+| the **percent** and **energy** of a turn without a feed | the flower's team |
+| the flower's **compute time**, on every turn, and why a flower failed | the flower's team |
+| **code**, what your bee **prints**, program **versions** and **sizes**, change **budgets**, the bee's **decision times** and errors | that team |
 
 Your bee's and flower's ledger holds exactly what your team can see, from turns that are over.
 
-**When the game ends, everything is revealed** for a full replay: every percent, energy, nectar, surplus
-and timing, every version and change, every budget, and (unless the owner turns it off) all code and
-printouts.
+**When the game ends, everything is revealed** for a full replay: every percent, energy and timing, every
+version and change, every budget, and (unless the owner turns it off) all code and printouts.
 
 ## Scoring: Darwinian fitness
 
@@ -282,8 +282,7 @@ The square roots reward variety: 4 feeds from one bee team give allure 2, one fr
 gives 4. Your own team's bee and flower count like any other team's.
 
 **The scoreboard is live and public**: during play everyone, spectators included, sees every team's
-allure, forage, surplus, shares and fitness as they change. What stays private is the detail behind them
-(see "What everyone can see").
+allure, forage, surplus, shares and fitness as they change.
 
 ## After the game
 

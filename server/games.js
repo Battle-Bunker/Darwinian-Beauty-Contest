@@ -328,23 +328,16 @@ export async function tryProgram(game, user, { kind, code, challenges, ledger, f
 // ---------- the views: everything a given viewer may see, live or later ----------
 //
 // During play, everyone (spectators included) sees every turn's arrival, challenge, response and whether
-// the bee fed, and the live scoreboard. Private until the game is over:
-//   - the flower's team only: each turn's percent, energy, the flower's CPU time, surplus, flower errors
-//     and which flower version answered;
-//   - the bee's team and the flower's team: a feed's nectar;
+// the bee fed; on a feed also its percent, energy, nectar and surplus; and the live scoreboard and
+// ledgers. Private until the game is over:
+//   - the flower's team only: the percent and energy of turns without a feed, the flower's CPU time and
+//     errors on every turn, and which flower version answered;
 //   - the bee's team only: its decision times, errors and versions; what it prints (everyone's once a
 //     finished game is revealed);
-//   - each team's own: code (revealed at the end if revealOnFinish), versions, change budgets.
+//   - each team's own: code (revealed at the end if revealOnFinish), versions, sizes, change budgets.
 
-/** A game's whole-game ledgers, as viewer `idx` (a team index, or -1) may see them. */
-function ledgersView(g, idx, over) {
-  if (!g.participants) return null;
-  return {
-    feeds: g.feeds,
-    nectar: g.nectar.map((row, b) => row.map((x, f) => (over || b === idx || f === idx ? x : null))),
-    surplus: g.surplus.map((row) => row.map((x, f) => (over || f === idx ? x : null))),
-  };
-}
+/** A game's whole-game ledgers (public). */
+const ledgersView = (g) => (g.participants ? { feeds: g.feeds, nectar: g.nectar, surplus: g.surplus } : null);
 
 const scoresOf = (g) => (g.participants ? score(g.participants, g.feeds, g.nectar, g.surplus) : null);
 
@@ -404,19 +397,16 @@ export async function viewGame(room, game, user) {
     interface: programInterface(cfg),
     scores: scoresOf(g),
     // feeds[bee team][flower team], nectar[..][..] and surplus[..][..] over the whole game, in participants order
-    ledgers: ledgersView(g, mine ? indexOf(mine.id) : -1, over),
+    ledgers: ledgersView(g),
   };
 }
 
 /** Just the live numbers (cheap enough to poll every second): clock, round, the scoreboard and the ledgers. */
-export async function viewScores(game, user) {
+export async function viewScores(game) {
   const g = (await query("SELECT * FROM games WHERE id = $1", [game.id])).rows[0];
-  const mine = await myTeam(g.id, user?.id);
-  const participants = g.participants || null;
   return {
-    status: g.status, clockMs: g.clock_ms, endMs: Math.round(g.config.minutes * 60000), round: g.round, lastSeq: g.last_seq, participants,
-    scores: scoresOf(g),
-    ledgers: ledgersView(g, mine && participants ? participants.indexOf(mine.id) : -1, g.status === "finished"),
+    status: g.status, clockMs: g.clock_ms, endMs: Math.round(g.config.minutes * 60000), round: g.round, lastSeq: g.last_seq,
+    participants: g.participants || null, scores: scoresOf(g), ledgers: ledgersView(g),
   };
 }
 
@@ -443,8 +433,9 @@ export async function viewActions(game, user, { after = 0, before = null, limit 
 
 /**
  * One action as a viewer (a member of team `me`, or nobody) may see it. Fields the viewer may not see are
- * absent. Public: the arrival (whose bee, whose flower), and on the turn's end the challenge, the response
- * and whether the bee fed (the action itself).
+ * absent. Public: the arrival (whose bee, whose flower); on the turn's end the challenge, the response,
+ * whether the bee fed (the action itself) and the surplus (0 on a leave); on a feed also the percent,
+ * energy and nectar.
  */
 export function actionView(a, me, over, revealed) {
   const myBee = over || (!!me && a.bee_team === me), myFlower = over || (!!me && a.flower_team === me);
@@ -452,10 +443,11 @@ export function actionView(a, me, over, revealed) {
   if (myBee) out.beeVersion = a.bee_version;
   if (myFlower) out.flowerVersion = a.flower_version;
   if (a.action !== "arrive") {
-    out.c = a.c;
-    out.r = a.r;
-    if (myFlower) Object.assign(out, { percent: a.percent, energy: a.energy, ms: a.cpu_ms, surplus: a.surplus, flowerError: a.flower_error });
-    if (a.action === "feed" && (myBee || myFlower)) out.nectar = a.nectar;
+    const fed = a.action === "feed";
+    Object.assign(out, { c: a.c, r: a.r, surplus: a.surplus });
+    if (fed) out.nectar = a.nectar;
+    if (fed || myFlower) Object.assign(out, { percent: a.percent, energy: a.energy });
+    if (myFlower) Object.assign(out, { ms: a.cpu_ms, flowerError: a.flower_error });
     if (myBee) Object.assign(out, { beeMs: a.bee_ms, beeError: a.bee_error });
   }
   if (a.log && (revealed || (!!me && a.bee_team === me))) out.log = a.log;
@@ -494,8 +486,8 @@ export const turnOf = (a, idx) => ({
 /** entryFor, or every field (ti === null: the game is over). */
 function ledgerEntry(t, ti) {
   if (ti !== null) return entryFor(t, ti);
-  return { round: t.round, bee: t.bee, flower: t.flower, challenge: t.c, response: t.r, fed: t.fed, nectar: t.fed ? t.nectar : null,
-    percent: t.percent, energy: t.energy, ms: t.ms, surplus: t.surplus };
+  return { round: t.round, bee: t.bee, flower: t.flower, challenge: t.c, response: t.r, fed: t.fed, percent: t.percent, energy: t.energy,
+    nectar: t.fed ? t.nectar : null, surplus: t.fed ? t.surplus : 0, ms: t.ms };
 }
 
 export { DEFAULT_CONFIG };
