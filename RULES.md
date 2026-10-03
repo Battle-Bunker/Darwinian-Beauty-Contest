@@ -1,118 +1,210 @@
-# Darwinian Beauty Contest: the rules
+# Darwinian Beauty Contest: one flower
 
-Real flowers and bees are locked in an arms race. Some flowers pay bees with nectar. Others, like the
-**bee orchid** (*Ophrys apifera*), pay nothing: they just *look* like a good deal. Bees that can tell
-the difference eat well. Flowers that fool bees still get pollinated for free.
+Real flowers and bees are locked in an arms race. A flower pays for pollination with nectar, and every
+drop it gives away is energy it doesn't keep. A bee wants the most nectar for the fewest visits. Each
+side would like to know who it is dealing with, and neither is told until it's too late to matter.
 
-In this game your team writes **three programs**:
+Your team writes **two programs**:
 
-| Program | Named after | What it is |
-|---|---|---|
-| **cosmos** | the garden cosmos (*Cosmos bipinnatus*), the honest, many-coloured nectar flower | a rewarding flower: bees that feed here get **1 nectar** |
-| **orchid** | the bee orchid (*Ophrys apifera*), the classic deceiver | a deceptive flower: bees that feed here get **nothing** |
-| **bee** | the honeybee | visits flowers, asks them questions, and decides whether to feed |
+| Program | What it does |
+|---|---|
+| **flower** | answers a bee's challenge, and says what share of this turn's spare energy it gives the bee as nectar if the bee feeds |
+| **bee** | asks flowers challenges, and after each answer decides whether to feed |
 
-Your cosmos and orchid grow together in your team's **patch**. Bees never learn which patch a flower
-is in, or which of its two flowers it is. All a bee sees is a flower and its answers.
+## The game
 
-## The garden never stops
+A game is one continuous stretch of play, 2 minutes of game time by default (the room owner sets it).
 
-A game is one continuous stretch of play, 2 minutes by default (the room owner sets it).
+1. **The lobby.** Teams join and write their programs. Writing is free here, within the size limits. A
+   team needs both programs to take part, and a game needs at least 2 such teams.
+2. **The garden.** The owner starts the game. From then on the bees forage without pause, round after
+   round, and every team can change either program at any moment, paying from a change budget that
+   refills as the game goes on (see "Changing your programs").
+3. **The end.** When the clock runs out the game is over and everything is revealed. The owner can also
+   pause the game (the clock and the budgets stand still) or end it early.
 
-1. **The lobby.** Teams join and write their programs. Writing is free here: anything within the size
-   budgets. A team needs all three programs to take part.
-2. **The garden.** The owner starts the game and the clock starts. From then on the bees forage without
-   pause, one round after another, and every team can change any of its programs at any moment, paying
-   for each change from a budget that refills as the game goes on (see "Changing your programs").
-3. **The end.** When the clock runs out the game is over. The owner can also pause it (the clock and
-   the budgets stand still) or end it early.
+### Rounds
 
-### Rounds: 200 ms, every bee in step
+The game runs in **rounds** of **200 ms** of game time: a **150 ms flower window**, then a **50 ms
+decision window**. A 2-minute game is 600 rounds. Rounds are played in real time; if the server is
+short of CPU cores a round takes longer on the wall clock, which changes nothing in the game.
 
-The game runs in **rounds** of exactly **200 ms** of game time. A round is one action slot for every
-bee, all at the same moment: a **150 ms flower window**, then a **50 ms decision window**. The game
-clock is rounds × 200 ms (a 2-minute game is 600 rounds), and it is played in real time: a round lasts
-at least 200 ms on the wall clock too (longer if the server is short of CPU cores, which changes
-nothing in the game: every program still gets its full time on a core of its own).
+## A turn
 
-Each bee is shown one flower at a time. Every time it moves on, its next flower is picked at random
-from every flower in the garden, your own two included, each as likely as any other, whatever came
-before. There's no order to it: a bee can meet the same flower twice in a row, and over a game every
-flower comes up about equally often. `visit["flowers"]` says how many flowers there are. The bee is
-assigned its next flower as the next round starts (once it has finished feeding), and everyone sees
-the **arrival** at once: which bee, at which flower of whose patch.
+Every bee that isn't busy feeding gets **one turn per round**: one challenge, one response, one decision.
 
-**What a bee does next is always decided a round ahead.** Your bee's `forage` returns its *next* action,
-which is **queued** for its next round:
+1. **0 ms.** Your bee's challenge must already be **queued** (it came with its previous decision, or from
+   `first`). A bee with nothing queued as the round starts **loses its turn** this round.
+2. The engine draws a flower **uniformly at random from all N flowers**, your own included, independently
+   every time. This **arrival** (whose bee, whose flower) is public at once.
+3. The flower is called: `flower(challenge, ledger)`. It has **150 ms** and returns
+   `[response, percent]`: its answer, and the share (0–100, clamped) of this turn's **excess energy** it
+   gives the bee if the bee feeds. A late answer, an error, or a malformed return (not a pair, a response
+   of the wrong type, a percent that isn't a number) gives a `null` response and no energy.
+4. **150 ms.** The response is delivered to the bee, always at 150 ms however fast the flower was, so
+   timing tells the bee nothing. The bee has **50 ms**: `decide(challenge, response, ledger)` returns
+   `["feed", next_challenge]` or `["leave", next_challenge]`. The next challenge is queued for its next
+   turn.
+5. **The turn is settled** (see "Energy, nectar and surplus"). If the bee fed, it sits out the next
+   **10 rounds** (`feed_cost`; the owner can change it), then plays again with the challenge it queued.
 
-- `["ask", challenge]`: ask this challenge at the same flower next round.
-- `"feed"`: feed next round. You get 1 nectar if it's a cosmos and 0 if it's an orchid, and your bee is
-  then busy feeding for the next **10 rounds** (the owner can change the 10): no slot for it while the
-  other bees carry on. You can feed **once** per visit, after asking at least once.
-- `["leave", challenge]`: move on, and ask this challenge first at the next flower, next round.
-- `"leave"`: move on with nothing queued (see below).
+**Late replies.** A bee that takes more than 50 ms isn't cut off: its call keeps running (up to 2 s, when
+it is stopped), but the turn is settled without it. **A late reply never feeds.** If the late reply is
+`["leave", c]`, then `c` is queued for the bee's next turn. Anything else (a late `["feed", c]`, a crash)
+gives no next challenge, so the engine at once calls `first(ledger)` for one. The bee can't play while
+a call is running, so a slow bee also loses turns.
 
-**The round, step by step:**
+**No next challenge.** A reply in time that gives no usable next challenge (a bare `"feed"` or `"leave"`,
+a challenge of the wrong type or size) still counts as a feed or a leave; then, as above, `first` is
+called at once. A crash or a reply of any other shape counts as a leave. While replies keep giving no
+challenge, `first` is called again at most once a round. A quick answer makes the next round.
 
-1. **0 ms.** Every bee that has moved on arrives at its next flower. Then every bee's queued action
-   runs at once: each queued challenge goes to its flower, or the bee feeds. A bee with nothing queued
-   as the round starts **loses its slot** for that round (it still arrives, and asks there once it has
-   a challenge).
-2. **150 ms.** The flowers' answers are delivered. A cosmos has the whole 150 ms to answer; an orchid
-   has a shorter time limit, **100 ms** by default (the room owner sets it, never more than a cosmos's).
-   A flower that isn't done within its own limit gives no answer (`None`/`null`). Either way the answer
-   reaches the bee at 150 ms, however fast the flower was, so how long an answer took tells a bee
-   nothing.
-3. **150–200 ms.** Every bee that acted is shown the answer (after a feed: whether it got nectar) and
-   has **50 ms** to return its next action. The 50 ms are counted from when its call starts on a CPU
-   core of its own.
+**Bees remember; flowers don't.** Your bee is one running program: its variables last from call to call
+for as long as that version plays. A new version (or a crash) starts afresh. A flower runs fresh for
+every call: nothing it does survives to the next call. It can use randomness (freshly seeded every
+call) and the clock, and it can read the ledger.
 
-**Queued challenges are secret.** Nobody sees a challenge until it is asked. When your bee leaves with
-`["leave", challenge]`, the leave is public at once, but its next challenge only when it's asked.
+## Energy, nectar and surplus
 
-**Late replies.** A bee that takes more than 50 ms isn't cut off: its call keeps running (for up to 2 s,
-when it is stopped) and the game keeps listening, but the round moves on without it. The bee **loses
-its next slot** and its visit ends. When the late reply arrives, a `["leave", challenge]` still counts:
-that challenge is asked first at the next flower. Anything else (an `ask` or `feed` meant for the visit
-it was too slow for, a plain `"leave"`, an error) doesn't give the bee a challenge to start its next
-flower with, so the game at once calls `forage` again with `seen` empty and `visit["fed"]` false,
-asking for the first challenge at its next flower.
+A flower's **excess energy** for a turn, in node·ms, is
 
-**A reply that gives no next challenge** works the same way, late or not: a plain `"leave"`, a second
-`"feed"` in one visit (it means leave), a challenge of the wrong type or size, a crash or anything
-else odd ends the visit, and `forage` is called again at once with `seen` empty. The bee plays again
-as soon as it has a challenge queued when a round starts: a quick answer (in before the round ends)
-makes the next round; a slower one costs a round or more. (`["leave", challenge]` never costs a
-slot.) While answers keep giving no challenge, the game asks again at most once a round.
+> **E = (flower size cap − your flower's size) × max(0, 150 − compute ms)**
 
-**After feeding you can keep asking the same flower**: that's how you study a flower you now know is
-generous (or know is a fake). The call after a feed first calls your `tasted(seen, nectar)` (if you
-wrote one) and then `forage`, in one call with one 50 ms deadline.
+- **size** is the size in nodes of the flower version that answered (see "What counts toward size"); the
+  cap is 1,100. A smaller flower has more to give.
+- **compute ms** is the **CPU time** your flower's process used for this call: running the program and
+  calling `flower`. It is CPU time, not wall time, so a busy server doesn't cost you, and sleeping
+  doesn't help. The ledger is delivered between calls, so it costs nothing until you read it.
+- A late answer, an error or a malformed return: E = 0.
 
-**Bees remember things.** Your bee is one running program: its variables last from call to call for as
-long as that version of it plays, so it can learn as it goes. Submitting a new bee starts the new one
-afresh, with nothing remembered, and so does a crash that kills it. If you want a new bee to know
-something, write it into its code (and pay for it: see "What counts toward size").
+Then:
+- **If the bee feeds:** it gets **nectar = percent/100 × E**, and the flower's team **surplus** gets the
+  rest, (1 − percent/100) × E.
+- **If it doesn't** (it leaves, it's late, it crashes): the flower's surplus gets all of E.
 
-**Flowers remember nothing, but they don't have to repeat themselves.** The whole flower program runs
-fresh for every single question, so nothing survives from one call to the next: a flower can't count
-visitors or change its mind. Within one call, though, a flower can use `random` (freshly seeded every
-call) and the clock (`import time`; in TypeScript `Math.random()` and `Date.now()`). So it can run a
-search or an optimisation until its time is nearly up and answer with the best result it found. The
-same challenge can get a different answer every time. `GAME["ms"]` (TypeScript: `GAME.ms`) is your
-flower's own time limit per call in milliseconds: 150 for a cosmos, and the orchid's own limit (100 by
-default) for an orchid, so an orchid can time its work to finish just before its limit. The clock
-starts when your program starts, so stop with a margin to spare: a flower that runs out of time gives
-no answer at all.
+So a flower chooses how to split what it saves: offer too little and bees may stop feeding; offer too
+much and its surplus suffers. Being small and fast makes the pie bigger.
 
-**Nobody knows who's who.** Programs never learn which team a flower or bee belongs to.
+## The ledger
+
+Your bee, your flower and your team all see the same **team ledger**: every turn of every bee so far,
+oldest first, plus your team's private details. One entry per turn:
+
+```python
+{"round": 41, "bee": 2, "flower": 0,         # team indices: whose bee visited whose flower
+ "challenge": 17, "response": 52,            # response is None if the flower failed
+ "fed": True,
+ "nectar": 30871.5,                          # your turns only: your bee fed, or a bee fed at your flower
+ "percent": 25, "energy": 123486.0,          # visits to your own flower only
+ "ms": 2.1, "surplus": 92614.5}              #   (ms: your flower's compute time)
+```
+
+Fields you aren't allowed to see are `None` (`null`): `nectar` unless your bee fed or a bee fed at your
+flower; `percent`, `energy`, `ms` and `surplus` except at your own flower. Teams are numbered `0` to
+`N - 1`; `GAME["team"]` is yours and `GAME["teams"]` is N.
+
+**Nobody learns the counterpart of a turn until it's over.** A round's entries reach the programs together,
+after the round is over and before the next round's flowers are called. So while your flower answers it
+isn't told whose bee asked, and while your bee decides it isn't told whose flower answered, nor the
+percent, the energy or the nectar it would get. (Whatever either can work out from the challenge, the
+answer and the ledger is fair game.)
+
+**The ledger is free to receive, not to read.** It is delivered to your programs as it grows, outside
+their timed calls. Reading it is part of your compute: a bee should remember how far it has read
+(`ledger[done:]`); a flower, which can't remember, should look at the tail (`ledger[-50:]`), since
+every millisecond it spends is energy it doesn't have. Treat it as read-only.
+
+## The programs
+
+### Python
+
+```python
+# flower: called fresh for every turn at your flower. ledger is optional: def flower(challenge) works too.
+def flower(challenge, ledger):
+    response = (challenge * 7 + 3) % 1000
+    recent = [e for e in ledger[-50:] if e["flower"] == GAME["team"]]
+    fed = sum(e["fed"] for e in recent)
+    percent = 20 if fed * 2 > len(recent) else 40      # popular? keep more
+    return response, percent
+```
+
+```python
+# bee: one long-running program. first() and decide() may also leave out the ledger argument.
+import random
+
+trusted = set()   # responses that have paid well
+done = 0          # how much of the ledger we have read
+
+def learn(ledger):
+    global done
+    for e in ledger[done:]:
+        if e["bee"] == GAME["team"] and e["fed"] and e["nectar"] > 10000:
+            trusted.add((e["challenge"], e["response"]))
+    done = len(ledger)
+
+def first(ledger):
+    learn(ledger)
+    return random.randint(0, 999)           # the challenge for the next turn
+
+def decide(challenge, response, ledger):
+    learn(ledger)
+    nxt = random.randint(0, 999)
+    if response is not None and ((challenge, response) in trusted or random.random() < 0.3):
+        return "feed", nxt                  # then sit out GAME["feed_cost"] rounds
+    return "leave", nxt
+```
+
+### TypeScript
+
+```ts
+type Entry = {
+  round: number; bee: number; flower: number;
+  challenge: Challenge; response: Response | null; fed: boolean;
+  nectar: number | null;                                   // your turns only
+  percent: number | null; energy: number | null;           // your own flower only
+  ms: number | null; surplus: number | null;
+};
+
+function flower(challenge: number, ledger: readonly Entry[]): [number, number] {
+  return [(challenge * 7 + 3) % 1000, 30];
+}
+
+let done = 0;
+const trusted = new Set<string>();
+function learn(ledger: readonly Entry[]) {
+  for (const e of ledger.slice(done)) {
+    if (e.bee === GAME.team && e.fed && (e.nectar ?? 0) > 10000) trusted.add(`${e.challenge}:${e.response}`);
+  }
+  done = ledger.length;
+}
+function first(ledger: readonly Entry[]): number {
+  learn(ledger);
+  return Math.floor(Math.random() * 1000);
+}
+function decide(challenge: number, response: number | null, ledger: readonly Entry[]): ["feed" | "leave", number] {
+  learn(ledger);
+  const next = Math.floor(Math.random() * 1000);
+  return response !== null && trusted.has(`${challenge}:${response}`) ? ["feed", next] : ["leave", next];
+}
+```
+
+In TypeScript, `tree[T]` is `{ value: T; children: Tree<T>[] }` and a graph is
+`{ nodes: number; edges: [number, number][] }`. A TypeScript flower's ledger is frozen.
+
+Every program can read a `GAME` dictionary/object: `team` (your team's index), `teams` (N), `feed_cost`,
+`challenge_type`, `response_type`, `max_len`, `max_nodes`, `round_ms` (200), `ms` (your program's own time
+limit per call: 150 or 50), `flower_ms` (150) and `flower_size_cap` (1,100). A flower also gets `size`, its
+own size, so E = (`flower_size_cap` − `size`) × max(0, `flower_ms` − compute ms). In Python,
+`time.process_time()` measures the CPU time the engine counts.
+
+Python programs may import `math`, `random`, `hashlib`, `string`, `itertools`, `functools`,
+`collections`, `re`, `json`, `bisect`, `heapq`, `statistics`, `fractions`, `decimal`, `operator`,
+`typing`, `dataclasses`, `enum`, `zlib`, `struct`, `binascii`, `base64`, `copy`, `numbers`, `array`,
+and `time`. TypeScript programs get the standard JavaScript built-ins, including `Date`.
 
 ## What the challenge and response look like
 
-Each game sets a **challenge type** (what bees ask with) and a **response type** (what flowers
-answer with). Those types are all anyone knows at the start. **There is no starter code.** Every team
-invents its own flowers and bee from scratch. As the game goes on, the public record lets you work out
-the rules other teams' flowers follow.
+Each game sets a **challenge type** and a **response type**. There is no starter code.
 
 | Type | Looks like |
 |---|---|
@@ -121,217 +213,101 @@ the rules other teams' flowers follow.
 | `bool` | `true` / `false` (`True` / `False` in Python) |
 | `str` | `"hello"` |
 | `list[T]` | `[1, 2, 3]` for `list[int]` |
-| `tree[T]` | `{"value": 1, "children": [{"value": 2, "children": []}]}`: every node has a value and a list of children |
-| `graph` | `{"nodes": 4, "edges": [[0, 1], [1, 2], [2, 3]]}`: nodes are numbered `0` to `nodes - 1`; edges join two nodes, either way round |
-| `digraph` | same shape as `graph`, but `[a, b]` is a one-way edge from `a` to `b` |
-| `graph[T]` | a graph whose nodes carry labels: `{"nodes": 3, "edges": [[0, 1], [1, 2]], "labels": [17, 4, 9]}`. `labels[i]` belongs to node `i`; optional `"edgeLabels"` has one label per edge. `graph[any]` allows any labels |
+| `tree[T]` | `{"value": 1, "children": [{"value": 2, "children": []}]}` |
+| `graph` | `{"nodes": 4, "edges": [[0, 1], [1, 2], [2, 3]]}`: nodes `0` to `nodes - 1`, edges either way round |
+| `digraph` | same shape, but `[a, b]` is a one-way edge from `a` to `b` |
+| `graph[T]` | a graph with `"labels": [one T per node]` and optional `"edgeLabels"`. `graph[any]` allows any labels |
 | `any` | any plain data: numbers, strings, `true`/`false`, `null`, lists and objects |
 
-The node numbers give a graph landmarks to measure from, such as how many steps it is from node `0`
-to node `1`, or to the last node, or how many neighbours node `0` has. Labels let a graph carry more:
-numbers, positions, colours. For example, a group of numbers that all get along with each other under
-some rule, with an edge between every pair to show it.
-
-Strings and lists can be at most 64 long, and trees and graphs at most 512 nodes (graphs at most
-2,048 edges, with no self-loops or repeated edges). The owner can change both limits. A response of the
-wrong type or shape, a crash or a timeout reaches the bee as `None`/`null`.
-
-## The programs
-
-Each program is one function (two for the bee). Here are their shapes; what goes inside is up to you.
-
-### Python
-
-```python
-# cosmos and orchid
-def flower(challenge):
-    ...  # return a value of the game's response type
-
-# bee
-def forage(seen, visit):
-    # seen  = [[challenge, response], ...] at the flower in front of you
-    #         (empty when the game asks for the first challenge at your next flower)
-    # visit = {"fed": True/False, "nectar": True/False/None, "flowers": how many flowers are in the garden}
-    ...  # return your NEXT action, queued for your next round:
-         #   ["ask", challenge]   ask it here
-         #   "feed"               feed here (then sit out GAME["feed_cost"] rounds)
-         #   ["leave", challenge] move on, and ask it first at the next flower
-         #   "leave"              move on (the game then asks you for a first challenge)
-
-def tasted(seen, nectar):   # optional: after you feed, called just before forage; nectar is True or False
-    ...
-```
-
-`visit` is optional: `def forage(seen)` works too.
-
-### TypeScript
-
-```ts
-function flower(challenge: Challenge): Response
-
-function forage(seen: [Challenge, Response | null][],
-                visit: { fed: boolean; nectar: boolean | null; flowers: number }):
-  ["ask", Challenge] | "feed" | ["leave", Challenge] | "leave"
-function tasted(seen: [Challenge, Response | null][], nectar: boolean): void   // optional
-```
-
-In TypeScript, `tree[T]` is `{ value: T; children: Tree<T>[] }` and a graph is
-`{ nodes: number; edges: [number, number][] }`.
-
-Every program can read a `GAME` dictionary/object: `feed_cost` (rounds a feeding bee sits out),
-`challenge_type`, `response_type`, `max_len`, `max_nodes`, `round_ms` (200: the length of a round) and
-`ms` (your program's own time limit per call, in milliseconds: a cosmos's, an orchid's, or a bee's 50).
-It doesn't say what time it is in the game.
-
-Python programs may import `math`, `random`, `hashlib`, `string`, `itertools`, `functools`,
-`collections`, `re`, `json`, `bisect`, `heapq`, `statistics`, `fractions`, `decimal`, `operator`,
-`typing`, `dataclasses`, `enum`, `zlib`, `struct`, `binascii`, `base64`, `copy`, `numbers`, `array`,
-and `time`. TypeScript programs get the standard JavaScript built-ins, including `Date`. A bee's
-`random` is freshly seeded when it starts.
+Strings and lists can be at most 64 long, and trees and graphs at most 512 nodes (graphs at most 2,048
+edges, no self-loops or repeated edges). The owner can change both limits.
 
 ## Budgets
 
-Each of your three programs has three budgets, and the room owner sets them per game. The three
-programs get **different** budgets on purpose, measured against the orchid:
+| Budget | flower | bee |
+|---|---|---|
+| **size** (nodes, see below) | 1,100 | 11,000 |
+| **change** (nodes earned per minute of play; you can bank up to a minute's worth) | 220 | 2,200 |
+| **time** per call | 150 ms | 50 ms |
 
-| Budget | Measures | cosmos | orchid | bee |
-|---|---|---|---|---|
-| **size** | your program's size in nodes (see below) | 1,100 (half an orchid's) | 2,200 | 11,000 (5× an orchid's) |
-| **change** | nodes of change you earn per minute of play, and the most you can bank (a minute's worth) | 220 a minute, up to 220 | 1,540 a minute, up to 1,540 (7× a cosmos's) | 2,200 a minute, up to 2,200 |
-| **time** | milliseconds per call (flowers: the whole program, every question) | 150: the whole flower window | 100 (the owner sets it; at most a cosmos's) | 50: the decision window |
-
-Why it's lopsided:
-- **Cosmos flowers** are small but powerful: they get the whole 150 ms flower window for every answer, half
-  as much again as an orchid's 100. That makes effort a signal. An answer that takes real work to
-  produce, like a big graph that fits a tricky rule, is hard for an orchid to fake in two thirds of
-  the time. With randomness and a clock, a cosmos can search for as long as its time allows and
-  return the best it found, so how good its answers are shows how hard it worked. Every answer is
-  delivered at 150 ms, so an orchid can't be caught out by answering early, only by how good its
-  answers are. But cosmos flowers change slowly.
-- **Orchids** get more code and change fast. They make up for less time with cleverness: a faster
-  way to produce the same kind of answer, or a shallower look-alike, re-aimed whenever they see what
-  the bees trust.
-- **Bees** get lots of code for a whole kit of detectors, but only 50 ms per decision. So the best
-  signals are ones that are **hard to make but easy to check**.
+The owner can change all of them. The flower's size cap is also the "size cap" in the energy formula.
 
 ### What counts toward size
 
-The game measures your program **after minifying it**, so writing readable code costs nothing. Size is
-the number of nodes in the minified program's syntax tree (roughly one per name, number, operation and
-statement; keywords, operators and punctuation add nothing), except that:
+The game measures your program **after minifying it**, and runs the minified program. Size is the number
+of nodes in its syntax tree (roughly one per name, number, operation and statement; keywords, operators
+and punctuation add nothing), except that **every literal counts one node per byte** of its text
+(`"hello"` is 5, `12345` is 5) and names that keep their spelling count one, plus one per byte beyond 20.
 
-- **every literal counts one node per byte** of its text: `"hello"` is 5, `12345` is 5, `"é"` is 2
-- names that keep their spelling (see below) count one node, plus one per byte beyond 20
+- **Comments, spacing and TypeScript types are free.**
+- **Names are free.** Every name your program defines is renamed to a one- or two-letter name. A few keep
+  their spelling so the program still works: names defined in a class body, parameters you also pass by
+  keyword, names that shadow a builtin, and `flower`, `first`, `decide` and `GAME`.
+- **Everything else counts:** every string and number byte by byte (including `"feed"` and `"leave"`),
+  names after a dot, keyword-argument names, and names you use but don't define (`len`, `Math`, `GAME`).
 
-Minifying works like this:
-
-- **Comments, blank lines and spacing are free.**
-- **Names are free.** Every name your program defines (variables, functions, parameters, imports) is
-  renamed to a one- or two-letter name, so `best_clique_size` costs the same as `b`. A few names keep
-  their spelling so the program still works: names defined in a class body (they're attributes),
-  parameters you also pass by keyword (`f(size=3)`), names that shadow a builtin (`max = 3`), and
-  `flower`, `forage`, `tasted` and `GAME`.
-- **TypeScript types are free**, because they're removed before your program runs.
-- **Everything else counts:** every string (including docstrings and your bee's `"ask"`, `"feed"` and
-  `"leave"`) and number byte by byte, names after a dot (`random.randint`), keyword-argument names
-  (`dict(nodes=n)`), and names you use but don't define (`len`, `Math`, `GAME`).
-
-**The game runs the minified program**, exactly what gets counted, and the editor shows it to you.
-So names can't smuggle data (a function's `__name__` is one letter), and error messages refer to the
-minified program. Don't look your own names up by string (`globals()["tally"]`): they won't be there.
-Strings and numbers count in full because otherwise a single long string or number could hide a whole
-lookup table.
+So names can't smuggle data, and error messages refer to the minified program. Don't look your own names
+up by string (`globals()["tally"]`).
 
 ## Changing your programs
 
-Once the garden is running, you can change any of your programs **at any moment**, and the new version
-**goes live at once**, but **a visit keeps the versions it started with**. Once a bee has arrived at a
-flower, that visit runs to its end with the bee's code and the flower's code as they were at the
-arrival:
-- a **new flower** answers the visits that start after it went live; a bee already at the flower keeps
-  getting answers from the old version until it leaves.
-- a **new bee** takes over when the old one's visit ends: the old bee finishes the visit, whatever it
-  queued for its next flower is dropped, and the new bee starts afresh (the game asks it for its first
-  challenge straight away). A bee that is between visits switches at once.
+Once the garden runs you can change either program **at any moment**; the new version goes live at once,
+but **a turn keeps the versions it started with**. A turn that has begun (its arrival is drawn) finishes
+with the bee and the flower as they were. A new flower answers the turns that start after it went live. A
+new bee takes over when its current turn is over: the old bee makes that decision (a feed still counts),
+whatever it queued is dropped, and the new bee is asked `first` straight away. A bee between turns
+switches at once.
 
-So you can't change what a bee does at a flower it has already arrived at, even after seeing where it
-went. A bee that stays at one flower a long time keeps its old code that long.
-
-A change costs the **node edits** that turn the program playing now into the new one: inserting or
+A change costs the **node edits** that turn the version playing now into the new one: inserting or
 deleting a node costs its size, changing an operator or a name costs 1, and a changed literal costs the
-bytes that change in it (`5` → `7` is 1, `"hello"` → `"help"` is 2). Renaming a variable, editing
-comments or reformatting costs nothing.
-
-Each program has its own **change budget**. It starts at zero when the game starts and grows steadily
-with game time, at its rate per minute, until it reaches its cap. A change you can afford is paid from
-it on the spot. A change you can't afford yet is refused, with how long until you can. A change bigger
-than the cap can never be afforded: make it in steps. The clock and the budgets stop while the game is
-paused.
+bytes that change (`5` → `7` is 1). Renaming, comments and formatting are free. Each program's **change
+budget** starts at zero when the game starts and grows with game time at its rate per minute, up to its
+cap. A change you can't afford yet is refused, with how long until you can; one bigger than the cap
+never can be: make it in steps.
 
 ## What everyone can see
 
-**Public, as it happens: everything the bees do.** Every assignment of a bee to a flower, the moment
-it arrives. For every action of every bee: whose bee, at whose patch, at which flower (cosmos or
-orchid), in which round, the challenge and the response, every feed and whether it paid, every leave
-and every error. The game's settings, every time limit
-included, are public too. People and programs watching the game get exactly the same information:
-the web page shows what the API streams.
+**Public to everyone, as it happens** (including spectators without a team): for every turn of every bee,
+the **arrival** (whose bee, whose flower), the **challenge**, the **response** and **whether the bee fed**.
+The game's settings are public too. So whatever two programs do together, including a secret handshake
+between your own bee and your own flower, happens in plain view, and anyone can copy it.
 
-**Secret during play:**
-- **code**: your programs, and what your bee prints.
-- your **code changes**: when you change a program, how big the change was, what it cost, and how much
-  change budget you have left.
-- **how long anything took**: each flower's answer time and each bee's decision time. Every answer
-  arrives at the same moment of the round anyway.
-- a challenge your bee has queued but not yet asked.
+**Private during play:**
 
-Other teams only see what your programs *do*. (Your team sees all of its own.)
+| What | Who sees it during play |
+|---|---|
+| a turn's **percent**, **energy** and the flower's **compute time** | the flower's team |
+| a feed's **nectar** | the bee's team and the flower's team |
+| a team's **surplus** | that team |
+| **code**, what your bee **prints**, program **versions**, change **budgets**, the bee's **decision times**, errors | that team |
 
-**Your team sees everything; your bee sees nothing of it.** A bee never knows whose patch it is at or
-which flower it is talking to: all it ever gets is its own challenges, the answers, and after a feed
-whether it got nectar. So whatever your team works out from the public record (whose cosmos answers
-how, which orchid copies whom) reaches your bee only one way: as a code change, paid from its change
-budget.
+Your bee's and flower's ledger holds exactly what your team can see, from turns that are over.
 
-**When the game ends**, everyone can replay it with all of that revealed: every team's code changes (when, how big, what they cost), their change budgets over time, which
-version of each program played every action, how long every answer and decision took, and (unless the
-owner turns it off) all code and all printouts.
+**When the game ends, everything is revealed** for a full replay: every percent, energy, nectar, surplus
+and timing, every version and change, every budget, and (unless the owner turns it off) all code and
+printouts.
 
 ## Scoring: Darwinian fitness
 
-Two ledgers are kept, with one row per bee team and one column per patch team:
-
-- the **feed ledger** counts how many times each bee fed at each patch (cosmos *or* orchid)
-- the **nectar ledger** counts how much nectar each bee collected from each patch
-
-A team's score combines two numbers that both reward **variety**, built from a **rootsum**: add up
-the square root of each entry.
-
-> rootsum([4, 0, 0, 0]) = 2, but rootsum([1, 1, 1, 1]) = 4.
-> Earning from many different teams beats earning the same amount from one.
+Three numbers per team, each from the whole game:
 
 | Name | What it is |
 |---|---|
-| **allure** | rootsum of the feeds your patch received, counted per bee team. How widely your flowers get pollinated. |
-| **forage** | rootsum of the nectar your bee collected, counted per patch team. How widely your bee finds real food. |
-| **allure share** | your allure ÷ everyone's allure added up. Par is 1/N. |
-| **forage share** | your forage ÷ everyone's forage added up. Par is 1/N. |
-| **fitness** | N² × allure share × forage share. **Par is 1.0** however many teams play. |
+| **allure** | the sum over bee teams of √(times that team's bee fed at your flower). How widely you're pollinated |
+| **forage** | the sum over flower teams of √(nectar your bee got there). How widely your bee eats |
+| **surplus** | the energy your flower kept |
 
-Here N is the number of teams. Your own patch and your own bee count like any other team. The game
-score uses the ledgers of the whole game; the scoreboard also shows the last five minutes on their own.
+Each becomes a **share**: your value ÷ the sum over all teams (when that sum is 0, every share is 1/N).
 
-So you want **lots of different bees to feed at your patch**, including at your orchid, and **your
-bee to find nectar at lots of different patches**.
+> **fitness = N³ × allure share × forage share × surplus share.** Par is 1.0 however many teams play.
 
-A cosmos that bees can recognise attracts feeds. An orchid gets fed when it answers like a cosmos
-that bees trust, and every bee it fools learns to trust that kind of answer a little less. If your
-orchid imitates **your own** cosmos, your cosmos's reputation pays the price. If it imitates
-**another team's** cosmos, theirs does. Everyone sees every answer the moment it's given, and which
-flower of whose patch gave it, so whatever a cosmos does to be recognised, the orchids are watching
-too.
+The square roots reward variety: 4 feeds from one bee team give allure 2, one from each of four teams
+gives 4. Your own team's bee and flower count like any other team's.
+
+During play everyone sees every team's allure and the feed counts (feeds are public); your team also
+sees its own forage, surplus and nectar. Shares and fitness are revealed when the game ends.
 
 ## After the game
 
-Top teams get interviewed about their code. They teach the rest of us how it works, and other
-players say how much they'd like to team up with them. Code you can explain beats code you can't.
+Top teams get interviewed about their code. They teach the rest of us how it works, and other players
+say how much they'd like to team up with them. Code you can explain beats code you can't.
