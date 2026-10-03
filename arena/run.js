@@ -303,7 +303,9 @@ async function playGame(arena, ctx, log) {
         state.controls.delete(p.id);
       }
       no++;
-      if (!over()) await sleep(Math.min(S.gapSeconds * 2 ** idle, Math.max(S.gapSeconds, S.maxIdleGapSeconds ?? 20)) * 1000);
+      // The gap between sessions ends early when the game does (the end of the game waits for every team's loop).
+      const gapUntil = Date.now() + Math.min(S.gapSeconds * 2 ** idle, Math.max(S.gapSeconds, S.maxIdleGapSeconds ?? 20)) * 1000;
+      while (!over() && Date.now() < gapUntil) await sleep(Math.min(1000, gapUntil - Date.now()));
     }
   };
 
