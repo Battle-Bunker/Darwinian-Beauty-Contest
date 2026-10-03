@@ -1,6 +1,6 @@
 """Where the game stands right now: the clock and time left, your change budgets (available now, rate,
-cap, and when you can afford a change of N nodes), the scores (whole game and last 5 minutes), and the
-versions of your programs playing now.
+cap, and when you can afford a change of N nodes), the live scores (fitness, allure, forage and surplus, with their
+shares), and the versions of your programs playing now.
 
     python3 tools/status.py
     python3 tools/status.py --afford 300     # when could each program afford a 300-node change?

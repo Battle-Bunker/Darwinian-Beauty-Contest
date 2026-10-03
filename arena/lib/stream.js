@@ -2,15 +2,16 @@
 //
 //   <WS_ROOT>/<arena>/.shared/g<gen>/actions.jsonl   the PUBLIC stream: what GET .../actions shows anyone, fetched
 //                                                   with no credentials, so it holds public fields only (arrivals,
-//                                                   challenges, responses, feeds). One JSON object per line,
+//                                                   challenges, responses, feeds with their percent, energy, nectar
+//                                                   and surplus). One JSON object per line,
 //                                                   append-only, about once a second. Hard-linked into every workspace
 //                                                   as stream/actions.jsonl, so it is never copied per team.
 //   <WS_ROOT>/<arena>/.runner/g<gen>/actions.jsonl   the runner's private master copy. If a team damages the shared
 //                                                   file through its link, it is rewritten in place from this one.
 //   <workspace>/stream/ledger.jsonl                  per team: its TEAM LEDGER (GET .../ledger with its token), one
-//                                                   entry per finished turn, exactly what its programs get: public
-//                                                   fields for every turn, plus its own private ones (percent, energy,
-//                                                   ms and surplus at its flower; nectar where it fed or was fed at).
+//                                                   entry per finished turn, exactly what its programs get: what
+//                                                   everyone sees of every turn, plus its own private fields (percent
+//                                                   and energy of unfed turns at its flower, its flower's compute time).
 //   <workspace>/stream/mine.jsonl                    per team: the actions of its own bee and at its own flower as that
 //                                                   team sees them (GET .../actions?mine=1): with its bee's printouts,
 //                                                   decision times, errors and versions.
@@ -171,6 +172,12 @@ export class GameStream {
     const inc = (what) => { const k = `${a.bee}|${a.flower}|${what}`; m.set(k, (m.get(k) || 0) + 1); };
     inc(a.action); // arrive | feed | leave
     if (a.action !== "arrive" && ("r" in a) && a.r === null) inc("noResponse");
+    if (a.action === "feed") { // public on a feed: what the bee got and what the flower kept
+      const add = (what, v) => { if (typeof v === "number" && Number.isFinite(v)) { const k = `${a.bee}|${a.flower}|${what}`; m.set(k, (m.get(k) || 0) + v); } };
+      add("nectar", a.nectar);
+      add("surplus", a.surplus);
+      add("percent", a.percent);
+    }
   }
 
   /** Counts over [fromMs, toMs): { "<bee>|<flower>|<what>": n }. */
@@ -186,7 +193,7 @@ export class GameStream {
   /** Compact public headline numbers for one team over a stretch of game time (for briefs: a few numbers, no events). */
   headline(teamId, fromMs = 0, toMs = Infinity) {
     const c = this.counts(fromMs, toMs);
-    const h = { turns: 0, bee: { turns: 0, feeds: 0, ownFeeds: 0, flowers: new Set() }, flower: { turns: 0, feeds: 0, ownFeeds: 0, noResponse: 0, bees: new Set() } };
+    const h = { turns: 0, bee: { turns: 0, feeds: 0, ownFeeds: 0, nectar: 0, flowers: new Set() }, flower: { turns: 0, feeds: 0, ownFeeds: 0, noResponse: 0, surplus: 0, nectarPaid: 0, percentSum: 0, bees: new Set() } };
     for (const [k, n] of c) {
       const [bee, flower, what] = k.split("|");
       const ended = what === "feed" || what === "leave";
@@ -194,15 +201,21 @@ export class GameStream {
       if (bee === teamId) {
         if (ended) h.bee.turns += n;
         if (what === "feed") { h.bee.feeds += n; h.bee.flowers.add(flower); if (flower === teamId) h.bee.ownFeeds += n; }
+        if (what === "nectar") h.bee.nectar += n;
       }
       if (flower === teamId) {
         if (ended) h.flower.turns += n;
         if (what === "noResponse") h.flower.noResponse += n;
         if (what === "feed") { h.flower.feeds += n; h.flower.bees.add(bee); if (bee === teamId) h.flower.ownFeeds += n; }
+        if (what === "surplus") h.flower.surplus += n;
+        if (what === "nectar") h.flower.nectarPaid += n;
+        if (what === "percent") h.flower.percentSum += n;
       }
     }
     h.bee.flowers = h.bee.flowers.size;
     h.flower.bees = h.flower.bees.size;
+    h.flower.meanPercentFed = h.flower.feeds ? h.flower.percentSum / h.flower.feeds : null;
+    delete h.flower.percentSum;
     return h;
   }
 }

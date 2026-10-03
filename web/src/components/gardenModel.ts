@@ -99,8 +99,9 @@ export interface BeeDraw {
   ring: "mine" | "visitor" | null;
 }
 
-export interface FxDraw { x: number; y: number; u: number }
-export interface LabelDraw { x: number; y: number; text: string; kind: "nectar" | "kept"; u: number }
+/** A feed: a drop and sparkles, with the nectar it paid when known (public on every feed). */
+export interface FxDraw { x: number; y: number; u: number; text: string | null }
+export interface LabelDraw { x: number; y: number; text: string; kind: "kept"; u: number }
 /** The latest visit at the focus team's flower, with the details only that team sees (everyone, once revealed). */
 export interface Readout { flower: number; line1: string; line2: string; kind: "fed" | "left" | "fail"; age: number }
 
@@ -220,16 +221,14 @@ export function computeFrame(idx: TurnIndex, layout: Layout, p: FrameParams, now
     const g = u < F ? 1 - (u / F) * 0.4 : u < F + 160 ? 0.6 * (1 - (u - F) / 160) : 0;
     if (g > glow[T.flower]) glow[T.flower] = g;
 
-    if (isFed && u >= DEC && u < DEC + FX_MS) fx.push({ ...landPt(layout, T), u: (u - DEC) / FX_MS });
+    if (isFed && u >= DEC && u < DEC + FX_MS) {
+      fx.push({ ...landPt(layout, T), u: (u - DEC) / FX_MS, text: end && typeof end.nectar === "number" ? `+${fmtE(end.nectar)}` : null });
+    }
 
     if (p.focus !== null) {
       if (b === p.focus) {
         if (T.flower !== p.focus && u < 500) ping[T.flower] = Math.max(ping[T.flower], 1 - u / 500);
         if (u < 450 && P) trail = { from: S, to: H, o: 1 - u / 450 };
-        if (isFed && end && typeof end.nectar === "number" && u >= DEC && u < DEC + LABEL_MS) {
-          const L = landPt(layout, T);
-          labels.push({ x: L.x, y: L.y - 24, text: `+${fmtE(end.nectar)} nectar`, kind: "nectar", u: (u - DEC) / LABEL_MS });
-        }
       }
       if (T.flower === p.focus && isFed && end && typeof end.surplus === "number" && u >= DEC && u < DEC + LABEL_MS) {
         labels.push({ x: head.x + 38, y: head.y + 22 + T.slot * 13, text: `+${fmtE(end.surplus)} kept`, kind: "kept", u: (u - DEC) / LABEL_MS });

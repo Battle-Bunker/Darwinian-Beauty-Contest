@@ -1,6 +1,6 @@
 """Talk to the game runner: the tools in this folder hand their request to the runner through files in
 .runner/ and wait for its answer. The runner does what needs your team's login (submitting, checking,
-trying, reading your budgets) and writes the result back. No password or token ever passes through here.
+trying, reading your budgets and your team ledger) and writes the result back. No password or token ever passes through here.
 
     from _runner import call
     result = call("status")
@@ -56,8 +56,8 @@ def read_code(kind, path=None):
 
 
 def kind_arg(args):
-    if not args or args[0] not in ("cosmos", "orchid", "bee"):
-        sys.exit("first argument: cosmos, orchid or bee")
+    if not args or args[0] not in ("flower", "bee"):
+        sys.exit("first argument: flower or bee")
     return args[0]
 
 

@@ -46,8 +46,8 @@ export function readme({ ext, apiBase, examples, common = null }) {
 | history/ | every version your team submitted in this game (\`<kind>/v1.${ext}\`, ...) and versions.md: when each went live, its size, its change cost |
 | status.txt | what \`tools/status.py\` said when this session started |
 | notebook.md | your private notes: they carry over to your next sessions and games |
-| stream/ledger.jsonl | YOUR TEAM LEDGER: one entry per finished turn, oldest first, exactly what your programs get (public fields for every turn, plus your own private ones). The runner appends new entries about once a second while the game runs. Read it with code; never write to it |
-| stream/actions.jsonl | the public action stream: every arrival and every turn's end as anyone sees it (no private fields) |
+| stream/ledger.jsonl | YOUR TEAM LEDGER: one entry per finished turn, oldest first, exactly what your programs get (what everyone sees of every turn, plus your own private fields). The runner appends new entries about once a second while the game runs. Read it with code; never write to it |
+| stream/actions.jsonl | the public action stream: every arrival and every turn's end as anyone sees it |
 | stream/mine.jsonl | your own bee's and flower's actions as your team sees them, with your bee's printouts (\`log\`), decision times and errors |
 | stream/teams.json, stream/SCHEMA.md | team ids, names and ledger indices; what each line holds |
 | tools/ | the tools below |
@@ -80,7 +80,7 @@ A script you start may run in the background while your session lasts: start it 
 ## The game's public API
 
 The public API needs no login, and you may read it (GET only) at ${apiBase}. It shows public fields only (your private
-ones are in stream/ledger.jsonl and stream/mine.jsonl, or ask the runner: \`call("ledger", after=seq)\`):
+ones are in stream/ledger.jsonl and stream/mine.jsonl, or ask the runner for a fresh page: \`call("ledger", after=seq)\`):
 - \`GET ${apiBase}/events?after=<seq>\`: Server-Sent Events, lines \`data: {...}\` with \`{actions, lastSeq, clockMs, round, status}\`
   as they happen
 - \`${apiBase.replace(/^http/, "ws")}/ws?after=<seq>\`: the same messages over a WebSocket, one JSON text frame each. Python's
@@ -100,7 +100,8 @@ export const SCHEMA = `# The streams
 
 One entry per finished turn, oldest first: exactly what your bee and flower get as \`ledger\`, plus \`seq\` (the turn's
 number in the public stream). Teams are indices \`0\` to \`N - 1\` (stream/teams.json maps them to names; yours is
-\`GAME["team"]\` in your programs, \`"myIndex"\` in teams.json).
+\`GAME["team"]\` in your programs, \`"myIndex"\` in teams.json). A field your team may not see is null; the server decides
+(RULES.md, "What everyone can see").
 
 | field | what |
 |---|---|
@@ -108,8 +109,9 @@ number in the public stream). Teams are indices \`0\` to \`N - 1\` (stream/teams
 | bee, flower | whose bee visited whose flower (team indices) |
 | challenge, response | what the bee asked and what the flower answered (null if the flower failed) |
 | fed | whether the bee fed |
-| nectar | what the bee got: only on turns where your bee fed or a bee fed at your flower (else null) |
-| percent, energy, ms, surplus | at your own flower only (else null): the percent it offered, the turn's excess energy E, its compute time, what your surplus got |
+| nectar, surplus | on a feed: what the bee got, and what the flower's team kept |
+| percent, energy | the share offered and the turn's excess energy E: on every feed, and on every turn at your own flower (else null) |
+| ms | your own flower's compute time (null elsewhere) |
 
 ## stream/actions.jsonl: the public stream
 
@@ -123,13 +125,14 @@ actions: its \`arrive\` (written at once) and its end, \`feed\` or \`leave\`.
 | bee, flower | team ids: whose bee, whose flower |
 | action | arrive, feed or leave |
 | c, r | on feed and leave: the challenge and the response (null if the flower failed) |
+| percent, energy, nectar, surplus | on a feed: the share offered, the excess energy, what the bee got and what the flower kept |
 
 ## stream/mine.jsonl: your own team's actions
 
 The actions of your bee and at your flower as your team sees them (same \`seq\`), with your private fields: at your
-flower \`percent\`, \`energy\`, \`ms\`, \`surplus\`, \`flowerError\`, \`flowerVersion\`; for your bee \`beeMs\` (decision time),
-\`beeError\`, \`beeVersion\` and \`log\` (what it printed); \`nectar\` where your bee fed or a bee fed at your flower. A field
-you may not see is simply missing. Once the game is over everything is public.
+flower \`percent\` and \`energy\` (also on turns without a feed), \`ms\`, \`flowerError\`, \`flowerVersion\`; for your bee
+\`beeMs\` (decision time), \`beeError\`, \`beeVersion\` and \`log\` (what it printed). A field you may not see is simply
+missing. Once the game is over everything is public.
 
 \`stream/teams.json\`: \`{"teams": {id: name}, "me": your team id, "participants": [ids in index order], "names": [names in
 index order], "myIndex": your index}\`.
