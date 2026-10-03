@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const BASE = process.env.ARENA_API || "http://localhost:4000";
+export const BASE = process.env.ARENA_API || "http://localhost:4100";
 
 export class ApiError extends Error {
   constructor(status, message, body) { super(message); this.status = status; this.body = body; }
@@ -55,11 +55,17 @@ export const Api = {
   check: (tok, g, kind, code) => api(tok, "POST", `${g}/check`, { kind, code }),
   // A 422 (too big, can't afford it yet, game over) comes back as a body with ok: false and errors.
   submit: (tok, g, kind, code) => api(tok, "POST", `${g}/programs`, { kind, code }, { retries: 1 }),
-  try: (tok, g, kind, code, challenges, flowers) => api(tok, "POST", `${g}/try`, { kind, code, challenges, flowers }),
+  /** A flower on challenges (with a ledger, default []); a bee for `rounds` rounds in a garden of just its own flower
+   * (`flower`: that code, else the team's latest flower). */
+  tryFlower: (tok, g, code, challenges, ledger) => api(tok, "POST", `${g}/try`, { kind: "flower", code, challenges, ledger }),
+  tryBee: (tok, g, code, { flower, rounds } = {}) => api(tok, "POST", `${g}/try`, { kind: "bee", code, flower, rounds }),
   view: (tok, g) => api(tok, "GET", g),
-  /** mine: only the actions of the team's bee and at its patch, as the team sees them (its token). */
+  /** mine: only the turns of the team's bee and at its flower, as the team sees them (its token). Without a token: the
+   * public fields only. */
   actions: (tok, g, after = 0, limit = 5000, { mine = false } = {}) => api(tok, "GET", `${g}/actions?after=${after}&limit=${limit}${mine ? "&mine=1" : ""}`),
-  scores: (g) => api(null, "GET", `${g}/scores`),
+  /** The team ledger: exactly what the team's programs get (its token); a spectator gets the public fields. */
+  ledger: (tok, g, after = 0, limit = 5000) => api(tok, "GET", `${g}/ledger?after=${after}&limit=${limit}`),
+  scores: (tok, g) => api(tok, "GET", `${g}/scores`),
   start: (tok, g) => api(tok, "POST", `${g}/start`),
   /** action: pause | resume | finish (the room owner). */
   status: (tok, g, action) => api(tok, "POST", `${g}/status`, { action }, { okStatuses: [409] }),
