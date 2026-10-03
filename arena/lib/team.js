@@ -12,7 +12,7 @@ import { BudgetError, callModel, capModel, extractTag, runSession } from "./llm.
 import { gameBrief, interviewPrompt, interviewSystem, lobbyBrief, mmss, toolSystem } from "./prompts.js";
 import { Broker } from "./broker.js";
 import { Scaffold } from "./scaffold.js";
-import { TRANSCRIPTS, audit, collect, extOf, killLeftovers, prepareWorkspace, recordViolations, spillDir, writeMinified } from "./workspace.js";
+import { TRANSCRIPTS, audit, collect, commonFiles, extOf, killLeftovers, prepareWorkspace, recordViolations, spillDir, writeMinified } from "./workspace.js";
 
 const KINDS = ["cosmos", "orchid", "bee"];
 const n0 = (x) => Math.floor(x).toLocaleString("en-US");
@@ -317,7 +317,7 @@ export async function runTeamSession({ desk, arena, gameRow, persona, entry, gPa
   const status = statusOf(view, teamId);
   const { dir, ext, drafts } = await prepareWorkspace({ arena, gameRow, persona, view, stream, apiBase, statusText: status.text + "\n(at the start of this session)\n", carry, tok });
   const teams = (view.participants || view.teams.map((t) => t.id)).length;
-  const system = toolSystem(persona, config, dir, { fixed: !!arena.settings.noEvolution, apiBase, teams });
+  const system = toolSystem(persona, config, dir, { fixed: !!arena.settings.noEvolution, apiBase, teams, common: commonFiles(arena)?.files });
   const scripts = fs.readdirSync(dir).filter((f) => f.endsWith(".py") && !KINDS.includes(f.replace(/\.py$/, "")));
   const prompt = buildPrompt({ view, drafts, status, maxTurns, scripts, dir });
   const tag = `${arena.id}:${persona.slug}:g${gameRow.generation}:s${sessionNo}${attempt ? `a${attempt}` : ""}:${crypto.randomBytes(3).toString("hex")}`;
@@ -393,7 +393,7 @@ export async function lobby({ desk, arena, gameRow, persona, entry, gPath, strea
     const s = await runTeamSession({
       desk, arena, gameRow, persona, entry, gPath, stream, phase: "lobby", sessionNo: 0, attempt, log, carry: attempt ? null : carry, api,
       buildPrompt: ({ view, maxTurns }) => lobbyBrief({ config: view.game.config, teamName: entry.team_name, generation: gameRow.generation, maxTurns,
-        carried: !!carry && Object.values(carry).some(Boolean), fix, examples }),
+        carried: !!carry && Object.values(carry).some(Boolean), fix, examples, common: commonFiles(arena)?.files }),
     });
     if (s.violation) { violation = true; break; }
     const have = await submitted(api, tok, gPath, entry.team_id);

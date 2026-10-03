@@ -24,7 +24,15 @@ const safeName = (s) => String(s).replace(/[^A-Za-z0-9_-]+/g, "_");
 
 // ---------------------------------------------------------------- the files
 
-export function readme({ ext, apiBase, examples }) {
+/** The documents a primed cohort shares as common knowledge (arena.settings.common = { dir }): { dir, files } or null. */
+export function commonFiles(arena) {
+  const c = arena?.settings?.common;
+  if (!c?.dir) return null;
+  const dir = path.resolve(ARENA_DIR, "..", c.dir);
+  return { dir, files: fs.readdirSync(dir).filter((f) => !f.startsWith(".") && fs.statSync(path.join(dir, f)).isFile()).sort() };
+}
+
+export function readme({ ext, apiBase, examples, common = null }) {
   return `# Your workspace
 
 | path | what |
@@ -42,7 +50,7 @@ export function readme({ ext, apiBase, examples }) {
 | stream/teams.json, stream/SCHEMA.md | team ids and names; what a line holds and how to read the stream |
 | tools/ | the tools below |
 | previous-games/ | earlier games in this arena, revealed: every team's final code, the standings, everyone's change timeline, and what the interview panel said about you |
-${examples ? `| examples/ | example programs; every team in this garden has the same files (${examples.join(", ")}) |\n` : ""}
+${examples ? `| examples/ | example programs; every team in this garden has the same files (${examples.join(", ")}) |\n` : ""}${common ? `| common/ | common knowledge: every team in this garden has exactly these files and knows that every other team has them (${common.join(", ")}). Read only: the runner restores them at every game |\n` : ""}
 ## Tools (run them with python3 from this folder)
 
 | command | what |
@@ -161,7 +169,11 @@ export async function prepareWorkspace({ arena, gameRow, persona, view, stream, 
 
   write(path.join(dir, "RULES.md"), rules());
   const examples = arena.settings.examples ? fs.readdirSync(path.resolve(ARENA_DIR, "..", arena.settings.examples)) : null;
-  write(path.join(dir, "README.md"), readme({ ext, apiBase, examples }));
+  const common = commonFiles(arena);
+  write(path.join(dir, "README.md"), readme({ ext, apiBase, examples, common: common?.files }));
+  // Common knowledge (a primed cohort): restored at every game, so every team, new ones included, has the same copy.
+  fs.rmSync(path.join(dir, "common"), { recursive: true, force: true });
+  if (common) fs.cpSync(common.dir, path.join(dir, "common"), { recursive: true });
   if (examples) {
     fs.rmSync(path.join(dir, "examples"), { recursive: true, force: true });
     fs.cpSync(path.resolve(ARENA_DIR, "..", arena.settings.examples), path.join(dir, "examples"), { recursive: true });

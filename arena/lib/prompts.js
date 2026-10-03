@@ -104,7 +104,14 @@ ${fixed
 }
 
 /** System prompt of a session (lobby or game): tools, persona, how the workspace works, fair play, RULES.md, settings. */
-export function toolSystem(persona, config, dir, { fixed = false, apiBase, teams }) {
+/** The common-knowledge notice of a primed cohort (files: the names in common/). */
+export function commonNotice(files) {
+  return `Common knowledge: every team in this garden, including any team that joins in a later game, received exactly the same ` +
+    `files in common/ (${files.join(", ")}), and every team was told that every other team received them too. They are ideas and ` +
+    `examples, not rules: use them, change them or ignore them.`;
+}
+
+export function toolSystem(persona, config, dir, { fixed = false, apiBase, teams, common = null }) {
   const x = ext(config);
   return `You are a team agent in a coding game, working with tools inside your own workspace folder: ${dir}
 Tools: Read (absolute paths inside your workspace; use offset/limit for big files), Write and Edit (files in your workspace),
@@ -153,7 +160,8 @@ ${personaAndSituation(persona, fixed)}
   actual time each call took is private to its own team during play.
 - ${changeText()} Your programs run minified, so error messages refer to the minified program (\`tools/check.py <kind> --json\`
   shows it).
-
+${common ? `- ${commonNotice(common)}
+` : ""}
 # Fair play (breaking these ends your session at once; anything you try to submit after that is refused)
 - Use only the files in this workspace. Do not read, list or write any other directory (not even /tmp).
 - Do not write to stream/: those files are kept by the game runner and shared.
@@ -169,7 +177,7 @@ ${settingsText(config, teams)}`;
 }
 
 /** The lobby brief: write (or rework) all three programs, test them, submit them. */
-export function lobbyBrief({ config, teamName, generation, maxTurns, carried, startsWith = null, fix = null, examples = null }) {
+export function lobbyBrief({ config, teamName, generation, maxTurns, carried, startsWith = null, fix = null, examples = null, common = null }) {
   const x = ext(config);
   if (fix) {
     return `These programs are not submitted yet, so your team can't play:\n${fix}\n\nFix them and submit each one with ` +
@@ -188,6 +196,7 @@ export function lobbyBrief({ config, teamName, generation, maxTurns, carried, st
   }
   if (examples) parts.push(`Shared examples: every team in this garden received the same example files in examples/ (${examples.join(", ")}). ` +
     `Every team has exactly these files and was told the same thing.`);
+  if (common) parts.push(commonNotice(common));
   parts.push(`Writing is free in the lobby: only the size budgets apply (cosmos ${n0(b.cosmos.size)}, orchid ${n0(b.orchid.size)}, bee ` +
     `${n0(b.bee.size)} nodes). Test with tools/check.py and tools/try.py, then submit all three with \`python3 tools/submit.py <kind>\`: ` +
     `a team needs all three submitted to play. ${startsWith ? startsWith : ""}`.trim());

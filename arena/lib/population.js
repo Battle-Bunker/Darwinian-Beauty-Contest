@@ -88,17 +88,19 @@ export async function retire(arena, generation, c) {
 // ---------------------------------------------------------------- breeders
 
 /** Breeder score = mean over spawn-games of (fitness percentile + social percentile) / 2, across all arenas. */
-export async function breederScores() {
+export async function breederScores(exclude = []) {
+  // exclude: sibling arenas (other cohorts of the same experiment), so each cohort's breeding sees only its own outcomes
   const rows = await all(`
     SELECT p.breeder_id, p.id AS persona_id, p.status, e.fitness_rank, e.social_rank,
            (SELECT count(*)::int FROM arena.entries e2 WHERE e2.game_id = e.game_id) AS n
       FROM arena.personas p JOIN arena.entries e ON e.persona_id = p.id JOIN arena.games g ON g.id = e.game_id
-     WHERE p.breeder_id IS NOT NULL AND e.fitness IS NOT NULL AND e.social IS NOT NULL AND g.contaminated IS NULL`);
+     WHERE p.breeder_id IS NOT NULL AND e.fitness IS NOT NULL AND e.social IS NOT NULL AND g.contaminated IS NULL
+       AND NOT (p.arena_id = ANY($1))`, [exclude]);
   const out = {};
   for (const b of BREEDERS) {
     const rs = rows.filter((r) => r.breeder_id === b.id);
     // "displaced" = swapped back out after an outage-caused retirement was reversed: not the spawn's fault.
-    const spawns = await one("SELECT count(*)::int AS n, count(*) FILTER (WHERE status = 'retired' AND retire_reason NOT LIKE 'displaced%')::int AS retired FROM arena.personas WHERE breeder_id = $1", [b.id]);
+    const spawns = await one("SELECT count(*)::int AS n, count(*) FILTER (WHERE status = 'retired' AND retire_reason NOT LIKE 'displaced%')::int AS retired FROM arena.personas WHERE breeder_id = $1 AND NOT (arena_id = ANY($2))", [b.id, exclude]);
     const fit = rs.map((r) => pct(r.fitness_rank, r.n)), soc = rs.map((r) => pct(r.social_rank, r.n));
     const m = (a) => (a.length ? a.reduce((s, x) => s + x, 0) / a.length : null);
     out[b.id] = { ...b, games: rs.length, spawns: spawns.n, retired: spawns.retired, fitPct: m(fit), socPct: m(soc), score: rs.length ? (m(fit) + m(soc)) / 2 : null };
@@ -128,13 +130,13 @@ async function populationText(arena) {
   return lines.join("\n");
 }
 
-async function recordsText() {
-  const scores = await breederScores();
+async function recordsText(exclude = []) {
+  const scores = await breederScores(exclude);
   const out = [];
   for (const b of Object.values(scores)) {
     out.push(`## Breeder ${b.name} (${b.id}, model ${b.model}): score ${b.score?.toFixed(3) ?? "no data yet"}, ${b.spawns} spawn, ${b.retired} retired, mean fitness percentile ${b.fitPct?.toFixed(2) ?? "-"}, mean social percentile ${b.socPct?.toFixed(2) ?? "-"}`);
     const spawn = await all(`SELECT p.*, (SELECT json_agg(json_build_object('f', e.fitness, 'fr', e.fitness_rank, 's', e.social, 'sr', e.social_rank) ORDER BY e.game_id) FROM arena.entries e WHERE e.persona_id = p.id AND e.fitness IS NOT NULL) AS games
-                               FROM arena.personas p WHERE p.breeder_id = $1 ORDER BY p.created_at`, [b.id]);
+                               FROM arena.personas p WHERE p.breeder_id = $1 AND NOT (p.arena_id = ANY($2)) ORDER BY p.created_at`, [b.id, exclude]);
     for (const s of spawn) {
       const g = s.games || [];
       out.push(`- ${s.name} / "${s.team_name}" (${s.arena_id}, ${s.model}, ${s.archetype}): ${g.length} games${g.length ? ": " + g.map((x) => `fit ${x.f?.toFixed(2)} #${x.fr}, social ${x.s?.toFixed(1) ?? "-"} #${x.sr ?? "-"}`).join("; ") : ""}. ${s.status === "retired" ? `RETIRED (${s.retire_reason})` : "active"}.`);
@@ -155,7 +157,7 @@ const slugify = (s) => String(s).toLowerCase().normalize("NFKD").replace(/[^a-z0
 
 /** Breed one persona into an open slot. Returns the new persona row. */
 export async function breed(arena, generation, slot, log) {
-  const scores = await breederScores();
+  const scores = await breederScores(siblingsOf(arena));
   const first = pickBreeder(scores);
   // If the drawn breeder fails (e.g. invalid JSON twice), the others get a turn rather than crashing the arena.
   for (const bid of [first, ...BREEDERS.map((b) => b.id).filter((id) => id !== first)]) {
@@ -165,11 +167,19 @@ export async function breed(arena, generation, slot, log) {
   throw new Error("no breeder produced a valid persona");
 }
 
-async function breedWith(b, scores, arena, generation, slot, log) {
-  const prompt = breederPrompt({
-    arena, config: { ...arena.settings.config, minutesByGame: arena.settings.minutesByGame || undefined }, population: await populationText(arena), records: await recordsText(),
-    ideas: await loadLedger(), exemplars: await exemplarsText(arena), slot,
+/** Other cohorts of the same experiment: their ideas, spawns and outcomes are kept from this arena's breeders and judges. */
+const siblingsOf = (arena) => arena.settings?.ledgerExclude || [];
+
+/** What a breeder is shown for one slot. It never includes a cohort's common-knowledge documents. */
+export async function breederPromptFor(arena, slot) {
+  return breederPrompt({
+    arena, config: { ...arena.settings.config, minutesByGame: arena.settings.minutesByGame || undefined }, population: await populationText(arena),
+    records: await recordsText(siblingsOf(arena)), ideas: await loadLedger(siblingsOf(arena), arena.id), exemplars: await exemplarsText(arena), slot,
   });
+}
+
+async function breedWith(b, scores, arena, generation, slot, log) {
+  const prompt = await breederPromptFor(arena, slot);
   let spec = null;
   for (let attempt = 0; attempt < 2 && !spec; attempt++) {
     try {

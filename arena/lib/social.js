@@ -15,10 +15,16 @@ export async function seedJudges() {
 }
 
 /** The idea ledger. `exclude`: arenas whose ideas this judging must not see (settings.ledgerExclude: e.g. the sibling arms of a controlled experiment). */
-export async function loadLedger(exclude = []) {
+/** The idea ledger as one arena may know it. exclude: sibling arenas (other cohorts of the same experiment): their ideas
+ * stay unknown here until this arena's own judges see them, and their sightings don't count. */
+export async function loadLedger(exclude = [], arenaId = null) {
   return all(`SELECT i.id, i.tag, i.description, i.first_team, i.first_arena, i.first_game_id,
-                     (SELECT count(DISTINCT s.game_id)::int FROM arena.idea_sightings s WHERE s.idea_id = i.id) AS games
-                FROM arena.ideas i WHERE i.first_arena IS NULL OR NOT (i.first_arena = ANY($1)) ORDER BY i.id`, [exclude]);
+                     (SELECT count(DISTINCT s.game_id)::int FROM arena.idea_sightings s JOIN arena.games g ON g.id = s.game_id
+                       WHERE s.idea_id = i.id AND NOT (g.arena_id = ANY($1))) AS games
+                FROM arena.ideas i
+               WHERE i.first_arena IS NULL OR NOT (i.first_arena = ANY($1))
+                  OR EXISTS (SELECT 1 FROM arena.idea_sightings s JOIN arena.games g ON g.id = s.game_id WHERE s.idea_id = i.id AND g.arena_id = $2)
+               ORDER BY i.id`, [exclude, arenaId]);
 }
 
 export const normTag = (t) => String(t || "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
@@ -80,7 +86,7 @@ export async function judgeGame({ arena, gameRow, config, teams, log }) {
   await q("DELETE FROM arena.idea_sightings WHERE game_id = $1", [gameRow.id]);
   await q("DELETE FROM arena.ideas i WHERE first_game_id = $1 AND NOT EXISTS (SELECT 1 FROM arena.idea_sightings s WHERE s.idea_id = i.id)", [gameRow.id]);
   await q("DELETE FROM arena.evaluations WHERE game_id = $1", [gameRow.id]);
-  const ideasBefore = await loadLedger(arena.settings?.ledgerExclude || []);
+  const ideasBefore = await loadLedger(arena.settings?.ledgerExclude || [], arena.id);
   const known = new Map(ideasBefore.map((i) => [i.tag, i]));
   const firstIdx = gameRow.id % judges.length;
   const first = judges[firstIdx], rest = judges.filter((_, i) => i !== firstIdx);
