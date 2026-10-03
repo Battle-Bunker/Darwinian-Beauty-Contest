@@ -2,30 +2,25 @@
 import { parseType, typeToString } from "./types.js";
 
 // Budgets per program kind, in weighted syntax-tree nodes of the minified program (vendor/measure.js).
-// The orchid is the reference:
-//   cosmos: half the orchid's size and the whole 150 ms flower window: honest flowers can prove they spent effort
-//   orchid: room for elaborate imitations, 7× a cosmos's change rate to chase what it imitates, and a
-//           shorter time limit (100 ms) than a cosmos's; its answer is still delivered at 150 ms
-//   bee:    5× the orchid's size for detector repertoires, and 50 ms to decide: checks must be cheap
-// Time: a round is one action slot for every bee, cosmos.ms (the flower window: every answer is
-// delivered then) + bee.ms (the bees' decision window) = 200 ms of game time.
+//   flower: small (1,100 nodes) and slow to change (220 a minute), with the whole 150 ms flower window.
+//           Its size cap is also the "size cap" of the energy formula: E = (cap − size) × max(0, ms − CPU ms).
+//   bee:    room for detector repertoires (11,000 nodes, 2,200 a minute), and 50 ms to decide.
+// Time: a round is one turn for every bee, flower.ms (the flower window: every response is delivered then)
+// + bee.ms (the bees' decision window) = 200 ms of game time.
 // Change budget accrues continuously while the game runs, `perMinute` nodes a minute, and banks up to
 // `cap` (one minute's worth): spend it whenever you like, on any change you can afford, and the new
-// program goes live at once. Before the game starts, writing programs is free. Over a default 2-minute
-// game a cosmos or bee can change 40% of a full-size program and an orchid 140%, as much as in the
-// round-based design's six rounds (two change turns per kind, of 20% and 70%).
-// The cosmos's size is just enough for the longer of the two example cosmos flowers (arena/examples: the
-// Paley clique chain is 1,024 nodes, the graceful labelling 427).
+// program goes live at once. Before the game starts, writing programs is free.
 const BUDGETS = {
-  cosmos: { size: 1100, perMinute: 220, cap: 220, ms: 150 },
-  orchid: { size: 2200, perMinute: 1540, cap: 1540, ms: 100 },
+  flower: { size: 1100, perMinute: 220, cap: 220, ms: 150 },
   bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 50 },
 };
+
+export const KINDS = ["flower", "bee"];
 
 export const DEFAULT_CONFIG = Object.freeze({
   language: "python",          // "python" | "typescript"
   minutes: 2,                  // how long the game runs (game time: it stops while paused)
-  feedCost: 10,                // rounds a feeding bee sits out after the round it feeds in
+  feedCost: 10,                // rounds a bee sits out after the round it feeds in
   challengeType: "int",        // type of the value a bee asks with
   responseType: "int",         // type of the value a flower answers with
   maxLen: 64,                  // max length of strings and lists in challenges/responses
@@ -58,8 +53,8 @@ export function normalizeConfig(input = {}, base = DEFAULT_CONFIG) {
     revealOnFinish: bool(c.revealOnFinish, base.revealOnFinish),
     budgets: {},
   };
-  for (const kind of ["cosmos", "orchid", "bee"]) {
-    const b = (c.budgets && c.budgets[kind]) || {}, d = base.budgets[kind];
+  for (const kind of KINDS) {
+    const b = (c.budgets && c.budgets[kind]) || {}, d = base.budgets[kind] || BUDGETS[kind];
     out.budgets[kind] = {
       size: int(b.size, 1, 1000000, d.size),
       perMinute: num(b.perMinute, 0, 1000000, d.perMinute),
@@ -67,14 +62,11 @@ export function normalizeConfig(input = {}, base = DEFAULT_CONFIG) {
       ms: int(b.ms, 1, 10000, d.ms),
     };
   }
-  // The orchid's time limit is at most a cosmos's: every answer is delivered at the end of the
-  // cosmos's window anyway, so a longer one could never be used.
-  out.budgets.orchid.ms = Math.min(out.budgets.orchid.ms, out.budgets.cosmos.ms);
   return out;
 }
 
-/** One round of game time: the flower window (a cosmos's time limit) plus the bees' decision window. */
-export const roundMs = (config) => config.budgets.cosmos.ms + config.budgets.bee.ms;
+/** One round of game time: the flower window plus the bees' decision window. */
+export const roundMs = (config) => config.budgets.flower.ms + config.budgets.bee.ms;
 
 /** Size limits applied to challenges and responses. */
 export const limitsOf = (config) => ({ maxLen: config.maxLen, maxNodes: config.maxNodes });
@@ -82,4 +74,10 @@ export const limitsOf = (config) => ({ maxLen: config.maxLen, maxNodes: config.m
 /** A team's change budget for one program at game time `clockMs`: what's banked plus what has accrued since. */
 export function available(budget, bank, clockMs) {
   return Math.min(budget.cap, bank.bank + (budget.perMinute * Math.max(0, clockMs - bank.atMs)) / 60000);
+}
+
+/** Excess energy of a turn, in node·ms: (flower size cap − the flower's size) × max(0, flower ms − CPU ms). */
+export function excessEnergy(config, size, cpuMs) {
+  const { size: cap, ms } = config.budgets.flower;
+  return Math.max(0, cap - size) * Math.max(0, ms - cpuMs);
 }

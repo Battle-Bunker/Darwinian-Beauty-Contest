@@ -13,7 +13,7 @@
 //     shortest free name, most-used first. Renaming must never change what the program does, so a few
 //     names keep their spelling: names bound in a class body (they're attributes), parameters that are
 //     also passed by keyword somewhere, names that shadow a builtin, the first part of a dotted import,
-//     and the names the game looks up (flower, forage, tasted, GAME)
+//     and the names the game looks up (flower, first, decide, GAME)
 //   - TypeScript types are removed, as they are before the program runs
 //   Every node counts 1, except:
 //   - a literal (string, number, regex, template text) counts one per byte of its text, at least 1,
@@ -31,7 +31,7 @@
 //   The tree edit's operations as source ranges [start, end, "del" | "ins" | "rel"], for the editor;
 //   a changed literal is marked byte by byte where it differs.
 var DbcMeasure = (() => {
-  const KEEP = new Set(["flower", "forage", "tasted", "GAME"]); // looked up by name
+  const KEEP = new Set(["flower", "first", "decide", "GAME"]); // looked up by name
   const BUILTINS = {
     python: new Set("ArithmeticError AssertionError AttributeError BaseException BaseExceptionGroup BlockingIOError BrokenPipeError BufferError BytesWarning ChildProcessError ConnectionAbortedError ConnectionError ConnectionRefusedError ConnectionResetError DeprecationWarning EOFError Ellipsis EncodingWarning EnvironmentError Exception ExceptionGroup False FileExistsError FileNotFoundError FloatingPointError FutureWarning GeneratorExit IOError ImportError ImportWarning IndentationError IndexError InterruptedError IsADirectoryError KeyError KeyboardInterrupt LookupError MemoryError ModuleNotFoundError NameError None NotADirectoryError NotImplemented NotImplementedError OSError OverflowError PendingDeprecationWarning PermissionError ProcessLookupError RecursionError ReferenceError ResourceWarning RuntimeError RuntimeWarning StopAsyncIteration StopIteration SyntaxError SyntaxWarning SystemError SystemExit TabError TimeoutError True TypeError UnboundLocalError UnicodeDecodeError UnicodeEncodeError UnicodeError UnicodeTranslateError UnicodeWarning UserWarning ValueError Warning ZeroDivisionError abs aiter all anext any ascii bin bool breakpoint bytearray bytes callable chr classmethod compile complex copyright credits delattr dict dir divmod enumerate eval exec exit filter float format frozenset getattr globals hasattr hash help hex id input int isinstance issubclass iter len license list locals map max memoryview min next object oct open ord pow print property quit range repr reversed round set setattr slice sorted staticmethod str sum super tuple type vars zip".split(" ")),
     typescript: new Set(("Infinity NaN undefined globalThis Object Function Array Number parseFloat parseInt Boolean String " +
