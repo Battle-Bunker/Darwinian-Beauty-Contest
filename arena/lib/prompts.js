@@ -7,7 +7,7 @@ import { ARENA_DIR } from "./db.js";
 
 // Read fresh for every prompt: RULES.md is the players' document and may be edited while arenas run.
 export const rules = () => fs.readFileSync(path.join(ARENA_DIR, "..", "RULES.md"), "utf8");
-const KINDS = ["cosmos", "orchid", "bee"];
+const KINDS = ["flower", "bee"];
 const codeBlock = (lang, code) => "```" + (lang === "typescript" ? "ts" : "python") + "\n" + String(code || "").replace(/\s+$/, "") + "\n```";
 const ext = (config) => (config.language === "typescript" ? "ts" : "py");
 export const mmss = (ms) => { const s = Math.max(0, Math.round((ms || 0) / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
@@ -20,49 +20,33 @@ export const sizeText = () => `Size is measured in nodes of your program's synta
 export const changeText = () => `A change costs the node edits that turn the version playing now into the new one (inserting or deleting a ` +
   `node costs its size, a changed literal the bytes that change; renames, comments and spacing are free).`;
 
-/** How a round works (the engine's timing), in short; RULES.md has the official wording. Every time limit is public. */
+/** How a turn works, in short; RULES.md has the official wording. Every time limit is public. */
 export function timingText(config) {
-  const b = config.budgets, ms = (k) => b[k]?.ms;
-  return `- Every round is exactly 200 ms of game time, and the bees play it in lockstep: game time is rounds × 200 ms, so a
-  ${durationText(config.minutes)} game is about ${Math.round((config.minutes * 60000) / 200)} rounds.
-- At the start of a round each bee's QUEUED action runs. A bee with nothing queued loses that slot.
-- An ask: the flower gets the challenge, and its answer is delivered exactly 150 ms later (null if the flower hadn't finished
-  by its own limit). The limits are public and in config.json: cosmos ${ms("cosmos")} ms, orchid ${ms("orchid")} ms, bee ${ms("bee")} ms.
-  Every answer arrives at 150 ms, so nobody can tell from timing how long a flower took (actual timings are private to their
-  own team during play).
-- Then every bee that acted has ${ms("bee")} ms (counted from when its call starts on a CPU core of its own) to return its next
-  action, queued for its next round: ["ask", c] (same flower), "feed" (then it is busy feeding for the next ${config.feedCost} rounds),
-  ["leave", c] (move on and ask c first at the next flower: never costs a slot), or "leave" (move on with nothing queued).
-- A bee that takes longer than ${ms("bee")} ms isn't cut off: its call runs on (stopped at 2 s) and the game keeps listening, but it
-  loses its next slot and its visit ends. A late ["leave", c] still counts: c opens the next flower. Anything else (a late ask
-  or feed meant for the lost visit, a plain "leave", an error) gives no challenge to start with, so the game at once calls
-  forage again with seen empty and visit["fed"] False, asking for the first challenge at the next flower. The same happens
-  whenever a reply gives no next challenge (a plain "leave", a second "feed", a challenge of the wrong type or size, a crash):
-  the visit ends and forage is asked again, at most once a round. The bee plays again as soon as a challenge is queued when a
-  round starts. So a slow bee loses slots but is never silenced.
-- After a feed, the next call runs tasted(seen, nectar) and then forage, in one call with one ${ms("bee")} ms deadline (what
-  tasted prints shows on the next action).
-- Queued challenges are secret until they are asked. But the moment a bee is dealt a flower, a public \`arrive\` action (bee,
-  patch, which flower, round, visit) says where it is, before its first ask.
-- Versions are pinned per visit: a visit keeps the bee and flower versions in effect when it started, and a change you
-  submit applies from the next visit. (So you can't watch your bee arrive at an orchid and then swap in a bee that knows.)`;
+  const b = config.budgets, fl = b.flower, bee = b.bee;
+  return `- Rounds of 200 ms of game time, all bees in lockstep: a ${durationText(config.minutes)} game is about
+  ${Math.round((config.minutes * 60000) / 200)} rounds. Every bee that isn't feeding gets one turn per round.
+- A turn: the bee's queued challenge goes to a flower drawn at random from all flowers (yours included); the flower has
+  ${fl.ms} ms to return [response, percent]; the response reaches the bee at ${fl.ms} ms whatever the flower's speed; the
+  bee has ${bee.ms} ms to return ["feed" or "leave", next challenge]. A feed takes the bee out for ${config.feedCost} rounds.
+- Excess energy of a turn: E = (${n0(fl.size)} − flower size) × max(0, ${fl.ms} − the flower's CPU ms). If the bee feeds it gets
+  percent/100 × E as nectar and the flower's team gets the rest as surplus. If it doesn't feed, that energy is lost.
+- Arrivals, challenges, responses and feeds are public as they happen; percent, energy, compute time and nectar stay with
+  the teams involved until the game ends. A turn's entry reaches both teams' programs (the ledger) only after the round.`;
 }
 
 /** This game's settings, compactly (budgets in nodes). */
 export function settingsText(config, teams) {
   const b = config.budgets;
-  return `- ${teams} teams, ${2 * teams} flowers. The game lasts ${durationText(config.minutes)} of game time.
+  return `- ${teams} teams, ${teams} flowers and ${teams} bees. The game lasts ${durationText(config.minutes)} of game time.
 - Challenges are ${config.challengeType}, responses are ${config.responseType} (interface.txt). Language: ${config.language}.
 ${timingText(config)}
-- Budgets (nodes; compute: each program's public time limit per call, in ms):
+- Budgets (nodes; time per call in ms):
 
-| program | size | change budget earned per minute | most it can bank | compute |
+| program | size | change budget earned per minute | most it can bank | time per call |
 |---|---|---|---|---|
 ${KINDS.map((k) => `| ${k} | ${n0(b[k].size)} | ${n0(b[k].perMinute)} | ${n0(b[k].cap)} | ${b[k].ms} |`).join("\n")}
 
-  Change budget starts at 0 when the game starts and grows with game time. Over this whole game a program earns
-  ${KINDS.map((k) => `${k} ${n0(b[k].perMinute * config.minutes)}`).join(", ")} nodes of change, but it can bank only up to its cap, so
-  budget it doesn't spend beyond that is lost.`;
+  Change budget starts at 0 when the game starts and grows with game time, up to its cap.`;
 }
 
 // ---------------------------------------------------------------- team agents
@@ -70,10 +54,10 @@ ${KINDS.map((k) => `| ${k} | ${n0(b[k].size)} | ${n0(b[k].perMinute)} | ${n0(b[k
 /** What every team agent is told about its situation, in one paragraph (for the breeders). */
 export const FRAME_SUMMARY = `Every team agent is told: it is one team in a tournament of games (where the arena has selection, teams that keep doing
 badly are removed and replaced); each game is one short continuous stretch of play (a minute or two); before it starts the
-agent writes its three programs in a private workspace with tools and python3 (the lobby, where writing is free); while the
-game runs it gets a session to watch the public action stream and submit changes, which go live at once and cost change
-budget that refills with game time; it can start a scaffold, its own program that keeps watching the stream and submitting
-changes by itself for the rest of the game; after every game it is
+agent writes its two programs, a flower and a bee, in a private workspace with tools and python3 (the lobby, where writing
+is free); while the game runs it gets a session to watch its team ledger and the public stream and submit changes, which go
+live at once and cost change budget that refills with game time; it can start a scaffold, its own program that keeps
+watching and submitting changes by itself for the rest of the game; after every game it is
 interviewed by a panel of 10-14-year-old players who score understanding, respect, novelty and want-to-team-up (where the arena
 has selection, agents that repeatedly do poorly there are removed); game fitness matters too; it keeps a notebook across
 sessions and games; and it gets RULES.md in full.`;
@@ -86,9 +70,9 @@ ${persona.persona_prompt.trim()}
 # Your situation
 You are one team in an ongoing tournament ("arena") of Darwinian Beauty Contest. Every team is run by an AI agent playing a
 persona, standing in for a human+AI team. You play as team "${persona.team_name}".
-- Each game is one continuous stretch of play, a minute or two of game time. Before it starts (the lobby) you write your
-  three programs. While it runs, the bees forage without pause and you may change your programs at any moment, paying for
-  each change from a budget that refills as the game goes on.
+- Each game is one continuous stretch of play, a few minutes of game time. Before it starts (the lobby) you write your two
+  programs, a flower and a bee. While it runs, the bees forage without pause and you may change your programs at any
+  moment, paying for each change from a budget that refills as the game goes on.
 ${fixed
     ? `- Games follow one another, always with the same teams.
 - After EVERY game you will be INTERVIEWED: you must teach your code to a panel of players aged 10-14. They score how well they
@@ -123,50 +107,47 @@ ${personaAndSituation(persona, fixed)}
 
 # How you work
 - Your team's private workspace is the current directory. README.md explains every file and tool.
-- Your programs are cosmos.${x}, orchid.${x} and bee.${x}. Nothing reaches the game until you submit it:
+- Your programs are flower.${x} and bee.${x}. Nothing reaches the game until you submit it:
   \`python3 tools/submit.py <kind>\`. In the lobby submitting is free. While the game runs a submission goes live at once and
   pays its change cost; if you can't afford it yet it is refused and you're told when you can. \`tools/check.py\` (size, cost
-  now, a quick runtime test) and \`tools/try.py\` (run it on the game's real runner) are free. \`tools/status.py\` shows the clock,
-  your change budgets and the scores right now.
+  now, a quick runtime test) and \`tools/try.py\` (run it on the game's real runner: a flower on challenges with its percent,
+  energy and CPU time; a bee in a garden of your own flower) are free. \`tools/status.py\` shows the clock, your change
+  budgets and the live scores.
 - Games are short (this one: ${durationText(config.minutes)}), and a session is slow by comparison: you think in seconds to
   minutes, the garden moves every 200 ms. So in a game what reacts is what you prepared: programs that adapt by themselves
-  (a bee learns as it goes), and above all your SCAFFOLD.
+  (both get the team ledger on every call), and your SCAFFOLD.
 - Your scaffold is a program of your own that runs outside the game engine for the rest of the game, even between and after
-  your sessions: it watches the action stream and changes your programs itself, within your change budget. Write it in
-  Python with tools/garden.py and start it with \`python3 tools/scaffold.py start scaffold.py\` (you can start it in the
-  lobby, before the game begins). The runner supervises it: it restarts it if it crashes, stops it when the game ends, and
-  gives it a small CPU share. garden.py: \`follow()\` (each new action as it happens), \`actions(after)\`, \`status()\` (clock,
-  round, scores, your exact budgets and their refill rate, your versions), \`live(kind)\` (your code playing now),
-  \`measure(kind, code)\` (size and cost, free), \`check(kind, code)\`, \`submit(kind, code)\` (refused with \`wait_s\` if you
-  can't afford it yet), \`wait_for_budget(kind, cost)\`. For example: when a rival cosmos's answer to a challenge appears,
-  rewrite your orchid's table and submit it if affordable; or retune your bee's thresholds as the scores move. Its code is
-  audited before every start and restart with the fair-play rules below; it also may not start other processes, use
-  exec/eval or dynamic imports, or read the environment. \`tools/scaffold.py status|logs|stop|restart\` manage it (its print
-  output is its log). In short games it is the main way to react.
+  your sessions: it watches the ledger and the stream and changes your programs itself, within your change budget. Write it
+  in Python with tools/garden.py and start it with \`python3 tools/scaffold.py start scaffold.py\` (you can start it in the
+  lobby). The runner supervises it: it restarts it if it crashes, stops it when the game ends, and gives it a small CPU share.
+  It runs with tools/ on its import path, so \`import garden\` works. garden.py: \`follow()\` (each new ledger entry as it
+  arrives), \`ledger(after)\`, \`follow_live()\` (public actions as they happen), \`status()\` (clock, round, live scores,
+  your exact budgets and their refill rate, your versions), \`live(kind)\` (your code playing now), \`measure(kind, code)\`
+  (size and cost, free), \`check(kind, code)\`, \`try_flower(code, challenges)\`, \`submit(kind, code)\` (refused with
+  \`wait_s\` if you can't afford it yet), \`wait_for_budget(kind, cost)\`. Its code is audited before every start and restart
+  with the fair-play rules below; it also may not start other processes, use exec/eval or dynamic imports, or read the
+  environment. \`tools/scaffold.py status|logs|stop|restart\` manage it (its print output is its log).
 - Scripts you run in a session (the Bash tool's run_in_background option, output to a file in your workspace) are stopped
   when that session ends; only the scaffold outlives sessions.
-- Every team sees everything that happens, the moment it happens: every inspection's bee team, patch team, which flower it
-  was (cosmos or orchid), challenge and response, every feed and whether it gave nectar, and the round. Hidden during play:
-  code, what bees print, code changes and change budgets, and how long any program took. Once the game is over,
-  everything is revealed.
-- Bees, though, are in the dark: a bee never learns whose patch or which flower it is at. Whatever your team learns from
-  the stream reaches your bee only through code you change (paid from your change budget), in a session or by your scaffold.
-- The action stream: stream/actions.jsonl holds every action, one JSON object per line, growing about once a second
-  (stream/SCHEMA.md); stream/mine.jsonl adds what only your team sees of its own bee and patch. It can get big: read it with code (tools/stream.py), never
-  print it whole. The same stream is on the game's public API, read-only and with no login: ${apiBase}/events?after=<seq>
+- What everyone sees, the moment it happens: every arrival (whose bee at whose flower), challenge, response and feed, and
+  the live scoreboard. What only the teams involved see during play: percent, energy and compute time (the flower's team)
+  and nectar (the bee's and the flower's teams); code, versions, budgets and what a bee prints stay with their own team.
+  Once the game is over, everything is revealed.
+- Your files: stream/ledger.jsonl is your team ledger (exactly what your programs get, one entry per finished turn,
+  growing about once a second); stream/actions.jsonl is the public stream; stream/mine.jsonl has your own bee's and
+  flower's actions with your private fields and your bee's printouts (stream/SCHEMA.md). They grow big: read them with
+  code (tools/ledger.py, tools/stream.py), never print them whole. The public API needs no login: ${apiBase}/events?after=<seq>
   (Server-Sent Events; garden.follow_live reads it), ${apiBase.replace(/^http/, "ws")}/ws?after=<seq> (a WebSocket with the
-  same messages, one JSON text frame each) and ${apiBase}/actions?after=<seq>. Python's standard library has no WebSocket
-  client and your own code may not open raw sockets, so from Python use the Server-Sent Events.
+  same messages) and ${apiBase}/scores. Python's standard library has no WebSocket client and your own code may not open
+  raw sockets, so from Python use the Server-Sent Events.
 - ${sizeText()} So write readable code, and keep prose in comments (docstrings are strings).
-- Every program's time limit is public (config.json): use your compute right up to your own limit if it helps; the
-  actual time each call took is private to its own team during play.
 - ${changeText()} Your programs run minified, so error messages refer to the minified program (\`tools/check.py <kind> --json\`
   shows it).
 ${common ? `- ${commonNotice(common)}
 ` : ""}
 # Fair play (breaking these ends your session at once; anything you try to submit after that is refused)
 - Use only the files in this workspace. Do not read, list or write any other directory (not even /tmp).
-- Do not write to stream/: those files are kept by the game runner and shared.
+- Do not write to stream/: those files are kept by the game runner.
 - Do not access the database or the network, except to read (GET) the game's public API at ${apiBase.replace(/\/rooms\/.*$/, "/rooms/...")}.
   Do not log in as anyone, send credentials, or try to read other teams' private data.
 - Do not print or inspect environment variables.

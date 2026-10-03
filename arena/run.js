@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Arena runner: LLM-agent teams playing continuous games of Darwinian Beauty Contest through the HTTP API.
-// A game: the room owner creates it; every team writes its three programs in the lobby (one tool-using session each,
+// A game: the room owner creates it; every team writes its two programs (flower, bee) in the lobby (one tool-using session each,
 // in parallel, lib/team.js); the owner starts it; while it runs, every team has sessions back to back (the first ones
 // start a few seconds before the game does), watching the live stream and submitting changes through its workspace
 // tools; when the game's clock runs out, running sessions are stopped. Then: metrics, interviews, the teen judges,
@@ -8,11 +8,11 @@
 //
 //   node arena/run.js --arena pilot --games 3      # a fresh arena from a preset (preset = id unless --preset)
 //   node arena/run.js --arenas a:2,b:3             # several arenas in one process (":n" = games)
-//   node arena/run.js --experiment csig --budget 50   # a cohort experiment (lib/presets.js EXPERIMENTS), interleaved;
+//   node arena/run.js --experiment NAME --budget 50   # a cohort experiment (lib/presets.js EXPERIMENTS), interleaved;
 //                                                     # --budget caps each cohort
 //
 // Re-running the same command resumes from the database (arena schema): finished stages are skipped.
-// Env: ARENA_API (default http://localhost:4000), ARENA_CONCURRENCY (8), ARENA_BUDGET_USD (global cap, 300),
+// Env: ARENA_API (default http://localhost:4100), ARENA_CONCURRENCY (8), ARENA_BUDGET_USD (global cap, 300),
 //      ARENA_SESSION_LIMITS, ARENA_WS_ROOT, ARENA_DATABASE_URL.
 import fs from "node:fs";
 import path from "node:path";
@@ -39,7 +39,7 @@ const args = Object.fromEntries(process.argv.slice(2).reduce((acc, a, i, arr) =>
 const STAGES = ["created", "lobby-done", "playing", "played", "interviewed", "judged", "done"];
 const atLeast = (stage, s) => STAGES.indexOf(stage) >= STAGES.indexOf(s);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const KINDS = ["cosmos", "orchid", "bee"];
+const KINDS = ["flower", "bee"];
 
 function logger(id) {
   const file = path.join(ARENA_DIR, "runs", `${id}.log`);
@@ -145,10 +145,10 @@ async function setupGame(arena, generation, log) {
 
 /** The persona's final programs from the last game it played in this arena (its starting point in the lobby). */
 async function carryOver(arena, generation, personaId) {
-  const prev = await one(`SELECT g.game_uuid, e.team_id FROM arena.entries e JOIN arena.games g ON g.id = e.game_id
+  const prev = await one(`SELECT g.game_short_id, e.team_id FROM arena.entries e JOIN arena.games g ON g.id = e.game_id
                            WHERE g.arena_id = $1 AND g.generation < $2 AND e.persona_id = $3 AND NOT e.sat_out ORDER BY g.generation DESC LIMIT 1`, [arena.id, generation, personaId]);
   if (!prev) return null;
-  return (await finalPrograms(prev.game_uuid))[prev.team_id]?.code || null;
+  return (await finalPrograms(gamePath(arena.room_short_id, prev.game_short_id)))[prev.team_id]?.code || null;
 }
 
 // ---------------------------------------------------------------- one game
@@ -191,11 +191,11 @@ async function lobbyStage(arena, ctx, stream, desks, log) {
   const t0 = Date.now();
   const res = await Promise.all(entries.map(async (e) => {
     const p = personas.find((x) => x.id === e.persona_id);
-    // Resume: a team that already has all three programs and a lobby session is done.
+    // Resume: a team that already has both programs and a lobby session is done.
     const done = await one("SELECT 1 FROM arena.sessions WHERE game_id = $1 AND persona_id = $2 AND phase = 'lobby' AND ended_at IS NOT NULL LIMIT 1", [gameRow.id, p.id]);
     if (done) {
-      const n = await one("SELECT count(DISTINCT kind)::int AS n FROM programs WHERE game_id = $1 AND team_id = $2", [gameRow.game_uuid, e.team_id]);
-      if (n.n === 3) return { p, ready: true, violation: false };
+      const t = (await Api.view(ctx.ownerTok, gPath)).teams.find((x) => x.id === e.team_id);
+      if (KINDS.every((k) => t?.ready?.[k])) return { p, ready: true, violation: false };
     }
     try {
       const carry = await carryOver(arena, gameRow.generation, p.id);
@@ -207,7 +207,7 @@ async function lobbyStage(arena, ctx, stream, desks, log) {
     }
   }));
   for (const r of res) {
-    if (!r.ready) log(`  ${r.p.name}: not all three programs submitted: SITS OUT game ${gameRow.generation}`);
+    if (!r.ready) log(`  ${r.p.name}: not both programs submitted: SITS OUT game ${gameRow.generation}`);
     if (r.violation) log(`  ${r.p.name}: fair-play violation in the lobby: no sessions during game ${gameRow.generation}`);
   }
   await q("UPDATE arena.games SET stage = 'lobby-done' WHERE id = $1", [gameRow.id]);
@@ -252,7 +252,7 @@ async function playGame(arena, ctx, log) {
   if (players.length < 2) {
     for (const d of desks.values()) await d.stop("no game");
     live.delete(gameRow.id);
-    throw new Error(`game ${gen}: only ${players.length} team(s) have all three programs; a game needs 2`);
+    throw new Error(`game ${gen}: only ${players.length} team(s) have both programs; a game needs 2`);
   }
   stream.status = view.game.status;
   stream.clockMs = view.game.clockMs;
@@ -286,13 +286,10 @@ async function playGame(arena, ctx, log) {
         const desk = desks.get(p.id);
         const s = await runTeamSession({
           desk, arena, gameRow, persona: p, entry: e, gPath, stream, phase: "game", sessionNo: no, control, log, timeoutMs: S.maxMinutes * 60_000,
-          buildPrompt: ({ view: v, drafts, status, maxTurns, scripts }) => {
-            const mine = v.scores ? [...v.scores].sort((a, b) => b.fitness - a.fitness) : null;
-            const rank = mine ? mine.findIndex((x) => x.teamId === e.team_id) : -1;
-            return gameBrief({ config: v.game.config, teamName: e.team_name, generation: gen, sessionNo: no, status: v.game.status, clockMs: v.game.clockMs,
-              budgets: status.budgets, standing: rank >= 0 && v.game.clockMs > 0 ? { fitness: mine[rank].fitness, rank: rank + 1, of: mine.length } : null,
-              head: v.game.clockMs > 0 ? head : null, drafts, maxTurns, scripts, scaffold: desk.scaffold.status(), automatic: autoCount(p.id) });
-          },
+          buildPrompt: ({ view: v, drafts, status, maxTurns, scripts }) => gameBrief({ config: v.game.config, teamName: e.team_name, teamId: e.team_id, generation: gen,
+            sessionNo: no, status: v.game.status, clockMs: v.game.clockMs, budgets: status.budgets, scores: v.game.clockMs > 0 ? v.scores : null,
+            names: Object.fromEntries(v.teams.map((t) => [t.id, t.name])), head: v.game.clockMs > 0 ? head : null, drafts, maxTurns, scripts,
+            scaffold: desk.scaffold.status(), automatic: autoCount(p.id) }),
         });
         log(`  ${p.name}: session ${no} ${s.killed ? `stopped (${s.killed})` : "ended"} at ${mmss(stream.clockMs)}: $${s.cost.toFixed(2)}${s.cost && s.killed ? " (estimated)" : ""}, ${s.requests} requests, ` +
           `${s.submitted.length ? `submitted ${s.submitted.map((x) => `${x.kind} v${x.version}`).join(", ")}` : "nothing submitted"}`);
@@ -363,30 +360,41 @@ async function playGame(arena, ctx, log) {
 
 async function analyseGame(arena, ctx, log) {
   const { gameRow } = ctx;
-  const m = await computeGameMetrics({ all, one }, gameRow.game_uuid, { arenaGameId: gameRow.id });
-  // Storage: the game's actions in the DB, the stream files, the arena's workspaces (hard links counted once).
+  // Who submitted each version (a session, the scaffold, or the runner's lobby fallback): arena.requests.
+  const submits = await all(`SELECT e.team_id, r.kind, r.version, r.refused, r.source, s.no AS session_no FROM arena.requests r LEFT JOIN arena.sessions s ON s.id = r.session_id
+                               JOIN arena.entries e ON e.game_id = r.game_id AND e.persona_id = r.persona_id
+                              WHERE r.game_id = $1 AND r.op = 'submit' AND r.ok AND r.version IS NOT NULL`, [gameRow.id]);
+  const m = await computeGameMetrics(ctx.gPath, { submits });
+  // Scaffolds: who ran one, how often it started, crashed or was refused, its CPU, and what it submitted.
+  m.scaffolds = await all(`SELECT e.team_id, e.team_name AS team, count(*)::int AS starts, count(*) FILTER (WHERE sc.status = 'crashed')::int AS crashes,
+        count(*) FILTER (WHERE sc.status = 'refused')::int AS refused, coalesce(sum(sc.cpu_seconds), 0) AS cpu_seconds, coalesce(sum(sc.throttled_ms), 0)::bigint AS throttled_ms,
+        (SELECT count(*)::int FROM arena.requests r WHERE r.game_id = sc.game_id AND r.persona_id = sc.persona_id AND r.source = 'scaffold' AND r.op = 'submit' AND r.ok) AS submits,
+        (SELECT count(*)::int FROM arena.requests r WHERE r.game_id = sc.game_id AND r.persona_id = sc.persona_id AND r.source = 'scaffold' AND r.op = 'submit' AND NOT r.ok) AS refused_submits,
+        min(sc.clock_start) AS first_start_ms
+      FROM arena.scaffolds sc JOIN arena.entries e ON e.game_id = sc.game_id AND e.persona_id = sc.persona_id WHERE sc.game_id = $1 GROUP BY 1, 2, sc.game_id, sc.persona_id`, [gameRow.id]);
+  // Storage: the stream files and the arena's workspaces (hard links counted once).
   const seen = new Set();
   const sharedBytes = diskBytes(path.join(WS_ROOT, arena.id, ".shared", `g${gameRow.generation}`), seen);
   const wsBytes = diskBytes(path.join(WS_ROOT, arena.id), seen) + sharedBytes;
   const st = fs.statfsSync(fs.existsSync(WS_ROOT) ? WS_ROOT : ARENA_DIR);
-  m.storage = { ...m.storage, sharedStreamBytes: sharedBytes, arenaDiskBytes: wsBytes, freeBytes: st.bavail * st.bsize };
+  m.storage = { sharedStreamBytes: sharedBytes, arenaDiskBytes: wsBytes, freeBytes: st.bavail * st.bsize };
   await q("UPDATE arena.games SET metrics = $2 WHERE id = $1", [gameRow.id, m]);
-  const final = [...(m.final || [])].sort((a, b) => b.fitness - a.fitness);
+  const final = [...(m.final || [])].sort((a, b) => (b.fitness ?? 0) - (a.fitness ?? 0));
   for (const e of ctx.entries) {
     const f = final.find((x) => x.teamId === e.team_id);
     if (!f) continue;
-    await q("UPDATE arena.entries SET fitness = $3, fitness_rank = $4, allure = $5, forage = $6 WHERE game_id = $1 AND persona_id = $2",
-      [gameRow.id, e.persona_id, f.fitness, final.indexOf(f) + 1, f.allure, f.forage]);
+    await q("UPDATE arena.entries SET fitness = $3, fitness_rank = $4, allure = $5, forage = $6, surplus = $7, shares = $8 WHERE game_id = $1 AND persona_id = $2",
+      [gameRow.id, e.persona_id, f.fitness, final.indexOf(f) + 1, f.allure, f.forage, f.surplus, { allure: f.allureShare, forage: f.forageShare, surplus: f.surplusShare }]);
   }
-  log(`game ${gameRow.generation} final: ${final.map((x) => `${x.team} ${x.fitness.toFixed(2)}`).join(", ")}; ${m.actions} actions, ${m.rounds} rounds, ` +
-    `${m.changes.filter((c) => c.atMs > 0).length} in-game changes; DB ${(Number(m.storage.bytes) / 1e6).toFixed(1)} MB, stream ${(sharedBytes / 1e6).toFixed(1)} MB`);
+  log(`game ${gameRow.generation} final: ${final.map((x) => `${x.team} ${x.fitness?.toFixed(2) ?? "-"}`).join(", ")}; ${m.turns} turns, ${m.rounds} rounds, ` +
+    `${m.totals.feeds} feeds, ${m.changes.filter((c) => c.atMs > 0).length} in-game changes; stream ${(sharedBytes / 1e6).toFixed(1)} MB`);
 }
 
 async function socialEvaluation(arena, ctx, log) {
   const { gameRow } = ctx;
   const entries = await all("SELECT * FROM arena.entries WHERE game_id = $1 AND NOT sat_out", [gameRow.id]);
   const personas = await all("SELECT * FROM arena.personas WHERE id = ANY($1)", [entries.map((e) => e.persona_id)]);
-  const finals = await finalPrograms(gameRow.game_uuid);
+  const finals = await finalPrograms(ctx.gPath);
   if (!atLeast(gameRow.stage, "interviewed")) {
     await Promise.all(entries.filter((e) => !e.explanation).map(async (e) => {
       const p = personas.find((x) => x.id === e.persona_id);

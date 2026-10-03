@@ -3,11 +3,11 @@
 import crypto from "node:crypto";
 import { query, tx } from "./db/pool.js";
 import { allocatePrefixLen, normalizeCode, shortId, uuidToCode } from "./lib/shortid.js";
-import { DEFAULT_CONFIG, available, normalizeConfig } from "./lib/gameConfig.js";
+import { DEFAULT_CONFIG, KINDS, available, normalizeConfig } from "./lib/gameConfig.js";
 import { changes, size } from "./lib/measure.js";
 import { score, zeroLedger } from "./lib/scoring.js";
 import { programInterface } from "./lib/interface.js";
-import { KINDS, tryBee, tryFlower } from "./engine.js";
+import { entryFor, tryBee, tryFlower } from "./engine.js";
 import { exampleValue, parseType } from "./lib/types.js";
 
 export class HttpError extends Error {
@@ -18,8 +18,6 @@ const fail = (status, message) => { throw new HttpError(status, message); };
 // Colour-blind-friendly hues (Okabe–Ito first, then Paul Tol's muted set); names are always shown too.
 const TEAM_COLORS = ["#D55E00", "#0072B2", "#E69F00", "#009E73", "#CC79A7", "#56B4E9", "#882255", "#117733",
   "#332288", "#DDCC77", "#44AA99", "#AA4499", "#999933", "#CC6677", "#88CCEE", "#6B4226"];
-
-const RECENT_MS = 5 * 60000; // the "last five minutes" scores
 
 // ---------- realtime: every change but an action bumps games.version and notifies listeners ----------
 
@@ -129,7 +127,7 @@ export async function updateConfig(room, game, user, config) {
   });
 }
 
-/** The owner starts the garden: teams with all three programs play; the clock and change budgets start. */
+/** The owner starts the garden: teams with both programs play; the clock and change budgets start. */
 export async function startGame(room, game, user) {
   if (room.owner_id !== user.id) fail(403, "Only the room owner can start the game");
   return tx(async (c) => {
@@ -138,10 +136,11 @@ export async function startGame(room, game, user) {
     const teams = (await c.query("SELECT id FROM teams WHERE game_id = $1 ORDER BY created_at, id", [g.id])).rows;
     const have = (await c.query("SELECT DISTINCT team_id, kind FROM programs WHERE game_id = $1", [g.id])).rows;
     const participants = teams.map((t) => t.id).filter((id) => KINDS.every((k) => have.some((p) => p.team_id === id && p.kind === k)));
-    if (participants.length < 2) fail(409, "Need at least 2 teams that have written all three programs (cosmos, orchid, bee)");
+    if (participants.length < 2) fail(409, "Need at least 2 teams that have written both programs (flower and bee)");
     const zero = JSON.stringify(zeroLedger(participants.length));
     await c.query(
-      `UPDATE games SET status = 'running', participants = $2, feeds = $3, nectar = $3, clock_ms = 0, started_at = now(), last_error = NULL
+      `UPDATE games SET status = 'running', participants = $2, feeds = $3, nectar = $3, surplus = $3, clock_ms = 0, round = 0,
+              started_at = now(), last_error = NULL
         WHERE id = $1`, [g.id, participants, zero]);
     for (const teamId of participants) for (const kind of KINDS) {
       await c.query("INSERT INTO banks (game_id, team_id, kind, bank, at_ms) VALUES ($1, $2, $3, 0, 0)", [g.id, teamId, kind]);
@@ -218,21 +217,25 @@ async function latestProgram(client, gameId, teamId, kind) {
   return rows[0] || null;
 }
 
+
 /**
  * Measure a program against its size budget and, once the game is running, its change budget. Size is
  * weighted nodes of the minified program; the cost of a change is the node edits from the program now
  * playing (renaming is free). In the lobby, writing programs is free.
  */
 async function measure(client, g, team, kind, code) {
-  if (!KINDS.includes(kind)) fail(400, "kind must be cosmos, orchid or bee");
+  if (!KINDS.includes(kind)) fail(400, "kind must be flower or bee");
   if (typeof code !== "string") fail(400, "code must be a string");
   if (code.length > 100_000) fail(400, "Program is too long");
   const budget = g.config.budgets[kind];
   const errors = [];
   const { size: measured, minified, syntaxError } = await size(g.config.language, code);
   if (syntaxError) errors.push("Syntax error");
-  else if (!definesEntry(g.config.language, kind, minified)) {
-    errors.push(kind === "bee" ? "A bee must define forage(seen, visit)" : `Your ${kind} must define flower(challenge)`);
+  else {
+    const missing = entryPoints(kind).filter((name) => !defines(g.config.language, name, minified));
+    if (missing.length) {
+      errors.push(kind === "bee" ? "A bee must define first(ledger) and decide(challenge, response, ledger)" : "A flower must define flower(challenge, ledger)");
+    }
   }
   if (measured > budget.size) {
     errors.push(`Too big: ${measured} nodes > budget ${budget.size} (comments, spacing, types and name lengths don't count; every byte of a string or number does)`);
@@ -240,7 +243,7 @@ async function measure(client, g, team, kind, code) {
   const out = { kind, size: measured, minified, budget, distance: null, cost: 0, available: null };
   if (g.status === "finished") errors.push("Game over");
   else if (g.status !== "lobby") {
-    if (!(g.participants || []).includes(team.id)) errors.push("Your team isn't playing in this game (it hadn't written all three programs when the game started)");
+    if (!(g.participants || []).includes(team.id)) errors.push("Your team isn't playing in this game (it hadn't written both programs when the game started)");
     else {
       const current = await latestProgram(client, g.id, team.id, kind);
       const bank = (await client.query("SELECT bank, at_ms FROM banks WHERE game_id = $1 AND team_id = $2 AND kind = $3", [g.id, team.id, kind])).rows[0];
@@ -263,9 +266,10 @@ async function measure(client, g, team, kind, code) {
 }
 const shown = ({ exact, ...check }) => check;
 
-/** Does the (minified) program define its entry point at the top level? The game looks it up by name. */
-function definesEntry(language, kind, minified) {
-  const name = kind === "bee" ? "forage" : "flower";
+const entryPoints = (kind) => (kind === "bee" ? ["first", "decide"] : ["flower"]);
+
+/** Does the (minified) program define `name` at the top level? The game looks it up by name. */
+function defines(language, name, minified) {
   return language === "typescript"
     ? new RegExp(`(^|[;}\\s])(function\\s*\\*?\\s*${name}\\s*\\(|(const|let|var)\\s+${name}\\s*=)`).test(minified)
     : new RegExp(`^(def ${name}\\(|${name}\\s*=)`, "m").test(minified);
@@ -304,37 +308,58 @@ export async function submitProgram(game, user, kind, code) {
   });
 }
 
-/** Try a program without submitting it. Flowers: answer challenges. Bee: forage your own patch. */
-export async function tryProgram(game, user, kind, code, challenges, flowers = {}) {
+/** Try a program without submitting it. A flower answers challenges; a bee forages a garden of your own flower. */
+export async function tryProgram(game, user, { kind, code, challenges, ledger, flower, rounds } = {}) {
   const team = await myTeam(game.id, user.id);
   if (!team) fail(403, "Join a team first");
-  if (!KINDS.includes(kind) || typeof code !== "string") fail(400, "kind and code required");
+  if (!KINDS.includes(kind) || typeof code !== "string") fail(400, "kind (flower or bee) and code required");
   const cfg = game.config;
-  if (kind !== "bee") {
+  if (kind === "flower") {
     const list = Array.isArray(challenges) && challenges.length ? challenges : [exampleValue(parseType(cfg.challengeType))];
-    return tryFlower({ config: cfg, code, kind, challenges: list });
+    return tryFlower({ config: cfg, code, challenges: list, ledger: Array.isArray(ledger) ? ledger : [] });
   }
-  // The bee forages a garden of just your own two flowers: the ones passed in, else your latest.
-  const pick = async (k) => (typeof flowers?.[k] === "string" ? flowers[k] : (await latestProgram({ query }, game.id, team.id, k))?.code);
-  const cosmos = await pick("cosmos"), orchid = await pick("orchid");
-  if (!cosmos || !orchid) fail(409, "Your bee needs flowers to visit: write a cosmos and an orchid first (or pass them as flowers.cosmos / flowers.orchid)");
-  const result = await tryBee({ config: cfg, programs: { cosmos, orchid, bee: code } });
-  return { ...result, actions: result.actions.map((a) => ({ ...a, bee: team.id, patch: team.id })) };
+  const own = typeof flower === "string" ? flower : (await latestProgram({ query }, game.id, team.id, "flower"))?.code;
+  if (!own) fail(409, "Your bee needs a flower to visit: write your flower first (or pass one as `flower`)");
+  const n = Math.max(1, Math.min(1000, Number(rounds) || 300));
+  const result = await tryBee({ config: cfg, programs: { flower: own, bee: code }, rounds: n });
+  return { ...result, actions: result.actions.map((a) => ({ ...a, bee: team.id, flower: team.id })) };
 }
 
 // ---------- the views: everything a given viewer may see, live or later ----------
+//
+// During play, everyone (spectators included) sees every turn's arrival, challenge, response and whether
+// the bee fed, and the live scoreboard. Private until the game is over:
+//   - the flower's team only: each turn's percent, energy, the flower's CPU time, surplus, flower errors
+//     and which flower version answered;
+//   - the bee's team and the flower's team: a feed's nectar;
+//   - the bee's team only: its decision times, errors and versions; what it prints (everyone's once a
+//     finished game is revealed);
+//   - each team's own: code (revealed at the end if revealOnFinish), versions, change budgets.
+
+/** A game's whole-game ledgers, as viewer `idx` (a team index, or -1) may see them. */
+function ledgersView(g, idx, over) {
+  if (!g.participants) return null;
+  return {
+    feeds: g.feeds,
+    nectar: g.nectar.map((row, b) => row.map((x, f) => (over || b === idx || f === idx ? x : null))),
+    surplus: g.surplus.map((row) => row.map((x, f) => (over || f === idx ? x : null))),
+  };
+}
+
+const scoresOf = (g) => (g.participants ? score(g.participants, g.feeds, g.nectar, g.surplus) : null);
 
 /**
- * Everything about a game but its actions. During play, each team sees only its own program versions
- * and change budgets (other teams': null); once the game is over, everyone sees everyone's. Code is
- * your own team's, or everyone's once a finished game is revealed.
+ * Everything about a game but its turns. During play, each team sees only its own program versions and
+ * change budgets (other teams': null); once the game is over, everyone sees everyone's. Code is your own
+ * team's, or everyone's once a finished game is revealed. The scoreboard is public.
  */
 export async function viewGame(room, game, user) {
   const g = (await query("SELECT * FROM games WHERE id = $1", [game.id])).rows[0];
   const cfg = g.config;
   const mine = await myTeam(g.id, user?.id);
   const isOwner = !!user && user.id === room.owner_id;
-  const revealed = g.status === "finished" && cfg.revealOnFinish;
+  const over = g.status === "finished";
+  const revealed = over && cfg.revealOnFinish;
   const teams = (await query("SELECT * FROM teams WHERE game_id = $1 ORDER BY created_at, id", [g.id])).rows;
   const members = (await query("SELECT m.team_id, u.name FROM team_members m JOIN users u ON u.id = m.user_id WHERE m.game_id = $1 ORDER BY m.joined_at", [g.id])).rows;
   const progs = (await query(
@@ -342,14 +367,14 @@ export async function viewGame(room, game, user) {
       WHERE p.game_id = $1 ORDER BY p.team_id, p.kind, p.version`, [g.id])).rows;
   const banks = (await query("SELECT * FROM banks WHERE game_id = $1", [g.id])).rows;
   const participants = g.participants || null;
-  const canSee = (teamId) => revealed || mine?.id === teamId;
-  const over = g.status === "finished";
+  const indexOf = (teamId) => (participants ? participants.indexOf(teamId) : -1);
+  const canSeeCode = (teamId) => revealed || mine?.id === teamId;
   const canSeeChanges = (teamId) => over || mine?.id === teamId;
 
   const versionView = (p) => ({
     version: p.version, size: p.size, distance: p.distance, cost: p.cost, atMs: p.at_ms,
     submittedAt: p.submitted_at, submittedBy: p.submitted_by_name, problem: p.problem,
-    ...(canSee(p.team_id) ? { code: p.code } : {}),
+    ...(canSeeCode(p.team_id) ? { code: p.code } : {}),
   });
   const programsOf = (teamId) => Object.fromEntries(KINDS.map((k) => [k, progs.filter((p) => p.team_id === teamId && p.kind === k).map(versionView)]));
   const banksOf = (teamId) => Object.fromEntries(banks.filter((b) => b.team_id === teamId).map((b) => [b.kind, { bank: b.bank, atMs: b.at_ms }]));
@@ -367,75 +392,48 @@ export async function viewGame(room, game, user) {
       id: t.id, name: t.name, color: t.color,
       members: members.filter((m) => m.team_id === t.id).map((m) => m.name),
       participant: participants ? participants.includes(t.id) : null,
-      // in the lobby: which programs each team has written (it plays if all three)
+      index: indexOf(t.id) >= 0 ? indexOf(t.id) : null,
+      // in the lobby: which programs each team has written (it plays if both)
       ...(g.status === "lobby" ? { ready: Object.fromEntries(KINDS.map((k) => [k, progs.some((p) => p.team_id === t.id && p.kind === k)])) } : {}),
       // every version, oldest first, and the change budget (bank as of game time atMs): your own team's
       // during play, everyone's once it's over. Code only where you may see it.
       programs: canSeeChanges(t.id) ? programsOf(t.id) : null,
       banks: canSeeChanges(t.id) ? banksOf(t.id) : null,
     })),
-    myTeam: mine ? { id: mine.id, name: mine.name, joinCode: mine.join_code } : null,
+    myTeam: mine ? { id: mine.id, name: mine.name, joinCode: mine.join_code, index: indexOf(mine.id) >= 0 ? indexOf(mine.id) : null } : null,
     interface: programInterface(cfg),
-    scores: participants ? score(participants, g.feeds, g.nectar) : null,
-    recent: participants ? await recentScores(g, participants) : null,
-    // feeds[bee team][patch team] and nectar[...][...] over the whole game, in participants order
-    ledgers: participants ? { feeds: g.feeds, nectar: g.nectar } : null,
+    scores: scoresOf(g),
+    // feeds[bee team][flower team], nectar[..][..] and surplus[..][..] over the whole game, in participants order
+    ledgers: ledgersView(g, mine ? indexOf(mine.id) : -1, over),
   };
 }
 
-/** Just the live numbers (cheap enough to poll every second): clock, round, scores and ledgers. */
-export async function viewScores(game) {
+/** Just the live numbers (cheap enough to poll every second): clock, round, the scoreboard and the ledgers. */
+export async function viewScores(game, user) {
   const g = (await query("SELECT * FROM games WHERE id = $1", [game.id])).rows[0];
+  const mine = await myTeam(g.id, user?.id);
   const participants = g.participants || null;
   return {
     status: g.status, clockMs: g.clock_ms, endMs: Math.round(g.config.minutes * 60000), round: g.round, lastSeq: g.last_seq, participants,
-    scores: participants ? score(participants, g.feeds, g.nectar) : null,
-    recent: participants ? await recentScores(g, participants) : null,
-    ledgers: participants ? { feeds: g.feeds, nectar: g.nectar } : null,
+    scores: scoresOf(g),
+    ledgers: ledgersView(g, mine && participants ? participants.indexOf(mine.id) : -1, g.status === "finished"),
   };
 }
 
-/** Scores over the last five minutes of game time. */
-async function recentScores(g, participants) {
-  const from = Math.max(0, g.clock_ms - RECENT_MS);
-  const idx = new Map(participants.map((id, i) => [id, i]));
-  const feeds = zeroLedger(participants.length), nectar = zeroLedger(participants.length);
-  const { rows } = await query(
-    `SELECT bee_team, patch_team, count(*)::int AS feeds, count(*) FILTER (WHERE nectar)::int AS nectar
-       FROM actions WHERE game_id = $1 AND at_ms >= $2 AND action = 'feed' GROUP BY 1, 2`, [g.id, from]);
-  for (const r of rows) {
-    const s = idx.get(r.bee_team), o = idx.get(r.patch_team);
-    if (s === undefined || o === undefined) continue;
-    feeds[s][o] = r.feeds;
-    nectar[s][o] = r.nectar;
-  }
-  return { fromMs: from, toMs: g.clock_ms, scores: score(participants, feeds, nectar) };
-}
-
 /**
- * Actions after `after` (a seq), oldest first, at most `limit`; or with `before`, the last `limit`
- * actions before that seq, still oldest first (before = lastSeq + 1 gives the latest). Public as soon
- * as they happen: whose bee asked at whose patch, at which of its flowers (`kind`), in which round, the
- * challenge and the response, every feed and whether it paid, every leave and error. Teams see all of
- * it; bees never do (a bee is told nothing about whose patch or which flower it is at). Except, until
- * the game is over:
- * - how long programs actually took (a flower's answer time `ms`, a bee's decision time `beeMs`): your
- *   own only. Every answer reaches the bee at the end of the flower window, so that bees can't tell
- *   flowers apart by timing; the times would undo that if everyone could read them during play;
- * - anything that gives away a code change: which program versions played (your own only) and why the
- *   engine ended a bee's visit (a new bee took over, or it restarted);
- * - what a bee printed: its own team's, or everyone's once a finished game is revealed.
- * Every way of reading actions (pages, ?before=, ?mine=1, the SSE stream) goes through actionView.
+ * Actions after `after` (a seq), oldest first, at most `limit`; or with `before`, the last `limit` actions
+ * before that seq, still oldest first (before = lastSeq + 1 gives the latest). `mine`: only turns of the
+ * viewer's team's bee or at its flower. Every way of reading actions (pages, ?before=, ?mine=1, the SSE and
+ * WebSocket streams) goes through actionView.
  */
 export async function viewActions(game, user, { after = 0, before = null, limit = 1000, mine: onlyMine = false } = {}) {
   const g = (await query("SELECT status, config, last_seq, clock_ms, round FROM games WHERE id = $1", [game.id])).rows[0];
   const mine = await myTeam(game.id, user?.id);
   const over = g.status === "finished", revealed = over && g.config.revealOnFinish;
   const n = Math.max(1, Math.min(5000, Number(limit) || 1000));
-  // mine: only actions of your team's bee or at your team's patch
   const only = onlyMine && onlyMine !== "0" && onlyMine !== "false" ? (mine?.id ?? null) : undefined;
   if (only === null) fail(403, "Join a team first");
-  const where = only ? "game_id = $1 AND (bee_team = $4 OR patch_team = $4)" : "game_id = $1";
+  const where = only ? "game_id = $1 AND (bee_team = $4 OR flower_team = $4)" : "game_id = $1";
   const params = (x) => (only ? [game.id, x, n, only] : [game.id, x, n]);
   const { rows } = before !== null && before !== undefined && before !== ""
     ? await query(`SELECT * FROM (SELECT * FROM actions WHERE ${where} AND seq < $2 ORDER BY seq DESC LIMIT $3) t ORDER BY seq`, params(Number(before) || 0))
@@ -443,17 +441,61 @@ export async function viewActions(game, user, { after = 0, before = null, limit 
   return { actions: rows.map((a) => actionView(a, mine?.id, over, revealed)), lastSeq: g.last_seq, clockMs: g.clock_ms, round: g.round, status: g.status };
 }
 
-export function actionView(a, myTeamId, over, revealed) {
-  const myBee = over || a.bee_team === myTeamId, myPatch = over || a.patch_team === myTeamId;
-  const out = { seq: a.seq, atMs: a.at_ms, round: a.round, bee: a.bee_team, visit: a.visit, patch: a.patch_team, kind: a.kind, action: a.action };
+/**
+ * One action as a viewer (a member of team `me`, or nobody) may see it. Fields the viewer may not see are
+ * absent. Public: the arrival (whose bee, whose flower), and on the turn's end the challenge, the response
+ * and whether the bee fed (the action itself).
+ */
+export function actionView(a, me, over, revealed) {
+  const myBee = over || (!!me && a.bee_team === me), myFlower = over || (!!me && a.flower_team === me);
+  const out = { seq: a.seq, atMs: a.at_ms, round: a.round, turn: a.turn, bee: a.bee_team, flower: a.flower_team, action: a.action };
   if (myBee) out.beeVersion = a.bee_version;
-  if (myPatch) out.flowerVersion = a.flower_version;
-  if (myBee && a.bee_ms !== null && a.bee_ms !== undefined) out.beeMs = a.bee_ms;
-  if (a.action === "ask") Object.assign(out, { c: a.c, r: a.r, ...(myPatch ? { ms: a.ms } : {}), ...(a.after ? { after: true } : {}) });
-  if (a.action === "feed") out.nectar = a.nectar;
-  if (a.error && (a.error_by !== "engine" || over || a.bee_team === myTeamId)) Object.assign(out, { error: a.error, by: a.error_by });
-  if (a.log && (revealed || a.bee_team === myTeamId)) out.log = a.log;
+  if (myFlower) out.flowerVersion = a.flower_version;
+  if (a.action !== "arrive") {
+    out.c = a.c;
+    out.r = a.r;
+    if (myFlower) Object.assign(out, { percent: a.percent, energy: a.energy, ms: a.cpu_ms, surplus: a.surplus, flowerError: a.flower_error });
+    if (a.action === "feed" && (myBee || myFlower)) out.nectar = a.nectar;
+    if (myBee) Object.assign(out, { beeMs: a.bee_ms, beeError: a.bee_error });
+  }
+  if (a.log && (revealed || (!!me && a.bee_team === me))) out.log = a.log;
   return out;
+}
+
+/**
+ * The team ledger: one entry per finished turn (its feed or leave), oldest first, exactly as the viewer's
+ * team's programs get it (team indices into participants), plus `seq` for paging. A spectator gets the public
+ * fields; once the game is over, everyone gets every field.
+ */
+export async function viewLedger(game, user, { after = 0, limit = 1000 } = {}) {
+  const g = (await query("SELECT status, participants, last_seq, round FROM games WHERE id = $1", [game.id])).rows[0];
+  const participants = g.participants || null;
+  const mine = await myTeam(game.id, user?.id);
+  const team = mine && participants && participants.includes(mine.id) ? participants.indexOf(mine.id) : null;
+  if (!participants) return { participants, team, entries: [], lastSeq: g.last_seq, round: g.round, status: g.status };
+  const n = Math.max(1, Math.min(5000, Number(limit) || 1000));
+  const { rows } = await query(
+    "SELECT * FROM actions WHERE game_id = $1 AND seq > $2 AND action IN ('feed', 'leave') ORDER BY seq LIMIT $3",
+    [game.id, Math.max(0, Number(after) || 0), n]);
+  const idx = new Map(participants.map((id, i) => [id, i]));
+  const over = g.status === "finished";
+  return {
+    participants, team, lastSeq: g.last_seq, round: g.round, status: g.status,
+    entries: rows.map((a) => ({ seq: a.seq, ...ledgerEntry(turnOf(a, idx), over ? null : team ?? -1) })),
+  };
+}
+
+/** A stored turn end as the engine's finished turn (team indices). */
+export const turnOf = (a, idx) => ({
+  round: a.round, bee: idx.get(a.bee_team), flower: idx.get(a.flower_team), c: a.c, r: a.r, fed: a.action === "feed",
+  nectar: a.nectar, percent: a.percent, energy: a.energy, ms: a.cpu_ms, surplus: a.surplus,
+});
+
+/** entryFor, or every field (ti === null: the game is over). */
+function ledgerEntry(t, ti) {
+  if (ti !== null) return entryFor(t, ti);
+  return { round: t.round, bee: t.bee, flower: t.flower, challenge: t.c, response: t.r, fed: t.fed, nectar: t.fed ? t.nectar : null,
+    percent: t.percent, energy: t.energy, ms: t.ms, surplus: t.surplus };
 }
 
 export { DEFAULT_CONFIG };

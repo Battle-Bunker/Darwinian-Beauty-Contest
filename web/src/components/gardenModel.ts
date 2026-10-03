@@ -1,37 +1,25 @@
-// Geometry and the live animation for the garden. The garden plays the action stream a moment behind
-// the game clock (DELAY), so actions that arrive in bursts (the server flushes a few times a second)
-// play out at the game times they happened. The game runs in lockstep rounds (200 ms by default): each
-// bee acts at most once a round, so a bee can be shown doing every single thing it does. A bee sets off
-// for its next flower the moment it's given one (an `arrive` action, when the server sends them; else
-// just before its first question there), shows each question and then the flower's answer in its
-// bubble, and when it feeds it sits on the flower for the rounds it's out of play.
+// Geometry and the animation model for the garden: one flower per team and one bee per team. What the
+// garden shows at game time D is computed from the turns (lib/turns.ts), not replayed event by event, so
+// the live garden (D runs a moment behind the game clock) and the replay (D is wherever the scrubber is)
+// are the same code, and any number of bees costs one binary search each per frame.
 //
-// Each team's patch has its cosmos on the left and its orchid on the right; a bee hovers by and lands on
-// the flower it's at (every action says which). Each bee has its own slot on an arc above every patch, so
-// bees visiting the same patch never sit on top of each other. (An action without a kind, which the API
-// shouldn't send, falls back to the middle of the patch.)
-import type { Action, FlowerKind } from "../types";
-import type { LiveStore } from "../lib/live";
-import { showValue } from "../lib/format";
+// A turn, in game time from its arrival t0: the bee flies to the flower it was drawn (FLY), asks its
+// challenge, the response is delivered at flower.ms (150), and the bee decides: a feed lands it on the
+// flower, where it sits out its feed_cost rounds until its next arrival; a leave keeps it hovering until
+// its next turn takes it somewhere else.
+import { showValue, fmtE } from "../lib/format";
+import { fed, type Turn, type TurnIndex } from "../lib/turns";
 
-export const CELL_W = 250;
-export const CELL_H = 215;
-export const TOP_PAD = 70;
-export const SIDE_PAD = 26;
-export const FLOWER_DX = 30;
-export const FLOWER_Y = -30;
-
-/** How far behind the game clock the garden plays (ms of game time). */
-export const DELAY = 1100;
-/** How far ahead of what it shows the garden looks, to start flights in time. */
-const LOOKAHEAD = 450;
-const FLY_MS = 200;    // a flight between patches, ideally
-const MIN_FLY = 160;   // never shorter than this
-const ASK_MS = 600;    // the question bubble stays up this long after a question (it pops at each new one)
-const ERR_MS = 700;
-export const FX_MS = 1100;
-const MAX_FX = 48;
-const MERGE_MS = 400;  // feeds at the same spot within this share one effect, with a count
+export const CELL_W = 170;
+export const CELL_H = 214;
+export const TOP_PAD = 58;
+export const SIDE_PAD = 16;
+/** Ground point → flower head. */
+export const HEAD_Y = -62;
+const HOVER_R = 54;
+const LAND_R = 13;
+const LABEL_MS = 1300;
+export const FX_MS = 900;
 
 export interface Pt { x: number; y: number }
 
@@ -39,12 +27,13 @@ export interface Layout {
   width: number;
   height: number;
   cols: number;
-  pos: Record<string, Pt>;
+  /** Ground point of each flower, by participant index. */
+  pos: Pt[];
 }
 
 /** Pick a grid that keeps the garden roughly 2:1 and readable at this container width. */
-export function layoutGarden(teamIds: string[], containerWidth: number): Layout {
-  const n = Math.max(1, teamIds.length);
+export function layoutGarden(n: number, containerWidth: number): Layout {
+  n = Math.max(1, n);
   const maxCols = Math.max(2, Math.floor((containerWidth || 900) / 150));
   let best = { cols: 1, score: Infinity };
   for (let cols = 1; cols <= Math.min(n, maxCols); cols++) {
@@ -56,335 +45,220 @@ export function layoutGarden(teamIds: string[], containerWidth: number): Layout 
   }
   const cols = best.cols;
   const rows = Math.ceil(n / cols);
-  const pos: Record<string, Pt> = {};
-  teamIds.forEach((id, i) => {
+  const pos: Pt[] = [];
+  for (let i = 0; i < n; i++) {
     const row = Math.floor(i / cols), col = i % cols;
-    // Centre a short last row, and nudge patches a little so the garden doesn't look like a spreadsheet.
+    // Centre a short last row, and nudge flowers a little so the garden doesn't look like a spreadsheet.
     const inRow = row === rows - 1 ? n - row * cols : cols;
     const offset = ((cols - inRow) * CELL_W) / 2;
-    const jx = (((i * 37) % 11) - 5) * 2.5, jy = (((i * 53) % 7) - 3) * 4;
-    pos[id] = { x: SIDE_PAD + offset + CELL_W * (col + 0.5) + jx, y: TOP_PAD + CELL_H * row + 120 + jy };
-  });
-  return { width: cols * CELL_W + 2 * SIDE_PAD, height: TOP_PAD + rows * CELL_H + 36, cols, pos };
-}
-
-/**
- * Where bee number `b` (of n) hovers around a patch: one slot per bee on an arc over the flowers
- * (from just below the left side, over the top, to just below the right), so bees never collide.
- */
-export function slot(p: Pt, b: number, n: number): Pt {
-  const from = -Math.PI - 0.45, span = Math.PI + 0.9;
-  const a = from + (span * (b + 0.5)) / Math.max(n, 1);
-  return { x: p.x + 94 * Math.cos(a), y: p.y + FLOWER_Y - 6 + 58 * Math.sin(a) };
-}
-
-/** x offset of a flower within its patch: the cosmos on the left, the orchid on the right; 0 (the middle
- *  of the patch) when which flower it is isn't known. */
-export const flowerX = (kind: FlowerKind | undefined) => (kind === "cosmos" ? -FLOWER_DX : kind === "orchid" ? FLOWER_DX : 0);
-
-/** -0.5..0.5: bee b's place in a row of n. */
-const rowPos = (b: number, n: number) => (n > 1 ? b / (n - 1) - 0.5 : 0);
-
-/** Where a bee hovers while it questions a flower: its slot, pulled toward that flower (fallback: above the patch). */
-export function hoverAt(p: Pt, kind: FlowerKind | undefined, b: number, n: number): Pt {
-  if (kind === undefined) {
-    const u = rowPos(b, n);
-    return { x: p.x + u * Math.min(96, 19 * Math.max(1, n - 1)), y: p.y + FLOWER_Y - 44 + Math.abs(u) * 14 };
+    const jx = (((i * 37) % 11) - 5) * 2, jy = (((i * 53) % 7) - 3) * 3;
+    pos.push({ x: SIDE_PAD + offset + CELL_W * (col + 0.5) + jx, y: TOP_PAD + CELL_H * row + 138 + jy });
   }
-  const s = slot(p, b, n);
-  const fx = p.x + flowerX(kind), fy = p.y + FLOWER_Y;
-  return { x: s.x + (fx - s.x) * 0.38, y: s.y + (fy - s.y) * 0.3 };
+  return { width: cols * CELL_W + 2 * SIDE_PAD, height: TOP_PAD + rows * CELL_H + 8, cols, pos };
 }
 
-/** Where a feeding bee sits: on the flower head (fallback: between the two flowers), nudged a little per bee. */
-export function landing(p: Pt, kind: FlowerKind | undefined, b: number, n: number): Pt {
-  if (kind === undefined) return { x: p.x + rowPos(b, n) * 14, y: p.y + FLOWER_Y - 8 };
-  const s = slot({ x: 0, y: 0 }, b, n);
-  return { x: p.x + flowerX(kind) + s.x * 0.12, y: p.y + FLOWER_Y - 6 + (s.y - FLOWER_Y + 6) * 0.1 };
+export const headOf = (layout: Layout, f: number): Pt => {
+  const p = layout.pos[f] ?? { x: 0, y: 0 };
+  return { x: p.x, y: p.y + HEAD_Y };
+};
+
+/** The angle (radians) a visitor hovers at: the round's visitors to one flower fan out over its top. */
+function slotAngle(slot: number, of: number): number {
+  const step = of > 1 ? Math.min(0.62, 4.4 / (of - 1)) : 0;
+  return -Math.PI / 2 + (slot - (of - 1) / 2) * step;
 }
 
-/** The key of the spot an action happened at: the flower if known, else the patch. */
-export const spotKey = (patch: string, kind: FlowerKind | undefined) => `${patch}:${kind ?? ""}`;
+export const hoverPt = (layout: Layout, t: Turn): Pt => {
+  const h = headOf(layout, t.flower), a = slotAngle(t.slot, t.of);
+  return { x: h.x + HOVER_R * Math.cos(a), y: h.y + HOVER_R * Math.sin(a) * 0.92 };
+};
 
-/** A bee's home: its slot over its own patch. */
-export const homeOf = (layout: Layout, team: string, b: number, n: number): Pt => (layout.pos[team] ? slot(layout.pos[team], b, n) : { x: 0, y: 0 });
+export const landPt = (layout: Layout, t: Turn): Pt => {
+  const h = headOf(layout, t.flower), a = slotAngle(t.slot, t.of);
+  return { x: h.x + LAND_R * Math.cos(a), y: h.y + LAND_R * Math.sin(a) - 2 };
+};
 
-export type Mode = "home" | "rest" | "fly" | "ask" | "feed" | "error" | "idle";
+/** A bee's home: beside its own flower, low on the left. */
+export const homePt = (layout: Layout, b: number): Pt => {
+  const h = headOf(layout, b);
+  return { x: h.x - 50, y: h.y + 30 };
+};
 
-export interface BeeSprite {
-  team: string; index: number;
+export type BeeMode = "home" | "fly" | "visit" | "feed" | "idle";
+export type BubbleKind = "ask" | "answer" | "none" | "fed" | "left" | "err";
+
+export interface BeeDraw {
   x: number; y: number;
   flip: boolean;      // facing left
-  mode: Mode;
-  pulse: number;      // 0..1: the question bubble's pop
-  say: string | null; // what the bubble says: the question, then the answer
   tilt: number;       // degrees
   flap: number;       // wing stroke, 0.35..1 (1: wings still)
+  mode: BeeMode;
+  bubble: string | null;
+  bubbleKind: BubbleKind;
+  pop: number;        // 0..1, the bubble's pop
+  ring: "mine" | "visitor" | null;
 }
 
-export interface Fx { id: number; x: number; y: number; t0: number; nectar: boolean; count: number; key: string }
+export interface FxDraw { x: number; y: number; u: number }
+export interface LabelDraw { x: number; y: number; text: string; kind: "nectar" | "kept"; u: number }
+/** The latest visit at the focus team's flower, with the details only that team sees (everyone, once revealed). */
+export interface Readout { flower: number; line1: string; line2: string; kind: "fed" | "left" | "fail"; age: number }
 
-/** Where a bee is headed: a flower (or a patch, when which flower isn't known), or home. */
-type Anchor = { patch: string; kind: FlowerKind | undefined } | null;
-
-/** Something a bee does at real time t: an action, or setting off for its next visit. */
-type Event = { t: number; a: Action } | { t: number; fly: { anchor: Anchor; arrive: number } };
-
-interface BeeState {
-  team: string; index: number;
-  anchor: Anchor;
-  visit: number | null;     // the latest visit scheduled
-  lastT: number;            // real time of the last event scheduled
-  from: Pt; t0: number; t1: number; // the flight in progress (real time)
-  queue: Event[];
-  askAt: number; feedAt: number; errorAt: number;
-  askText: string; answerText: string;
-  last: Pt; // where it was drawn last
+export interface Frame {
+  bees: BeeDraw[];
+  glow: number[];     // per flower: a visit's challenge is being answered (0..1)
+  ping: number[];     // per flower: the focus team's bee just arrived (0..1)
+  fx: FxDraw[];
+  labels: LabelDraw[];
+  trail: { from: Pt; to: Pt; o: number } | null;
+  readout: Readout | null;
 }
 
-export interface Frame { bees: BeeSprite[]; fx: Fx[]; glow: Record<string, number>; display: number }
+export interface FrameParams {
+  D: number;                 // the game time shown
+  roundMs: number;
+  flowerMs: number;
+  beeMs: number;
+  focus: number | null;      // the team whose bee and flower are highlighted
+  bubbles: "all" | "focus" | "none";
+  resting: boolean;          // lobby, or a finished game outside the replay: every bee at home
+  moving: boolean;           // time is moving (wings beat, bees bob)
+}
 
 const ease = (u: number) => (u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2);
 const lerp = (a: Pt, b: Pt, u: number): Pt => ({ x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u });
-function bezier(a: Pt, b: Pt, u: number): Pt {
+function arc(a: Pt, b: Pt, u: number): Pt {
   const dist = Math.hypot(b.x - a.x, b.y - a.y);
-  const c = { x: (a.x + b.x) / 2, y: Math.min(a.y, b.y) - 20 - dist * 0.18 };
+  const c = { x: (a.x + b.x) / 2, y: Math.min(a.y, b.y) - 10 - dist * 0.16 };
   const k = 1 - u;
   return { x: k * k * a.x + 2 * k * u * c.x + u * u * b.x, y: k * k * a.y + 2 * k * u * c.y + u * u * b.y };
 }
 
-/** A short form of a challenge or answer for a bubble: small scalars as they are, anything else "…". */
-function short(v: unknown): string {
+/** A short form of a challenge or response for a bubble: small scalars as they are, anything else "…". */
+export function short(v: unknown): string {
   if (v === null || v === undefined) return "None";
   const t = showValue(v, 8);
   return t.length <= 7 ? t : typeof v === "object" ? "…" : t.slice(0, 6) + "…";
 }
 
-/** First index in `actions` (sorted by seq) with seq > after. */
-function indexAfter(actions: Action[], after: number): number {
-  let lo = 0, hi = actions.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (actions[mid].seq <= after) lo = mid + 1; else hi = mid;
+const restPt = (layout: Layout, t: Turn) => (fed(t) ? landPt(layout, t) : hoverPt(layout, t));
+
+export function computeFrame(idx: TurnIndex, layout: Layout, p: FrameParams, now: number): Frame {
+  const n = idx.bees.length;
+  const R = p.roundMs, F = p.flowerMs;
+  const FLY = Math.min(100, R * 0.5);
+  const DEC = F + Math.min(25, p.beeMs / 2);
+  const LAND = Math.min(110, R * 0.5);
+  const glow = new Array<number>(n).fill(0);
+  const ping = new Array<number>(n).fill(0);
+  const fx: FxDraw[] = [];
+  const labels: LabelDraw[] = [];
+  let trail: Frame["trail"] = null;
+  let readT: Turn | null = null;
+  const bees: BeeDraw[] = [];
+
+  for (let b = 0; b < n; b++) {
+    const list = idx.bees[b];
+    const k = p.resting ? -1 : idx.at(b, p.D);
+    const home = homePt(layout, b);
+    const bob = p.moving ? Math.sin(now / 160 + b * 1.7) * 1.2 : 0;
+    const flap = p.moving ? 0.35 + 0.65 * Math.abs(Math.sin(now / 30 + b * 0.7)) : 1;
+    if (k < 0) {
+      bees.push({ x: home.x, y: home.y + (p.resting ? 0 : bob), flip: false, tilt: 0, flap: p.resting ? 1 : flap, mode: "home", bubble: null, bubbleKind: "ask", pop: 0, ring: b === p.focus ? "mine" : null });
+      continue;
+    }
+    const T = list[k], P = k > 0 ? list[k - 1] : null;
+    const u = p.D - T.t0;
+    const H = hoverPt(layout, T);
+    const S = P ? restPt(layout, P) : home;
+    const head = headOf(layout, T.flower);
+    const isFed = fed(T);
+    const end = T.end;
+    let pos: Pt, mode: BeeMode, tilt = 0, flip: boolean;
+
+    if (u < FLY) {
+      const v = ease(Math.max(0, u / FLY));
+      pos = arc(S, H, v);
+      mode = "fly";
+      const dx = H.x - S.x;
+      flip = Math.abs(dx) > 1 ? dx < 0 : pos.x > head.x;
+      tilt = Math.max(-16, Math.min(16, (H.y - S.y) * 0.08)) * (dx < 0 ? -1 : 1);
+    } else if (isFed && u >= DEC) {
+      pos = lerp(H, landPt(layout, T), ease(Math.min(1, (u - DEC) / LAND)));
+      mode = "feed";
+      flip = pos.x > head.x;
+    } else {
+      pos = { x: H.x, y: H.y + bob };
+      mode = u > R + 600 ? "idle" : "visit";
+      flip = pos.x > head.x;
+    }
+
+    // Bubbles: the challenge while the flower thinks, then its response, then the decision's colour.
+    let bubble: string | null = null, kind: BubbleKind = "ask", pop = 0;
+    const show = p.bubbles === "all" || (p.bubbles === "focus" && p.focus !== null && (b === p.focus || T.flower === p.focus));
+    if (show && u >= FLY * 0.5 && u < R + 80) {
+      if (u < F) {
+        bubble = end ? `${short(end.c)}?` : "?";
+        kind = "ask";
+        pop = Math.min(1, (u - FLY * 0.5) / 80);
+      } else if (end) {
+        const failed = end.r === null || end.r === undefined || !!end.flowerError;
+        bubble = `→ ${failed ? "None" : short(end.r)}`;
+        kind = end.beeError && u >= DEC ? "err" : failed ? "none" : u < DEC ? "answer" : isFed ? "fed" : "left";
+        pop = Math.min(1, (u - F) / 80);
+      }
+    }
+    if (mode === "feed" && u >= R + 80) bubble = null;
+
+    let ring: BeeDraw["ring"] = null;
+    if (p.focus !== null) {
+      if (b === p.focus) ring = "mine";
+      else if (T.flower === p.focus && (u < R + 60 || (isFed && u >= DEC))) ring = "visitor";
+    }
+
+    // A flower glows while it answers.
+    const g = u < F ? 1 - (u / F) * 0.4 : u < F + 160 ? 0.6 * (1 - (u - F) / 160) : 0;
+    if (g > glow[T.flower]) glow[T.flower] = g;
+
+    if (isFed && u >= DEC && u < DEC + FX_MS) fx.push({ ...landPt(layout, T), u: (u - DEC) / FX_MS });
+
+    if (p.focus !== null) {
+      if (b === p.focus) {
+        if (T.flower !== p.focus && u < 500) ping[T.flower] = Math.max(ping[T.flower], 1 - u / 500);
+        if (u < 450 && P) trail = { from: S, to: H, o: 1 - u / 450 };
+        if (isFed && end && typeof end.nectar === "number" && u >= DEC && u < DEC + LABEL_MS) {
+          const L = landPt(layout, T);
+          labels.push({ x: L.x, y: L.y - 24, text: `+${fmtE(end.nectar)} nectar`, kind: "nectar", u: (u - DEC) / LABEL_MS });
+        }
+      }
+      if (T.flower === p.focus && isFed && end && typeof end.surplus === "number" && u >= DEC && u < DEC + LABEL_MS) {
+        labels.push({ x: head.x + 38, y: head.y + 22 + T.slot * 13, text: `+${fmtE(end.surplus)} kept`, kind: "kept", u: (u - DEC) / LABEL_MS });
+      }
+      for (const t of P ? [T, P] : [T]) {
+        if (t.flower === p.focus && t.end && (typeof t.end.energy === "number" || t.end.flowerError) && p.D - t.t0 >= DEC && (!readT || t.t0 > readT.t0)) readT = t;
+      }
+    }
+
+    bees.push({ x: pos.x, y: pos.y, flip, tilt, flap: mode === "feed" ? 1 : flap, mode, bubble, bubbleKind: kind, pop, ring });
   }
-  return lo;
+
+  let readout: Readout | null = null;
+  if (readT && readT.end) {
+    const e = readT.end;
+    const age = p.D - readT.t0 - DEC;
+    if (e.flowerError || e.r === null) {
+      readout = { flower: readT.flower, line1: "no answer in time: E = 0", line2: fed(readT) ? "fed, but nothing to share" : "left", kind: "fail", age };
+    } else {
+      const E = e.energy ?? 0;
+      const line1 = `${e.percent ?? "?"}% of ${fmtE(E)}${typeof e.ms === "number" ? ` · ${e.ms < 10 ? e.ms.toFixed(1) : Math.round(e.ms)} ms` : ""}`;
+      readout = fed(readT)
+        ? { flower: readT.flower, line1, line2: `fed · kept ${fmtE(e.surplus ?? 0)}`, kind: "fed", age }
+        : { flower: readT.flower, line1, line2: `left · ${fmtE(E)} lost`, kind: "left", age };
+    }
+  }
+  return { bees, glow, ping, fx, labels, trail, readout };
 }
 
-export class GardenAnimator {
-  layout: Layout;
-  order: string[];
-  private bees = new Map<string, BeeState>();
-  private fx: Fx[] = [];
-  private glow = new Map<string, number>();
-  private display = -1;   // the game time being shown; -1 until the first step
-  private cursor = 0;     // the last seq scheduled
-  private lastReal = 0;
-  private fxId = 0;
-  private feedHold = 2000; // how long a feeding bee sits on its flower: the rounds it's out of play
-  private windowMs = 150;  // when in a round the flowers' answers are delivered
-  /** Set when the garden has nothing left to animate (lets the page stop its animation loop). */
-  idle = false;
+/** The game time a bee's latest turn starts at, for a status line ("round r"). */
+export const roundAt = (D: number, roundMs: number) => Math.max(0, Math.floor(D / roundMs) + 1);
 
-  constructor(layout: Layout, order: string[]) {
-    this.layout = layout;
-    this.order = order;
-    this.setTeams(layout, order);
-  }
-
-  /** Round length and how many rounds a feeding bee sits out (the game's config). */
-  setTiming(roundMs: number, feedRounds: number, windowMs: number) {
-    this.feedHold = Math.max(500, Math.min(6000, roundMs * Math.max(1, feedRounds)));
-    this.windowMs = windowMs;
-  }
-
-  setTeams(layout: Layout, order: string[]) {
-    this.layout = layout;
-    this.order = order;
-    const n = order.length;
-    order.forEach((team, index) => {
-      const b = this.bees.get(team);
-      if (b) { b.index = index; return; }
-      const home = homeOf(layout, team, index, n);
-      this.bees.set(team, { team, index, anchor: null, visit: null, lastT: 0, from: home, t0: 0, t1: 0, queue: [], askAt: -1e9, feedAt: -1e9, errorAt: -1e9, askText: "", answerText: "", last: home });
-    });
-  }
-
-  private anchorPt(b: BeeState): Pt {
-    const n = this.order.length;
-    if (!b.anchor || !this.layout.pos[b.anchor.patch]) return homeOf(this.layout, b.team, b.index, n);
-    return hoverAt(this.layout.pos[b.anchor.patch], b.anchor.kind, b.index, n);
-  }
-
-  private fly(b: BeeState, anchor: Anchor, now: number, arrive: number) {
-    b.from = b.last;
-    b.anchor = anchor;
-    b.t0 = now;
-    b.t1 = Math.max(now + MIN_FLY, arrive);
-  }
-
-  /** Put every bee straight where the actions up to game time `t` leave it (no animation). */
-  private jump(store: LiveStore, t: number) {
-    const acts = store.actions;
-    let i = indexAfter(acts, this.cursor);
-    for (; i < acts.length && acts[i].atMs <= t; i++) {
-      const a = acts[i], b = this.bees.get(a.bee);
-      this.cursor = a.seq;
-      if (!b) continue;
-      b.visit = a.visit;
-      b.anchor = { patch: a.patch, kind: a.kind };
-    }
-    for (const b of this.bees.values()) {
-      b.queue = [];
-      b.lastT = 0;
-      b.t0 = b.t1 = 0;
-      b.feedAt = -1e9;
-      b.last = this.anchorPt(b);
-    }
-    this.fx = [];
-    this.display = t;
-  }
-
-  /**
-   * Advance to real time `now`. clock: the game clock now; status decides whether the garden plays
-   * (running), catches up and holds (paused), or sends the bees home (finished, lobby).
-   */
-  step(store: LiveStore, now: number, clock: number, status: string) {
-    const dt = this.lastReal ? Math.min(250, now - this.lastReal) : 0;
-    this.lastReal = now;
-    if (status === "lobby") { this.display = clock; this.idle = true; return; }
-    const target = status === "running" ? clock - DELAY : clock;
-    if (this.display < 0) {
-      // First step: a finished game shows its bees at home; otherwise start just behind the clock.
-      this.jump(store, status === "finished" ? clock : Math.max(0, target));
-      if (status === "finished") for (const b of this.bees.values()) { b.anchor = null; b.last = this.anchorPt(b); }
-    } else if (this.display < target - 4000) {
-      this.jump(store, target - 200); // fell far behind (a hidden tab): skip ahead
-    }
-    // Real-time playback, never past the target (a stopped game catches up a little faster).
-    this.display = Math.min(target, this.display + dt * (status === "running" ? 1 : 2));
-
-    // Schedule what happens up to a little ahead of what's shown. A new visit starts with a flight that
-    // sets off once the previous visit's last action has played, and lands as the first one here happens.
-    const acts = store.actions;
-    if (acts.length && this.cursor < acts[0].seq - 1) this.cursor = acts[0].seq - 1; // ring moved on
-    for (let i = indexAfter(acts, this.cursor); i < acts.length && acts[i].atMs <= this.display + LOOKAHEAD; i++) {
-      const a = acts[i];
-      this.cursor = a.seq;
-      const b = this.bees.get(a.bee);
-      if (!b) continue;
-      const when = now + Math.max(0, a.atMs - this.display);
-      if (a.visit !== b.visit) {
-        b.visit = a.visit;
-        const anchor = { patch: a.patch, kind: a.kind };
-        if (a.action === "arrive") {
-          // Given its flower: it sets off now and lands a flight later.
-          const start = Math.max(b.lastT, when);
-          b.queue.push({ t: start, fly: { anchor, arrive: start + FLY_MS } });
-        } else {
-          const start = Math.min(when, Math.max(b.lastT, when - FLY_MS, now));
-          b.queue.push({ t: start, fly: { anchor, arrive: Math.max(start + MIN_FLY, when) } });
-        }
-      }
-      b.queue.push({ t: when, a });
-      b.lastT = when;
-      if (b.queue.length > 64) b.queue.splice(0, b.queue.length - 64);
-    }
-
-    // Fire what's due, in order, bee by bee.
-    const n = this.order.length;
-    for (const b of this.bees.values()) {
-      while (b.queue.length && b.queue[0].t <= now) {
-        const e = b.queue.shift()!;
-        if ("fly" in e) { b.feedAt = -1e9; this.fly(b, e.fly.anchor, now, e.fly.arrive); continue; }
-        const { t, a } = e;
-        if (a.action === "ask") {
-          b.askAt = t;
-          b.feedAt = -1e9;
-          b.askText = short(a.c);
-          b.answerText = a.error ? "None" : short(a.r);
-          this.glow.set(spotKey(a.patch, a.kind), t);
-        }
-        else if (a.action === "feed") {
-          b.feedAt = t;
-          const p = this.layout.pos[a.patch];
-          if (p) this.spawn(landing(p, a.kind, b.index, n), spotKey(a.patch, a.kind), !!a.nectar, now);
-        } else if (a.action === "error") { b.errorAt = t; b.feedAt = -1e9; }
-        else if (a.action === "leave") b.feedAt = -1e9;
-      }
-    }
-
-    // A finished game: once everything has played, the bees go home to rest.
-    if (status === "finished" && this.display >= target) {
-      for (const b of this.bees.values()) {
-        if (b.anchor && !b.queue.length && now >= b.t1 && now - Math.max(b.askAt, b.feedAt) > 600) this.fly(b, null, now, now + 900);
-      }
-    }
-    this.fx = this.fx.filter((f) => now - f.t0 < FX_MS);
-    const busy = this.fx.length > 0 || [...this.bees.values()].some((b) => b.queue.length || now < b.t1 + 50 || now - b.feedAt < this.feedHold || now - b.askAt < ASK_MS || now - b.errorAt < ERR_MS);
-    this.idle = status !== "running" && this.display >= target && !busy;
-  }
-
-  private spawn(at: Pt, key: string, nectar: boolean, now: number) {
-    // Feeds that land on the same spot close together share one effect with a count.
-    const same = this.fx.find((f) => f.key === key && f.nectar === nectar && now - f.t0 < MERGE_MS);
-    if (same) { same.count++; return; }
-    this.fx.push({ id: ++this.fxId, x: at.x, y: at.y, t0: now, nectar, count: 1, key });
-    if (this.fx.length > MAX_FX) this.fx.splice(0, this.fx.length - MAX_FX);
-  }
-
-  /** What to draw at real time `now`. */
-  frame(now: number, status: string): Frame {
-    const n = this.order.length;
-    const bees: BeeSprite[] = [];
-    for (const b of this.bees.values()) {
-      const home = homeOf(this.layout, b.team, b.index, n);
-      const target = this.anchorPt(b);
-      const bob = Math.sin(now / 160 + b.index * 1.7) * 1.4;
-      const patchPt = b.anchor ? this.layout.pos[b.anchor.patch] : undefined;
-      const face = (p: Pt) => (b.anchor && patchPt ? p.x > patchPt.x + flowerX(b.anchor.kind) : p.x > (this.layout.pos[b.team]?.x ?? 0));
-      let s: BeeSprite;
-      if (now < b.t1) {
-        const u = ease(Math.max(0, Math.min(1, (now - b.t0) / Math.max(1, b.t1 - b.t0))));
-        const p = bezier(b.from, target, u);
-        const dx = target.x - b.from.x;
-        s = { team: b.team, index: b.index, x: p.x, y: p.y, flip: Math.abs(dx) > 1 ? dx < 0 : face(p), mode: "fly", pulse: 0, say: null, tilt: Math.max(-16, Math.min(16, (target.y - b.from.y) * 0.08)) * (dx < 0 ? -1 : 1), flap: 1 };
-      } else if (!b.anchor || !patchPt) {
-        const resting = status === "finished" || status === "lobby";
-        s = { team: b.team, index: b.index, x: home.x, y: home.y + (resting ? 0 : bob), flip: face(home), mode: resting ? (status === "finished" ? "rest" : "home") : "idle", pulse: 0, say: null, tilt: 0, flap: 1 };
-      } else {
-        const sinceFeed = now - b.feedAt, sinceAsk = now - b.askAt, sinceErr = now - b.errorAt;
-        let p = target, mode: Mode = "idle", pulse = 0, tilt = 0, say: string | null = null;
-        if (sinceFeed >= 0 && sinceFeed < this.feedHold) {
-          // Drop onto the flower (or the patch), sip while out of play, lift off at the end.
-          const land = landing(patchPt, b.anchor.kind, b.index, n);
-          const down = Math.min(1, sinceFeed / 180), up = Math.max(0, (sinceFeed - (this.feedHold - 180)) / 180);
-          p = up > 0 ? lerp(land, target, ease(up)) : lerp(target, land, ease(down));
-          mode = "feed";
-        } else if (sinceErr >= 0 && sinceErr < ERR_MS) {
-          mode = "error";
-          tilt = Math.sin(now / 25) * 14;
-        } else if (sinceAsk >= 0 && sinceAsk < ASK_MS) {
-          mode = "ask";
-          pulse = sinceAsk < 160 ? Math.sin((Math.PI / 2) * (sinceAsk / 160)) : Math.max(0.55, 1 - (sinceAsk - 160) / 900);
-          // The question while the flower thinks; its answer once it's delivered (at the end of the flower window).
-          say = sinceAsk < this.windowMs ? `${b.askText}?` : `→ ${b.answerText}`;
-        }
-        const still = status === "paused";
-        s = { team: b.team, index: b.index, x: p.x, y: p.y + (mode === "feed" || still ? 0 : bob), flip: face(p), mode, pulse, say, tilt, flap: 1 };
-      }
-      // Wings beat whenever the bee is airborne in a live game (drawn here, not by CSS: the bee is redrawn every frame anyway).
-      if (status === "running" && s.mode !== "feed") s.flap = 0.35 + 0.65 * Math.abs(Math.sin(now / 30 + b.index * 0.7));
-      b.last = { x: s.x, y: s.y };
-      bees.push(s);
-    }
-    // Busy bees on top.
-    bees.sort((a, b) => Number(a.mode !== "idle" && a.mode !== "home" && a.mode !== "rest") - Number(b.mode !== "idle" && b.mode !== "home" && b.mode !== "rest"));
-    const glow: Record<string, number> = {};
-    for (const [k, t] of this.glow) {
-      const u = (now - t) / 500;
-      if (u >= 0 && u < 1) glow[k] = 1 - u;
-      else if (u >= 1) this.glow.delete(k);
-    }
-    return { bees, fx: this.fx.map((f) => ({ ...f })), glow, display: this.display };
-  }
-}

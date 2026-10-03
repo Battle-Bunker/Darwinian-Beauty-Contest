@@ -267,30 +267,41 @@ async function writePreviousGames(arena, dir, generation, personaId) {
   const games = await all("SELECT * FROM arena.games WHERE arena_id = $1 AND generation < $2 AND stage IN ('played','interviewed','judged','done') ORDER BY generation", [arena.id, generation]);
   for (const g of games) {
     const gdir = path.join(dir, "previous-games", `game-${g.generation}`);
-    if (!fs.existsSync(path.join(gdir, "standings.md")) && g.game_uuid) await writeGameRecord(gdir, g);
+    if (!fs.existsSync(path.join(gdir, "standings.md")) && g.game_short_id) await writeGameRecord(gdir, g, arena);
     const panel = path.join(gdir, "panel.md");
     if (!fs.existsSync(panel) && ["judged", "done"].includes(g.stage)) await writePanel(panel, g, personaId);
   }
 }
 
-/** A finished game's record from its tables: every team's final code, the standings, everyone's change timeline. */
-export async function writeGameRecord(gdir, g) {
-  const game = await one("SELECT * FROM games WHERE id = $1", [g.game_uuid]);
-  if (!game || game.status !== "finished") return;
-  const ext = extOf(game.config);
-  const teams = await all("SELECT id, name FROM teams WHERE game_id = $1", [g.game_uuid]);
-  const name = Object.fromEntries(teams.map((t) => [t.id, t.name]));
-  const progs = await all("SELECT team_id, kind, version, size, distance, cost, at_ms, problem, code FROM programs WHERE game_id = $1 ORDER BY at_ms, team_id, kind, version", [g.game_uuid]);
-  for (const p of progs) {
-    const latest = !progs.some((x) => x.team_id === p.team_id && x.kind === p.kind && x.version > p.version);
-    if (latest && game.config.revealOnFinish) write(path.join(gdir, "final-code", safeName(name[p.team_id]), `${p.kind}.${ext}`), p.code);
+/** A finished game's record, from the game's API (everything is revealed once it is over): every team's final code,
+ * the standings with the three score shares, everyone's change timeline. */
+export async function writeGameRecord(gdir, g, arena, api = Api) {
+  let view;
+  try { view = await api.view(null, gamePath(arena.room_short_id, g.game_short_id)); } catch { return; }
+  if (!view?.game || view.game.status !== "finished") return;
+  const config = view.game.config;
+  const ext = extOf(config);
+  const name = Object.fromEntries(view.teams.map((t) => [t.id, t.name]));
+  const progs = [];
+  for (const t of view.teams) {
+    for (const k of KINDS) {
+      const vs = t.programs?.[k] || [];
+      vs.forEach((v, i) => {
+        progs.push({ team_id: t.id, kind: k, ...v });
+        if (i === vs.length - 1 && v.code != null) write(path.join(gdir, "final-code", safeName(t.name), `${k}.${ext}`), v.code);
+      });
+    }
   }
-  const ents = await all("SELECT team_name, fitness, fitness_rank, sat_out FROM arena.entries WHERE game_id = $1 ORDER BY fitness_rank NULLS LAST", [g.id]);
-  write(path.join(gdir, "standings.md"), `# Game ${g.generation}: ${game.config.minutes} minutes, ${Number(game.round || 0)} rounds, ${Number(game.last_seq)} actions\n\n` +
-    `| rank | team | fitness |\n|---|---|---|\n` + ents.map((e) => `| ${e.fitness_rank ?? "-"} | ${e.team_name} | ${e.sat_out ? "sat out" : e.fitness?.toFixed(2) ?? "-"} |`).join("\n") +
-    `\n\n${game.config.revealOnFinish ? "Every team's final code is in final-code/." : "Code stays secret in this game."} changes.md lists every team's program versions.\n`);
+  progs.sort((a, b) => (a.atMs || 0) - (b.atMs || 0) || String(name[a.team_id]).localeCompare(String(name[b.team_id])) || a.kind.localeCompare(b.kind) || a.version - b.version);
+  const scores = Object.fromEntries((view.scores || []).map((x) => [x.teamId, x]));
+  const ents = await all("SELECT team_id, team_name, fitness, fitness_rank, sat_out FROM arena.entries WHERE game_id = $1 ORDER BY fitness_rank NULLS LAST", [g.id]);
+  const f2 = (x) => (x == null ? "-" : Number(x).toFixed(2));
+  write(path.join(gdir, "standings.md"), `# Game ${g.generation}: ${config.minutes} minutes, ${Number(view.game.round || 0)} rounds, ${Number(view.game.lastSeq || 0)} actions\n\n` +
+    `| rank | team | fitness | allure share | forage share | surplus share |\n|---|---|---|---|---|---|\n` +
+    ents.map((e) => { const x = scores[e.team_id] || {}; return `| ${e.fitness_rank ?? "-"} | ${e.team_name} | ${e.sat_out ? "sat out" : f2(e.fitness ?? x.fitness)} | ${f2(x.allureShare)} | ${f2(x.forageShare)} | ${f2(x.surplusShare)} |`; }).join("\n") +
+    `\n\n${config.revealOnFinish ? "Every team's final code is in final-code/." : "Code stays secret in this game."} changes.md lists every team's program versions.\n`);
   write(path.join(gdir, "changes.md"), `# Every program version in game ${g.generation}\n\n| game time | team | program | version | size | change cost | first problem |\n|---|---|---|---|---|---|---|\n` +
-    progs.map((p) => `| ${Number(p.at_ms) ? mmss(Number(p.at_ms)) : "lobby"} | ${name[p.team_id]} | ${p.kind} | v${p.version} | ${p.size} | ${p.cost} | ${p.problem ? p.problem.replace(/\|/g, "/").slice(0, 100) : "-"} |`).join("\n") + "\n");
+    progs.map((p) => `| ${Number(p.atMs) ? mmss(Number(p.atMs)) : "lobby"} | ${name[p.team_id]} | ${p.kind} | v${p.version} | ${p.size} | ${p.cost} | ${p.problem ? String(p.problem).replace(/\|/g, "/").slice(0, 100) : "-"} |`).join("\n") + "\n");
 }
 
 async function writePanel(file, g, personaId) {

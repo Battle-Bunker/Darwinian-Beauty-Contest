@@ -42,7 +42,8 @@ export function apiRouter() {
   const base = "/rooms/:room/games/:game";
   r.get(base, wrap(async (req, res) => res.json(await G.viewGame(req.room, req.game, req.user))));
   r.get(`${base}/actions`, wrap(async (req, res) => res.json(await G.viewActions(req.game, req.user, { after: req.query.after, before: req.query.before, limit: req.query.limit, mine: req.query.mine }))));
-  r.get(`${base}/scores`, wrap(async (req, res) => res.json(await G.viewScores(req.game))));
+  r.get(`${base}/ledger`, wrap(async (req, res) => res.json(await G.viewLedger(req.game, req.user, { after: req.query.after, limit: req.query.limit }))));
+  r.get(`${base}/scores`, wrap(async (req, res) => res.json(await G.viewScores(req.game, req.user))));
   r.get(`${base}/events`, wrap(async (req, res) => gameStream(req, res, {
     gameId: req.game.id, teamId: await G.myTeamId(req.game, req.user), version: req.game.version,
     after: Number(req.query.after ?? req.game.last_seq) || 0,
@@ -58,7 +59,7 @@ export function apiRouter() {
     const out = await G.submitProgram(req.game, req.user, req.body?.kind, req.body?.code);
     res.status(out.ok ? 200 : 422).json(out);
   }));
-  r.post(`${base}/try`, requireUser, wrap(async (req, res) => res.json(await G.tryProgram(req.game, req.user, req.body?.kind, req.body?.code, req.body?.challenges, req.body?.flowers))));
+  r.post(`${base}/try`, requireUser, wrap(async (req, res) => res.json(await G.tryProgram(req.game, req.user, req.body || {}))));
 
   r.use((err, _req, res, _next) => {
     if (!(err instanceof G.HttpError)) console.error(err);

@@ -1,12 +1,12 @@
 // One team's sessions: a tool-using Claude Code session in the team's private workspace, with the runner answering
-// the workspace tools (tools/*.py: submit, check, try, status) through lib/broker.js. Before every request the runner
+// the workspace tools (tools/*.py: submit, check, try, status, ledger) through lib/broker.js. Before every request the runner
 // audits the live transcript (a fair-play violation stops the session at once and refuses the request); after the
 // session it audits the whole transcript, stops anything the session left running, and keeps the notebook.
-// Also the lobby (write all three programs, with fix sessions) and the post-game interview.
+// Also the lobby (write both programs, with fix sessions) and the post-game interview.
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { Api, login, publicGameUrl } from "./api.js";
+import { Api, gamePath, login, publicGameUrl } from "./api.js";
 import { all, one, q } from "./db.js";
 import { BudgetError, callModel, capModel, extractTag, runSession } from "./llm.js";
 import { gameBrief, interviewPrompt, interviewSystem, lobbyBrief, mmss, toolSystem } from "./prompts.js";
@@ -14,7 +14,7 @@ import { Broker } from "./broker.js";
 import { Scaffold } from "./scaffold.js";
 import { TRANSCRIPTS, audit, collect, commonFiles, extOf, killLeftovers, prepareWorkspace, recordViolations, spillDir, writeMinified } from "./workspace.js";
 
-const KINDS = ["cosmos", "orchid", "bee"];
+const KINDS = ["flower", "bee"];
 const n0 = (x) => Math.floor(x).toLocaleString("en-US");
 
 export const SESSION_LIMITS = {
@@ -46,31 +46,29 @@ function samples(t, maxLen) {
 }
 export const sampleChallenges = (config) => samples(parseType(config.challengeType), config.maxLen);
 
-/** A quick runtime test on the game's real runner: [] when fine, else short error strings. A bee forages the team's
- * submitted flowers, or (before any are submitted) `flowers`: the workspace's flower files. */
-export async function runtimeTest(api, tok, g, kind, code, config, flowers = null) {
+/** A quick runtime test on the game's real runner: [] when fine, else short error strings. A bee plays a short garden of
+ * the team's own flower: its submitted one, or (before one is submitted) `flowerCode`, the workspace's flower file. */
+export async function runtimeTest(api, tok, g, kind, code, config, flowerCode = null) {
   try {
-    if (kind !== "bee") {
-      const t = await api.try(tok, g, kind, code, sampleChallenges(config));
+    if (kind === "flower") {
+      const t = await api.tryFlower(tok, g, code, sampleChallenges(config));
       if (t.error) return [`fails to load: ${t.error}`];
       const bad = (t.results || []).filter((r) => r.error);
       return bad.length ? [`runtime test: ${bad.slice(0, 3).map((r) => `flower(${JSON.stringify(r.c).slice(0, 40)}) -> ${r.error}`).join("; ")}`] : [];
     }
     let t;
-    try { t = await api.try(tok, g, "bee", code); }
+    try { t = await api.tryBee(tok, g, code, { rounds: 60 }); }
     catch (e) {
-      if (e.status !== 409 || !flowers?.cosmos?.trim() || !flowers?.orchid?.trim()) throw e;
-      t = await api.try(tok, g, "bee", code, undefined, flowers); // no flowers submitted yet: forage the files'
+      if (e.status !== 409 || !flowerCode?.trim()) throw e;
+      t = await api.tryBee(tok, g, code, { rounds: 60, flower: flowerCode }); // no flower submitted yet: the file's
     }
-    // Too slow is not a failure: a slow bee loses slots but plays on (try.py reports it).
+    // Too slow is not a failure: a slow bee loses turns but plays on (try.py reports it).
     const slow = (x) => /too slow/i.test(String(x || ""));
-    const probs = (t.problems || []).filter((p) => p.kind === "bee" && !slow(p.error)).map((p) => p.error);
-    const errs = (t.actions || []).filter((a) => a.action === "error" && !slow(a.error));
-    if (probs.length) return [`runtime test (your bee foraging your own two flowers): ${probs[0]}`];
-    if (errs.length) return [`runtime test: ${errs.length} of ${t.actions.length} actions were errors, e.g. ${errs[0].error}`];
+    const probs = (t.problems || []).filter((p) => (p.kind ?? "bee") === "bee" && !slow(p.error)).map((p) => p.error);
+    if (probs.length) return [`runtime test (your bee in a garden of your own flower): ${probs[0]}`];
     return [];
   } catch (e) {
-    if (e.status === 409 && kind === "bee") return []; // no flowers yet: can't run the bee, the check is enough
+    if (e.status === 409 && kind === "bee") return []; // no flower yet: can't run the bee, the check is enough
     return [`runtime test failed: ${e.message}`];
   }
 }
@@ -80,11 +78,22 @@ export async function runtimeTest(api, tok, g, kind, code, config, flowers = nul
 /** Change budget available now: min(cap, bank + perMinute × (clock − atMs)). */
 export const availableNow = (budget, bank, clockMs) => Math.min(budget.cap, bank.bank + (budget.perMinute * Math.max(0, clockMs - bank.atMs)) / 60000);
 
+const num = (x, d = 2) => (x == null ? "-" : Number(x).toFixed(d));
+const big = (x) => (x == null ? "-" : Math.abs(x) >= 1e6 ? `${(x / 1e6).toFixed(2)}M` : Math.abs(x) >= 1e3 ? `${(x / 1e3).toFixed(1)}k` : Number(x).toFixed(0));
+/** The live scoreboard, one line per team: fitness and the three components with their shares (a field the viewer may
+ * not see shows "-"). Sorted by fitness when known, else by allure. */
+export function scoreboard(scores, name, teamId = null) {
+  const rows = [...scores].sort((a, b) => (b.fitness ?? -1) - (a.fitness ?? -1) || (b.allure ?? 0) - (a.allure ?? 0));
+  return rows.map((x, i) => `  ${i + 1}. ${name[x.teamId] ?? x.teamId}${x.teamId === teamId ? " (you)" : ""}: fitness ${num(x.fitness)}; ` +
+    `allure ${num(x.allure)} (share ${num(x.allureShare)}, fed by ${x.pollinators ?? "-"} bee teams), ` +
+    `forage ${num(x.forage, 1)} (share ${num(x.forageShare)}), surplus ${big(x.surplus)} (share ${num(x.surplusShare)})`).join("\n");
+}
+
 export function statusOf(view, teamId, { afford = null, code = false } = {}) {
   const g = view.game, config = g.config, endMs = g.endMs ?? config.minutes * 60000;
   const name = Object.fromEntries(view.teams.map((t) => [t.id, t.name]));
   const mine = view.teams.find((t) => t.id === teamId);
-  const out = { ok: true, status: g.status, clockMs: g.clockMs, endMs, leftMs: Math.max(0, endMs - g.clockMs), round: g.round ?? null, budgets: null, scores: null, recent: null, versions: {} };
+  const out = { ok: true, status: g.status, clockMs: g.clockMs, endMs, leftMs: Math.max(0, endMs - g.clockMs), round: g.round ?? null, budgets: null, scores: null, versions: {} };
   const lines = [];
   if (g.status === "lobby") lines.push(`The game hasn't started (lobby). It will last ${mmss(endMs)} of game time.`);
   else lines.push(`Game ${g.status}: ${mmss(g.clockMs)} of ${mmss(endMs)} played (${mmss(out.leftMs)} left)${g.round != null ? `, round ${g.round}` : ""}.`);
@@ -106,14 +115,10 @@ export function statusOf(view, teamId, { afford = null, code = false } = {}) {
       lines.push(`  ${k.padEnd(6)} ${n0(av).padStart(6)} available, +${n0(b.perMinute)}/min, cap ${n0(b.cap)}${full ? ` (full in ${mmss(full)})` : " (full)"}${extra}`);
     }
   }
-  const board = (scores) => [...scores].sort((a, b) => b.fitness - a.fitness).map((s, i) => `${i + 1}. ${name[s.teamId]}${s.teamId === teamId ? " (you)" : ""} ${s.fitness.toFixed(2)}`).join("   ");
   if (view.scores) {
-    out.scores = view.scores.map((s) => ({ team: name[s.teamId], ...s }));
-    lines.push(`Scores, whole game: ${board(view.scores)}`);
-  }
-  if (view.recent?.scores) {
-    out.recent = { fromMs: view.recent.fromMs, toMs: view.recent.toMs, scores: view.recent.scores.map((s) => ({ team: name[s.teamId], ...s })) };
-    if (view.recent.fromMs > 0) lines.push(`Scores, last 5 minutes: ${board(view.recent.scores)}`);
+    out.scores = view.scores.map((x) => ({ team: name[x.teamId], ...x }));
+    lines.push(`Scores (live${g.status === "finished" ? ", final" : ""}):`);
+    lines.push(scoreboard(view.scores, name, teamId));
   }
   if (mine?.programs) {
     const parts = [];
@@ -124,6 +129,8 @@ export function statusOf(view, teamId, { afford = null, code = false } = {}) {
       parts.push(v ? `${k} v${v.version} (${v.atMs ? `live since ${mmss(v.atMs)}` : "lobby"}, ${n0(v.size)} nodes${v.problem ? `; problem: ${v.problem.slice(0, 80)}` : ""})` : `${k}: not submitted`);
     }
     lines.push(`Your programs ${g.status === "lobby" ? "submitted" : "playing"}: ${parts.join(", ")}.`);
+    const fl = out.versions.flower, cap = config.budgets?.flower?.size, fms = config.budgets?.flower?.ms;
+    if (fl && cap && fms) lines.push(`Your flower's size ${n0(fl.size)} of ${n0(cap)}: its excess energy per turn is at most (${n0(cap)} − ${n0(fl.size)}) × ${fms} = ${n0((cap - fl.size) * fms)} node·ms, less ${n0(cap - fl.size)} for every ms of compute.`);
   }
   out.text = lines.join("\n");
   return out;
@@ -138,8 +145,8 @@ export function statusOf(view, teamId, { afford = null, code = false } = {}) {
 export function requestHandler(ctx) {
   const { api = Api, tok, gPath, config, teamId, gate: gateOf = () => null, record: recordRow = async () => {}, dir = null,
     sourceOf = () => "session", scaffoldOp = null } = ctx;
-  // The workspace's flower files, for testing a bee before any flowers are submitted.
-  const fileFlowers = () => dir ? Object.fromEntries(["cosmos", "orchid"].map((k) => { try { return [k, fs.readFileSync(path.join(dir, `${k}.${config.language === "typescript" ? "ts" : "py"}`), "utf8")]; } catch { return [k, ""]; } })) : null;
+  // The workspace's flower file, for testing a bee before a flower is submitted.
+  const fileFlower = () => { if (!dir) return null; try { return fs.readFileSync(path.join(dir, `flower.${config.language === "typescript" ? "ts" : "py"}`), "utf8"); } catch { return null; } };
   return async (req) => {
     const op = String(req.op || "");
     const kind = req.kind;
@@ -157,7 +164,7 @@ export function requestHandler(ctx) {
       try { return await scaffoldOp(req); } catch (e) { return { ok: false, error: e.message, text: `error: ${e.message}` }; }
     }
     if (["check", "try", "submit"].includes(op)) {
-      if (!KINDS.includes(kind)) return { ok: false, error: "kind must be cosmos, orchid or bee", text: "kind must be cosmos, orchid or bee" };
+      if (!KINDS.includes(kind)) return { ok: false, error: "kind must be flower or bee", text: "kind must be flower or bee" };
       if (typeof req.code !== "string") return { ok: false, error: "no code", text: "no code was sent" };
     }
     try {
@@ -167,46 +174,63 @@ export function requestHandler(ctx) {
         await record({ op, ok: true, result: { clockMs: s.clockMs, budgets: s.budgets }, clockMs: s.clockMs });
         return s;
       }
+      if (op === "ledger") {
+        // The team ledger, fresh from the game (the same entries as stream/ledger.jsonl, which the runner updates every second).
+        const after = Number.isFinite(req.after) ? req.after : 0;
+        const r = await api.ledger(tok, gPath, after, Math.min(5000, Number(req.limit) || 5000));
+        await record({ op, ok: true, result: { after, n: (r.entries || []).length } });
+        return { ok: true, participants: r.participants, team: r.team, entries: r.entries || [], lastSeq: r.lastSeq, round: r.round, status: r.status,
+          text: `${(r.entries || []).length} ledger entries after seq ${after} (last seq ${r.lastSeq ?? "-"}, round ${r.round ?? "-"}, ${r.status ?? "?"})` };
+      }
       if (op === "check") {
         const c = await api.check(tok, gPath, kind, req.code);
         const errors = [...(c.errors || [])];
-        if (req.test !== false && !errors.length) errors.push(...(await runtimeTest(api, tok, gPath, kind, req.code, config, fileFlowers())));
+        if (req.test !== false && !errors.length) errors.push(...(await runtimeTest(api, tok, gPath, kind, req.code, config, fileFlower())));
         const out = { ok: !errors.length, kind, size: c.size, budget: c.budget?.size, distance: c.distance, cost: c.cost, available: c.available, minified: c.minified, errors };
-        out.text = [`${kind}: ${n0(c.size)} of ${n0(c.budget?.size ?? 0)} nodes.` + (c.available != null ? ` Submitting now would cost ${n0(c.cost)} of the ${n0(c.available)} you have.` : " (lobby: submitting is free)"),
+        const cap = config.budgets?.flower?.size, fms = config.budgets?.flower?.ms;
+        out.text = [`${kind}: ${n0(c.size)} of ${n0(c.budget?.size ?? 0)} nodes.` + (c.available != null ? ` Submitting now would cost ${n0(c.cost)} of the ${n0(c.available)} you have.` : " (lobby: submitting is free)") +
+          (kind === "flower" && cap && fms && c.size != null ? ` Excess energy per turn at most (${n0(cap)} − ${n0(c.size)}) × ${fms} = ${n0(Math.max(0, cap - c.size) * fms)} node·ms, less ${n0(Math.max(0, cap - c.size))} per ms of compute.` : ""),
           errors.length ? `Problems:\n- ${errors.join("\n- ")}` : "No problems found."].join("\n");
         await record({ op, kind, code: req.code, ok: out.ok, result: { size: c.size, cost: c.cost, available: c.available, errors } });
         return out;
       }
       if (op === "try") {
-        const challenges = Array.isArray(req.challenges) && req.challenges.length ? req.challenges : kind === "bee" ? undefined : sampleChallenges(config);
-        let t;
-        try { t = await api.try(tok, gPath, kind, req.code, challenges); }
-        catch (e) { if (kind !== "bee" || e.status !== 409) throw e; t = await api.try(tok, gPath, kind, req.code, undefined, fileFlowers()); }
         let out;
-        if (kind !== "bee") {
+        if (kind === "flower") {
+          const challenges = Array.isArray(req.challenges) && req.challenges.length ? req.challenges : sampleChallenges(config);
+          const t = await api.tryFlower(tok, gPath, req.code, challenges, Array.isArray(req.ledger) ? req.ledger : undefined);
           const res = t.results || [];
           out = { ok: !t.error && res.every((r) => !r.error), error: t.error, results: res,
-            text: t.error ? `fails to load: ${t.error}` : res.map((r) => `flower(${JSON.stringify(r.c).slice(0, 60)}) -> ${r.error ? `ERROR ${r.error}` : JSON.stringify(r.r).slice(0, 200)}  (${r.ms ?? "?"} ms)`).join("\n") };
+            text: t.error ? `fails to load: ${t.error}` : res.map((r) => `flower(${JSON.stringify(r.c).slice(0, 50)}) -> ${r.error ? `ERROR ${r.error}` : `${JSON.stringify(r.r).slice(0, 160)}, percent ${r.percent}`}` +
+              `  (energy ${r.energy != null ? n0(r.energy) : "-"}, ${r.ms ?? "?"} ms CPU)`).join("\n") };
         } else {
-          const acts = t.actions || [];
+          const opts = { rounds: Number.isFinite(req.rounds) ? req.rounds : undefined, flower: typeof req.flower === "string" ? req.flower : undefined };
+          let t;
+          try { t = await api.tryBee(tok, gPath, req.code, opts); }
+          catch (e) { if (e.status !== 409 || opts.flower || !fileFlower()) throw e; t = await api.tryBee(tok, gPath, req.code, { ...opts, flower: fileFlower() }); }
+          const acts = (t.actions || []).filter((a) => a.action !== "arrive");
           const by = (a) => acts.filter((x) => x.action === a).length;
-          const probs = (t.problems || []).map((p) => `${p.kind}: ${p.error}`);
-          const slowN = acts.filter((a) => a.action === "error" && /too slow/i.test(a.error || "")).length;
+          const probs = (t.problems || []).map((p) => `${p.kind ?? "?"}: ${p.error}`);
+          const slowN = acts.filter((a) => /too slow/i.test(a.beeError || "")).length;
           const ms = acts.map((a) => a.beeMs).filter((x) => x != null).sort((a, b) => a - b);
-          out = { ok: !probs.some((p) => p.startsWith("bee") && !/too slow/i.test(p)) && by("error") === slowN, rounds: t.rounds, feeds: t.feeds, nectar: t.nectar, problems: probs, tooSlow: slowN, actions: acts.slice(0, 200),
-            text: `${t.rounds ?? "?"} rounds in a garden of just your own two flowers: ${by("ask")} asks, ${t.feeds} feeds (${t.nectar} nectar), ${by("leave")} leaves, ${by("error")} errors` +
-              `${slowN ? ` (${slowN} decisions too slow: each costs a slot)` : ""}.` +
+          out = { ok: !probs.some((p) => p.startsWith("bee") && !/too slow/i.test(p)), rounds: t.rounds, feeds: t.feeds, nectar: t.nectar, surplus: t.surplus, problems: probs, tooSlow: slowN,
+            actions: acts.slice(0, 200),
+            text: `${t.rounds ?? "?"} rounds in a garden of just your own flower: ${acts.length} turns, ${by("feed")} feeds, ${by("leave")} leaves; ` +
+              `your bee got ${n0(t.nectar ?? 0)} nectar and your flower kept ${n0(t.surplus ?? 0)} surplus.` +
+              `${slowN ? ` ${slowN} decisions were too slow (each costs a turn).` : ""}` +
               (ms.length ? ` Decision time: median ${ms[Math.floor(ms.length / 2)].toFixed(1)} ms, slowest ${ms[ms.length - 1].toFixed(1)} ms (limit ${config.budgets?.bee?.ms ?? "?"} ms).` : "") +
               (probs.length ? `\nProblems:\n- ${probs.join("\n- ")}` : "") +
-              `\nFirst actions:\n` + acts.slice(0, 12).map((a) => `  ${a.kind} ${a.action}${a.action === "ask" ? ` c=${JSON.stringify(a.c).slice(0, 40)} r=${JSON.stringify(a.r).slice(0, 40)}` : ""}${a.action === "feed" ? ` nectar=${a.nectar}` : ""}${a.error ? ` error: ${a.error.slice(0, 80)}` : ""}${a.log ? ` printed: ${a.log.trim().slice(0, 60)}` : ""}`).join("\n") +
-              `\n(--json for every action)` };
+              `\nFirst turns:\n` + acts.slice(0, 12).map((a) => `  ${a.action} c=${JSON.stringify(a.c).slice(0, 40)} r=${JSON.stringify(a.r).slice(0, 40)}` +
+                `${a.percent != null ? ` percent=${a.percent}` : ""}${a.energy != null ? ` energy=${n0(a.energy)}` : ""}${a.nectar != null ? ` nectar=${n0(a.nectar)}` : ""}` +
+                `${a.beeError ? ` bee error: ${String(a.beeError).slice(0, 80)}` : ""}${a.flowerError ? ` flower error: ${String(a.flowerError).slice(0, 80)}` : ""}${a.log ? ` printed: ${String(a.log).trim().slice(0, 60)}` : ""}`).join("\n") +
+              `\n(--json for every turn)` };
         }
         await record({ op, kind, code: req.code, ok: out.ok, result: { problems: out.problems, error: out.error } });
         return out;
       }
       if (op === "submit") {
         if (!req.force) {
-          const errs = await runtimeTest(api, tok, gPath, kind, req.code, config, fileFlowers());
+          const errs = await runtimeTest(api, tok, gPath, kind, req.code, config, fileFlower());
           if (errs.length) {
             const text = `not submitted: the quick runtime test failed (pass --force to submit anyway):\n- ${errs.join("\n- ")}`;
             await record({ op, kind, code: req.code, ok: false, refused: "runtime test", result: { errors: errs } });
@@ -216,8 +240,8 @@ export function requestHandler(ctx) {
         const r = await api.submit(tok, gPath, kind, req.code);
         const over = (r.errors || []).some((e) => /game over/i.test(e));
         // Not affordable yet: how long until it is (the server's message says so).
-        const wait = (r.errors || []).map((e) => e.match(/Enough in about (\d+) s/)).find(Boolean);
-        const never = (r.errors || []).some((e) => /can never afford/i.test(e));
+        const wait = (r.errors || []).map((e) => e.match(/(?:in about|wait) (\d+) s/i)).find(Boolean);
+        const never = (r.errors || []).some((e) => /can never afford|never can/i.test(e));
         const out = { ok: !!r.submitted, kind, version: r.version, size: r.size, distance: r.distance, cost: r.cost, available: r.available, atMs: r.atMs ?? null,
           errors: r.errors || [], gameOver: over, waitS: wait ? Number(wait[1]) : never ? null : undefined, never: never || undefined };
         out.text = r.submitted
@@ -227,7 +251,7 @@ export function requestHandler(ctx) {
           clockMs: r.submitted ? r.atMs ?? undefined : undefined, result: { size: r.size, distance: r.distance, cost: r.cost, available: r.available, errors: r.errors } });
         return out;
       }
-      return { ok: false, error: `unknown request ${op}`, text: `unknown request ${op} (submit, check, try, status, scaffold)` };
+      return { ok: false, error: `unknown request ${op}`, text: `unknown request ${op} (submit, check, try, status, ledger, scaffold)` };
     } catch (e) {
       await record({ op, kind, code: req.code, ok: false, result: { error: e.message } }).catch(() => {});
       return { ok: false, error: e.message, text: `error: ${e.message}` };
@@ -382,7 +406,7 @@ async function submitted(api, tok, gPath, teamId) {
 }
 
 /**
- * The lobby: one session to write all three programs, then fix sessions while some are missing. A program file the team
+ * The lobby: one session to write both programs, then fix sessions while one is missing. A program file the team
  * wrote but didn't submit is submitted for it if it passes the checks (writing is free in the lobby). Returns
  * { ready, violation }; a team that isn't ready sits the game out.
  */
@@ -406,7 +430,7 @@ export async function lobby({ desk, arena, gameRow, persona, entry, gPath, strea
       // Written but not submitted (or edited after submitting): submit it if it passes, as the team would have.
       const c = await api.check(tok, gPath, k, code);
       const errs = [...(c.errors || [])];
-      if (!errs.length) errs.push(...(await runtimeTest(api, tok, gPath, k, code, config, { cosmos: s.files.cosmos, orchid: s.files.orchid })));
+      if (!errs.length) errs.push(...(await runtimeTest(api, tok, gPath, k, code, config, s.files.flower)));
       if (errs.length) {
         if (have[k] === null) failures.push(`- ${k}: ${errs.join("; ")}`);
         if (c.minified) writeMinified(s.dir, s.ext, k, c.minified);
@@ -429,13 +453,20 @@ export async function lobby({ desk, arena, gameRow, persona, entry, gPath, strea
 
 // ---------------------------------------------------------------- after the game
 
-/** The final programs (latest versions) of every team in a finished game, and how often each changed during play. */
-export async function finalPrograms(gameUuid) {
-  const rows = await all(`SELECT DISTINCT ON (team_id, kind) team_id, kind, version, code FROM programs WHERE game_id = $1 ORDER BY team_id, kind, version DESC`, [gameUuid]);
-  const changes = await all(`SELECT team_id, count(*)::int AS n FROM programs WHERE game_id = $1 AND at_ms > 0 GROUP BY team_id`, [gameUuid]);
+/** The final programs (latest versions) of every team in a finished game, and how often each changed during play, from
+ * the game's API (everything is revealed once it is over). gPath: the game's API path. */
+export async function finalPrograms(gPath, api = Api) {
+  const view = await api.view(null, gPath);
   const out = {};
-  for (const r of rows) (out[r.team_id] ||= { code: {}, changes: 0 }).code[r.kind] = r.code;
-  for (const c of changes) if (out[c.team_id]) out[c.team_id].changes = c.n;
+  for (const t of view.teams || []) {
+    const o = { code: {}, changes: 0 };
+    for (const k of KINDS) {
+      const vs = t.programs?.[k] || [];
+      if (vs.length) o.code[k] = vs[vs.length - 1].code ?? null;
+      o.changes += vs.filter((v) => Number(v.atMs) > 0).length;
+    }
+    out[t.id] = o;
+  }
   return out;
 }
 

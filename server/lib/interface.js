@@ -58,28 +58,28 @@ function typeRules(cT, rT, { maxLen, maxNodes }) {
 
 // How a flower runs, as comment lines under its signature.
 function flowerNotes(ts, config) {
-  const c = ts ? "//" : "#", G = (k) => (ts ? `GAME.${k}` : `GAME["${k}"]`);
-  const { cosmos, orchid } = config.budgets;
-  return `${c} Runs fresh for every question: nothing is kept between calls. ${ts ? "Math.random()" : "random"} is freshly seeded on every call\n` +
-    `${c} and the clock is available (${ts ? "Date.now()" : "import time"}). ${G("ms")} is your time limit per call in milliseconds:\n` +
-    `${c} ${cosmos.ms} for a cosmos, ${orchid.ms} for an orchid. The clock starts when your program starts, so stop with a margin\n` +
-    `${c} to spare: an answer that isn't done in time reaches the bee as ${ts ? "null" : "None"}. Every answer, however fast, reaches the\n` +
-    `${c} bee ${cosmos.ms} ms into the round, so it can't tell flowers apart by how long they take.`;
+  const c = ts ? "//" : "#", G = (k) => (ts ? `GAME.${k}` : `GAME["${k}"]`), nul = ts ? "null" : "None";
+  const { flower } = config.budgets;
+  return `${c} Runs fresh for every turn at your flower: nothing is kept between calls. ${ts ? "Math.random()" : "random"} is freshly\n` +
+    `${c} seeded on every call and the clock is available. ${G("ms")} = ${flower.ms}: your time limit per call in milliseconds; a\n` +
+    `${c} response that isn't done in time (or an error, or a malformed return) reaches the bee as ${nul}, with no energy.\n` +
+    `${c} percent (0-100) is the share of this turn's excess energy E the bee gets as nectar if it feeds; the rest is your\n` +
+    `${c} surplus. No feed: nobody gets anything. E = (${G("flower_size_cap")} - ${G("size")}) * max(0, ${G("flower_ms")} - CPU ms of this call).\n` +
+    `${c} The ledger holds every finished turn, oldest first (not the one in progress: you aren't told whose bee asked).\n` +
+    `${c} Receiving it is free; reading it is part of your compute.`;
 }
 
 // How a bee runs.
 function beeNotes(ts, config) {
-  const c = ts ? "//" : "#", G = (k) => (ts ? `GAME.${k}` : `GAME["${k}"]`);
-  return `${c} Rounds of ${G("round_ms")} = ${roundMs(config)} ms: as each round starts, every bee's queued action runs (an ask, or a feed);\n` +
-    `${c} answers arrive ${config.budgets.cosmos.ms} ms in, and forage then has ${G("ms")} = ${config.budgets.bee.ms} ms to return the bee's next action,\n` +
-    `${c} queued for its next round. A bee with nothing queued as a round starts misses that round.\n` +
-    `${c} A late reply still counts, but the bee misses its next round and the visit ends; of late replies only\n` +
-    `${c} ["leave", challenge] is used (its challenge opens the next flower). After any other late reply, or any reply\n` +
-    `${c} that gives no next challenge (a plain "leave", a second feed, a bad challenge, an error), forage is called\n` +
-    `${c} again at once with seen = [] and fed = ${ts ? "false" : "False"}: return the first challenge for the next flower.\n` +
-    `${c} A call is stopped after 2 s.\n` +
-    `${c} Your bee keeps its variables from call to call for as long as this version of it plays. Submitting\n` +
-    `${c} a new bee (or a crash) starts it afresh. ${ts ? "Math.random()" : "random"} is freshly seeded when it starts.`;
+  const c = ts ? "//" : "#", G = (k) => (ts ? `GAME.${k}` : `GAME["${k}"]`), nul = ts ? "null" : "None";
+  return `${c} Rounds of ${G("round_ms")} = ${roundMs(config)} ms. As each round starts, a bee with a challenge queued (and not feeding)\n` +
+    `${c} takes its turn: a flower is drawn at random among all ${G("teams")} (your own included) and answers within ${config.budgets.flower.ms} ms;\n` +
+    `${c} then decide has ${G("ms")} = ${config.budgets.bee.ms} ms. You aren't told whose flower answered (or the percent) until the turn is over.\n` +
+    `${c} A feed pays nectar and sits your bee out ${G("feed_cost")} rounds. A late reply never feeds; only a late ["leave", c]\n` +
+    `${c} queues c. After any other late reply, or a reply with no usable next challenge, first(ledger) is called at once.\n` +
+    `${c} A call is stopped after 2 s. response is ${nul} if the flower failed.\n` +
+    `${c} Your bee keeps its variables from call to call for as long as this version plays. A new version (or a crash)\n` +
+    `${c} starts afresh. The ledger grows as turns finish (receiving it is free; reading it is part of your compute).`;
 }
 
 export function programInterface(config) {
@@ -90,34 +90,31 @@ export function programInterface(config) {
     challengeMeans: describe(cT), responseMeans: describe(rT),
     rules: typeRules(cT, rT, limitsOf(config)),
   };
+  const entry = (C, R) => `{ round: number; bee: number; flower: number; challenge: ${C}; response: ${R} | null; fed: boolean;\n` +
+    `  nectar: number | null; percent: number | null; energy: number | null; ms: number | null; surplus: number | null }`;
+  const entryNote = (cm) => `${cm} Ledger entry: bee and flower are team indices (GAME.team is yours). nectar: your turns only; percent, energy,\n` +
+    `${cm} ms (your flower's CPU time) and surplus: turns at your own flower only. Hidden fields are null.`;
   if (config.language === "typescript") {
     const C = tsType(cT), R = tsType(rT);
     const aliases = [
       usesKind(cT, "tree") || usesKind(rT, "tree") ? "type Tree<T> = { value: T; children: Tree<T>[] };" : null,
       [cT, rT].some((t) => usesKind(t, "graph") || usesKind(t, "digraph")) ? "type Graph = { nodes: number; edges: [number, number][] };" : null,
       [cT, rT].some((t) => (t.kind === "graph" || t.kind === "digraph") && t.of) ? "type LabeledGraph<L> = Graph & { labels: L[]; edgeLabels?: L[] };" : null,
+      `type Entry = ${entry(C, R)};`,
     ].filter(Boolean).join("\n");
     return {
       types,
-      flower: `${aliases ? aliases + "\n" : ""}function flower(challenge: ${C}): ${R}\n${flowerNotes(true, config)}`,
-      bee: `${aliases ? aliases + "\n" : ""}function forage(seen: [${C}, ${R} | null][], visit: { fed: boolean; nectar: boolean | null; flowers: number }):\n` +
-        `  ["ask", ${C}] | "feed" | ["leave", ${C}] | "leave"\n` +
-        `// ["ask", c]: ask c here next round. "feed": once per visit, after asking; then sit out GAME.feed_cost rounds.\n` +
-        `// ["leave", c]: move on, and ask c first at the next flower next round. "leave": move on.\n` +
-        `// Each next flower is any flower in the garden (visit.flowers of them), picked at random: it may be the same one again.\n` +
-        `function tasted(seen: [${C}, ${R} | null][], nectar: boolean): void   // optional: after a feed, called just before forage\n${beeNotes(true, config)}`,
+      flower: `${aliases}\n${entryNote("//")}\nfunction flower(challenge: ${C}, ledger: readonly Entry[]): [${R}, number]   // [response, percent]\n${flowerNotes(true, config)}`,
+      bee: `${aliases}\n${entryNote("//")}\nfunction first(ledger: readonly Entry[]): ${C}   // the challenge for your bee's next turn\n` +
+        `function decide(challenge: ${C}, response: ${R} | null, ledger: readonly Entry[]): ["feed" | "leave", ${C}]   // [decision, next challenge]\n${beeNotes(true, config)}`,
     };
   }
+  const pyEntry = `# ledger: a list of dicts {"round", "bee", "flower", "challenge", "response", "fed", "nectar", "percent", "energy", "ms", "surplus"}\n` +
+    entryNote("#").replaceAll("GAME.team", 'GAME["team"]').replace("# Ledger entry: ", "# ").replace("are null", "are None");
   return {
     types,
-    flower: `def flower(challenge):    # challenge: ${c}  ->  return a ${r}\n${flowerNotes(false, config)}`,
-    bee: `def forage(seen, visit):   # seen: [[challenge, response], ...] at this flower (response None if it failed)\n` +
-      `    # visit = {"fed": bool, "nectar": bool or None, "flowers": flowers in the garden}\n` +
-      `    # each next flower is any of visit["flowers"] in the garden, picked at random: it may be the same one again\n` +
-      `    # return ["ask", challenge]   ask it here next round\n` +
-      `    #     or "feed"               once per visit, after asking; then sit out GAME["feed_cost"] rounds\n` +
-      `    #     or ["leave", challenge] move on, and ask it first at the next flower next round\n` +
-      `    #     or "leave"              move on\n` +
-      `def tasted(seen, nectar):        # optional: after a feed, called just before forage; nectar is True or False\n${beeNotes(false, config)}`,
+    flower: `${pyEntry}\ndef flower(challenge, ledger):    # challenge: ${c}  ->  return (response, percent); response: ${r}\n${flowerNotes(false, config)}`,
+    bee: `${pyEntry}\ndef first(ledger):                       # -> the challenge (${c}) for your bee's next turn\n` +
+      `def decide(challenge, response, ledger):  # -> ("feed", next_challenge) or ("leave", next_challenge)\n${beeNotes(false, config)}`,
   };
 }

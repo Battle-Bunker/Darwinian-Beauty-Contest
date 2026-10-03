@@ -7,13 +7,27 @@ import { api } from "../api";
 import type { Action, ActionsPage, GameStatus } from "../types";
 
 /** How many recent actions a page holds (older ones fall off the front). */
-export const RING = 5000;
+export const RING = 8000;
 /** How many recent actions to load when a page opens. */
 export const BACKLOG = 2500;
 
 type Listener = () => void;
 
-export class LiveStore {
+/** Anything a component can follow at its own pace: a revision counter and change notifications. */
+export interface Ticking {
+  rev: number;
+  subscribe(fn: Listener): () => void;
+}
+
+/** Where a list of actions comes from: the live ring, or a finished game's whole history. */
+export interface ActionSource extends Ticking {
+  actions: Action[];
+  /** Set once the oldest action held is the game's first. */
+  complete: boolean;
+  lastSeq: number;
+}
+
+export class LiveStore implements ActionSource {
   /** Recent actions, oldest first, by seq. */
   actions: Action[] = [];
   /** The newest seq held. */
@@ -120,7 +134,7 @@ export class LiveStore {
  * Re-render at most every `ms` while the store changes (and, with `always`, on that beat regardless,
  * for clocks). Returns the store's rev so it can key memos.
  */
-export function useLiveTick(store: LiveStore, ms: number, always = false): number {
+export function useLiveTick(store: Ticking, ms: number, always = false): number {
   const [rev, setRev] = useState(store.rev);
   const [, beat] = useState(0);
   useEffect(() => {

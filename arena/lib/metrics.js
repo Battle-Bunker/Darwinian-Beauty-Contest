@@ -1,26 +1,32 @@
-// Metrics of a finished continuous game, from the game's own tables (the full record: every team's versions are
-// visible once a game is over). One pass over the actions in seq order (GameMetrics.add), so a long game never has
-// to be in memory at once. Stored in arena.games.metrics by run.js and printed by analyze.js.
+// Metrics of a finished one-flower game, from the game's API once it is over (every field is revealed then: percent,
+// energy, compute time, nectar, surplus, versions). Pure computation over the actions (computeMetrics); the fetching is
+// computeGameMetrics. Stored in arena.games.metrics by run.js and printed by analyze.js.
 //
-//   windows      per stretch of game time (windowMs): actions, rounds, feeds, nectar, precision (nectar per feed),
-//                nectar per bee-round (a bee gets one turn per round unless it is feeding), rival cosmos vs rival
-//                orchid fed rates (share of visits that ended in a feed) and their gap, fingerprinting (share of a
-//                bee's pre-feed asks that repeat a challenge it asked before; distinct challenges), stolen-face and
-//                twin orchid answers, flower compute against budget, and fitness from that stretch's ledgers
-//   teams        per team: the same for its bee, its cosmos and its orchid, whole game and per window
-//   copies       how fast orchids copy rival cosmos flowers: for each answer (c, r) a cosmos gave, the time until a rival
-//                orchid first answered r to c (only when that orchid hadn't answered so before), and whether the
-//                orchid's version that did it went live after the cosmos's answer appeared
-//   changes      every program version: who, which, when (game time), size, node edits, cost, and the session
-//   compute      per flower: asks, mean/p90/max ms against its budget, timeouts
-//   final        the game's scores
-import crypto from "node:crypto";
-import { score, zeroLedger } from "../../server/lib/scoring.js";
+//   windows        per stretch of game time: turns, feeds and feed rate, excess energy produced, energy lost to unfed
+//                  turns, nectar, surplus, mean percent offered, flower failures, self-feeds
+//   distributions  percent (every answered turn), energy (every turn), nectar and surplus (every fed turn): quantiles
+//   teams          per team: its flower (turns, feeds, pollinators, percent, energy, energy lost, nectar paid, surplus,
+//                  compute) and its bee (turns, feeds, nectar, decision time, too-slow decisions, self-feeding)
+//   versions       per flower version: size and compute against the energy it made, the percent it offered, and what it
+//                  earned
+//   selfFeeding    per team: its bee at its own flower vs elsewhere; handshake: whether its flower treats its own bee
+//                  differently (percent, feed rate) in a way that suggests the two recognise each other
+//   discrimination do bees feed more where the offer is generous? feed rate by percent bucket and by the nectar on offer
+//                  (percent × E), per bee team: the mean offer at turns it fed vs turns it left
+//   copies         how fast flowers copy each other's answers: a flower's first answer r to challenge c after another
+//                  team's flower answered r to c, and whether the copier's version went live after that answer appeared
+//   changes        every program version (who, which, when, size, node edits, cost, and who submitted it)
+//   final          the scores: fitness, allure, forage, surplus and the three shares
+import { Api } from "./api.js";
 
 const r3 = (x) => (x == null || !Number.isFinite(x) ? null : Math.round(x * 1000) / 1000);
-const key = (v) => { const s = JSON.stringify(v ?? null); return s.length <= 200 ? s : "#" + crypto.createHash("sha1").update(s).digest("hex").slice(0, 16) + ":" + s.length; };
 const quantile = (xs, p) => { if (!xs.length) return null; const s = [...xs].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; };
 const median = (xs) => quantile(xs, 0.5);
+const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
+const sum = (xs) => xs.reduce((a, b) => a + (b || 0), 0);
+const q5 = (xs) => (xs.length ? { n: xs.length, min: r3(Math.min(...xs)), p10: r3(quantile(xs, 0.1)), p50: r3(median(xs)), p90: r3(quantile(xs, 0.9)), max: r3(Math.max(...xs)), mean: r3(mean(xs)) } : { n: 0 });
+const key = (v) => JSON.stringify(v ?? null);
+const TOO_SLOW = /too slow/i;
 
 /** A sensible window for a game of `durationMs`: about 8 windows, at least 10 s, in round numbers. */
 export function windowFor(durationMs) {
@@ -28,289 +34,188 @@ export function windowFor(durationMs) {
   return nice.find((w) => durationMs / w <= 8) || 600000;
 }
 
-export class GameMetrics {
-  /** participants: team ids in ledger order; names: {id: name}; config: the game config. */
-  constructor({ config, participants, names, windowMs }) {
-    this.config = config;
-    this.ids = participants;
-    this.idx = new Map(participants.map((id, i) => [id, i]));
-    this.names = names;
-    this.windowMs = windowMs || windowFor(config.minutes * 60000);
-    this.w = new Map();             // window index -> stats
-    this.visits = new Map();        // "bee|visit" -> { w, patch, kind, fed }
-    this.askedBy = new Map();       // bee -> Set(challenge keys asked before feeding)
-    this.cosmosAns = new Map();     // cosmos team -> Map(c -> Map(r -> first atMs))
-    this.orchidAns = new Map();     // orchid team -> Map(c -> Set(r))
-    this.copies = [];               // { orchid, cosmos, c, latencyMs, atMs, version }
-    this.cosmosAnswerCount = 0;     // distinct (cosmos, c, r) answers
-    this.flowerMs = new Map();      // "team|kind" -> [ms]
-    this.answers = new Map();       // "team|kind" -> { n, nodes, edges, chars, graphs }: what answers looked like (effort)
-    this.beeMs = new Map();         // team -> [ms a bee took to decide]
-    this.slots = new Map();         // team -> { asks, feeds, tooSlow, errors }: slots used, and decisions that came too late
-    this.timeouts = new Map();
-    this.actions = 0;
-    this.lastMs = 0;
-    this.maxRound = 0;
+/** The turns of a game: its feed and leave actions (each carries the whole turn). */
+const turnsOf = (actions) => actions.filter((a) => a.action === "feed" || a.action === "leave");
+const potential = (t) => (t.percent != null && t.energy != null ? (t.percent / 100) * t.energy : null); // nectar on offer
+
+/**
+ * Metrics from a finished game. view: the game view after finish (teams with programs, participants, scores, config);
+ * actions: every action, revealed; submits: [{ team_id, kind, version, source, session_no, refused }] from arena.requests
+ * (who submitted each version), optional.
+ */
+export function computeMetrics({ view, actions, submits = [], windowMs }) {
+  const config = view.game.config;
+  const ids = view.participants || view.teams.filter((t) => t.participant).map((t) => t.id);
+  const name = Object.fromEntries(view.teams.map((t) => [t.id, t.name]));
+  const turns = turnsOf(actions);
+  const durationMs = Math.max(Number(view.game.clockMs) || 0, ...actions.map((a) => a.atMs || 0));
+  const W = windowMs || windowFor(durationMs || config.minutes * 60000);
+  const flowerMs = config.budgets?.flower?.ms ?? 150, cap = config.budgets?.flower?.size ?? 1100;
+  const sizeOf = new Map(); // `${team}:${version}` -> size
+  const liveAt = new Map(); // `${team}:${kind}:${version}` -> atMs
+  for (const t of view.teams) for (const k of ["flower", "bee"]) for (const v of t.programs?.[k] || []) {
+    if (k === "flower") sizeOf.set(`${t.id}:${v.version}`, v.size);
+    liveAt.set(`${t.id}:${k}:${v.version}`, Number(v.atMs) || 0);
   }
 
-  #win(atMs) {
-    // The last few actions are stamped just after the clock ran out: they belong to the last window.
-    const i = Math.min(Math.floor(atMs / this.windowMs), Math.max(0, Math.ceil((this.config.minutes * 60000) / this.windowMs) - 1));
-    let s = this.w.get(i);
-    if (!s) {
-      const n = this.ids.length;
-      s = { i, actions: 0, asks: 0, feeds: 0, nectar: 0, minRound: Infinity, maxRound: -Infinity, feedsL: zeroLedger(n), nectarL: zeroLedger(n),
-        rival: { cosmosVisits: 0, cosmosFed: 0, orchidVisits: 0, orchidFed: 0 }, bees: new Map(), orchidAsks: 0, stolen: 0, twin: 0,
-        flowerMs: new Map(), flowerErrors: 0, beeErrors: 0 };
-      this.w.set(i, s);
-    }
-    return s;
+  // Windows.
+  const windows = [];
+  for (const t of turns) {
+    const i = Math.floor((t.atMs || 0) / W);
+    const w = (windows[i] ||= { from: i * W, turns: 0, feeds: 0, energy: 0, energyLost: 0, nectar: 0, surplus: 0, percents: [], failures: 0, selfTurns: 0, selfFeeds: 0 });
+    w.turns++;
+    if (t.action === "feed") w.feeds++;
+    w.energy += t.energy || 0;
+    if (t.action !== "feed") w.energyLost += t.energy || 0;
+    w.nectar += t.nectar || 0;
+    w.surplus += t.surplus || 0;
+    if (t.r === null || t.r === undefined) w.failures++;
+    else if (t.percent != null) w.percents.push(t.percent);
+    if (t.bee === t.flower) { w.selfTurns++; if (t.action === "feed") w.selfFeeds++; }
+  }
+  const win = [];
+  for (let i = 0; i < windows.length; i++) {
+    const w = windows[i] || { from: i * W, turns: 0, feeds: 0, energy: 0, energyLost: 0, nectar: 0, surplus: 0, percents: [], failures: 0, selfTurns: 0, selfFeeds: 0 };
+    win.push({ from: w.from, turns: w.turns, feeds: w.feeds, feedRate: r3(w.turns ? w.feeds / w.turns : null), energy: r3(w.energy), energyLost: r3(w.energyLost),
+      energyLostShare: r3(w.energy ? w.energyLost / w.energy : null), nectar: r3(w.nectar), surplus: r3(w.surplus), meanPercent: r3(mean(w.percents)),
+      failures: w.failures, selfFeeds: w.selfFeeds, selfTurns: w.selfTurns });
   }
 
-  #bee(s, b) {
-    let x = s.bees.get(b);
-    if (!x) s.bees.set(b, (x = { asks: 0, repeats: 0, cs: new Map(), feeds: 0, nectar: 0, rivalCosmosVisits: 0, rivalCosmosFed: 0, rivalOrchidVisits: 0, rivalOrchidFed: 0, errors: 0 }));
-    return x;
-  }
-
-  /** a: an action row from the game's table (seq order): at_ms, round, bee_team, visit, patch_team, kind, action, c, r, after, nectar, ms, error, error_by, flower_version. */
-  add(a) {
-    const atMs = Number(a.at_ms ?? a.atMs), bee = a.bee_team ?? a.bee, patch = a.patch_team ?? a.patch;
-    const s = this.#win(atMs);
-    this.actions++;
-    this.lastMs = Math.max(this.lastMs, atMs);
-    s.actions++;
-    if (a.round != null) { const r = Number(a.round); s.minRound = Math.min(s.minRound, r); s.maxRound = Math.max(s.maxRound, r); this.maxRound = Math.max(this.maxRound, r); }
-    const vk = `${bee}|${a.visit}`;
-    let v = this.visits.get(vk);
-    const rival = bee !== patch;
-    const bx = this.#bee(s, bee);
-    if (!v) {
-      v = { w: s, patch, kind: a.kind, fed: false };
-      this.visits.set(vk, v);
-      if (rival) { if (a.kind === "cosmos") { s.rival.cosmosVisits++; bx.rivalCosmosVisits++; } else { s.rival.orchidVisits++; bx.rivalOrchidVisits++; } }
-    }
-    const sl = this.slots.get(bee) || this.slots.set(bee, { asks: 0, feeds: 0, tooSlow: 0, errors: 0 }).get(bee);
-    if (a.action === "ask") sl.asks++;
-    if (a.action === "feed") sl.feeds++;
-    if (a.action === "error") { if (/too slow/i.test(a.error || "")) { sl.tooSlow++; s.tooSlow = (s.tooSlow || 0) + 1; } else sl.errors++; }
-    const bms = a.bee_ms ?? a.beeMs;
-    if (bms != null) (this.beeMs.get(bee) || this.beeMs.set(bee, []).get(bee)).push(Number(bms));
-    if (a.action === "ask") {
-      s.asks++;
-      const c = key(a.c);
-      if (a.r != null) {
-        const fk2 = `${patch}|${a.kind}`;
-        const st = this.answers.get(fk2) || this.answers.set(fk2, { n: 0, nodes: 0, edges: 0, chars: 0, graphs: 0 }).get(fk2);
-        st.n++;
-        st.chars += JSON.stringify(a.r).length;
-        if (a.r && typeof a.r === "object" && Number.isInteger(a.r.nodes) && Array.isArray(a.r.edges)) { st.graphs++; st.nodes += a.r.nodes; st.edges += a.r.edges.length; }
-      }
-      if (!a.after) {
-        bx.asks++;
-        let seen = this.askedBy.get(bee);
-        if (!seen) this.askedBy.set(bee, (seen = new Set()));
-        if (seen.has(c)) bx.repeats++; else seen.add(c);
-        bx.cs.set(c, (bx.cs.get(c) || 0) + 1);
-      }
-      const fk = `${patch}|${a.kind}`;
-      if (a.ms != null) {
-        (this.flowerMs.get(fk) || this.flowerMs.set(fk, []).get(fk)).push(Number(a.ms));
-        (s.flowerMs.get(fk) || s.flowerMs.set(fk, []).get(fk)).push(Number(a.ms));
-      }
-      if (a.error && a.error_by === "flower") { s.flowerErrors++; if (/time|timeout/i.test(a.error)) this.timeouts.set(fk, (this.timeouts.get(fk) || 0) + 1); }
-      if (a.r != null && !a.error) {
-        const r = key(a.r);
-        if (a.kind === "cosmos") {
-          let byC = this.cosmosAns.get(patch);
-          if (!byC) this.cosmosAns.set(patch, (byC = new Map()));
-          let byR = byC.get(c);
-          if (!byR) byC.set(c, (byR = new Map()));
-          if (!byR.has(r)) { byR.set(r, atMs); this.cosmosAnswerCount++; }
-        } else {
-          // An orchid answer: does it match an answer a cosmos gave to the same challenge earlier?
-          {
-            s.orchidAsks++;
-            let stolenFrom = null, twin = false;
-            for (const [team, byC] of this.cosmosAns) {
-              const t0 = byC.get(c)?.get(r);
-              if (t0 == null || t0 > atMs) continue;
-              if (team === patch) twin = true;
-              else if (!stolenFrom || t0 < stolenFrom.t0) stolenFrom = { team, t0 };
-            }
-            if (stolenFrom) s.stolen++;
-            if (twin) s.twin++;
-            let mine = this.orchidAns.get(patch);
-            if (!mine) this.orchidAns.set(patch, (mine = new Map()));
-            let rs = mine.get(c);
-            if (!rs) mine.set(c, (rs = new Set()));
-            if (!rs.has(r)) {
-              rs.add(r);
-              if (stolenFrom) this.copies.push({ orchid: patch, cosmos: stolenFrom.team, c, latencyMs: atMs - stolenFrom.t0, atMs, cosmosAtMs: stolenFrom.t0, version: a.flower_version ?? null });
-            }
-          }
-        }
-      }
-    } else if (a.action === "feed") {
-      s.feeds++;
-      bx.feeds++;
-      v.fed = true;
-      const bi = this.idx.get(bee), pi = this.idx.get(patch);
-      if (bi != null && pi != null) { s.feedsL[bi][pi]++; if (a.nectar) s.nectarL[bi][pi]++; }
-      if (a.nectar) { s.nectar++; bx.nectar++; }
-      if (rival) {
-        const vw = v.w; // count the fed visit in the window where the visit started
-        const vb = this.#bee(vw, bee);
-        if (v.kind === "cosmos") { vw.rival.cosmosFed++; vb.rivalCosmosFed++; } else { vw.rival.orchidFed++; vb.rivalOrchidFed++; }
-      }
-    } else if (a.action === "error") {
-      bx.errors++;
-      s.beeErrors++;
-    }
-  }
-
-  /** programs: every version {team_id, kind, version, size, distance, cost, at_ms, problem}; requests: arena.requests submit rows with session numbers. */
-  finish({ programs = [], submits = [], finalFeeds = null, finalNectar = null } = {}) {
-    const n = this.ids.length;
-    const name = (id) => this.names[id] || String(id).slice(0, 8);
-    const budgetMs = (kind) => this.config.budgets?.[kind]?.ms || null;
-    const cumF = zeroLedger(n), cumN = zeroLedger(n);
-    const windows = [];
-    const perTeam = Object.fromEntries(this.ids.map((id) => [id, { name: name(id), windows: [] }]));
-    for (const s of [...this.w.values()].sort((a, b) => a.i - b.i)) {
-      for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) { cumF[i][j] += s.feedsL[i][j]; cumN[i][j] += s.nectarL[i][j]; }
-      const rounds = Number.isFinite(s.maxRound) ? s.maxRound - s.minRound + 1 : null;
-      const bees = [...s.bees.values()];
-      const repeat = bees.map((b) => (b.asks ? b.repeats / b.asks : null)).filter((x) => x != null);
-      const comp = {};
-      for (const [fk, ms] of s.flowerMs) { const kind = fk.split("|")[1]; (comp[kind] ||= []).push(...ms.map((x) => x / (budgetMs(kind) || 1))); }
-      const fit = score(this.ids, s.feedsL, s.nectarL), cum = score(this.ids, cumF, cumN);
-      windows.push({
-        from: s.i * this.windowMs, to: (s.i + 1) * this.windowMs, actions: s.actions, rounds, asks: s.asks, feeds: s.feeds, nectar: s.nectar,
-        precision: r3(s.feeds ? s.nectar / s.feeds : null), nectarPerBeeRound: r3(rounds ? s.nectar / (rounds * n) : null),
-        rivalCosmosFed: r3(s.rival.cosmosVisits ? s.rival.cosmosFed / s.rival.cosmosVisits : null),
-        rivalOrchidFed: r3(s.rival.orchidVisits ? s.rival.orchidFed / s.rival.orchidVisits : null),
-        gap: r3(s.rival.cosmosVisits && s.rival.orchidVisits ? s.rival.cosmosFed / s.rival.cosmosVisits - s.rival.orchidFed / s.rival.orchidVisits : null),
-        repeatShare: r3(repeat.length ? repeat.reduce((a, b) => a + b, 0) / repeat.length : null),
-        distinctPerBee: r3(bees.length ? bees.reduce((a, b) => a + b.cs.size, 0) / bees.length : null),
-        stolenShare: r3(s.orchidAsks ? s.stolen / s.orchidAsks : null), twinShare: r3(s.orchidAsks ? s.twin / s.orchidAsks : null),
-        cosmosCompute: r3(comp.cosmos?.length ? comp.cosmos.reduce((a, b) => a + b, 0) / comp.cosmos.length : null),
-        orchidCompute: r3(comp.orchid?.length ? comp.orchid.reduce((a, b) => a + b, 0) / comp.orchid.length : null),
-        flowerErrors: s.flowerErrors, beeErrors: s.beeErrors, tooSlow: s.tooSlow || 0,
-        fitness: Object.fromEntries(fit.map((x) => [x.teamId, r3(x.fitness)])), cumFitness: Object.fromEntries(cum.map((x) => [x.teamId, r3(x.fitness)])),
-      });
-      for (const id of this.ids) {
-        const b = s.bees.get(id);
-        const top = b && b.cs.size ? Math.max(...b.cs.values()) : 0;
-        const fx = (kind) => { const ms = s.flowerMs.get(`${id}|${kind}`) || []; return ms.length ? r3(ms.reduce((a, c) => a + c, 0) / ms.length / (budgetMs(kind) || 1)) : null; };
-        const fed = (kind) => { let v = 0; for (let i = 0; i < n; i++) if (this.ids[i] !== id) v += s.feedsL[i][this.idx.get(id)]; return v; };
-        perTeam[id].windows.push({
-          from: s.i * this.windowMs, asks: b?.asks ?? 0, feeds: b?.feeds ?? 0, nectar: b?.nectar ?? 0, precision: r3(b?.feeds ? b.nectar / b.feeds : null),
-          rivalCosmosFed: r3(b?.rivalCosmosVisits ? b.rivalCosmosFed / b.rivalCosmosVisits : null), rivalOrchidFed: r3(b?.rivalOrchidVisits ? b.rivalOrchidFed / b.rivalOrchidVisits : null),
-          repeatShare: r3(b?.asks ? b.repeats / b.asks : null), distinct: b?.cs.size ?? 0, topChallengeShare: r3(b?.asks ? top / b.asks : null),
-          feedsReceivedFromRivals: fed(), cosmosCompute: fx("cosmos"), orchidCompute: fx("orchid"), fitness: windows[windows.length - 1].fitness[id],
-        });
-      }
-    }
-    // Whole-game per team.
-    const sum = (id, k) => perTeam[id].windows.reduce((a, w) => a + (w[k] || 0), 0);
-    for (const id of this.ids) {
-      let rcv = 0, rcf = 0, rov = 0, rof = 0, asks = 0, repeats = 0;
-      for (const s of this.w.values()) { const b = s.bees.get(id); if (!b) continue; rcv += b.rivalCosmosVisits; rcf += b.rivalCosmosFed; rov += b.rivalOrchidVisits; rof += b.rivalOrchidFed; asks += b.asks; repeats += b.repeats; }
-      Object.assign(perTeam[id], {
-        asks: sum(id, "asks"), feeds: sum(id, "feeds"), nectar: sum(id, "nectar"), precision: r3(sum(id, "feeds") ? sum(id, "nectar") / sum(id, "feeds") : null),
-        rivalCosmosFed: r3(rcv ? rcf / rcv : null), rivalOrchidFed: r3(rov ? rof / rov : null), gap: r3(rcv && rov ? rcf / rcv - rof / rov : null),
-        repeatShare: r3(asks ? repeats / asks : null), distinctChallenges: this.askedBy.get(id)?.size ?? 0,
-      });
-    }
-    // Slots: a bee has one per round; it uses one per ask or feed and sits out feedCost rounds after a feed. The rest
-    // are missed (nothing queued as the round started: a slow decision, or a reply that gave no next challenge).
-    const feedCost = this.config.feedCost ?? 0;
-    for (const id of this.ids) {
-      const sl = this.slots.get(id) || { asks: 0, feeds: 0, tooSlow: 0, errors: 0 };
-      const used = sl.asks + sl.feeds, sitting = sl.feeds * feedCost;
-      const missed = Math.max(0, this.maxRound - used - sitting);
-      Object.assign(perTeam[id], { slotsUsed: used, slotsFeeding: sitting, slotsMissed: missed, missedShare: r3(this.maxRound ? missed / this.maxRound : null), tooSlow: sl.tooSlow, beeErrors: sl.errors });
-    }
-    // Copies: per orchid team.
-    const copies = {};
-    for (const id of this.ids) {
-      const cs = this.copies.filter((x) => x.orchid === id);
-      if (!cs.length) continue;
-      const atOf = (ver) => programs.find((p) => p.team_id === id && p.kind === "orchid" && p.version === ver)?.at_ms;
-      const attributed = cs.filter((x) => x.version != null && Number(atOf(x.version) ?? 0) > x.cosmosAtMs);
-      copies[id] = {
-        name: name(id), copies: cs.length, from: [...new Set(cs.map((x) => name(x.cosmos)))], medianLatencyMs: median(cs.map((x) => x.latencyMs)),
-        p10LatencyMs: quantile(cs.map((x) => x.latencyMs), 0.1), afterNewVersion: attributed.length, medianLatencyAfterNewVersionMs: median(attributed.map((x) => x.latencyMs)),
-      };
-    }
-    // Compute per flower, whole game.
-    const compute = {};
-    for (const [fk, ms] of this.flowerMs) {
-      const [id, kind] = fk.split("|");
-      const b = budgetMs(kind);
-      const ans = this.answers.get(fk);
-      compute[fk] = { team: name(id), kind, asks: ms.length, budgetMs: b, meanMs: r3(ms.reduce((a, x) => a + x, 0) / ms.length), p90Ms: r3(quantile(ms, 0.9)), maxMs: r3(Math.max(...ms)),
-        meanFrac: r3(ms.reduce((a, x) => a + x, 0) / ms.length / (b || 1)), p90Frac: r3(quantile(ms, 0.9) / (b || 1)), timeouts: this.timeouts.get(fk) || 0,
-        answerChars: ans ? r3(ans.chars / ans.n) : null, answerNodes: ans?.graphs ? r3(ans.nodes / ans.graphs) : null, answerEdges: ans?.graphs ? r3(ans.edges / ans.graphs) : null };
-    }
-    // How long bees took to decide, against their budget.
-    const beeCompute = {};
-    for (const [id, ms] of this.beeMs) {
-      const b = budgetMs("bee");
-      beeCompute[id] = { team: name(id), decisions: ms.length, budgetMs: b, meanMs: r3(ms.reduce((a, x) => a + x, 0) / ms.length), p90Ms: r3(quantile(ms, 0.9)), maxMs: r3(Math.max(...ms)),
-        overBudget: b ? ms.filter((x) => x > b).length : null };
-    }
-    // Changes: every version, with the session that submitted it.
-    const changes = programs.map((p) => {
-      const s = submits.find((r) => r.team_id === p.team_id && r.kind === p.kind && r.version === p.version);
-      return { team: name(p.team_id), teamId: p.team_id, kind: p.kind, version: p.version, atMs: Number(p.at_ms), size: p.size, distance: p.distance, cost: p.cost,
-        problem: p.problem ? String(p.problem).slice(0, 160) : null, session: s ? s.session_no : null, auto: s?.refused?.startsWith("auto") || false,
-        source: s?.source || (Number(p.at_ms) > 0 ? "unknown" : "lobby") };
-    }).sort((a, b) => a.atMs - b.atMs || a.team.localeCompare(b.team));
-    const durationMs = this.lastMs;
-    const totalCopies = this.copies.filter((x) => this.ids.includes(x.orchid));
-    const verAt = (x) => programs.find((p) => p.team_id === x.orchid && p.kind === "orchid" && p.version === x.version)?.at_ms;
-    const attributed = totalCopies.filter((x) => x.version != null && Number(verAt(x) ?? 0) > x.cosmosAtMs);
-    return {
-      windowMs: this.windowMs, durationMs, actions: this.actions, rounds: this.maxRound, actionsPerSec: r3(durationMs ? this.actions / (durationMs / 1000) : null),
-      roundsPerSec: r3(durationMs ? this.maxRound / (durationMs / 1000) : null), windows, teams: perTeam,
-      copies: { cosmosAnswers: this.cosmosAnswerCount, copied: totalCopies.length, medianLatencyMs: median(totalCopies.map((x) => x.latencyMs)),
-        afterNewVersion: attributed.length, medianLatencyAfterNewVersionMs: median(attributed.map((x) => x.latencyMs)), byOrchid: copies },
-      compute, beeCompute, changes,
-      final: finalFeeds ? score(this.ids, finalFeeds, finalNectar).map((x) => ({ team: name(x.teamId), teamId: x.teamId, fitness: r3(x.fitness), allure: r3(x.allure), forage: r3(x.forage), feedsReceived: x.feedsReceived, nectarCollected: x.nectarCollected })) : null,
+  // Per team.
+  const teams = {};
+  for (const id of ids) {
+    const atFlower = turns.filter((t) => t.flower === id), byBee = turns.filter((t) => t.bee === id);
+    const fed = atFlower.filter((t) => t.action === "feed"), beeFed = byBee.filter((t) => t.action === "feed");
+    const answered = atFlower.filter((t) => t.r !== null && t.r !== undefined);
+    const ms = atFlower.map((t) => t.ms).filter((x) => x != null), beeMs = byBee.map((t) => t.beeMs).filter((x) => x != null);
+    const own = byBee.filter((t) => t.flower === id), ownFed = own.filter((t) => t.action === "feed");
+    const elsewhere = byBee.filter((t) => t.flower !== id), elsewhereFed = elsewhere.filter((t) => t.action === "feed");
+    const othersAtMe = atFlower.filter((t) => t.bee !== id), othersAtMeFed = othersAtMe.filter((t) => t.action === "feed");
+    const pctOwn = own.map((t) => t.percent).filter((x) => x != null), pctOthers = othersAtMe.map((t) => t.percent).filter((x) => x != null);
+    teams[id] = {
+      name: name[id], index: ids.indexOf(id),
+      flower: { turns: atFlower.length, feeds: fed.length, feedRate: r3(atFlower.length ? fed.length / atFlower.length : null), pollinators: new Set(fed.map((t) => t.bee)).size,
+        failures: atFlower.length - answered.length, meanPercent: r3(mean(answered.map((t) => t.percent).filter((x) => x != null))),
+        percent: q5(answered.map((t) => t.percent).filter((x) => x != null)), energy: q5(atFlower.map((t) => t.energy || 0)),
+        energyTotal: r3(sum(atFlower.map((t) => t.energy))), energyLost: r3(sum(atFlower.filter((t) => t.action !== "feed").map((t) => t.energy))),
+        nectarPaid: r3(sum(fed.map((t) => t.nectar))), surplus: r3(sum(fed.map((t) => t.surplus))), ms: q5(ms),
+        computeShare: r3(ms.length ? mean(ms) / flowerMs : null) },
+      bee: { turns: byBee.length, feeds: beeFed.length, feedRate: r3(byBee.length ? beeFed.length / byBee.length : null), nectar: r3(sum(beeFed.map((t) => t.nectar))),
+        nectarPerFeed: r3(beeFed.length ? sum(beeFed.map((t) => t.nectar)) / beeFed.length : null), flowersFedAt: new Set(beeFed.map((t) => t.flower)).size,
+        tooSlow: byBee.filter((t) => TOO_SLOW.test(t.beeError || "")).length, errors: byBee.filter((t) => t.beeError && !TOO_SLOW.test(t.beeError)).length, decisionMs: q5(beeMs) },
+      selfFeeding: { ownTurns: own.length, ownFeeds: ownFed.length, ownFeedRate: r3(own.length ? ownFed.length / own.length : null),
+        elsewhereFeedRate: r3(elsewhere.length ? elsewhereFed.length / elsewhere.length : null), ownShareOfFeeds: r3(beeFed.length ? ownFed.length / beeFed.length : null),
+        ownNectar: r3(sum(ownFed.map((t) => t.nectar))) },
+      handshake: (() => {
+        const rateOwn = own.length ? ownFed.length / own.length : null, rateOthers = othersAtMe.length ? othersAtMeFed.length / othersAtMe.length : null;
+        const pOwn = mean(pctOwn), pOthers = mean(pctOthers);
+        const flag = own.length >= 5 && rateOwn != null && rateOthers != null && ((rateOwn - rateOthers >= 0.3) || (pOwn != null && pOthers != null && Math.abs(pOwn - pOthers) >= 15));
+        return { ownTurns: own.length, feedRateOwnBee: r3(rateOwn), feedRateOtherBees: r3(rateOthers), percentToOwnBee: r3(pOwn), percentToOtherBees: r3(pOthers), flag };
+      })(),
     };
   }
+
+  // Flower versions: size and compute against energy.
+  const versions = [];
+  const byVersion = new Map();
+  for (const t of turns) { const k = `${t.flower}:${t.flowerVersion ?? "?"}`; if (!byVersion.has(k)) byVersion.set(k, []); byVersion.get(k).push(t); }
+  for (const [k, ts] of byVersion) {
+    const [team, version] = k.split(":");
+    const fed = ts.filter((t) => t.action === "feed"), ms = ts.map((t) => t.ms).filter((x) => x != null);
+    const size = sizeOf.get(`${team}:${version}`) ?? null;
+    versions.push({ team: name[team], teamId: team, version: version === "?" ? null : Number(version), atMs: liveAt.get(`${team}:flower:${version}`) ?? null, size,
+      maxEnergy: size != null ? (cap - size) * flowerMs : null, turns: ts.length, feeds: fed.length, feedRate: r3(ts.length ? fed.length / ts.length : null),
+      meanMs: r3(mean(ms)), p90Ms: r3(quantile(ms, 0.9)), meanEnergy: r3(mean(ts.map((t) => t.energy || 0))), meanPercent: r3(mean(ts.map((t) => t.percent).filter((x) => x != null))),
+      nectarPerFeed: r3(fed.length ? sum(fed.map((t) => t.nectar)) / fed.length : null), surplus: r3(sum(fed.map((t) => t.surplus))), failures: ts.filter((t) => t.r == null).length });
+  }
+  versions.sort((a, b) => String(a.team).localeCompare(String(b.team)) || (a.version ?? 0) - (b.version ?? 0));
+
+  // Discrimination: feed rates by percent offered, and by the nectar on offer.
+  const answered = turns.filter((t) => t.r != null && t.percent != null);
+  const buckets = [[0, 10], [10, 30], [30, 60], [60, 101]].map(([lo, hi]) => {
+    const ts = answered.filter((t) => t.percent >= lo && t.percent < hi);
+    return { range: `${lo}-${Math.min(hi, 100)}`, turns: ts.length, feeds: ts.filter((t) => t.action === "feed").length, feedRate: r3(ts.length ? ts.filter((t) => t.action === "feed").length / ts.length : null) };
+  });
+  const pots = answered.map(potential).filter((x) => x != null);
+  const lo = quantile(pots, 1 / 3), hi = quantile(pots, 2 / 3);
+  const tercile = (f) => { const ts = answered.filter((t) => f(potential(t))); return { turns: ts.length, feedRate: r3(ts.length ? ts.filter((t) => t.action === "feed").length / ts.length : null) }; };
+  const perBee = {};
+  for (const id of ids) {
+    const ts = answered.filter((t) => t.bee === id);
+    const fedP = ts.filter((t) => t.action === "feed").map(potential), leftP = ts.filter((t) => t.action !== "feed").map(potential);
+    perBee[id] = { team: name[id], turns: ts.length, offerWhenFed: r3(mean(fedP)), offerWhenLeft: r3(mean(leftP)), percentWhenFed: r3(mean(ts.filter((t) => t.action === "feed").map((t) => t.percent))),
+      percentWhenLeft: r3(mean(ts.filter((t) => t.action !== "feed").map((t) => t.percent))) };
+  }
+  const discrimination = { byPercent: buckets, byOffer: { low: tercile((p) => p <= lo), mid: tercile((p) => p > lo && p <= hi), high: tercile((p) => p > hi), cuts: [r3(lo), r3(hi)] }, perBee };
+
+  // Copies of answers between flowers (public (c, r) pairs).
+  const first = new Map(); // key(c) -> Map(key(r) -> Map(team -> { atMs, version }))
+  const copies = [];
+  for (const t of turns) {
+    if (t.r === null || t.r === undefined) continue;
+    const c = key(t.c), r = key(t.r);
+    let m = first.get(c); if (!m) first.set(c, (m = new Map()));
+    let n = m.get(r); if (!n) m.set(r, (n = new Map()));
+    if (n.has(t.flower)) continue;
+    const earlier = [...n.entries()].filter(([team]) => team !== t.flower).sort((a, b) => a[1].atMs - b[1].atMs)[0];
+    n.set(t.flower, { atMs: t.atMs, version: t.flowerVersion });
+    if (!earlier) continue;
+    const vAt = liveAt.get(`${t.flower}:flower:${t.flowerVersion}`) ?? 0;
+    copies.push({ copier: t.flower, source: earlier[0], latencyMs: t.atMs - earlier[1].atMs, version: t.flowerVersion ?? null, afterNewVersion: vAt > earlier[1].atMs });
+  }
+  const byCopier = ids.map((id) => {
+    const xs = copies.filter((x) => x.copier === id), att = xs.filter((x) => x.afterNewVersion);
+    return { team: name[id], teamId: id, matches: xs.length, copies: att.length, sources: [...new Set(att.map((x) => name[x.source]))], medianLatencyMs: median(att.map((x) => x.latencyMs)) };
+  }).filter((x) => x.matches);
+  const att = copies.filter((x) => x.afterNewVersion);
+
+  // Changes: every version, with who submitted it.
+  const changes = [];
+  for (const t of view.teams) for (const k of ["flower", "bee"]) for (const v of t.programs?.[k] || []) {
+    const s = submits.find((r) => r.team_id === t.id && r.kind === k && r.version === v.version);
+    changes.push({ team: t.name, teamId: t.id, kind: k, version: v.version, atMs: Number(v.atMs) || 0, size: v.size, distance: v.distance, cost: v.cost,
+      problem: v.problem ? String(v.problem).slice(0, 160) : null, session: s ? s.session_no : null, source: s?.source || (Number(v.atMs) > 0 ? "unknown" : "lobby") });
+  }
+  changes.sort((a, b) => a.atMs - b.atMs || a.team.localeCompare(b.team));
+
+  const final = (view.scores || []).filter((x) => ids.includes(x.teamId)).map((x) => ({ team: name[x.teamId], teamId: x.teamId, fitness: r3(x.fitness), allure: r3(x.allure), forage: r3(x.forage),
+    surplus: r3(x.surplus), allureShare: r3(x.allureShare), forageShare: r3(x.forageShare), surplusShare: r3(x.surplusShare), feedsReceived: x.feedsReceived, feedsGiven: x.feedsGiven,
+    pollinators: x.pollinators, nectarCollected: r3(x.nectarCollected), nectarGiven: r3(x.nectarGiven), nectarSources: x.nectarSources }));
+
+  const fedTurns = turns.filter((t) => t.action === "feed");
+  return {
+    windowMs: W, durationMs, actions: actions.length, turns: turns.length, rounds: Number(view.game.round) || Math.max(0, ...actions.map((a) => a.round || 0)),
+    turnsPerSec: r3(durationMs ? turns.length / (durationMs / 1000) : null), roundsPerSec: r3(durationMs ? (Number(view.game.round) || 0) / (durationMs / 1000) : null),
+    totals: { feeds: fedTurns.length, feedRate: r3(turns.length ? fedTurns.length / turns.length : null), energy: r3(sum(turns.map((t) => t.energy))),
+      energyLost: r3(sum(turns.filter((t) => t.action !== "feed").map((t) => t.energy))), nectar: r3(sum(fedTurns.map((t) => t.nectar))), surplus: r3(sum(fedTurns.map((t) => t.surplus))),
+      failures: turns.filter((t) => t.r == null).length, selfFeeds: fedTurns.filter((t) => t.bee === t.flower).length },
+    windows: win,
+    distributions: { percent: q5(answered.map((t) => t.percent)), energy: q5(turns.map((t) => t.energy || 0)), nectar: q5(fedTurns.map((t) => t.nectar || 0)), surplus: q5(fedTurns.map((t) => t.surplus || 0)) },
+    teams, versions, discrimination,
+    copies: { matches: copies.length, copies: att.length, medianLatencyMs: median(att.map((x) => x.latencyMs)), byCopier },
+    changes, final,
+    config: { minutes: config.minutes, feedCost: config.feedCost, challengeType: config.challengeType, responseType: config.responseType, budgets: config.budgets },
+    clockMs: Number(view.game.clockMs) || 0, round: Number(view.game.round) || 0,
+  };
 }
 
-/** Compute a finished game's metrics from the database (read-only on the game's tables). */
-export async function computeGameMetrics({ all, one }, gameUuid, { windowMs, arenaGameId } = {}) {
-  const g = await one("SELECT * FROM games WHERE id = $1", [gameUuid]);
-  const teams = await all("SELECT id, name FROM teams WHERE game_id = $1", [gameUuid]);
-  const names = Object.fromEntries(teams.map((t) => [t.id, t.name]));
-  const m = new GameMetrics({ config: g.config, participants: g.participants || [], names, windowMs });
+/** Every action of a game, page by page (revealed once the game is over). */
+export async function fetchActions(api, gPath, tok = null) {
+  const out = [];
   let after = 0;
   for (;;) {
-    const rows = await all(`SELECT * FROM actions WHERE game_id = $1 AND seq > $2 ORDER BY seq LIMIT 20000`, [gameUuid, after]);
-    for (const r of rows) m.add(r);
-    if (rows.length < 20000) break;
-    after = Number(rows[rows.length - 1].seq);
+    const page = await api.actions(tok, gPath, after, 5000);
+    const rows = (page.actions || []).filter((a) => a.seq > after);
+    out.push(...rows);
+    if (rows.length < 5000) break;
+    after = rows[rows.length - 1].seq;
   }
-  const programs = await all("SELECT team_id, kind, version, size, distance, cost, at_ms, problem FROM programs WHERE game_id = $1 ORDER BY at_ms, version", [gameUuid]);
-  const submits = arenaGameId ? await all(`SELECT e.team_id, r.kind, r.version, r.refused, r.source, s.no AS session_no FROM arena.requests r LEFT JOIN arena.sessions s ON s.id = r.session_id
-                                             JOIN arena.entries e ON e.game_id = r.game_id AND e.persona_id = r.persona_id
-                                            WHERE r.game_id = $1 AND r.op = 'submit' AND r.ok AND r.version IS NOT NULL`, [arenaGameId]) : [];
-  const out = m.finish({ programs, submits, finalFeeds: g.feeds, finalNectar: g.nectar });
-  // Scaffolds: who ran one, how often it started, crashed or was refused, its CPU, and what it submitted.
-  out.scaffolds = arenaGameId ? await all(`SELECT e.team_id, e.team_name AS team, count(*)::int AS starts, count(*) FILTER (WHERE sc.status = 'crashed')::int AS crashes,
-        count(*) FILTER (WHERE sc.status = 'refused')::int AS refused, coalesce(sum(sc.cpu_seconds), 0) AS cpu_seconds, coalesce(sum(sc.throttled_ms), 0)::bigint AS throttled_ms,
-        (SELECT count(*)::int FROM arena.requests r WHERE r.game_id = sc.game_id AND r.persona_id = sc.persona_id AND r.source = 'scaffold' AND r.op = 'submit' AND r.ok) AS submits,
-        (SELECT count(*)::int FROM arena.requests r WHERE r.game_id = sc.game_id AND r.persona_id = sc.persona_id AND r.source = 'scaffold' AND r.op = 'submit' AND NOT r.ok) AS refused_submits,
-        min(sc.clock_start) AS first_start_ms
-      FROM arena.scaffolds sc JOIN arena.entries e ON e.game_id = sc.game_id AND e.persona_id = sc.persona_id WHERE sc.game_id = $1 GROUP BY 1, 2, sc.game_id, sc.persona_id`, [arenaGameId]) : [];
-  out.storage = await one(`SELECT count(*)::int AS actions, coalesce(sum(pg_column_size(a.*)), 0)::bigint AS bytes FROM actions a WHERE a.game_id = $1`, [gameUuid]);
-  out.config = { minutes: g.config.minutes, feedCost: g.config.feedCost, challengeType: g.config.challengeType, responseType: g.config.responseType, budgets: g.config.budgets };
-  out.clockMs = Number(g.clock_ms);
-  out.round = Number(g.round || 0);
   return out;
+}
+
+/** A finished game's metrics from its API. submits: who submitted each version (arena.requests), optional. */
+export async function computeGameMetrics(gPath, { api = Api, submits = [], windowMs } = {}) {
+  const view = await api.view(null, gPath);
+  const actions = await fetchActions(api, gPath);
+  return computeMetrics({ view, actions, submits, windowMs });
 }

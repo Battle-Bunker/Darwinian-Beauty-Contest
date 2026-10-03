@@ -8,6 +8,26 @@ export function showValue(v: unknown, max = 40): string {
   return s.length > max ? s.slice(0, max - 1) + "…" : s;
 }
 
+/**
+ * Energy, nectar and surplus (node·ms), compactly: 950, 12.3k, 4.56M. Exact values go in titles and tables.
+ */
+export function fmtE(x: number | null | undefined): string {
+  if (x === null || x === undefined || !Number.isFinite(x)) return "–";
+  const a = Math.abs(x), s = x < 0 ? "−" : "";
+  if (a < 1000) return s + (a < 10 && a % 1 ? a.toFixed(1) : Math.round(a).toString());
+  if (a < 1e6) return s + (a / 1e3).toFixed(a < 1e4 ? 2 : a < 1e5 ? 1 : 0) + "k";
+  if (a < 1e9) return s + (a / 1e6).toFixed(a < 1e7 ? 2 : a < 1e8 ? 1 : 0) + "M";
+  return s + (a / 1e9).toFixed(2) + "G";
+}
+
+/** An exact energy figure for titles: 123,486.5 node·ms. */
+export const fmtEExact = (x: number | null | undefined) =>
+  x === null || x === undefined || !Number.isFinite(x) ? "–" : `${(Math.round(x * 10) / 10).toLocaleString()} node·ms`;
+
+/** A flower's CPU time: one decimal under 10 ms. */
+export const fmtMs = (x: number | null | undefined) =>
+  x === null || x === undefined || !Number.isFinite(x) ? "–" : x < 10 ? x.toFixed(1) : String(Math.round(x));
+
 export const fmt2 = (x: number) => (Number.isFinite(x) ? x.toFixed(2) : "–");
 export const fmt3 = (x: number) => (Number.isFinite(x) ? x.toFixed(3) : "–");
 export const pct = (x: number) => (Number.isFinite(x) ? `${Math.round(x * 1000) / 10}%` : "–");
