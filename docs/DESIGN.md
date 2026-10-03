@@ -1,211 +1,184 @@
-# Design notes
+# Design notes: one flower per team
+
+This branch (`claude/one-flower`) is a variant of the continuous garden (`claude/continuous-garden`). Each
+team writes **one flower and one bee**; the cosmos/orchid split, its patches and its fixed nectar are gone.
+A flower now *chooses* how much to pay, out of energy it can only have by being small and fast.
 
 ## Names
 
 | Thing | Name | Why |
 |---|---|---|
-| rewarding flower program | **cosmos** (plural: cosmos) | The garden cosmos (*Cosmos bipinnatus* and its relatives) is an honest, generous flower: widely grown, in pink, white, crimson and magenta (orange and yellow in the sulphur cosmos), with open, daisy-like flowers that give bees real nectar and pollen |
-| deceptive flower program | **orchid** | The bee orchid (*Ophrys apifera*) is the archetypal deceiver: it offers nothing and looks like something it isn't |
-| bee program | **bee** | |
-| a team's two flowers | **patch** | Bees never learn which patch a flower is in, or which of the two it is |
-| `feeds[s][o]` | **feed ledger** | times bee *s* fed at patch *o* (cosmos or orchid) |
-| `nectar[s][o]` | **nectar ledger** | nectar bee *s* got from patch *o* |
+| a team's answering program | **flower** | |
+| a team's asking program | **bee** | |
+| one bee's challenge, one flower's response, one decision | **turn** | at most one per bee per round |
+| (flower size cap − size) × max(0, 150 − CPU ms) | **excess energy** E (node·ms) | what a flower saved this turn by being small and quick |
+| the share of E a flower offers | **percent** | 0–100, clamped |
+| percent/100 × E, to the bee if it feeds | **nectar** | |
+| (1 − percent/100) × E, to the flower's team if the bee feeds | **surplus** | a turn without a feed pays nobody |
+| `feeds[b][f]`, `nectar[b][f]`, `surplus[b][f]` | **feed / nectar / surplus ledgers** | row = bee team, column = flower team |
+| every finished turn, as one team may see it | **team ledger** | what the team's programs and operators get |
 | Σ√xᵢ | **rootsum** | the diversity-weighted size of an earnings vector |
-| rootsum of a patch's feed column | **allure** | how widely a patch gets pollinated |
-| rootsum of a bee's nectar row | **forage** | how widely a bee finds real food |
-| allure ÷ Σ allure | **allure share** | par 1/N |
-| forage ÷ Σ forage | **forage share** | par 1/N |
-| N² × allure share × forage share | **fitness** | par 1.0 for any N; "relative fitness" is the population-genetics term, and 1 means holding steady |
+| rootsum of a flower's feed column | **allure** | how widely the flower is pollinated |
+| rootsum of a bee's nectar row | **forage** | how widely the bee eats |
+| sum of a flower's surplus column | **surplus** (score) | what the flower kept |
+| value ÷ Σ value over teams (1/N when Σ = 0) | **share** | par 1/N |
+| N³ × allure share × forage share × surplus share | **fitness** | par 1.0 for any N |
 
-Short version for players: *"Fitness = allure × forage, each measured as your share of the garden, scaled so
-that average is 1."*
+## The game in one paragraph
 
-## Why rootsum
+Every 200 ms round, each bee that isn't feeding takes one turn. Its challenge must already be queued. The
+engine draws a flower uniformly at random among all N (its own included), calls it, and the flower has
+150 ms to return `[response, percent]`. The runner measures the call's CPU time, which gives E. At 150 ms
+the response reaches the bee, which has 50 ms to return `["feed" | "leave", next_challenge]`. A feed pays
+nectar and surplus and sits the bee out `feedCost` rounds; a leave pays nobody. The bee's next challenge
+is queued for its next turn.
 
-A vector of earnings `v` from N sources has rootsum `Σ√vᵢ`. For a fixed total `T`, rootsum is largest
-when earnings are spread evenly (`√(N·T)`) and smallest when they all come from one source (`√T`).
-Diminishing returns per source (`d√k/dk = 1/(2√k)`) mean the k-th feed from the same team is worth
-less and less, so a bee can't farm one friendly patch and a patch can't rely on one loyal bee. Own-team
-entries count like any other source: a team can always earn from itself, but only as one of N columns.
+## Why energy, and why CPU time
 
-## One continuous garden
+The cosmos/orchid design made "effort" a signal through a time asymmetry: a cosmos had more time than an
+orchid. Here every flower has the same 150 ms, but effort is *paid for*: every millisecond of CPU a flower
+spends, and every node of code it carries, comes out of E, the pie it shares with a bee that feeds. A
+flower that makes its answers hard to fake spends energy doing it, and has less to offer. A flower that
+answers cheaply has more to offer, or to keep.
 
-The round-based design (on the `claude/darwinian-beauty-contest-6c3cia` branch; arena/REPORT.md §1–19)
-tried to force bees and flowers to be unpredictable by making them take turns to change: bees, then
-orchids, then cosmos flowers, so each kind could react while the others stood still. It failed for a simple
-reason: **a locked program isn't locked behaviour**. A bee that can tell rounds apart (its per-round
-random seed, or how much memory it has) asks a brand-new secret question every round with no code change,
-tastes each flower's answer to it once, and remembers which answers paid. The orchids' turn to copy came
-too late every time (REPORT.md §19).
+E is measured in **CPU time**, inside the runner, around exactly the flower's own work:
+- Python: the forked child's `time.process_time()` from just after the fork to just after `flower()`
+  returns (the program's module code included).
+- TypeScript: `process.cpuUsage()` around running the program in its fresh context and calling `flower`
+  (creating the context, which costs every flower the same, is left out).
 
-So this design drops rounds altogether:
-- **One stream.** The bees forage for the whole game (2 minutes by default) in lockstep rounds of 200 ms
-  of game time, one action slot per bee per round (see "Lockstep rounds" below); a bee that feeds has no
-  slot for the next 10 rounds. A bee is one long-running program; it keeps its state until its team
-  replaces it.
-- **Behaviour public at once, changes private.** Every ask, answer, feed and error is public the moment it
-  happens, with whose bee, whose patch and which flower (but bees never see any of it: see below). Code,
-  what bees print, each team's code changes and change budgets, and how long programs took stay secret
-  during play; once the game is over the replay shows every change and budget (and the code, unless
-  the owner turns that off). Other teams have to read a change from behaviour, not from a changelog.
-- **Change at any time, paid from a budget that refills.** Each program earns change budget per minute of
-  game time, up to a cap of one minute's worth, and any change it can afford goes live at once. Over a
-  default 2-minute game that's as much change as the round-based design allowed in six rounds (a cosmos or
-  bee 40% of a full-size program, an orchid 140%). The rates keep the asymmetry: orchids earn 7× a
-  cosmos's rate, so they can chase whatever bees trust; cosmos flowers change slowly. Writing programs in the
-  lobby is free.
+Wall time would charge a flower for the machine being busy, and would let a flower game E by sleeping in
+another's slot. CPU time charges for work done. The time *limit* is still wall-clock (150 ms, enforced in
+the runner); since the engine runs at most one program per core, the two stay close.
 
-What this changes, and what it doesn't:
-- Information no longer comes in batches. An orchid's team sees a cosmos's answer, and the question a bee
-  asked to get it, the moment it's given, and can aim its orchid at it as soon as it can afford the change.
-  Reaction speed (of the people or agents, and of the budget) now matters.
-- A bee can still rotate a secret question as often as it likes, for free: rotating is behaviour, not a
-  code change. What it can't hide any more is the question itself (it's public as soon as it's asked) or
-  the answers it learned to trust. Whether that's enough for orchids to catch up depends on how fast they
-  can react, which is what the games will show.
-- Cosmos flowers still have their costly signal: the whole 150 ms flower window on every answer, against an
-  orchid's 100 ms.
+## Lockstep rounds: why timing is equalised
 
-### Lockstep rounds: why timing is equalised
+As in the continuous garden, every response is delivered at 150 ms however fast its flower was, and the bee
+is only called in the decision window, after every flower in the round is done. So the clock inside a bee
+can't tell a fast flower from a slow one, and a flower's compute time stays private to its team (it is
+public only through E on a feed, mixed with the flower's private size).
 
-An earlier version let the bees take turns as fast as the programs ran, and recorded every flower's answer
-time in the public stream. That made time itself a detector: an orchid has less compute than a cosmos, so
-an orchid that saves time answers sooner, and a bee (or a team reading the stream) could tell the kinds
-apart by the clock rather than by the answers. The game is meant to be about what flowers *say*, so the
-timing is now equalised:
-- **Rounds are fixed 200 ms slots, every bee in step**: a 150 ms flower window (a cosmos's whole time
-  limit) and a 50 ms decision window. Game time is rounds × 200 ms, so it's the same for every bee
-  however busy the machine is; live games pace rounds to real time.
-- **Every answer is delivered at 150 ms.** A cosmos gets the whole window; an orchid has a shorter limit
-  (100 ms by default, public, so an orchid can time an anytime search to finish just before it), but its
-  answer still reaches the bee at 150 ms. The bee is only called in the decision window, after every
-  flower in the round is done, so the clock inside a bee can't tell a fast answer from a slow one.
-- **Measured times are private during play.** Each answer's `ms` and each decision's `beeMs` are their
-  own team's until the game is over, so the public stream doesn't leak what the bee can't see.
-- **Queued challenges are secret.** A bee's next action is decided a round ahead and queued; nothing about
-  a queued challenge is recorded or shown until it is asked. In particular `["leave", c]` (move on and ask
-  `c` first at the next flower) publishes the leave at once but not `c`, so nobody can prepare for a
-  question before it reaches a flower.
-- **A late bee loses a slot, not its say.** 50 ms is a deadline, not an interruption: the call runs on (up
-  to 2 s), the round moves on, the bee loses its next slot and its visit ends. A late `["leave", c]` still
-  queues `c`; any other late reply (an ask or a feed for the abandoned visit, a plain leave, an error)
-  doesn't give a next challenge, so the engine asks again at once, outside the round flow, for the first
-  challenge at the next flower. Any reply that gives no next challenge is handled the same way. The 50 ms
-  are counted from when the call gets a core of its own, and a late bee keeps its core until it replies, so
-  the machine is never oversubscribed and every flower's limit stays fair; slowness only stretches wall
-  time.
+A bee's next challenge is decided a round ahead and queued; it is never shown before its turn ends. A bee
+with nothing queued as a round starts loses its turn. A late bee loses its turn's say, never its next
+challenge: its call runs on (up to 2 s), the turn is settled without it (never as a feed), and a late
+`["leave", c]` still queues `c`. Any other late reply, and any reply with no usable next challenge, gets
+the bee asked `first(ledger)` at once, outside the round flow (at most one such request in flight per bee,
+at most one new one a round).
 
-### Teams see everything; bees see nothing
+## The team ledger
 
-Every action is public as it happens, which flower included: whose bee asked which flower of whose
-patch, what it asked, what it was told, and whether a feed paid. (Hiding the flower was tried briefly;
-it bought little, since a patch's two flowers can usually be told apart by their answers, and it only
-made the record harder to mine.) Bees, though, know nothing of it: a bee is told only its own
-challenges, the answers, and after a feed whether it got nectar, never whose patch or which flower.
+Programs used to see only their own visit. Now both programs, and the team's operators, see the same
+**team ledger**: every finished turn of every bee, with what the team may see of it (the public part of
+every turn; the private details of turns at its own flower). It is how a bee learns which flowers paid,
+and how a flower learns which bees feed.
 
-So the tension lives in the channel from team to bee. Whatever a team learns from the record (which
-answers come from cosmos flowers, which orchids copy whom) can reach its bee only as a code change,
-paid from the bee's change budget. Full transparency gives every team the most power to
-reverse-engineer what a cosmos's signal is and how to fake it, which is what makes honest signalling
-hard: a cosmos's signal survives only if it stays costly to produce even once everyone understands it.
+**Delivered between timed calls, incrementally.** At each round boundary, the turns settled in the round
+before are sent to every live bee and flower process as one small delta (`{op: "ledger", entries}`),
+before that round's calls. A new or respawned process gets the whole ledger in its setup. So:
+- A flower's CPU clock starts after the delta is applied (in its own forked child, or around its own vm
+  run), and a bee's 50 ms start only once its process has the delta (`proc.synced`). A growing ledger never
+  costs a program time or energy; *reading* it does.
+- Python flowers fork per call, so the parent holds the ledger and every child inherits it, already
+  parsed, at no cost. The parent `gc.freeze()`s after each delta so a child's garbage collector never
+  walks (and copy-on-write faults) the ledger.
+- TypeScript flowers run in a fresh vm context per call, so the ledger lives, parsed and deep-frozen, in a
+  separate **ledger realm**; each call gets a frozen snapshot array (rebuilt only when the ledger grew).
+  Objects from another realm can reach that realm's built-ins, so the ledger realm is locked down: every
+  reachable built-in is frozen and its function constructors throw, so nothing a flower does to the ledger
+  (or to anything it can reach from it) survives the call. Statelessness holds.
+- A bee keeps the ledger in its own process or context and gets the same list object each call, so it can
+  remember how far it has read (`ledger[done:]`).
 
-### Assignments are public, and versions are pinned per visit
+**Nobody learns the counterpart of a turn until it is over.** A round's turns reach the programs together,
+after the round. While a flower answers it isn't told whose bee asked; while a bee decides it isn't told
+whose flower answered, nor the percent, E or the nectar. What either side can *infer* is fair game: a
+challenge or response can be a signature, and the ledger shows which bees are sitting out a feed, so with
+few teams a flower can sometimes narrow down who is asking.
 
-Which flower each bee is at is public the moment it is assigned: every visit opens with an `arrive`
-action, written to the stream at once. That makes it tempting to react: a team watching its bee arrive
-at an orchid it knows could swap in a bee that knows it too. So a visit keeps the program versions in
-effect at its arrival, the bee's and the flower's, until it ends; a change reaches a bee at its next
-visit. A team can't steer its bee at a flower it can already see it's at, and a flower team can't
-re-aim its flower at a bee that has just arrived. What a team learns still reaches its bee, but only
-for flowers it hasn't been assigned yet, which it can't know in advance.
+## What is public
 
-### Flowers are drawn at random, not dealt
+Arrivals, challenges, responses and every feed (with its percent, E, nectar and surplus) are public to
+everyone as they happen, spectators included, and so is the scoreboard. That was a deliberate change from
+"third-party turns are secret": any self-dealing scheme, such as a handshake between a team's own bee and
+flower, has to work in plain view, where every other team can study and copy it.
 
-Every new visit is at a flower picked uniformly at random from the whole garden, independently of the
-last. An earlier version dealt each bee its flowers from a shuffled deck, every flower once per lap.
-That was fair, but it leaked: visit numbers are public, so the two visits a bee made to a patch within a
-lap were known to be one cosmos and one orchid, and a single feed's nectar labelled the other visit too.
-And bees used the deck as a clock: counting visits told a bee where it was in the lap and so what it
-still had to meet (once it had recognised every cosmos in a lap, the rest had to be orchids). A
-random draw has no laps to count. Over a game every flower still comes up about equally often.
+Private during play: the percent and E of a turn without a feed (the flower's team), the flower's compute
+time on every turn and why it failed (the flower's team), and each team's code, prints, versions, sizes,
+budgets and bee timings. The secret that remains is the flower's compute time, which can't be read off a
+public E without the flower's size, which stays private with its code. Everything is revealed at the end.
 
-### Each round, in the engine
+## Versions are pinned per turn
+
+A turn keeps the bee's and the flower's program versions from its arrival to its settlement. A new flower
+answers turns that start after it went live (the old version's processes are kept, reference-counted,
+until no turn uses them). A new bee takes over when its turn in progress is settled: the old bee makes that
+decision (a feed still counts, and its rounds are still sat out), whatever it queued is dropped, and the
+new bee is asked `first` at once. A bee between turns switches at once. A team watching its bee arrive
+can't steer that turn.
+
+## Each round, in the engine
 
 | Game time | What happens |
 |---|---|
-| 0 ms | Round boundary: a crashed bee starts afresh; new code for a bee between visits takes over (asked for its first challenge at once). Every bee between visits and not feeding is assigned a random flower (`arrive`, flushed at once), pinning the versions for that visit. Then every bee with an action queued and not feeding acts: asks go to their flowers (a fresh process run per ask, of the pinned version), feeds go in the ledgers. A bee with nothing queued loses the slot. |
-| 150 ms | Answers are delivered. Each bee that acted is called: `forage(seen, visit)`, after a feed `tasted` then `forage` in the same call. Leaves and errors are recorded at this time; a visit that ends lets new code for the bee take over. |
-| 200 ms | Each reply is in, or its deadline has passed. The next round starts. |
+| 0 ms | The last round's turns go out to every program's ledger. A crashed bee starts afresh; new code for a bee between turns takes over; a bee with nothing queued is asked `first` (at most once a round). Each bee with a challenge queued, no call in flight and no rounds left to sit out takes its turn: a flower is drawn at random, the arrival is recorded and flushed at once, both versions are pinned, and the flower is called. A bee with nothing queued loses the round. |
+| 150 ms | Every response is delivered; each bee with a turn is called: `decide(challenge, response, ledger)`. |
+| 200 ms | Each reply is in, or its deadline has passed. Each turn is settled: nectar, surplus and the ledgers; the turn's end (`feed` or `leave`, carrying the whole turn) is recorded; a feed sits the bee out `feedCost` rounds; new code for the bee takes over. |
 
-At most one ask or feed per bee per round: with 6 teams, at most 30 actions a second.
+At most one turn per bee per round: with 6 teams, at most 30 turns (60 actions) a second.
 
-### How it runs
+## How it runs
 
-- `server/engine.js`: a `Garden` runs one game's rounds (above). Per bee it keeps the action queued for its
-  next slot, whether a call is in flight, which visit the runner's `seen` belongs to (a request with
-  `new: true` empties it; the first decision at a new flower only empties it if the bee got there by
-  `["leave", c]`), and a generation number so replies from a replaced or restarted process are ignored.
-  Re-requests are throttled: at most one in flight per bee, and at most one new one a round. Programs can
-  be swapped at any moment, but each visit pins the versions it began with: a replaced flower version is
-  kept (reference-counted) until no visit uses it; a bee swaps when its visit ends. Answers are labelled
-  with the version that gave them. `paced: false` runs rounds back to back (tests
-  and the "try a bee" tool); a request outside the round flow then makes the next round if it answers
-  within the bee's 50 ms.
+- `server/engine.js`: a `Garden` runs one game's rounds (above). Per bee it keeps the challenge queued for
+  its next turn, whether a call is in flight, the turn in progress, rounds left to sit out, and a
+  generation number so replies from a replaced or restarted process are ignored. It keeps every finished
+  turn (`history`) and how many of them the programs have (`delivered`). `paced: false` runs rounds back to
+  back (tests and the "try" tool); a request outside the round flow then makes the next round if it
+  answers within the bee's 50 ms.
+- `server/runners/`: `proc.js` speaks JSON lines to a runner process, one request at a time, in order;
+  `sync(entries)` appends to the program's ledger. `py_runner.py` and `ts_runner.cjs` run flowers (stateless,
+  CPU-timed) and bees (stateful).
 - `server/live.js`: each running game's garden runs in exactly one server process, whichever holds the
   game's Postgres advisory lock; every process adopts running games nobody holds, so a game survives its
-  process dying (its bees start afresh, from the stored round). Four times a second it writes the new
-  actions, the round, the clock and the ledgers, and notifies listeners. Submissions, pauses and finishes
-  are written by whichever process got the request; the notification brings them to the garden. A pause
-  takes effect at the end of the round in progress.
+  process dying. Adoption restores the round, clock, ledgers, each bee's turn count, the rounds a bee still
+  has to sit out, and the team ledgers (from the stored turn ends), so new processes start with the whole
+  ledger. A hard crash loses the round in progress (its arrivals may be stored without their ends); a clean
+  shutdown settles it first. Four times a second the garden's new actions, round, clock and ledgers are
+  written; arrivals are written at once.
 - `server/games.js`: the clock lives in the database (`games.clock_ms`, game time, which stops while
-  paused). A team's budget for a program is `min(cap, bank + perMinute × (clock − atMs))`; a submission
-  pays its node-edit distance from the version playing now, inside the same transaction that writes the
-  version, so two submissions can't spend the same budget.
-- Viewers get the actions over Server-Sent Events, or page through them with `GET .../actions`.
+  paused). Budgets as before. The views filter every action, ledger entry and game view for the viewer
+  (`actionView`, `ledgerEntry`).
+- `server/realtime.js`, `server/sockets.js`: the per-viewer feed over SSE and WebSocket, fed by Postgres
+  `LISTEN/NOTIFY`.
 
 ## Why rootsum
 
 A vector of earnings `v` from N sources has rootsum `Σ√vᵢ`. For a fixed total `T`, rootsum is largest
 when earnings are spread evenly (`√(N·T)`) and smallest when they all come from one source (`√T`).
 Diminishing returns per source (`d√k/dk = 1/(2√k)`) mean the k-th feed from the same team is worth
-less and less, so a bee can't farm one friendly patch and a patch can't rely on one loyal bee. Own-team
+less and less, so a bee can't farm one friendly flower and a flower can't rely on one loyal bee. Own-team
 entries count like any other source: a team can always earn from itself, but only as one of N columns.
 
-## Should a bee ever skip its own cosmos?
+Surplus is a plain sum: it measures how much a flower kept, and the rootsums on the other two terms
+already reward spreading. Fitness is N³ × the three shares, so a perfectly even game scores 1 for everyone.
 
-No. A bee meets its own flowers only as often as the random draw picks them (2 in 2N visits on average,
-like any other patch), so self-dealing is capped by the draw, and it earns one rootsum term on each side,
-with diminishing returns.
+## Budgets
 
-What it does leak now is its question. Everything is public, so a bee that recognises its own cosmos by
-asking a secret question shows that question to everyone, along with the answer its patch gave. The answer to
-a *new* secret question is still unforgeable if the cosmos answers with a keyed hash, but every orchid
-team can see which questions the bee keeps asking and which answers it feeds on.
+| | flower | bee |
+|---|---|---|
+| size | 1,100 nodes | 11,000 nodes |
+| change | 220 a minute, banking a minute's worth | 2,200 a minute, banking a minute's worth |
+| time | 150 ms | 50 ms |
 
-## Asymmetric budgets and fair compute
-
-| Budget (orchid = reference) | Why |
-|---|---|
-| **cosmos**: ½ size, the whole 150 ms flower window (1.5× an orchid's time), a seventh of the orchid's change rate | **Costly signalling**: a cosmos can spend effort an orchid can't afford on every answer, such as a bigger, harder instance of its pattern. It changes slowly, so it can't simply out-run imitators. |
-| **orchid**: the reference; 7× a cosmos's change rate | Orchids answer with more code and faster adaptation: more efficient generators, shallower look-alikes, re-aimed at whatever bees trust. |
-| **bee**: 5× size, 50 ms per decision | Room for detector repertoires but little time per decision, so the winning signals are *hard to make, easy to check*. |
-
-**Fair compute**: the engine runs at most one program per CPU core, across every game in the process, and
-keeps a small pool of processes per flower. When compute is the signal, a busy machine mustn't make a
-cosmos time out. Wall-clock limits with one program per core behave like CPU limits (CPU-time interval
-timers fire late on tickless kernels). Since game time is counted in rounds, a machine with fewer cores
-than a round needs only makes rounds take longer in wall time; every program still gets its full time.
+The flower keeps the cosmos's limits: small and slow to change. Its size cap is also the size cap of the
+energy formula, so every node of flower code costs energy on every turn. The bee keeps room for detector
+repertoires but little time per decision, so the best checks are cheap ones. All of it is configurable.
 
 ## Flowers are stateless, not pure
 
-A flower runs fresh for every call, so nothing carries over between questions. But each call gets fresh
-randomness and the clock (`time`, `Date.now()`) and can read its own budget as `GAME.ms`. A cosmos can run
-an anytime search, such as a local search for a big clique, and answer with the best result it found
-within 150 ms; an orchid has 100 ms to fake one. Bees can then judge how good an answer is, not just whether
-they have seen it before. The engine never caches answers, so every ask runs the flower again.
-
-Nothing forces a flower to use randomness: a deterministic cosmos can still be fingerprinted by repeating
-a question.
+A flower runs fresh for every call, so nothing carries over between calls. But each call gets fresh
+randomness and the clock, and can read the team ledger: it can't count visitors itself, but it can read
+what the ledger says about past turns (at the cost of the CPU time it spends reading). The engine never
+caches answers.
 
 ## Programs are measured on, and run as, their minified form
 
@@ -228,7 +201,7 @@ names keep their spelling where renaming could change behaviour:
 - parameters also passed by keyword somewhere
 - names that shadow a builtin
 - the first part of a dotted import
-- the names the game looks up (`flower`, `forage`, `tasted`, `GAME`)
+- the names the game looks up (`flower`, `first`, `decide`, `GAME`)
 
 **Change** is a weighted Zhang–Shasha tree edit distance between the program playing now and the new one.
 Inserting or deleting a node costs its weight. Relabelling a literal costs the byte-level edit distance

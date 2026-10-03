@@ -73,8 +73,9 @@ A flower's **excess energy** for a turn, in node·ms, is
 - **size** is the size in nodes of the flower version that answered (see "What counts toward size"); the
   cap is 1,100. A smaller flower has more to give.
 - **compute ms** is the **CPU time** your flower's process used for this call: running the program and
-  calling `flower`. It is CPU time, not wall time, so a busy server doesn't cost you, and sleeping
-  doesn't help. The ledger is delivered between calls, so it costs nothing until you read it.
+  calling `flower`. It is CPU time, not wall time: a busy server doesn't cost you, and time your flower
+  spends not computing isn't counted. The ledger is delivered between calls, so it costs nothing until
+  you read it.
 - A late answer, an error or a malformed return: E = 0.
 
 Then:
@@ -101,7 +102,8 @@ oldest first, with everything your team may see of it. One entry per turn:
 ```
 
 Fields you aren't allowed to see are `None` (`null`): `percent` and `energy` of turns without a feed
-at other teams' flowers, and `ms` except at your own flower. Teams are numbered `0` to `N - 1`;
+at other teams' flowers, and `ms` except at your own flower. When a flower failed, its `percent` is
+`None` and its `energy` 0. Teams are numbered `0` to `N - 1`;
 `GAME["team"]` is yours and `GAME["teams"]` is N.
 
 **Nobody learns the counterpart of a turn until it's over.** A round's entries reach the programs together,
@@ -247,7 +249,7 @@ never can be: make it in steps.
 
 **Public to everyone, as it happens** (including spectators without a team): for every turn of every bee,
 the **arrival** (whose bee, whose flower), the **challenge**, the **response** and **whether the bee fed**
-(or left, or was late). On a **feed**, also the **percent**, the **energy**, the **nectar** the bee got and
+(a bee that was late or broke simply didn't). On a **feed**, also the **percent**, the **energy**, the **nectar** the bee got and
 the **surplus** the flower kept. The game's settings and the scoreboard are public too. So whatever two
 programs do together happens in plain view.
 

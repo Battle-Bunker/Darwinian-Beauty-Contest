@@ -1,20 +1,23 @@
 # Darwinian Beauty Contest
 
 A coding game inspired by the evolutionary arms race between flowers and the bees that judge their
-beauty. Teams of humans and AIs ("centaurs") write three programs:
+beauty. Teams of humans and AIs ("centaurs") write two programs (this is the **one flower** variant, on
+the `claude/one-flower` branch):
 
-- **cosmos**: a rewarding flower (after the garden cosmos, *Cosmos bipinnatus*, an honest nectar flower in many colours)
-- **orchid**: a deceptive flower (after the bee orchid, *Ophrys apifera*, the classic deceiver)
-- **bee**: questions flowers and decides where to feed
+- **flower**: answers a bee's challenge with a response and a **percent**: the share of this turn's excess
+  energy it gives the bee as nectar if the bee feeds
+- **bee**: asks flowers challenges and, after each answer, decides whether to feed
 
-A game is one continuous garden: the bees forage nonstop, every question, answer and feed is public
-the moment it happens, and only code is secret. Each program earns a change budget as the game goes on,
-and a team can spend it at any moment on a new version, which goes live at once. Flowers answer each
-challenge from scratch (they keep nothing between questions, but can use randomness and the clock to
-search for a good answer within their time limit); a bee keeps its state for as long as that version of
-it plays. Programs are measured (in syntax-tree nodes, literals byte by byte) and run in minified form.
-Your fitness rewards *diverse* success on both sides of the arms race: getting bees from many teams to
-feed at your patch (**allure**) and getting real nectar from many teams' patches (**forage**).
+A game is one continuous garden of 200 ms rounds. Every round, each bee that isn't feeding takes a turn at a
+flower drawn at random (its own included): the flower has 150 ms, the bee 50 ms. A flower's **excess
+energy** is (size cap − its size) × (150 ms − the CPU time it used); a feed splits it into nectar for the
+bee and surplus for the flower's team, and a turn without a feed pays nobody. Every turn is public as it
+happens (who visited whom, the challenge, the response, whether the bee fed, and a feed's percent, energy,
+nectar and surplus), and so is the scoreboard; code, timings and the details of unfed turns stay with
+their teams until the end. Both programs read a **team ledger** of every finished turn, delivered between
+their timed calls. Each program earns a change budget as the game goes on, and a team can spend it at any
+moment on a new version. Fitness rewards *diverse* success: bees from many teams feeding at your flower
+(**allure**), nectar from many teams' flowers (**forage**), and energy your flower kept (**surplus**).
 
 **[RULES.md](RULES.md)** has the full rules for players. **[docs/API.md](docs/API.md)** documents the HTTP API.
 
@@ -22,11 +25,11 @@ feed at your patch (**allure**) and getting real nectar from many teams' patches
 
 ```
 npm install
-./scripts/dev-db.sh          # local Postgres (or set DATABASE_URL)
+./scripts/dev-db.sh          # local Postgres with database dbc_one (or set DATABASE_URL)
 npm run build                # builds the web app (web/ → web/dist)
 npm start                    # http://localhost:3000, runs migrations on boot
 npm test                     # unit tests
-npm run smoke                # plays two short games through the API (server must be running)
+npm run smoke                # plays two short games through the API, SSE and WebSocket (server must be running)
 npm run demo                 # seeds a room with live 6-team games (log in as "Gardener" or "Ada")
 ```
 
@@ -40,12 +43,12 @@ To work on the web app with hot reload, run the server and then `API=http://loca
 | Path | What |
 |---|---|
 | `server/index.js` | Express app: JSON API under `/api`, the web app from `web/dist`, `vendor/` for the browser |
-| `server/games.js` | rooms, games, teams, programs and change budgets, start/pause/finish, and the **viewer-filtered views** |
-| `server/engine.js` | the garden: lockstep 200 ms rounds, one action slot per bee; queued challenges, answers delivered at 150 ms, 50 ms bee decisions with late replies; programs can be swapped at any moment; actions and ledgers out |
-| `server/live.js` | runs each running game's garden in one server process (advisory lock), writing actions, clock and ledgers 4× a second |
+| `server/games.js` | rooms, games, teams, programs and change budgets, start/pause/finish, and the **viewer-filtered views** (actions, team ledger, game view, scoreboard) |
+| `server/engine.js` | the garden: lockstep 200 ms rounds, one turn per bee; queued challenges, flowers drawn at random, excess energy from CPU time, responses delivered at 150 ms, 50 ms bee decisions with late replies; the team ledger delivered between turns; versions pinned per turn; actions and ledgers out |
+| `server/live.js` | runs each running game's garden in one server process (advisory lock), writing actions, clock and ledgers 4× a second (arrivals at once); adoption restores the team ledgers |
 | `server/realtime.js`, `server/sockets.js` | the live game feed for each viewer, over SSE and WebSocket (the same messages), fed by Postgres `LISTEN/NOTIFY` |
-| `server/runners/` | program runners. Python flowers fork per call (stateless); a bee is one process for as long as its version plays. TypeScript uses fresh `vm` contexts |
-| `server/lib/scoring.js` | rootsum → allure / forage → shares → fitness |
+| `server/runners/` | program runners. Python flowers fork per call (stateless, CPU-timed, the ledger inherited through the fork); a bee is one process for as long as its version plays. TypeScript flowers run in fresh `vm` contexts and read the ledger from a locked-down realm |
+| `server/lib/scoring.js` | rootsum → allure / forage, plus surplus → shares → fitness (N³ × the three shares) |
 | `server/lib/shortid.js` | Crockford base32 codes and shortest-unique-prefix allocation |
 | `server/auth/` | pluggable login. `dev` = name only. Production adds e.g. Replit Auth in `replit.js` with the same shape |
 | `server/db/migrations/` | SQL schema, applied on boot |
@@ -53,14 +56,15 @@ To work on the web app with hot reload, run the server and then `API=http://loca
 | `web/` | the web app: Vite + React + TypeScript, built to `web/dist` |
 | `arena/` | LLM-agent tournaments for exploring the game's ecosystem |
 
-**One view, no replay mode.** Every program version, every bee action and the score ledgers are stored
-in Postgres. `GET /api/rooms/:room/games/:game` and `GET .../actions` rebuild the game for whoever is
-asking: everything is public except code (and what bees print), which is your own team's, or everyone's
-once a finished game is revealed. Loading a game page mid-game or a year later gives the same viewer the
-same information. Live clients follow a stream, over a WebSocket (`.../ws`) or Server-Sent Events
-(`.../events`), with the same messages either way: it carries new actions as they're written (each bee's
-arrival at a flower included, the moment it happens) and tells clients to refetch the view when anything
-else changes. It's fed by Postgres `LISTEN/NOTIFY`, so several server instances work.
+**One view, no replay mode.** Every program version, every turn and the score ledgers are stored in
+Postgres. `GET /api/rooms/:room/games/:game`, `GET .../actions` and `GET .../ledger` rebuild the game for
+whoever is asking: every turn's public part for everyone, and each team's private details (its unfed
+turns' percent and energy, its flower's compute time, its bee's timings and prints, its code and budgets)
+for that team, or for everyone once the game is over. Loading a game page mid-game or a year later gives
+the same viewer the same information. Live clients follow a stream, over a WebSocket (`.../ws`) or
+Server-Sent Events (`.../events`), with the same messages either way: it carries new actions as they're
+written (each bee's arrival at a flower included, the moment it happens) and tells clients to refetch the
+view when anything else changes. It's fed by Postgres `LISTEN/NOTIFY`, so several server instances work.
 
 **Short ids.** Rooms and games have UUID primary keys and store their Crockford base32 `code` plus a
 `prefix_len` fixed at creation: the shortest prefix no earlier record shared. Since later records
@@ -81,7 +85,7 @@ nsjail, or a WASM interpreter).
 
 | Variable | Default |
 |---|---|
-| `DATABASE_URL` | `postgres://dbc:dbc@localhost:5432/dbc_live` |
+| `DATABASE_URL` | `postgres://dbc:dbc@localhost:5432/dbc_one` |
 | `PORT` | `3000` |
 | `AUTH_PROVIDER` | `dev` |
 | `COOKIE_SECURE` | unset (set `1` behind https) |

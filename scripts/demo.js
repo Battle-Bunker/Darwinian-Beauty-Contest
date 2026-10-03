@@ -1,8 +1,8 @@
 // Seeds a lively demo for the web UI: a room with a running 6-team game, a short game that has already
 // finished (revealed, so its code, prints and change timeline are public), and a game in the lobby.
-// Programs vary (honest cosmos flowers, mimic orchids, a buggy orchid; picky, greedy and buggy bees that
-// print), and teams change programs mid-game, so the garden, the feed, the scores and the version
-// history all have something to show.
+// Programs vary (honest, generous, stingy, hard-working and buggy flowers; picky, greedy, handshaking and
+// buggy bees that print), and teams change programs mid-game, so the garden, the feed, the scores and the
+// version history all have something to show.
 //   BASE=http://localhost:3000 node scripts/demo.js
 //   DEMO_MINUTES=10   length of the running game (game time)
 // Log in on the web page as "Gardener" (the room owner) or "Ada" (on Honey Hunters) to see their views.
@@ -24,159 +24,128 @@ const login = async (name) => (await api(null, "POST", "/auth/dev/login", { name
 
 // ---------- programs (Python; int challenges and responses) ----------
 
-const honestCosmos = `# An honest cosmos: a fixed, checkable rule.
-def flower(challenge):
-    return (challenge * 3 + 1) % 1000
-`;
-
 const PROGRAMS = {
   Ada: {
     team: "Honey Hunters",
-    cosmos: honestCosmos,
-    orchid: `# Looks like our cosmos up close, and like nothing much further out.
-def flower(challenge):
-    if 0 <= challenge < 100:
-        return (challenge * 3 + 1) % 1000
-    return challenge % 1000
+    // An honest flower: a fixed, checkable rule, and 40% of the energy for a bee that feeds.
+    flower: `def flower(challenge, ledger):
+    return (challenge * 3 + 1) % 1000, 40
 `,
-    // Learns which first answers paid off, and keeps a running score it prints now and then.
-    bee: `QUESTION = 42
-tally = {}
-visits = 0
+    // Feeds when the answer fits its own flower's rule, and sometimes to explore; reads the ledger as it grows.
+    bee: `import random
+done = 0
+paid = 0.0
+turns = 0
 
-def forage(seen, visit):
-    global visits
-    if not seen:
-        visits += 1
-        if visits % 40 == 0:
-            print("visit", visits, "known answers:", len(tally))
-        return ["ask", QUESTION]
-    if visit["fed"]:
-        return "leave"
-    fed, got = tally.get(seen[0][1], [0, 0])
-    if fed < 2 or got * 2 >= fed:
-        return "feed"
-    return "leave"
+def first(ledger):
+    return random.randint(0, 99)
 
-def tasted(seen, nectar):
-    fed, got = tally.get(seen[0][1], [0, 0])
-    tally[seen[0][1]] = [fed + 1, got + (1 if nectar else 0)]
+def decide(challenge, response, ledger):
+    global done, paid, turns
+    for e in ledger[done:]:
+        if e["bee"] == GAME["team"] and e["fed"]:
+            paid += e["nectar"]
+    done = len(ledger)
+    turns += 1
+    if turns % 40 == 0:
+        print("turn", turns, "nectar so far", round(paid))
+    nxt = random.randint(0, 99)
+    if response == (challenge * 3 + 1) % 1000 or random.random() < 0.2:
+        return "feed", nxt
+    return "leave", nxt
 `,
   },
   Bo: {
-    team: "Mimic Meadow",
-    cosmos: `def flower(challenge):
-    return (challenge * 7 + 3) % 1000
+    team: "Generous Glade",
+    flower: `def flower(challenge, ledger):
+    return (challenge * 7 + 3) % 1000, 80
 `,
-    orchid: `# A perfect copy of our own cosmos: no question can tell them apart.
-def flower(challenge):
-    return (challenge * 7 + 3) % 1000
-`,
-    bee: `def forage(seen, visit):
-    if not seen:
-        return ["ask", 500]
-    if visit["fed"]:
-        return "leave"
-    return "feed" if seen[0][1] % 2 == 0 else "leave"
+    // Feeds everywhere: lots of nectar, lots of rounds sat out.
+    bee: `def first(ledger):
+    return 500
+
+def decide(challenge, response, ledger):
+    return "feed", 500
 `,
   },
   Cy: {
     team: "Secret Handshake",
-    cosmos: `def flower(challenge):
+    flower: `def flower(challenge, ledger):
     if challenge == 7:
-        return 777          # the secret handshake
-    return (challenge * 5) % 1000
+        return 777, 10          # the handshake: a stingy offer to its own bee
+    return (challenge * 5) % 1000, 50
 `,
-    orchid: `def flower(challenge):
-    return (challenge * 5) % 1000
-`,
-    // Feeds on the handshake; after feeding it asks one more question to study the flower.
-    bee: `studied = {}
+    bee: `def first(ledger):
+    return 7
 
-def forage(seen, visit):
-    if not seen:
-        return ["ask", 7]
-    if visit["fed"]:
-        if len(seen) < 3:
-            return ["ask", 42]
-        return "leave"
-    if seen[0][1] == 777:
-        return "feed"
-    if len(seen) == 1:
-        return ["ask", 42]
-    if seen[1][1] in studied:
-        return "leave"
-    studied[seen[1][1]] = True
-    return "feed"
-
-def tasted(seen, nectar):
-    if nectar and seen[0][1] != 777:
-        print("nectar without the handshake:", seen)
+def decide(challenge, response, ledger):
+    return ("feed" if response == 777 else "leave"), 7
 `,
   },
   Dee: {
     team: "Greedy Buzz",
-    cosmos: honestCosmos,
-    orchid: `def flower(challenge):
-    return 1000 // (challenge % 5)   # oops: crashes when challenge % 5 == 0
+    flower: `def flower(challenge, ledger):
+    return 1000 // (challenge % 5), 20   # oops: crashes when challenge % 5 == 0
 `,
-    bee: `def forage(seen, visit):
-    if not seen:
-        return ["ask", 10]
-    if visit["fed"]:
-        return "leave"
-    return "feed"
+    bee: `def first(ledger):
+    return 10
+
+def decide(challenge, response, ledger):
+    return ("feed" if response is not None else "leave"), challenge + 1
 `,
   },
   Eve: {
     team: "Picky Pollinators",
-    cosmos: `def flower(challenge):
-    return challenge + 1
+    // Works hard for its answer (and so has less energy to share).
+    flower: `import time
+def flower(challenge, ledger):
+    t = time.process_time()
+    best = 0
+    while time.process_time() - t < 0.04:
+        best = (best * 31 + challenge) % 1000
+    return best, 60
 `,
-    orchid: `def flower(challenge):
-    return challenge + 2
-`,
+    // Learns from the ledger which flowers paid well, by their answer to its question.
     bee: `import random
-good = set()
+done = 0
+worth = {}
 
-def forage(seen, visit):
-    if visit["fed"]:
-        return "leave"
-    if len(seen) < 3:
-        return ["ask", random.randint(0, 50)]
-    key = tuple(r - c for c, r in seen)
-    if key in good or random.random() < 0.3:
-        return "feed"
-    return "leave"
+def first(ledger):
+    return 3
 
-def tasted(seen, nectar):
-    if nectar:
-        key = tuple(r - c for c, r in seen)
-        if key not in good:
-            print("new good pattern", key)
-        good.add(key)
+def decide(challenge, response, ledger):
+    global done
+    for e in ledger[done:]:
+        if e["fed"] and e["challenge"] == 3 and e["response"] is not None:
+            worth[e["response"]] = max(worth.get(e["response"], 0), e["nectar"])
+    done = len(ledger)
+    if response is None:
+        return "leave", 3
+    if worth.get(response, 0) > 20000 or random.random() < 0.3:
+        if response not in worth:
+            print("trying", response)
+        return "feed", 3
+    return "leave", 3
 `,
   },
   Fin: {
     team: "Buggy Bumble",
-    cosmos: honestCosmos,
-    orchid: `def flower(challenge):
-    return (challenge * 3 + 2) % 1000
+    flower: `def flower(challenge, ledger):
+    return (challenge * 3 + 2) % 1000, 30
 `,
     bee: `count = 0
 
-def forage(seen, visit):
+def first(ledger):
+    return 1
+
+def decide(challenge, response, ledger):
     global count
     count += 1
     if count % 50 == 0:
         print("call", count)
     if count % 9 == 0:
         return "dance"           # not a valid move: a mistake
-    if visit["fed"]:
-        return "leave"
-    if not seen:
-        return ["ask", count]
-    return "feed" if seen[0][1] % 3 == 1 else "leave"
+    return ("feed" if response is not None and response % 3 == 1 else "leave"), count
 `,
   },
 };
@@ -191,7 +160,7 @@ async function setUpGame(owner, room, { config, teams, programs = teams }) {
     const token = await login(name);
     const team = await api(token, "POST", `${g}/teams`, { name: PROGRAMS[name].team });
     players[name] = { token, team };
-    const kinds = Array.isArray(programs) ? (programs.includes(name) ? ["cosmos", "orchid", "bee"] : []) : programs[name] ?? [];
+    const kinds = Array.isArray(programs) ? (programs.includes(name) ? ["flower", "bee"] : []) : programs[name] ?? [];
     for (const kind of kinds) await api(token, "POST", `${g}/programs`, { kind, code: PROGRAMS[name][kind] });
   }
   // A teammate joins Ada's team.
@@ -223,23 +192,23 @@ const reset = () => { for (const [k, v] of Object.entries(JSON.parse(JSON.string
 const owner = await login("Gardener");
 const room = (await api(owner, "POST", "/rooms")).shortId;
 
-// 1. A game in the lobby: Ada's team is ready, Mimic Meadow has only a cosmos, Secret Handshake nothing yet.
-const lobby = await setUpGame(owner, room, { config: { minutes: 2 }, teams: ["Ada", "Bo", "Cy"], programs: { Ada: ["cosmos", "orchid", "bee"], Bo: ["cosmos"] } });
+// 1. A game in the lobby: Ada's team is ready, Generous Glade has only a flower, Secret Handshake nothing yet.
+const lobby = await setUpGame(owner, room, { config: { minutes: 2 }, teams: ["Ada", "Bo", "Cy"], programs: { Ada: ["flower", "bee"], Bo: ["flower"] } });
 console.log("lobby game set up");
 
-// 2. A short game that runs to the end: four teams, a few changes along the way.
+// 2. A short game that runs to the end: four teams, a few changes along the way (Fin's team sits it out).
 reset();
 const done = await setUpGame(owner, room, { config: { minutes: 0.5 }, teams: ["Ada", "Bo", "Cy", "Eve", "Fin"], programs: ["Ada", "Bo", "Cy", "Eve"] });
 await api(owner, "POST", `${done.g}/start`);
 console.log("short game started; it finishes in 30 s of game time");
 await sleep(4000);
-await change(done.players, done.g, "Bo", "bee", (c) => c.replace('["ask", 500]', '["ask", 501]'));
-await change(done.players, done.g, "Ada", "orchid", (c) => c.replace("< 100", "< 200"));
+await change(done.players, done.g, "Bo", "bee", (c) => c.replaceAll("500", "501"));
+await change(done.players, done.g, "Ada", "flower", (c) => c.replace("40", "35"));
 await sleep(6000);
-await change(done.players, done.g, "Cy", "orchid", (c) => c.replace("* 5)", "* 5 + 7)"));
+await change(done.players, done.g, "Cy", "flower", (c) => c.replace("777, 10", "777, 5"));
 await change(done.players, done.g, "Eve", "bee", (c) => c.replace("0.3", "0.2"));
 await sleep(6000);
-await change(done.players, done.g, "Ada", "bee", (c) => c.replace("QUESTION = 42", "QUESTION = 43"));
+await change(done.players, done.g, "Ada", "bee", (c) => c.replace("0.2", "0.1"));
 for (;;) {
   const v = await api(owner, "GET", done.g);
   if (v.game.status === "finished") { console.log(`short game finished: ${v.game.lastSeq} actions in ${v.game.round} rounds`); break; }
@@ -252,12 +221,12 @@ const live = await setUpGame(owner, room, { config: { minutes: RUNNING_MINUTES }
 await api(owner, "POST", `${live.g}/start`);
 console.log(`running game started (${RUNNING_MINUTES} minutes of game time)`);
 await sleep(3000);
-await change(live.players, live.g, "Bo", "bee", (c) => c.replace('["ask", 500]', '["ask", 501]'));
-await change(live.players, live.g, "Ada", "orchid", (c) => c.replace("< 100", "< 200"));
-await change(live.players, live.g, "Dee", "orchid", (c) => c.replace("% 5)", "% 5 + 1)")); // fixes the crash
+await change(live.players, live.g, "Bo", "bee", (c) => c.replaceAll("500", "501"));
+await change(live.players, live.g, "Ada", "flower", (c) => c.replace("40", "35"));
+await change(live.players, live.g, "Dee", "flower", (c) => c.replace("% 5)", "% 5 + 1)")); // fixes the crash
 await sleep(3000);
-await change(live.players, live.g, "Eve", "cosmos", (c) => c.replace("+ 1", "+ 3"));
-await change(live.players, live.g, "Ada", "bee", (c) => c.replace("visits % 40", "visits % 25"));
+await change(live.players, live.g, "Eve", "flower", (c) => c.replace("0.04", "0.03"));
+await change(live.players, live.g, "Ada", "bee", (c) => c.replace("turns % 40", "turns % 25"));
 
 console.log("room    ", `${BASE}/room/${room}`);
 console.log("running ", `${BASE}/room/${room}/game/${live.game.shortId}`);
