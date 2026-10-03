@@ -339,6 +339,77 @@ def forage(seen, visit):
   assert.ok(out.actions.some(tooSlow));
 });
 
+// A garden that plays no rounds, holding a cosmos whose pool of processes a test asks directly. Running
+// the garden just closes it, which kills every flower process.
+async function cosmosPool(code) {
+  const garden = new Garden({ config: normalizeConfig({}), teams: 1, maxRounds: 0, paced: false });
+  await garden.setProgram(0, "cosmos", code, 1);
+  const pool = garden.flowers[0].pool;
+  assert.equal((await pool.ready).ok, true);
+  return { garden, pool, ask: async (c) => (await pool.call({ c })).res };
+}
+const exited = (p) => new Promise((resolve) => {
+  if (p.child.exitCode !== null || p.child.signalCode !== null) return resolve(true);
+  p.child.once("exit", () => resolve(true));
+  setTimeout(() => resolve(false), 3000).unref();
+});
+const died = async (p) => {
+  p.kill();
+  while (!p.dead) await new Promise((r) => setTimeout(r, 2));
+};
+
+test("a flower process that stops responding is replaced: later asks are answered again, by the same version", async () => {
+  const { garden, pool, ask } = await cosmosPool(flowers.cosmos);
+  const seen = new Set(pool.procs);
+  try {
+    assert.deepEqual(await ask(1), { v: 2 });
+    // A visit is pinned to version 1 while version 2 goes live, so version 1's pool stays up for it.
+    pool.users++;
+    await garden.setProgram(0, "cosmos", `def flower(c):\n    return c + 100\n`, 2);
+    assert.ok(garden.retiring.has(pool));
+    // One of its processes stops responding: proc.js kills it after 2 × 150 + 1500 ms, and that ask is lost.
+    const hung = pool.procs[0];
+    hung.child.kill("SIGSTOP");
+    const lost = await ask(2);
+    assert.equal(lost.dead, true);
+    assert.match(lost.e, /stopped responding/);
+    assert.ok(await exited(hung), "the hung process is gone");
+    // The asks after it are answered again, by a fresh process running version 1's code.
+    for (let c = 3; c < 10; c++) assert.deepEqual(await ask(c), { v: c + 1 });
+    assert.notEqual(pool.procs[0], hung);
+    assert.deepEqual((await garden.flowers[0].pool.call({ c: 3 })).res, { v: 103 }, "version 2 answers its own visits");
+    for (const p of [...pool.procs, ...garden.flowers[0].pool.procs]) seen.add(p);
+  } finally {
+    await garden.run();
+  }
+  for (const p of seen) assert.ok(await exited(p), "closing the garden kills every process, respawned ones too");
+});
+
+test("a flower whose processes keep dying is respawned at most once a second per process, not at every ask", async () => {
+  const { garden, pool, ask } = await cosmosPool(flowers.cosmos);
+  try {
+    const n = pool.procs.length;
+    const seen = new Set(pool.procs);
+    const answers = [];
+    const t0 = performance.now();
+    // Every process dies before every ask: each slot is respawned once, and after that its asks fail at once.
+    for (let c = 0; c < 20; c++) {
+      for (const p of pool.procs) await died(p);
+      answers.push(await ask(c));
+      for (const p of pool.procs) seen.add(p);
+    }
+    assert.ok(performance.now() - t0 < 1000, "all within a second");
+    assert.equal(seen.size, 2 * n, "one respawn per slot");
+    assert.deepEqual(answers.slice(0, n), answers.slice(0, n).map((_, c) => ({ v: c + 1 })));
+    assert.ok(answers.slice(n).every((a) => a.dead), JSON.stringify(answers));
+    // A second later a slot may respawn again, and the flower answers again.
+    await new Promise((r) => setTimeout(r, 1000));
+    assert.deepEqual(await ask(7), { v: 8 });
+  } finally {
+    await garden.run();
+  }
+});
+
 for (const language of ["python", "typescript"]) {
   test(`${language}: flowers are stateless: fresh randomness, a clock, their own budget, no answer cache`, async () => {
     const config = normalizeConfig({ language });

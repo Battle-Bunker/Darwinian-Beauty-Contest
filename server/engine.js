@@ -93,32 +93,62 @@ async function withCpu(fn) {
 }
 
 // A flower is stateless, so any of a few identical processes can answer for it: a popular flower that
-// several bees question at once doesn't queue behind one process.
+// several bees question at once doesn't queue behind one process. A process that dies (it crashed, or
+// stopped responding and proc.js killed it) is replaced by a fresh one running the same version's code
+// when its slot is next picked. Respawns are spaced out: at most one per slot per RESPAWN_MS, twice as
+// long after each respawn that dies before answering (up to RESPAWN_MAX_MS), so a flower that always hangs
+// can't stall round after round. Meanwhile its asks go to a live process if it has one, else get the dead
+// one's error at once.
 const FLOWER_POOL = Math.max(1, Number(process.env.FLOWER_POOL) || 2);
+const RESPAWN_MS = 1000;
+const RESPAWN_MAX_MS = 60000;
 class FlowerPool {
   constructor(language, setup) {
+    this.language = language;
+    this.setup = setup;
     this.users = 0;       // visits pinned to this version
     this.retired = false; // replaced: it goes once no visit uses it
+    this.killed = false;  // no respawns once killed
     this.procs = Array.from({ length: FLOWER_POOL }, () => new ProgramProcess(language, "flower", setup));
     this.pending = this.procs.map(() => 0);
+    this.respawns = this.procs.map(() => 0);  // per slot: respawns since it last answered
+    this.respawnAt = this.procs.map(() => 0); // per slot: no respawn before this performance.now()
     this.ready = Promise.all(this.procs.map((p) => p.ready)).then((r) => r[0]);
   }
   /** { res, ms }: the reply, and how long the flower ran (not counting the wait for a free core). */
   async call(obj) {
+    // The least busy slot, passing over dead ones that can't respawn yet.
+    const now = performance.now();
+    const load = (j) => (this.procs[j].dead && now < this.respawnAt[j] ? Infinity : this.pending[j]);
     let i = 0;
-    for (let j = 1; j < this.procs.length; j++) if (this.pending[j] < this.pending[i]) i = j;
+    for (let j = 1; j < this.procs.length; j++) if (load(j) < load(i)) i = j;
     this.pending[i]++;
     try {
       return await withCpu(async () => {
+        const proc = this.#live(i);
+        await proc.ready; // a fresh process starts up on this core, before the flower's time starts
         const t0 = performance.now();
-        const res = await this.procs[i].call(obj);
+        const res = await proc.call(obj);
+        if (!res.dead) this.respawns[i] = 0;
         return { res, ms: performance.now() - t0 };
       });
     } finally {
       this.pending[i]--;
     }
   }
-  kill() { for (const p of this.procs) p.kill(); }
+  /** Slot i's process: a fresh one in place of a dead one, unless the slot must wait to respawn. */
+  #live(i) {
+    const old = this.procs[i];
+    if (!old.dead || this.killed || performance.now() < this.respawnAt[i]) return old;
+    old.kill(); // gone already, unless it died some other way
+    this.respawnAt[i] = performance.now() + Math.min(RESPAWN_MAX_MS, RESPAWN_MS * 2 ** this.respawns[i]);
+    this.respawns[i]++;
+    return (this.procs[i] = new ProgramProcess(this.language, "flower", this.setup));
+  }
+  kill() {
+    this.killed = true;
+    for (const p of this.procs) p.kill();
+  }
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, Math.max(0, ms)));
