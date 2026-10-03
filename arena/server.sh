@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# (Re)start the arena's own game server (default port 4000) on the continuous-game database (dbc_live).
-#   arena/server.sh            restart on port 4000 with CPU_SLOTS=3
+# (Re)start the arena's own game server (default port 4100) on the one-flower database (dbc_one).
+#   arena/server.sh            restart on port 4100 with CPU_SLOTS=3
 #   PORT=4001 arena/server.sh  another port
 #   FORCE=1 arena/server.sh    restart even while a game is running (its bees restart afresh; flowers are stateless)
 # The dev-login secret comes from arena/runs/.dev-secret (mode 600; created if missing) and goes only into the server's
@@ -8,10 +8,10 @@
 # ports (e.g. 3000, 3401) are never touched.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-PORT="${PORT:-4000}"
+PORT="${PORT:-4100}"
 CPU_SLOTS="${CPU_SLOTS:-3}"
-DB="${DATABASE_URL:-postgres://dbc:dbc@localhost:5432/dbc_live}"
-case "$DB" in */dbc) echo "refusing $DB: the arena runs on dbc_live (dbc holds the old round-based experiments)" >&2; exit 1;; esac
+DB="${DATABASE_URL:-postgres://dbc:dbc@localhost:5432/dbc_one}"
+case "$DB" in */dbc|*/dbc\?*|*/dbc_live|*/dbc_live\?*) echo "refusing $DB: the arena runs on dbc_one (dbc and dbc_live hold earlier experiments)" >&2; exit 1;; esac
 LOG="arena/runs/server${PORT}.log"
 SECRET_FILE="arena/runs/.dev-secret"
 mkdir -p arena/runs
