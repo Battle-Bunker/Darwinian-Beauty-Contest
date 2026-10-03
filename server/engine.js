@@ -347,9 +347,8 @@ export class Garden {
     // Turns. Feeding bees sit out; a bee with nothing queued (or a call still in flight) loses its turn.
     const turns = [];
     for (const b of this.bees) {
-      if (!b.proc || b.broken || b.loading) continue;
-      if (b.sitOut > 0) { b.sitOut--; continue; }
-      if (!b.queued || b.busy) continue;
+      if (b.sitOut > 0) { b.sitOut--; continue; } // feeding rounds pass whatever the bee is doing
+      if (!b.proc || b.broken || b.loading || !b.queued || b.busy) continue;
       const slot = this.#draw();
       if (!slot) continue;
       const t = {
