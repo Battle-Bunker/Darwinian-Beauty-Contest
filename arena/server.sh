@@ -1,31 +1,48 @@
 #!/usr/bin/env bash
-# (Re)start the arena's own game server (default port 4000), only when no round is simulating.
+# (Re)start the arena's own game server (default port 4000) on the continuous-game database (dbc_live).
 #   arena/server.sh            restart on port 4000 with CPU_SLOTS=3
 #   PORT=4001 arena/server.sh  another port
+#   FORCE=1 arena/server.sh    restart even while a game is running (its bees restart afresh; flowers are stateless)
 # The dev-login secret comes from arena/runs/.dev-secret (mode 600; created if missing) and goes only into the server's
-# environment. Servers on other ports (e.g. 3000, 3100) are never touched: only a node server/index.js process whose
-# environment says PORT=$PORT is stopped.
+# environment. Only the server this script started on $PORT (arena/runs/server$PORT.pid) is ever stopped; servers on other
+# ports (e.g. 3000, 3401) are never touched.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 PORT="${PORT:-4000}"
 CPU_SLOTS="${CPU_SLOTS:-3}"
-DB="${DATABASE_URL:-postgres://dbc:dbc@localhost:5432/dbc}"
+DB="${DATABASE_URL:-postgres://dbc:dbc@localhost:5432/dbc_live}"
+case "$DB" in */dbc) echo "refusing $DB: the arena runs on dbc_live (dbc holds the old round-based experiments)" >&2; exit 1;; esac
 LOG="arena/runs/server${PORT}.log"
 SECRET_FILE="arena/runs/.dev-secret"
+mkdir -p arena/runs
 
-running=$(psql "$DB" -Atc "SELECT count(*) FROM games WHERE running_round IS NOT NULL")
-if [ "$running" != "0" ]; then echo "a round is simulating ($running); not restarting" >&2; exit 1; fi
+# Arena games (rooms owned by an "Arena owner ..." login) that are running: a restart would start their bees afresh.
+running=$(psql "$DB" -Atc "SELECT count(*) FROM games g JOIN rooms r ON r.id = g.room_id JOIN users u ON u.id = r.owner_id
+                            WHERE g.status = 'running' AND u.name LIKE 'Arena owner %'" 2>/dev/null || echo 0)
+if [ "$running" != "0" ] && [ "${FORCE:-0}" != "1" ]; then
+  echo "$running arena game(s) running; a restart would start their bees afresh. Pause them or wait, or FORCE=1" >&2; exit 1
+fi
 
-for p in $(pgrep -f "node server/index.js" || true); do
-  if tr '\0' '\n' < "/proc/$p/environ" 2>/dev/null | grep -qx "PORT=$PORT"; then echo "stopping server pid $p on :$PORT"; kill "$p"; fi
-done
-sleep 1
+# Stop only the server this script started on this port (its pid file), after checking it really is that server.
+PIDFILE="arena/runs/server${PORT}.pid"
+if [ -s "$PIDFILE" ]; then
+  p=$(cat "$PIDFILE")
+  if [ -r "/proc/$p/environ" ] && tr '\0' '\n' < "/proc/$p/environ" | grep -qx "PORT=$PORT" && tr '\0' ' ' < "/proc/$p/cmdline" | grep -q "server/index.js"; then
+    echo "stopping server pid $p on :$PORT"; kill "$p"; sleep 1
+  fi
+  rm -f "$PIDFILE"
+fi
+if curl -s -m 2 -o /dev/null "http://localhost:$PORT/api/health"; then
+  echo "something else is serving :$PORT (not started by this script); stop it yourself" >&2; exit 1
+fi
 
 umask 077
 [ -s "$SECRET_FILE" ] || openssl rand -hex 24 > "$SECRET_FILE"
-echo "=== start $(date +%T) port $PORT CPU_SLOTS=$CPU_SLOTS" >> "$LOG"
-DEV_LOGIN_SECRET="$(cat "$SECRET_FILE")" PORT="$PORT" CPU_SLOTS="$CPU_SLOTS" MAX_CONCURRENT_ROUNDS="${MAX_CONCURRENT_ROUNDS:-8}" \
+echo "=== start $(date +%T) port $PORT CPU_SLOTS=$CPU_SLOTS db ${DB##*/}" >> "$LOG"
+DATABASE_URL="$DB" DEV_LOGIN_SECRET="$(cat "$SECRET_FILE")" PORT="$PORT" CPU_SLOTS="$CPU_SLOTS" \
   nohup node server/index.js >> "$LOG" 2>&1 &
+echo $! > "$PIDFILE"
+echo "server pid $! on :$PORT (log $LOG)"
 sleep 3
 code=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H 'content-type: application/json' -d '{"name":"probe"}' "http://localhost:$PORT/api/auth/dev/login")
-echo "server on :$PORT; a login without the secret gets HTTP $code (expect 403)"
+echo "a login without the secret gets HTTP $code (expect 403)"

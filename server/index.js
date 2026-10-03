@@ -5,9 +5,10 @@ import { fileURLToPath } from "node:url";
 import { env } from "./config.js";
 import { migrate } from "./db/migrate.js";
 import { sessionMiddleware } from "./auth/index.js";
-import { apiRouter } from "./routes/api.js";
+import { apiRouter, gameSocketFeed } from "./routes/api.js";
 import { startListening } from "./realtime.js";
-import { recoverInterruptedRounds } from "./games.js";
+import { attachGameSockets } from "./sockets.js";
+import { startLive, stopLive } from "./live.js";
 import { initMeasure } from "./lib/measure.js";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -20,7 +21,7 @@ export async function createApp() {
   app.use(express.json({ limit: "512kb" }));
   app.use(sessionMiddleware);
   app.use("/api", apiRouter());
-  // Shared with the browser so the editor can show node counts and diffs exactly as the server does.
+  // Shared with the browser so the editor can show sizes and change costs exactly as the server does.
   app.use("/vendor", express.static(path.join(ROOT, "vendor"), { maxAge: "1h" }));
   // The single-page web app (built into web/dist). Every non-API path serves index.html.
   app.use(express.static(WEB, { index: false, maxAge: "1h" }));
@@ -35,11 +36,20 @@ export async function createApp() {
 async function main() {
   await migrate();
   await initMeasure();
-  const recovered = await recoverInterruptedRounds();
-  if (recovered) console.log(`cleared ${recovered} interrupted round(s)`);
   await startListening();
+  await startLive();
   const app = await createApp();
-  app.listen(env.port, "0.0.0.0", () => console.log(`darwinian-beauty-contest on :${env.port} (auth: ${env.authProvider})`));
+  const server = app.listen(env.port, "0.0.0.0", () => console.log(`darwinian-beauty-contest on :${env.port} (auth: ${env.authProvider})`));
+  // The live game feed over WebSockets too (/api/rooms/:room/games/:game/ws): the same messages as SSE.
+  attachGameSockets(server, gameSocketFeed);
+  // Write what the gardens did before going; another process (or this one, restarted) picks them up.
+  for (const sig of ["SIGTERM", "SIGINT"]) {
+    process.once(sig, async () => {
+      server.close();
+      await stopLive().catch((e) => console.error(e));
+      process.exit(0);
+    });
+  }
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) main().catch((e) => { console.error(e); process.exit(1); });

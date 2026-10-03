@@ -14,6 +14,19 @@ The key findings below are from phase 1 (engine v1, summarised logs). Phase 2 is
 - §16 corrects §15: most bee discrimination comes from fingerprinting, not certificate checks.
 - §17 compares hidden and public logs under engine v3; §18 gives every team two example signature flowers.
 - §19 asks why orchid change rounds don't wipe out fingerprinting bees.
+- §20 is the first pilot of the continuous garden (branch `claude/continuous-garden`): games of 30 s, 1 and 2 minutes.
+- §21 covers continuous games of 2, 5 and 10 minutes with scaffolds; §22 the costly-signalling priming experiment.
+
+> **Correction (applies to §1–20).** Those games dealt flowers to bees from a **shuffled deck**: each flower once
+> per lap, in random order. The intended rule is a uniformly random draw on every visit (engine commit 0679f8c,
+> 2 October; §21 and §22 use it).
+> - With a deck, a bee can track where it is in the lap, so it knows which flowers are still to come and that its
+>   two visits to a patch in one lap are one of each kind.
+> - Conclusions about how bees identify flowers in §1–20 (fingerprinting, lap counting, the "card-counting" ideas,
+>   discrimination and precision figures) are shaped by that extra information. Don't carry them over to the
+>   random draw without re-testing.
+
+On the continuous-garden branch the rewarding flower is called **cosmos**; earlier sections use its old name, clover.
 
 ## Key findings
 
@@ -1314,6 +1327,321 @@ copies from are stale.
   the style of an answer that is costly to reproduce.
 - **The alternative is delayed tasting.** Nectar would arrive in `MEMORY` after the round, with no `tasted` during it.
   That removes in-round learning entirely and changes the bee game much more.
+
+## 20. Continuous garden pilot: 30 s, 1 and 2 minute games
+
+**What changed.** Rounds of code changes are gone (docs/DESIGN.md "One continuous garden"):
+- One game is one stream: bees take turns round robin, as fast as the programs run. A feed takes a bee out
+  of the round robin for 10 rounds.
+- Every action is public at once. Code, bee printouts, code changes and change budgets stay private until
+  the game ends.
+- Each program earns change budget per minute (cosmos 220, orchid 1,540, bee 2,200 nodes; cap one
+  minute's worth). Anything affordable goes live at once.
+- Agents run back-to-back sessions during the game. They read the stream with code from a shared JSONL,
+  not from their prompt, and submit through workspace tools.
+
+**Pilot as run** (`cont-pilot`, room /room/E on the arena server):
+- 3 teams on int→int: Luna and Tess on sonnet, Grace on haiku. After game 2, Grace was retired and the
+  Moss breeder created Biko (haiku).
+- Games of 0.5, 1 and 2 minutes.
+- $2.90 in all, 56 sessions, no fair-play violations.
+- One game per duration, so nothing below is more than an anecdote.
+
+| minutes | actions/s | rounds/s | bee precision | rival cosmos − orchid fed gap | sessions per team in play | in-game versions | final fitness |
+|---|---|---|---|---|---|---|---|
+| 0.5 | 864 | 403 | 0.96 | 0.30 | 2.3 | 2 (one free) | Moonpetal 1.57, Show Your Work Hive 1.56, Steady State 0.24 |
+| 1 | 356 | 180 | 0.64 | 0.21 | 4.7 | 0 | Moonpetal 2.59, Show Your Work Hive 1.84, Steady State 0.00 |
+| 2 | 813 | 499 | 0.66 | 0.14 | 8.7 | 2 | Moonpetal 1.41, Show Your Work Hive 1.07, Secret Handshake 0.50 |
+
+- **The lobby decides short games.** In 30 s and 1 min almost nothing changed in play. Sessions take
+  seconds to minutes, and the teams in front had no reason to change.
+- **The winners rested.** Sonnet sessions mostly read `tools/status.py`, saw they were first and ended in
+  about 7 s ("Moon song keeps winning; resting to the end"). That's why a 2-minute game had 13 sessions
+  per sonnet team.
+- **One team adapted mid-game, as intended.** Biko (haiku, game 3) read the stream with code and saw that
+  Moonpetal's orchid answers exactly like its cosmos. He rewrote his orchid (230 nodes) at 1:18 and his
+  bee (397 nodes) at 1:20. From 1:15 the rival cosmos feed rate rose from 27% to 61%, and the orchid rate
+  from 15% to 45%.
+- **Copying was slow.** In the 2-minute game, 28 rival-orchid answers matched a cosmos answer through an
+  orchid version that went live after that answer first appeared (median 61 s). Most other matches are
+  rules that converged, not copies.
+- **Nobody used compute.** Flowers used 1–4% of their compute budget, so int→int games so far are
+  rule-guessing, not effort signalling. Trivial programs also make the stream huge: 360–860 actions a
+  second, about 15 MB of database per 2-minute 3-team game.
+
+## 21. Continuous garden on graphs: 2, 5 and 10 minute games with scaffolds
+
+**What changed since §20.**
+- Rounds are lockstep: 200 ms each. Flower answers arrive at 150 ms, then bees have 50 ms to decide.
+- Flowers are dealt uniformly at random, and every visit opens with a public `arrive`.
+- Flower and bee versions are pinned per visit.
+- Every action is public, including which flower (cosmos or orchid) answered. Bees still never learn
+  whose flower they are at.
+- Teams can run a **scaffold**: their own program outside the engine that follows the stream and submits
+  changes by itself for the whole game.
+
+**As run** (`cont-graphs`, room /room/EF, full tables in `arena/runs/analysis-cont-graphs.md`):
+- Graphs preset (int → graph[any]), one game each of 2, 5 and 10 minutes.
+- Four fixed teams (no evolution): Mallory (Red Team Petals) and Kenji (quiet bees) on opus; Rosalind
+  (Batesian Botanics) and Priya (Priyas Plan Bee) on sonnet.
+- $11.92 in all.
+- Kenji sat out game 1, because of an audit false positive (see Breakages below).
+- Games ran one after another, and each game's code is revealed before the next. So duration is
+  confounded with experience, and there is one game per duration: read the trends as anecdotes.
+
+| minutes | teams | scaffolds that submitted | in-game changes: sessions / scaffolds | bee precision | rival cosmos − orchid fed gap | proof-of-work cosmos: p90 compute, answer nodes, rival fed | other flowers: p90 compute, nodes | exact orchid copies (source) | repeat share | too slow / missed slots | USD |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 2 | 3 | 1 of 3 | 2 / 12 | 0.77 | 0.08 | Red 86%, 224, **20%** | 3–5%, 13–15 | none | 0% | 0 / 4 | 2.90 |
+| 5 | 4 | 2 of 4 | 3 / 19 | 0.60 | 0.25 | quiet bees 92%, 119, **79%** | 3–6%, 13–16 | Red's orchid = Priya's cosmos (from game 1) | 0% | 0 / 1 | 4.13 |
+| 10 | 4 | 2 of 4 | 2 / 34 | 0.77 | 0.40 | quiet bees 94%, 174, **100%** (165 of 165 rival visits) | 3–5%, 11–14 | quiet bees' orchid = Red's, then Batesian's game-2 cosmos | 6% (all quiet bees') | 0 / 5 | 4.89 |
+
+**Scaffolds: only the opus teams' did anything.**
+- Every team started one in every lobby, but the two sonnet teams' scaffolds never submitted anything:
+  - Rosalind's is one `print` line and exits at once.
+  - Priya's counts actions and logs them. It also crash-looped for 13 s in game 1: she left out
+    `sys.path.insert(0, "tools")`, then fixed it herself.
+- Mallory's scaffold was rewritten each game:
+  - Game 1, "the analyst": it builds cosmos/orchid counts per answer shape from the public log and pushes
+    them into the bee every 30 s. Every 12 s it dresses the orchid in the shape statistics of the most-fed
+    rival cosmos.
+  - Game 2, "the detective": it also cracks simple rival cosmos rules from the log, e.g. Priya's ring
+    labelled (7 + i·c) mod 97, and turns them into exact checks ("ID cards") in the bee.
+  - Game 3, "the forgery auditor": it runs the bee's cards against rival *orchid* answers. A card that
+    any orchid passes is switched off, and the proof-of-work threshold is raised above the best orchid.
+- Kenji's scaffold, "the librarian":
+  - It keeps a fading cosmos/orchid count per answer fingerprint and re-submits the bee's book every
+    ~25 s: 12 times in game 2, 26 in game 3, about 150 nodes each.
+  - In game 3 it also switches which rival cosmos the orchid impersonates.
+- Changes made by sessions stayed at 2–3 per game; scaffold changes grew with game length (12, 19, 34).
+  The agents' sessions didn't drive in-game adaptation:
+  - Sonnet sessions were 7–10 s check-ins: 3 turns, $0.02–0.04, usually nothing submitted.
+  - Opus sessions sat in `sleep` loops watching the scaffold. In game 3 the first two hit the 6-minute
+    wall-clock cap.
+
+**Effort signals: one cosmos per game spent its compute, and by 10 minutes every rival bee trusted it.**
+- **The proof-of-work cosmos.**
+  - Its edge labels are hashcash nonces (sha256 of "c:k" starting with 10 zero bits), searched until the
+    150 ms is nearly gone. Kenji's version used 92–94% of its budget (p90).
+  - Its answers are 120–220 nodes and 3–4k characters. Every other flower used 3–6% and answered with
+    11–16 nodes.
+  - Rival bees fed at it on 20% of visits in game 1 (Mallory's version, which nobody had seen yet), 79% in
+    game 2 and 100% in game 3.
+- **The cheap cosmos flowers.** In game 3 they got 38–90%, and orchids 12–41%.
+- **What the bees relied on.**
+  - Kenji's own bee re-hashes every nonce. The other bees used size: Priya's feeds at graphs of 50+ nodes,
+    and Mallory's has a proof-of-work card.
+  - No orchid tried a big graph of invalid nonces, which would have fooled the size-only bees.
+- **Mallory dropped proof of work after game 1**, when it went unrewarded in a 2-minute game. She moved
+  to cracked-rule ID cards. So effort signalling was sustained by one team, and the rest learned to feed
+  at it.
+
+**Discrimination grew with game length.**
+- Pooled over teams, the gap between the rival cosmos and rival orchid feed rates was 0.08, 0.25 and 0.40.
+- In game 3, per bee (rival cosmos / rival orchid feed rate, then precision):
+  - Red: 69% / 4%, precision 0.94.
+  - quiet bees: 70% / 13%, precision 0.88.
+  - Priya: 75% / 32%, precision 0.70.
+  - Batesian: 90% / 92%, precision 0.55. Its bee feeds at nearly everything.
+- **Feeding at your own orchid was the opus teams' problem in game 2.** Red's bee fed at its own orchid on
+  90% of visits, because that orchid wore Priya's cosmos rule, which Red's bee trusted. Kenji's bee did so
+  on 56%.
+- **Both fixed it in game 3 with a private tell**, and own-orchid feeds fell to 4% and 0%:
+  - Red's orchid lists its edges in sorted order.
+  - Kenji's bee only asks challenges ≡ 777 (mod 1009), and his orchid answers those with junk. That tell
+    is visible in the public log, but no rival's code used it.
+- **Forgery had collateral damage.** Kenji's game-3 orchid exactly reproduces Batesian's cosmos. Mallory's
+  auditor saw an orchid pass the Batesian card and switched it off within the first minute. Red's bee then
+  fed at Batesian's real cosmos on 9% of visits, against 52% in game 2.
+
+**Copying, and how fast.**
+- **The built-in copy metric found nothing:** 0 matches in 238, 443 and 1,094 distinct cosmos answers. It
+  needs the same challenge asked at both flowers, and with random int challenges none repeats across bees.
+- **So I replayed every orchid version on 20 recorded challenges of every rival cosmos version**, from the
+  same game and the game before, with the engine's own `tryFlower`.
+- **Every exact copy came from the previous game's revealed code and was live from the lobby.** The copy
+  latency is one game:
+  - Game 2: Red's orchid reproduces Priya's game-1 cosmos (20 of 20). Kenji's orchid matches Priya's on
+    about half the challenges and Batesian's on the other half, switching by challenge parity.
+  - Game 3: Kenji's orchid starts as Red's game-2 cosmos (20 of 20). Red had changed its cosmos, so the
+    costume was stale from the start. Kenji's scaffold noticed and switched to Batesian's game-2 cosmos at
+    0:32 (20 of 20).
+- **No orchid copied a rule cracked during play.** Mallory's game-1 scaffold mimicked shapes 8 times in
+  2 minutes but never matched exactly (at most 2 of 20).
+- **Cracking during play did happen, on the bee side:** Mallory's detective turned Priya's rule into an
+  exact check within seconds of seeing enough answers.
+
+**Fingerprinting moved from repeated challenges to the labelled log.**
+- No bee re-asked a challenge to test a flower's consistency. Repeats were 0% apart from Kenji's tell set,
+  which caused 23% repeats as a side effect of drawing from 991 values.
+- Both opus scaffolds instead treat the public `kind` as a free labelled training set: shape fingerprint →
+  cosmos/orchid counts, refreshed every 25–30 s.
+
+**Timing.**
+- No bee was ever too slow: no `too slow` errors, and a mean decision time of about 1 ms of the 50 ms.
+- Missed slots were 4, 1 and 5, all under 0.3%.
+- **But the server stalled.** 18 calls took 160–1,440 ms: flowers that normally take 3–5 ms, and bees that
+  normally take about 1 ms. Several often fell in the same round.
+  - Nothing was lost: every answer arrived and no bee lost a slot. The engine's wall-clock deadline fired
+    late along with everything else.
+  - These outliers inflate mean compute: quiet bees' cosmos shows "102%" of its budget in game 3. Use p90.
+  - The machine has 4 cores. CPU_SLOTS=3 keeps the gardens' programs to three at a time, but Postgres,
+    the runner, the agents' tool calls and the scaffolds share the same cores. This matters for running
+    several gardens at once.
+
+**Spend.**
+- $11.92 against a $40 cap; the whole ledger is now $14.86.
+- Opus lobbies were 44% of it: 6 sessions, $5.30.
+- In play: 12 opus sessions ($1.86) and 33 sonnet sessions ($1.24).
+- Judges and interviews: $2.87.
+
+**Breakages.**
+- **Kenji's false-positive violation.** It came from `sed -E 's/"edges".*"labels"/../'`: the audit read the
+  `..` in the replacement as a path. It stopped his game-1 lobby, so he had no programs and sat out game 1.
+  - Fixed in 0e2d795, which doesn't check the script argument of sed/perl as a path; it ships with a test.
+  - Violations 12 and 13 are relabelled `false-positive`.
+  - The running batch kept the old audit, but no session in games 2 and 3 tripped it: 57 sessions audited,
+    and none else had any finding.
+- **The end of a game waited for idle teams.** The runner waited for every team's session loop, including
+  idle gaps of up to 120 s, before stopping scaffolds and starting the interviews: about 100 s per game.
+  Fixed: the gap between sessions now ends with the game.
+- **Kenji's scaffold ran past the game.** It stopped itself at game over, about 1.5 minutes before the
+  runner would have.
+- Scaffolds were otherwise reliable: no audit refusals, no CPU-share pauses, and 13 s of CPU at most.
+
+## 22. Costly-signalling priming: three matched cohorts, six games each
+
+**The question.** Common-knowledge priming of particular signalling ideas should make them succeed, because cosmos flowers
+and bees can coordinate on them. The open question is whether priming the *general* idea of costly signalling (proof of
+work and its relatives) produces a metastable regime that keeps innovating at that level of sophistication or higher.
+
+**Answer (one run per arm, so treat it as strong anecdote):**
+- **Concept priming (B) produced a metastable regime, but a frozen one.**
+  - From the first lobby, all six cosmos flowers used hash proof of work, and it kept 100% of rival nectar in all six
+    games. B had the best discrimination of the three (the gap peaked at 0.65 in game 4).
+  - Nothing new appeared after game 2. There was no adaptive difficulty, no combined proof, and none of the other
+    families its document listed (certificate puzzles, sequential work, anytime optimisation).
+  - The arms race moved into parameters (thresholds, faster hashing, private handshakes). In games 5–6 the margin
+    eroded, as orchids did real proof of work at about 70% of the cosmos's amount: the gap fell from 0.65 to 0.28–0.30,
+    and precision from 0.85 to 0.69.
+- **Recipe priming (C) locked onto the recipes.** The Paley clique chain and graceful labelling dominated from game 1 at
+  a slightly higher level, with a few new puzzles in game 3 (snake trail, knight's tour) and one in game 6 (n-queens).
+  Discrimination stayed below B's, and collapsed in games 5–6 under the dead-flower bug (49–57% of cosmos asks
+  unanswered).
+- **Only the control (A) kept innovating, but its signals never worked as signals.**
+  - Cheap rules for two games. Then, mostly through bred teams: knight's tours, md5 and hash chains, 17-bit hashcash,
+    4-colouring by annealing, factorisation, sequential squaring, and cosmos flowers that mix mechanisms by challenge
+    range.
+  - Costly cosmos teams went 0/6 → 6/6, with 1–3 new mechanisms in almost every game.
+  - But discrimination stayed at or below 0.13 after game 2. 33 orchid versions reproduced rival cosmos answers exactly,
+    including deterministic "hard" ones such as Maze Runners' maze and Technically Legal's 17-bit proof of work.
+- **In short:** priming the general idea bought coordination and effectiveness at the primed level, and with them
+  lock-in. Innovation at or above that level came from the unprimed cohort, which never got the coordination.
+
+**Design as run** (`node arena/run.js --experiment csig`; lib/presets.js `EXPERIMENTS.csig`):
+- **Cohorts.** Three cohorts, identical except for one folder, `common/`, which every team received each game and was
+  told every team had:
+  - A: none.
+  - B: `arena/priming/concept/costly-signals.md`, a page of principles, mechanism families and counter-moves, with no
+    code.
+  - C: `arena/priming/recipes`, the Paley and graceful example cosmos flowers, their checkers, and a README
+    recalibrated for 150/100 ms.
+- **Same in every cohort.** Six founders (Mallory, Kenji and Ada on opus; Rosalind, Priya and Theo on sonnet), int →
+  graph[any], 6 games of 5 minutes, scaffolds, and retirement and breeding.
+- **Kept within a cohort.** Breeders never saw `common/`. Each cohort's judges and breeders saw only that cohort's
+  ideas and outcomes.
+- **Scheduling.** The cohorts played one game at a time, interleaved by game number in a rotating order.
+- **Spend.** A $43.53, B $38.08, C $45.56. The classifier added $7.47.
+
+**Measures** (`node arena/csig.js --experiment csig --classify --replay`; tables in `arena/runs/analysis-csig.md`):
+- **Mechanisms.** A haiku classifier labels each distinct program, with keyword checks as evidence.
+- **Levels:** 0 a rule or badge; 1 work a bee can't check; 2 hash proof of work; 3 a checkable puzzle, sequential work
+  or graded anytime search; +1 for adaptive difficulty or combined proofs. "Adaptive" excludes a search that merely
+  runs until its time limit.
+- **Feed-weighted level.** Each cosmos version is weighted by the feeds it got from rival bees.
+- **Forgery replay.** Every orchid version was re-run on 10 recorded challenges of every rival cosmos version, from the
+  same game and the one before, on the engine's own runner.
+
+### Trajectories over the six games
+| measure (games 1–6) | A control | B concept | C recipes |
+|---|---|---|---|
+| costly cosmos teams | 0/6, 0/6, 2/6, 4/5, 4/6, 6/6 | 6/6 ×5, 5/5 | 5/6, 5/6, 5/5, 5/6, 5/6, 5/6 |
+| feed-weighted level (max) | 0 (0), 0 (0), 0.51 (3), 2.61 (3), 1.27 (3), 2.99 (4) | 2.00 (2) every game | 2.88, 2.84, 3.00, 2.51, 2.80, 2.58 (3 every game) |
+| dominant mechanism (share of rival nectar) | rule 100%, 100%, 83% → sequential 43% → hash-pow 36%, 44% | hash-pow 100% ×6 | certificate 62–77% ×4 → anytime 48% → certificate 57% |
+| new mechanisms or puzzle families | 1, 0, 3, 2, 3, 3 | 1, 1, 0, 0, 0, 0 | 5, 0, 2, 0, 0, 1 |
+| new ideas (judges) | 9, 5, 4, 4, 3, 9 | 14, 7, 6, 5, 4, 3 | 15, 3, 12, 4, 4, 5 |
+| cosmos p90 compute (median of teams) | 2%, 3%, 3%, 73%, 17%, 56% | 83%, 86%, 86%, 88%, 83%, 72% | 75%, 67%, 76%, 63%, 28%, 27% |
+| rival cosmos − orchid feed gap | 0.31, 0.20, 0.04, 0.02, 0.13, 0.10 | 0.19, 0.36, 0.51, 0.65, 0.28, 0.30 | 0.19, 0.15, 0.32, 0.25, 0.04, 0.02 |
+| precision | 0.67, 0.68, 0.70, 0.68, 0.67, 0.64 | 0.78, 0.88, 0.81, 0.85, 0.79, 0.69 | 0.77, 0.72, 0.82, 0.68, 0.57, 0.69 |
+| exact orchid copies of a rival cosmos (versions) | 0, 8, 7, 6, 4, 8 | 0 | 0 |
+| fitness spread | 0.64, 0.76, 1.35, 1.90, 1.55, 1.08 | 1.00, 1.02, 0.99, 0.37, 0.86, 1.02 | 1.10, 1.31, 0.29, 1.04, 1.63, 1.35 |
+| cosmos asks with no answer (engine bug) | 0%, 12%, 41%, 20%, 42%, 13% | 0%, 0%, 0%, 1%, 0%, 0% | 0%, 17%, 0%, 9%, 49%, 57% |
+| retired after the game (after game 6: no replacement) | 0, 2, 0, 1, 1, (2) | 0, 2, 0, 2, 1, (1) | 0, 2, 1, 0, 2, (2) |
+| teams that sat out (audit false positive) | game 4: Mallory | game 6: Ada | game 3: Ada |
+
+**What the forgers did** (orchid versions pooled over the six games; "fooled" = share of rival bees' visits that ended in
+a feed):
+| | A control | B concept | C recipes |
+|---|---|---|---|
+| main orchid strategies | look-alike 42, copy-rule 33, corner-cut 26, other 22 | corner-cut 53 (less proof of work in 100 ms), look-alike 9, copy-rule 3 | corner-cut 74 (the recipe at 100 ms), other 11, partial work 7, look-alike 5 |
+| rival bees fooled | 2–47% by strategy; copies 20–22% | 13–14% | 3–12% (corner-cut 9–12%) |
+| rival cosmos fed (pooled) | rule 35%, hash-pow 27%, sequential 17%, certificate 14% | hash-pow 48% | certificate 29%, anytime 18% |
+| bees that verify (final versions) | 4–6 of 6 | 5–6 of 6 | 5–6 of 6 |
+
+### Did anything ratchet or collapse in games 4–6?
+- **A ratcheted.** The level went from 0 to 2.6–3.0. Costly cosmos teams reached 6/6, and the dominant mechanism turned
+  over from rule to sequential to hash proof of work.
+  - Games 5–6 brought its first combined and adaptive cosmos flowers: quiet bees' range-switching proof of work plus
+    knight's tour plus padlock chain, and Fast Path Flora's hash proof of work or sequential squaring.
+  - It never became a coordinated signal. Bees couldn't tell the new mechanisms apart (gap 0.02–0.13), and orchids
+    copied the deterministic ones exactly.
+- **B held exactly at level 2, with no ratchet and no collapse of the mechanism.** Its effectiveness eroded instead. The
+  orchids' counter ("the honest understudy": real 10-bit tickets, minimal safety margin, about 70% of the cosmos's
+  count) pushed the gap from 0.65 down to 0.28–0.30, and the bees answered by tuning thresholds, not by changing
+  mechanism.
+- **C held its level, but the dominant recipe flipped** (certificate → anytime → certificate). Discrimination
+  collapsed to 0.04 and 0.02 in games 5–6. This coincides with 49–57% of cosmos asks failing from the engine bug, so it
+  can't be read as a property of the recipes.
+
+### Design levers the evidence suggests
+1. **Put forgery pressure on the dominant signal's mechanism, not just its threshold.**
+   - In B, orchids could only do less of the same work (fooled 13%), so bees never had to change mechanism.
+   - Vary the cosmos-to-orchid time ratio between games (e.g. orchid 100 → 130 ms), or cap answer size or bee check
+     time, so that a fixed proof's margin collapses from time to time.
+2. **Make bees move on: change the environment between games.** Rotate the challenge and response types, or remove or
+   limit a primitive for a game (no `hashlib`). In B, ticket counting kept working to the end.
+3. **Reward novelty in selection.** Judge-recognised new ideas fell from 14 to 3 in B. The control's innovators came from
+   breeders (Knight Moves, Maze Runners, Crayon Map Club, Buried Treasure Bees), so breeders could be asked for mechanism
+   families the cohort hasn't tried.
+4. **Prime verification, not production.**
+   - A invented costly mechanisms but never coordinated on them, and B coordinated on the one mechanism it was handed.
+   - A shared, growing checker library or registry (common knowledge of how to *verify* each new mechanism, published
+     after every game) might give coordination without freezing the mechanism. Make deterministic puzzles expensive to
+     reproduce, or tie them to fresh randomness, so that exact copies stop working.
+5. **Refresh the common knowledge.** B's page never changed. A per-game digest of what worked and what was forged could
+   push the frontier, or deepen the lock-in: worth testing.
+6. **Rerun before trusting the effect sizes:** at least two seeds per arm, on the fixed engine and audit.
+
+### Bugs that bias this comparison (the run used the original tooling; the fixes landed afterwards)
+- **Dead flower processes (engine; fixed in ea7443d).**
+  - What happened: after a stall of more than 1.8 s, a flower process was killed and never replaced, so 90–100% of
+    that flower version's later answers were null.
+  - Where: A in games 2–6 (12–42% of cosmos asks), C in games 2 and 4–6 (9–57%). B was untouched (0–1%). It hit every
+    mechanism in A and C, rules included (18–38% of asks unanswered), not just costly ones.
+  - Effect: it depresses A's and C's feed rates, discrimination, precision and nectar, and adds noise to their fitness
+    and so to their retirements. Their affected games also ran slower rounds (260–420 ms of wall time per round, against
+    B's 209–216 ms).
+  - What it doesn't touch: which mechanisms teams wrote, and the level and innovation measures. One caveat: C's cosmos
+    compute dropped to 27–28% in games 5–6, possibly a reaction to flowers that seemed to time out.
+- **Audit false positives (fixed in dbdea02).**
+  - What happened: four lobby violations, all false: Ada's Python variable `nc = …` (read as netcat) and a `..` in a
+    comment in Mallory's heredoc.
+  - Effect: one opus team sat out one game in each cohort (A game 4 Mallory, B game 6 Ada, C game 3 Ada), and the audit
+    refused Ada's scaffold in C game 4. That's roughly balanced across cohorts, but each removes a strong team from one
+    game.
+- **Classifier caveats.**
+  - A cosmos that switches mechanism by challenge range sometimes comes back as "other" (level 0). That understates A's
+    game 5 (quiet bees).
+  - Levels are ordinal: hash proof of work (2) isn't necessarily simpler than a certificate puzzle (3) in practice.
 
 ## Most interesting games
 

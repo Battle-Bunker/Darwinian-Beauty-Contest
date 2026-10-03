@@ -1,6 +1,5 @@
--- Darwinian Beauty Contest: initial schema.
--- Every game and all of its generated data lives here, so any page load (live or later) can rebuild
--- the exact same view for the same viewer.
+-- Darwinian Beauty Contest: a continuous garden. Every game and everything it generates lives here, so
+-- any page load (live or later) rebuilds the same view for the same viewer.
 
 CREATE TABLE users (
   id            uuid PRIMARY KEY,
@@ -36,13 +35,16 @@ CREATE TABLE games (
   code          text NOT NULL,
   prefix_len    int  NOT NULL,            -- unique within the room
   config        jsonb NOT NULL,
-  status        text NOT NULL DEFAULT 'lobby' CHECK (status IN ('lobby', 'running', 'finished')),
-  rounds_played int  NOT NULL DEFAULT 0,
-  running_round int,                      -- non-null while a round is being simulated
-  participants  uuid[],                   -- team ids fixed when round 1 runs (column order of ledgers)
-  version       bigint NOT NULL DEFAULT 0, -- bumped on every change; clients refetch when it moves
-  last_error    text,                     -- why the last attempt to run a round failed, if it did
+  status        text NOT NULL DEFAULT 'lobby' CHECK (status IN ('lobby', 'running', 'paused', 'finished')),
+  clock_ms      bigint NOT NULL DEFAULT 0, -- game time played so far (it stops while paused)
+  participants  uuid[],                   -- team ids fixed when the game starts (row/column order of ledgers)
+  feeds         jsonb,                    -- N×N: feeds[bee team][patch team], whole game so far
+  nectar        jsonb,                    -- N×N: nectar[bee team][patch team], whole game so far
+  last_seq      bigint NOT NULL DEFAULT 0, -- the latest action's seq
+  version       bigint NOT NULL DEFAULT 0, -- bumped on every change but actions; clients refetch when it moves
+  last_error    text,
   created_at    timestamptz NOT NULL DEFAULT now(),
+  started_at    timestamptz,
   finished_at   timestamptz,
   UNIQUE (room_id, code)
 );
@@ -68,64 +70,60 @@ CREATE TABLE team_members (
   UNIQUE (game_id, user_id)               -- one team per user per game
 );
 
--- Pending programs for the next round (latest submission per team and kind wins).
-CREATE TABLE submissions (
+-- Every version of every program. The latest version of each (team, kind) is the one playing. Code is
+-- private to its team until a finished game is revealed; everything else here is public.
+CREATE TABLE programs (
   game_id      uuid NOT NULL REFERENCES games(id) ON DELETE CASCADE,
   team_id      uuid NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
   kind         text NOT NULL CHECK (kind IN ('clover', 'orchid', 'bee')),
+  version      int  NOT NULL,             -- 1, 2, ... per (team, kind)
   code         text NOT NULL,
-  nodes        int  NOT NULL,
-  distance     int,                       -- AST edits from the previous round's program (null before round 1)
+  size         int  NOT NULL,             -- weighted nodes of the minified program
+  distance     int,                       -- node edits from the previous version (null when written in the lobby)
+  cost         int  NOT NULL DEFAULT 0,   -- change budget spent on it (0 in the lobby)
+  at_ms        bigint NOT NULL DEFAULT 0, -- game time it went live (0: before the start)
   submitted_by uuid NOT NULL REFERENCES users(id),
   submitted_at timestamptz NOT NULL DEFAULT now(),
+  problem      text,                      -- first error it hit while playing
+  PRIMARY KEY (game_id, team_id, kind, version)
+);
+
+-- Change budget per (team, kind): `bank` nodes as of game time `at_ms`; more accrues from then on
+-- (config budgets: perMinute, up to cap).
+CREATE TABLE banks (
+  game_id  uuid NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  team_id  uuid NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  kind     text NOT NULL,
+  bank     double precision NOT NULL DEFAULT 0,
+  at_ms    bigint NOT NULL DEFAULT 0,
   PRIMARY KEY (game_id, team_id, kind)
 );
 
-CREATE TABLE rounds (
-  game_id      uuid NOT NULL REFERENCES games(id) ON DELETE CASCADE,
-  round_no     int  NOT NULL,
-  seed         bigint NOT NULL,
-  feeds        jsonb NOT NULL,            -- N×N ledger, participants order
-  nectar       jsonb NOT NULL,            -- N×N ledger, participants order
-  scores       jsonb NOT NULL,            -- per-team breakdown for this round alone
-  totals       jsonb NOT NULL,            -- per-team breakdown for all rounds so far (the game score)
-  started_at   timestamptz NOT NULL,
-  finished_at  timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (game_id, round_no)
+-- Everything that happens in the garden, one row per bee action, public as soon as it happens (only
+-- `log`, the bee's print output, stays with its team until a finished game is revealed).
+--   ask:   the bee asked challenge c; the flower answered r (null if it failed: see error)
+--   feed:  the bee fed; nectar says whether it was a clover
+--   leave: the bee moved on
+--   error: the bee broke (see error); the visit ends
+CREATE TABLE actions (
+  game_id        uuid NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  seq            bigint NOT NULL,         -- 1, 2, ... per game
+  at_ms          bigint NOT NULL,         -- game time
+  bee_team       uuid NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  visit          int  NOT NULL,           -- the bee's visit number (1, 2, ...)
+  patch_team     uuid NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  kind           text NOT NULL CHECK (kind IN ('clover', 'orchid')),
+  action         text NOT NULL CHECK (action IN ('ask', 'feed', 'leave', 'error')),
+  c              jsonb,                   -- ask: the challenge
+  r              jsonb,                   -- ask: the response
+  after          boolean NOT NULL DEFAULT false, -- ask: asked after feeding
+  nectar         boolean,                 -- feed: true at a clover
+  ms             real,                    -- ask: how long the flower took
+  error          text,
+  error_by       text CHECK (error_by IN ('bee', 'challenge', 'flower', 'engine')),
+  log            text,                    -- what the bee printed (private)
+  bee_version    int,
+  flower_version int,
+  PRIMARY KEY (game_id, seq)
 );
-
--- The exact programs that played each round.
-CREATE TABLE round_programs (
-  game_id      uuid NOT NULL REFERENCES games(id) ON DELETE CASCADE,
-  round_no     int  NOT NULL,
-  team_id      uuid NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
-  kind         text NOT NULL,
-  code         text NOT NULL,
-  nodes        int  NOT NULL,
-  distance     int,
-  carried_over boolean NOT NULL,
-  problem      text,                      -- first load/runtime error, shown to the owning team only
-  PRIMARY KEY (game_id, round_no, team_id, kind)
-);
-
--- One row per flower visit. Public: who visited whose patch, when, how many asks, feed + nectar.
--- Private: challenge/response values (bee's team, and the patch owner if flowerLogs), flower kind
--- (patch owner only), errors and bee print output (bee's team only).
-CREATE TABLE visits (
-  game_id      uuid NOT NULL REFERENCES games(id) ON DELETE CASCADE,
-  round_no     int  NOT NULL,
-  bee_team     uuid NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
-  seq          int  NOT NULL,             -- order within this bee's round
-  patch_team   uuid NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
-  kind         text NOT NULL CHECK (kind IN ('clover', 'orchid')),
-  turn_start   int  NOT NULL,
-  turn_end     int  NOT NULL,
-  action       text NOT NULL CHECK (action IN ('feed', 'leave', 'error')),
-  nectar       boolean,                   -- only when action = 'feed'
-  steps        jsonb NOT NULL,            -- [{c, r, challengeError?, flowerError?}]
-  bee_error    text,
-  bee_log      text,
-  note         text,
-  PRIMARY KEY (game_id, round_no, bee_team, seq)
-);
-CREATE INDEX visits_patch ON visits(game_id, round_no, patch_team);
+CREATE INDEX actions_time ON actions(game_id, at_ms);

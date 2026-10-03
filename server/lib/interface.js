@@ -1,7 +1,7 @@
 // What every team knows before writing a line: the function names, their arguments, and the game's
 // types. Deliberately no behaviour: no starter code, so there's no shared starting point to converge on.
 import { parseType } from "./types.js";
-import { limitsOf } from "./gameConfig.js";
+import { limitsOf, roundMs } from "./gameConfig.js";
 
 function describe(t) {
   switch (t.kind) {
@@ -57,11 +57,29 @@ function typeRules(cT, rT, { maxLen, maxNodes }) {
 }
 
 // How a flower runs, as comment lines under its signature.
-function flowerNotes(ts) {
-  const c = ts ? "//" : "#";
+function flowerNotes(ts, config) {
+  const c = ts ? "//" : "#", G = (k) => (ts ? `GAME.${k}` : `GAME["${k}"]`);
+  const { cosmos, orchid } = config.budgets;
   return `${c} Runs fresh for every question: nothing is kept between calls. ${ts ? "Math.random()" : "random"} is freshly seeded on every call\n` +
-    `${c} and the clock is available (${ts ? "Date.now()" : "import time"}). ${ts ? "GAME.ms" : 'GAME["ms"]'} is your compute budget per call in milliseconds;\n` +
-    `${c} the clock starts when your program starts, so stop with a margin to spare.`;
+    `${c} and the clock is available (${ts ? "Date.now()" : "import time"}). ${G("ms")} is your time limit per call in milliseconds:\n` +
+    `${c} ${cosmos.ms} for a cosmos, ${orchid.ms} for an orchid. The clock starts when your program starts, so stop with a margin\n` +
+    `${c} to spare: an answer that isn't done in time reaches the bee as ${ts ? "null" : "None"}. Every answer, however fast, reaches the\n` +
+    `${c} bee ${cosmos.ms} ms into the round, so it can't tell flowers apart by how long they take.`;
+}
+
+// How a bee runs.
+function beeNotes(ts, config) {
+  const c = ts ? "//" : "#", G = (k) => (ts ? `GAME.${k}` : `GAME["${k}"]`);
+  return `${c} Rounds of ${G("round_ms")} = ${roundMs(config)} ms: as each round starts, every bee's queued action runs (an ask, or a feed);\n` +
+    `${c} answers arrive ${config.budgets.cosmos.ms} ms in, and forage then has ${G("ms")} = ${config.budgets.bee.ms} ms to return the bee's next action,\n` +
+    `${c} queued for its next round. A bee with nothing queued as a round starts misses that round.\n` +
+    `${c} A late reply still counts, but the bee misses its next round and the visit ends; of late replies only\n` +
+    `${c} ["leave", challenge] is used (its challenge opens the next flower). After any other late reply, or any reply\n` +
+    `${c} that gives no next challenge (a plain "leave", a second feed, a bad challenge, an error), forage is called\n` +
+    `${c} again at once with seen = [] and fed = ${ts ? "false" : "False"}: return the first challenge for the next flower.\n` +
+    `${c} A call is stopped after 2 s.\n` +
+    `${c} Your bee keeps its variables from call to call for as long as this version of it plays. Submitting\n` +
+    `${c} a new bee (or a crash) starts it afresh. ${ts ? "Math.random()" : "random"} is freshly seeded when it starts.`;
 }
 
 export function programInterface(config) {
@@ -81,13 +99,25 @@ export function programInterface(config) {
     ].filter(Boolean).join("\n");
     return {
       types,
-      flower: `${aliases ? aliases + "\n" : ""}function flower(challenge: ${C}): ${R}\n${flowerNotes(true)}`,
-      bee: `${aliases ? aliases + "\n" : ""}function forage(seen: [${C}, ${R} | null][], turnsLeft: number, visit: { fed: boolean; nectar: boolean | null }): ["ask", ${C}] | "feed" | "leave"\nfunction tasted(seen: [${C}, ${R} | null][], nectar: boolean): void   // optional\n// let keep = …: whatever top-level keep holds when a round ends is saved (plain data)\n// MEMORY: read-only array of what keep held at the end of each earlier round (MEMORY[0] = end of round 1)`,
+      flower: `${aliases ? aliases + "\n" : ""}function flower(challenge: ${C}): ${R}\n${flowerNotes(true, config)}`,
+      bee: `${aliases ? aliases + "\n" : ""}function forage(seen: [${C}, ${R} | null][], visit: { fed: boolean; nectar: boolean | null; flowers: number }):\n` +
+        `  ["ask", ${C}] | "feed" | ["leave", ${C}] | "leave"\n` +
+        `// ["ask", c]: ask c here next round. "feed": once per visit, after asking; then sit out GAME.feed_cost rounds.\n` +
+        `// ["leave", c]: move on, and ask c first at the next flower next round. "leave": move on.\n` +
+        `// Each next flower is any flower in the garden (visit.flowers of them), picked at random: it may be the same one again.\n` +
+        `function tasted(seen: [${C}, ${R} | null][], nectar: boolean): void   // optional: after a feed, called just before forage\n${beeNotes(true, config)}`,
     };
   }
   return {
     types,
-    flower: `def flower(challenge):    # challenge: ${c}  ->  return a ${r}\n${flowerNotes(false)}`,
-    bee: `def forage(seen, turns_left, visit):   # seen: [[challenge, response], ...] at this flower (response None if it failed)\n    # visit = {"fed": bool, "nectar": bool or None}; return ["ask", challenge], "feed" (once per visit) or "leave"\ndef tasted(seen, nectar):        # optional: called after you feed; nectar is True or False\n# keep = …: whatever top-level keep holds when a round ends is saved (plain data)\n# MEMORY: read-only list of what keep held at the end of each earlier round (MEMORY[0] = end of round 1)`,
+    flower: `def flower(challenge):    # challenge: ${c}  ->  return a ${r}\n${flowerNotes(false, config)}`,
+    bee: `def forage(seen, visit):   # seen: [[challenge, response], ...] at this flower (response None if it failed)\n` +
+      `    # visit = {"fed": bool, "nectar": bool or None, "flowers": flowers in the garden}\n` +
+      `    # each next flower is any of visit["flowers"] in the garden, picked at random: it may be the same one again\n` +
+      `    # return ["ask", challenge]   ask it here next round\n` +
+      `    #     or "feed"               once per visit, after asking; then sit out GAME["feed_cost"] rounds\n` +
+      `    #     or ["leave", challenge] move on, and ask it first at the next flower next round\n` +
+      `    #     or "leave"              move on\n` +
+      `def tasted(seen, nectar):        # optional: after a feed, called just before forage; nectar is True or False\n${beeNotes(false, config)}`,
   };
 }

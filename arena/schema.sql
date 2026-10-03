@@ -1,14 +1,14 @@
--- Arena: LLM-driven populations playing Darwinian Beauty Contest through the HTTP API.
--- Lives in its own schema `arena` in the same database as the game. Idempotent: applied on every run.
--- Game data itself (rooms, games, rounds, visits) stays in the game's own tables; we keep ids/urls.
+-- Arena: LLM-driven teams playing continuous games of Darwinian Beauty Contest through the HTTP API.
+-- Lives in its own schema `arena` in the game's database (dbc_live). Idempotent: applied on every run.
+-- Game data itself (rooms, games, programs, actions) stays in the game's own tables; we keep ids/urls.
 
 CREATE SCHEMA IF NOT EXISTS arena;
 
--- One arena = a room + a sequence of games (generations) with an evolving population.
+-- One arena = a room + a sequence of games with a population of personas (evolving unless noEvolution).
 CREATE TABLE IF NOT EXISTS arena.arenas (
-  id            text PRIMARY KEY,               -- e.g. 'baseline'
+  id            text PRIMARY KEY,
   preset        text NOT NULL,
-  settings      jsonb NOT NULL,                 -- { config: game config, teams, generations, ... }
+  settings      jsonb NOT NULL,                 -- { config, minutesByGame, session, limits, teams, ... }
   owner_name    text NOT NULL,                  -- dev-login name of the room owner
   room_short_id text,
   room_url      text,
@@ -16,14 +16,14 @@ CREATE TABLE IF NOT EXISTS arena.arenas (
   created_at    timestamptz NOT NULL DEFAULT now()
 );
 
--- Team agents (centaur stand-ins). The persona prompt is wrapped with the standard arena frame.
+-- Team agents. The persona prompt is wrapped with the standard arena frame (lib/prompts.js).
 CREATE TABLE IF NOT EXISTS arena.personas (
   id              text PRIMARY KEY,             -- '<arena>/<slug>'
   arena_id        text NOT NULL REFERENCES arena.arenas(id),
   slug            text NOT NULL,
   name            text NOT NULL,
   team_name       text NOT NULL,
-  model           text NOT NULL,                -- fable | opus | sonnet | haiku
+  model           text NOT NULL,                -- opus | sonnet | haiku (never fable)
   archetype       text NOT NULL,
   is_kid          boolean NOT NULL,
   persona_prompt  text NOT NULL,
@@ -31,22 +31,26 @@ CREATE TABLE IF NOT EXISTS arena.personas (
   generation_born int NOT NULL DEFAULT 1,
   replaced        text,                         -- persona id whose slot this one took
   status          text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'retired')),
-  retired_after   int,                          -- generation after which it was retired
+  retired_after   int,
   retire_reason   text,
-  notebook        text NOT NULL DEFAULT '',     -- persistent notes, carried across rounds and games
+  notebook        text NOT NULL DEFAULT '',     -- persistent notes, carried across sessions and games
+  source          text,
   created_at      timestamptz NOT NULL DEFAULT now()
 );
 
--- One game per generation.
+-- One game per generation. stage: created -> lobby-done -> playing -> played -> interviewed -> judged -> done
 CREATE TABLE IF NOT EXISTS arena.games (
   id            serial PRIMARY KEY,
   arena_id      text NOT NULL REFERENCES arena.arenas(id),
   generation    int NOT NULL,
   game_short_id text,
   game_url      text,
+  game_uuid     uuid,
   config        jsonb,
-  stage         text NOT NULL DEFAULT 'created', -- created|playing|played|interviewed|judged|done
-  metrics       jsonb,                           -- game-level metrics (incl. collapse flags)
+  stage         text NOT NULL DEFAULT 'created',
+  paused_by     text,                            -- the runner paused the game (pause file, shutdown); it resumes it
+  metrics       jsonb,                           -- lib/metrics.js
+  contaminated  text,                            -- quarantined (outage...): excluded from analysis and selection
   started_at    timestamptz NOT NULL DEFAULT now(),
   finished_at   timestamptz,
   UNIQUE (arena_id, generation)
@@ -59,6 +63,7 @@ CREATE TABLE IF NOT EXISTS arena.entries (
   team_id      uuid,
   team_name    text,
   login_name   text,
+  sat_out      boolean NOT NULL DEFAULT false,  -- no valid programs when the game started
   fitness      double precision,
   fitness_rank int,
   allure       double precision,
@@ -66,35 +71,66 @@ CREATE TABLE IF NOT EXISTS arena.entries (
   explanation  text,                            -- the interview ("teach us your code")
   social       double precision,                -- mean judge score, 0..10 (never mixed into fitness)
   social_rank  int,
-  social_parts jsonb,                           -- {understanding, respect, novelty, team_up, newIdeas}
-  agent_errors int NOT NULL DEFAULT 0,          -- programs that never passed validation
+  social_parts jsonb,
   PRIMARY KEY (game_id, persona_id)
 );
 
--- Every team-agent call: prompt size, reply, what was checked/submitted.
-CREATE TABLE IF NOT EXISTS arena.agent_turns (
+-- Every tool-using session: the lobby one(s) and the ones while the game runs.
+CREATE TABLE IF NOT EXISTS arena.sessions (
+  id            serial PRIMARY KEY,
+  arena_id      text NOT NULL,
+  game_id       int NOT NULL,
+  persona_id    text NOT NULL,
+  no            int NOT NULL,                    -- 0 = lobby, 1.. = during the game
+  attempt       int NOT NULL DEFAULT 0,          -- lobby fix sessions: 1, 2, ...
+  phase         text NOT NULL,                   -- lobby | game
+  model         text,
+  started_at    timestamptz NOT NULL DEFAULT now(),
+  ended_at      timestamptz,
+  clock_start   bigint,                          -- game time (ms) when it started / ended
+  clock_end     bigint,
+  ended_by      text,                            -- done | killed:<reason> | error
+  cost_usd      double precision,
+  cost_estimated boolean NOT NULL DEFAULT false, -- killed before the CLI reported its cost: estimated from usage
+  turns         int,
+  subtype       text,
+  reply         text,
+  transcript    text,
+  prompt_chars  int,
+  violation     boolean NOT NULL DEFAULT false
+);
+CREATE INDEX IF NOT EXISTS sessions_game ON arena.sessions(game_id, persona_id);
+
+-- Every request a session made through its workspace tools (submit, check, try, status).
+CREATE TABLE IF NOT EXISTS arena.requests (
   id          serial PRIMARY KEY,
+  session_id  int,
   game_id     int NOT NULL,
   persona_id  text NOT NULL,
-  round_no    int NOT NULL,
-  attempt     int NOT NULL,
-  prompt_chars int,
-  reply       text,
-  parsed      jsonb,
-  checks      jsonb,
-  submitted   jsonb,
-  notes       text,
-  error       text,
-  cost_usd    double precision,
+  op          text NOT NULL,
+  kind        text,
+  code        text,                              -- submit/check/try: the code sent
+  ok          boolean,
+  refused     text,                              -- refused by the runner (fair play, game over, ...)
+  result      jsonb,                             -- what the tool got back (minus the code)
+  version     int,                               -- submit: the version created
+  cost        int,                               -- submit: change budget spent
+  clock_ms    bigint,                            -- game time of the request
   created_at  timestamptz NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS agent_turns_game ON arena.agent_turns(game_id, persona_id, round_no);
+CREATE INDEX IF NOT EXISTS requests_game ON arena.requests(game_id, persona_id);
 
-CREATE TABLE IF NOT EXISTS arena.round_metrics (
-  game_id   int NOT NULL,
-  round_no  int NOT NULL,
-  metrics   jsonb NOT NULL,
-  PRIMARY KEY (game_id, round_no)
+-- Fair-play audit findings.
+CREATE TABLE IF NOT EXISTS arena.violations (
+  id          serial PRIMARY KEY,
+  arena_id    text NOT NULL,
+  game_id     int,
+  persona_id  text NOT NULL,
+  session_id  int,
+  severity    text NOT NULL,                     -- violation | warning | false-positive
+  tool        text,
+  detail      text,
+  created_at  timestamptz NOT NULL DEFAULT now()
 );
 
 -- Teen judges (social evaluation) and their per-team scores.
@@ -114,8 +150,8 @@ CREATE TABLE IF NOT EXISTS arena.evaluations (
   respect       double precision,
   novelty       double precision,
   team_up       double precision,
-  summary       text,                            -- the judge's own-words summary of the code
-  tags          jsonb,                           -- [{tag, known, desc}]
+  summary       text,
+  tags          jsonb,
   comment       text,
   PRIMARY KEY (game_id, judge_id, persona_id)
 );
@@ -137,7 +173,7 @@ CREATE TABLE IF NOT EXISTS arena.idea_sightings (
   game_id     int NOT NULL,
   persona_id  text NOT NULL,
   judge_id    text NOT NULL,
-  new_in_game boolean NOT NULL,                  -- idea was not in the ledger before this game
+  new_in_game boolean NOT NULL,
   PRIMARY KEY (idea_id, game_id, persona_id, judge_id)
 );
 
@@ -160,72 +196,64 @@ CREATE TABLE IF NOT EXISTS arena.population_events (
   created_at  timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS arena.collapse_events (
-  id          serial PRIMARY KEY,
-  arena_id    text NOT NULL,
-  game_id     int,
-  generation  int,
-  round_no    int,
-  mode        text NOT NULL,
-  severity    double precision NOT NULL,         -- 0..1
-  evidence    jsonb,
-  created_at  timestamptz NOT NULL DEFAULT now()
-);
-
--- Cost ledger: one row per CLI call (including failed attempts).
+-- Cost ledger: one row per CLI call (including failed attempts and limit-held calls).
 CREATE TABLE IF NOT EXISTS arena.llm_calls (
   id            serial PRIMARY KEY,
   ts            timestamptz NOT NULL DEFAULT now(),
   model         text NOT NULL,
-  resolved      text,                            -- actual model id reported by the CLI
-  purpose       text NOT NULL,                   -- team | team-retry | interview | judge | breeder | other
+  resolved      text,
+  purpose       text NOT NULL,                   -- lobby | session | interview | judge | breeder | other
   arena_id      text,
   game_id       int,
   persona_id    text,
   cost_usd      double precision NOT NULL DEFAULT 0,
+  estimated     boolean NOT NULL DEFAULT false,  -- cost estimated from token usage (session killed before it reported)
   input_tokens  int,
   output_tokens int,
   cache_read    int,
   cache_write   int,
   duration_ms   int,
+  turns         int,
   ok            boolean NOT NULL,
   error         text
 );
 CREATE INDEX IF NOT EXISTS llm_calls_arena ON arena.llm_calls(arena_id);
 
--- Added after the no-starter-code change (idempotent).
-ALTER TABLE arena.entries ADD COLUMN IF NOT EXISTS sat_out boolean NOT NULL DEFAULT false;  -- no valid programs for round 1
--- primed: round-1 prompts showed the old shared starter code; post-primed: no starters, but the arena's
--- history (recaps, notebooks) began primed; unprimed: arena never saw starter code.
-ALTER TABLE arena.games ADD COLUMN IF NOT EXISTS condition text;
--- Games hit by an outage (e.g. the account session limit): excluded from metrics, leaderboards and selection.
-ALTER TABLE arena.games ADD COLUMN IF NOT EXISTS contaminated text;
--- v2 phase: optional idea card given to a subset of teams (A = clover costly/keyed signals, B = bee detectors +
--- rival-imitating orchids), and where a seeded persona came from.
-ALTER TABLE arena.personas ADD COLUMN IF NOT EXISTS idea_card text;
-ALTER TABLE arena.personas ADD COLUMN IF NOT EXISTS source text;
-ALTER TABLE arena.llm_calls ADD COLUMN IF NOT EXISTS turns int;     -- agent turns in a tool-using session
--- Fair-play audit of tool-using sessions (v2 phase).
-CREATE TABLE IF NOT EXISTS arena.violations (
+-- Scaffolds: a team's own long-running program outside the engine (lib/scaffold.js), started from its workspace,
+-- supervised by the runner until the game ends. One row per start (and per restart after a crash), with the audited source.
+CREATE TABLE IF NOT EXISTS arena.scaffolds (
   id          serial PRIMARY KEY,
   arena_id    text NOT NULL,
-  game_id     int,
-  persona_id  text NOT NULL,
-  round_no    int,
-  attempt     int,
-  severity    text NOT NULL,                     -- violation (disqualifies the round) | warning
-  tool        text,
-  detail      text,
-  created_at  timestamptz NOT NULL DEFAULT now()
-);
--- Cohort experiment: which catalogue ideas each team's code/notes show, per round (keyword and haiku classifier).
-CREATE TABLE IF NOT EXISTS arena.adoption (
   game_id     int NOT NULL,
-  round_no    int NOT NULL,
   persona_id  text NOT NULL,
-  method      text NOT NULL,                     -- keyword | llm
-  ideas       jsonb,                             -- keyword: {code: [ids], notes: [ids]}; llm: {clover, orchid, bee}
-  detail      text,
-  PRIMARY KEY (game_id, round_no, persona_id, method)
+  session_id  int,                               -- the session that asked for it (null: a restart by the runner)
+  action      text NOT NULL,                     -- start | restart | crash-restart | resume
+  file        text NOT NULL,
+  source      text,                              -- the audited code: the entry file and the workspace modules it imports
+  audit       jsonb,                             -- findings of the static audit
+  status      text NOT NULL,                     -- running | refused | finished | crashed | stopped
+  pid         int,
+  clock_start bigint,
+  clock_end   bigint,
+  exit_code   int,
+  cpu_seconds double precision,
+  throttled_ms bigint,
+  started_at  timestamptz NOT NULL DEFAULT now(),
+  ended_at    timestamptz
 );
-ALTER TABLE arena.games ADD COLUMN IF NOT EXISTS python boolean;   -- team sessions could run python3 in this game
+CREATE INDEX IF NOT EXISTS scaffolds_game ON arena.scaffolds(game_id, persona_id);
+-- Who made a request: a session (an agent's tool call), the team's scaffold, or the runner itself (lobby fallback).
+ALTER TABLE arena.requests ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'session';
+ALTER TABLE arena.requests ADD COLUMN IF NOT EXISTS scaffold_id int;
+ALTER TABLE arena.violations ADD COLUMN IF NOT EXISTS scaffold_id int;
+-- The rewarding flower was renamed from clover to cosmos (server/db/migrations/004_cosmos.sql). Rename the kind wherever
+-- the arena stored it as data: requests, the status budgets they got back, game configs and metrics (kind values,
+-- "<team>|<kind>" keys and the clover-named fields). Free text (transcripts, explanations, notebooks, ideas) keeps its words.
+UPDATE arena.requests SET kind = 'cosmos' WHERE kind = 'clover';
+UPDATE arena.requests SET result = jsonb_set(result #- '{budgets,clover}', '{budgets,cosmos}', result -> 'budgets' -> 'clover')
+ WHERE jsonb_typeof(result -> 'budgets') = 'object' AND result -> 'budgets' ? 'clover';
+UPDATE arena.games SET config = jsonb_set(config #- '{budgets,clover}', '{budgets,cosmos}', config -> 'budgets' -> 'clover')
+ WHERE jsonb_typeof(config -> 'budgets') = 'object' AND config -> 'budgets' ? 'clover';
+UPDATE arena.games
+   SET metrics = replace(replace(replace(metrics::text, '"clover', '"cosmos'), '|clover"', '|cosmos"'), '"rivalClover', '"rivalCosmos')::jsonb
+ WHERE metrics::text ~ '"clover|\|clover"|"rivalClover';

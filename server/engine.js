@@ -1,61 +1,83 @@
-// The round simulator. Pure with respect to the database: programs + config + seed (+ bee memory) in,
-// visits out.
+// The garden: one continuous stream of bee actions. Pure with respect to the database: programs go in
+// (and can be replaced at any moment), actions come out.
 //
-// Every team owns a patch of two flowers (clover = rewarding, orchid = deceptive) and one bee.
-// Each bee gets turnsPerFlower × (number of flowers) turns, and is shown flowers drawn from a
-// shuffled deck of all 2N flowers (every flower comes up once before any repeats). At each flower it
-// may ask challenges (1 turn each), feed once (feedCost turns; nectar only at clovers), keep asking
-// after feeding, and leave (free). After a feed, anything other than an ask ends the visit. Bees run
-// independently and in parallel. Flowers are stateless: nothing survives from one call to the next.
-// They may use fresh randomness and the clock, so the same challenge can get a different answer every
-// time, and every ask runs the flower again. At the end of the round each bee's top-level data is
-// snapshotted; later rounds see those snapshots, read-only, as MEMORY.
+// Every team owns a patch of two flowers (cosmos = rewarding, orchid = deceptive) and one bee. Every new
+// visit is at a flower picked uniformly at random among all the flowers in the garden, independently of
+// the last (no laps: a bee can meet the same flower twice in a row). At a flower a bee asks challenges,
+// may feed once (nectar only at cosmos flowers), and leaves.
+//
+// Time runs in rounds, in lockstep: a round is one action slot for every bee and lasts exactly
+// roundMs (cosmos.ms + bee.ms = 150 + 50 = 200 ms) of game time; game time is rounds × roundMs. A live
+// game paces rounds to real time (each lasts at least roundMs of wall time, longer if the machine is
+// short of cores: game time stays virtual, so that's still fair).
+//   0 ms   A bee between visits arrives at its next flower (a public `arrive`). Each bee's QUEUED action
+//          runs: an ask goes to its flower, or the bee feeds. A bee with nothing queued as the round
+//          starts loses the slot. Queued challenges are secret until asked.
+//   150 ms The flowers' answers are delivered (null if a flower wasn't done within its own time limit:
+//          a cosmos gets the whole 150 ms, an orchid its own, shorter limit), so when an answer arrives
+//          says nothing about which flower gave it. Each bee that acted is asked for its next action:
+//          forage(seen, visit), after a feed tasted(seen, nectar) first, in the same call.
+//   200 ms Its reply is due, 50 ms after the call started on its own core. The reply is queued for the
+//          bee's next slot: ["ask", c] at the same flower, "feed" (then the bee sits out feedCost
+//          rounds), or ["leave", c] (c is asked first at the next flower). A reply that gives no next
+//          challenge (a plain "leave", a second feed, an invalid challenge, an error) ends the visit,
+//          and the engine asks again at once, outside the round flow: forage([], {fed: false, ...}),
+//          the bee's first challenge at its next flower. It plays as soon as one is queued in time.
+// A late reply doesn't stop the round: at the deadline the bee loses its next slot and its visit ends,
+// but the engine keeps listening (the call runs on, up to a hard limit of 2 s). If the late reply is
+// ["leave", c], c is the first ask at the next flower; anything else is asked again, as above.
+//
+// Flowers are stateless: every ask runs the flower afresh, with fresh randomness and the clock, so the
+// same challenge can get a different answer every time. A bee keeps its state for as long as that
+// version of it plays; new code (or a crash) starts it afresh.
+// Visits: as a round starts, a bee that is between visits (and loaded, and not feeding) is assigned its
+// next flower, recorded at once as a public `arrive`; then its queued challenge, if any, is asked there.
+// A visit keeps the program versions in effect when it started, the bee's and the flower's, until it
+// ends: a team may replace any of its programs at any time, but a change reaches a bee only at its next
+// visit. A new flower version answers visits that start after it went live (the old version keeps
+// answering the visits already at it); a new bee takes over when its visit ends (or at once, if it is
+// between visits), dropping whatever the old bee had queued.
 // Every program runs in its minified form (vendor/measure.js): the same text its size is measured on,
 // so names, which minifying shortens, can't hide data.
 import os from "node:os";
 import { ProgramProcess } from "./runners/proc.js";
 import { checkValue, parseType } from "./lib/types.js";
 import { zeroLedger } from "./lib/scoring.js";
-import { limitsOf, turnsFor } from "./lib/gameConfig.js";
+import { limitsOf, roundMs } from "./lib/gameConfig.js";
 import { size } from "./lib/measure.js";
 
+export const KINDS = ["cosmos", "orchid", "bee"];
+export const FLOWERS = ["cosmos", "orchid"];
+
 /** The text the game actually runs: the program minified. */
-const runnable = async (language, code) => (await size(language, code)).minified;
+export const runnable = async (language, code) => (await size(language, code)).minified;
 
-export const KINDS = ["clover", "orchid", "bee"];
-
-export function mulberry32(seed) {
-  let s = seed >>> 0;
-  return () => {
-    s = (s + 0x6d2b79f5) | 0;
-    let t = Math.imul(s ^ (s >>> 15), 1 | s);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-/** What programs may read as GAME, plus "ms": each program's own compute budget per call.
- *  (Flowers can't tell which round it is; bees can, from MEMORY.) */
-export function gameInfo(config, nTeams) {
+/** What programs may read as GAME, plus "ms": each program's own time limit per call. */
+export function gameInfo(config) {
   const { maxLen, maxNodes } = limitsOf(config);
   return {
-    turns: turnsFor(config, nTeams), feed_cost: config.feedCost, challenge_type: config.challengeType,
-    response_type: config.responseType, max_len: maxLen, max_nodes: maxNodes, flowers: 2 * nTeams,
+    feed_cost: config.feedCost, challenge_type: config.challengeType, response_type: config.responseType,
+    max_len: maxLen, max_nodes: maxNodes, round_ms: roundMs(config),
   };
 }
 
 // Responses can be big trees and graphs; this caps the JSON text of any single value.
 const MAX_CHARS = 262144;
-
-/** Setup for a flower process. */
-const flowerSetup = (config, kind, code, game) => ({
-  code, ms: config.budgets[kind].ms, game: { ...game, ms: config.budgets[kind].ms }, maxChars: MAX_CHARS,
+const MAX_LOG = 2000; // characters of a bee's print output kept per action
+// A bee's 50 ms is a deadline, not an interruption: the call runs on, and only this hard limit stops it.
+const BEE_LIMIT_MS = 2000;
+const flowerSetup = (config, kind, code) => ({
+  code, ms: config.budgets[kind].ms, game: { ...gameInfo(config), ms: config.budgets[kind].ms }, maxChars: MAX_CHARS,
 });
-const MAX_LOG = 4000;
+const beeSetup = (config, code) => ({
+  code, ms: config.budgets.bee.ms, limitMs: Math.max(BEE_LIMIT_MS, 2 * config.budgets.bee.ms),
+  game: { ...gameInfo(config), ms: config.budgets.bee.ms }, maxChars: MAX_CHARS,
+});
 
-// Compute budgets are a costly signal (clovers get 3× an orchid's), so timing must be fair: never run
-// more programs at once than there are CPU cores, across every round this process is simulating.
-// Each program then has a core to itself, and its wall-clock time limit is effectively a CPU limit.
+// Time limits are a costly signal (a cosmos gets more than an orchid), so timing must be fair: never
+// run more programs at once than there are CPU cores, across every game this process runs. Each program
+// then has a core to itself, and its wall-clock time limit is effectively a CPU limit. A late bee keeps
+// its core until it replies, which only stretches the round in wall time.
 const CPU_SLOTS = Math.max(1, Number(process.env.CPU_SLOTS) || os.availableParallelism?.() || os.cpus().length);
 let cpuBusy = 0;
 const cpuWaiters = [];
@@ -70,196 +92,555 @@ async function withCpu(fn) {
   }
 }
 
-// A flower is stateless, so any of a few identical processes can answer for it: popular clovers that
-// many bees question at once don't queue behind one process.
+// A flower is stateless, so any of a few identical processes can answer for it: a popular flower that
+// several bees question at once doesn't queue behind one process. A process that dies (it crashed, or
+// stopped responding and proc.js killed it) is replaced by a fresh one running the same version's code
+// when its slot is next picked. Respawns are spaced out: at most one per slot per RESPAWN_MS, twice as
+// long after each respawn that dies before answering (up to RESPAWN_MAX_MS), so a flower that always hangs
+// can't stall round after round. Meanwhile its asks go to a live process if it has one, else get the dead
+// one's error at once.
 const FLOWER_POOL = Math.max(1, Number(process.env.FLOWER_POOL) || 2);
+const RESPAWN_MS = 1000;
+const RESPAWN_MAX_MS = 60000;
 class FlowerPool {
   constructor(language, setup) {
+    this.language = language;
+    this.setup = setup;
+    this.users = 0;       // visits pinned to this version
+    this.retired = false; // replaced: it goes once no visit uses it
+    this.killed = false;  // no respawns once killed
     this.procs = Array.from({ length: FLOWER_POOL }, () => new ProgramProcess(language, "flower", setup));
     this.pending = this.procs.map(() => 0);
+    this.respawns = this.procs.map(() => 0);  // per slot: respawns since it last answered
+    this.respawnAt = this.procs.map(() => 0); // per slot: no respawn before this performance.now()
     this.ready = Promise.all(this.procs.map((p) => p.ready)).then((r) => r[0]);
   }
+  /** { res, ms }: the reply, and how long the flower ran (not counting the wait for a free core). */
   async call(obj) {
+    // The least busy slot, passing over dead ones that can't respawn yet.
+    const now = performance.now();
+    const load = (j) => (this.procs[j].dead && now < this.respawnAt[j] ? Infinity : this.pending[j]);
     let i = 0;
-    for (let j = 1; j < this.procs.length; j++) if (this.pending[j] < this.pending[i]) i = j;
+    for (let j = 1; j < this.procs.length; j++) if (load(j) < load(i)) i = j;
     this.pending[i]++;
     try {
-      return await withCpu(() => this.procs[i].call(obj));
+      return await withCpu(async () => {
+        const proc = this.#live(i);
+        await proc.ready; // a fresh process starts up on this core, before the flower's time starts
+        const t0 = performance.now();
+        const res = await proc.call(obj);
+        if (!res.dead) this.respawns[i] = 0;
+        return { res, ms: performance.now() - t0 };
+      });
     } finally {
       this.pending[i]--;
     }
   }
-  kill() { for (const p of this.procs) p.kill(); }
+  /** Slot i's process: a fresh one in place of a dead one, unless the slot must wait to respawn. */
+  #live(i) {
+    const old = this.procs[i];
+    if (!old.dead || this.killed || performance.now() < this.respawnAt[i]) return old;
+    old.kill(); // gone already, unless it died some other way
+    this.respawnAt[i] = performance.now() + Math.min(RESPAWN_MAX_MS, RESPAWN_MS * 2 ** this.respawns[i]);
+    this.respawns[i]++;
+    return (this.procs[i] = new ProgramProcess(this.language, "flower", this.setup));
+  }
+  kill() {
+    this.killed = true;
+    for (const p of this.procs) p.kill();
+  }
 }
 
-/**
- * teams: [{ id, programs: { clover, orchid, bee }, memory?: (string|null)[] }] in a stable order.
- *   memory[k] is the bee's snapshot from round k+1 (null when nothing was kept).
- * Returns { visits, feeds, nectar, problems, memories, turns }, ledgers indexed like `teams`.
- *   memories[i] = { snapshot: string|null, bytes, note } — what this round leaves for the next.
- */
-export async function simulateRound({ config, teams, seed }) {
-  const n = teams.length;
-  const cType = parseType(config.challengeType);
-  const rType = parseType(config.responseType);
-  const limits = limitsOf(config);
-  const game = gameInfo(config, n);
-  const TURNS = game.turns;
-  const memoryBytes = config.beeMemoryKb * 1024;
-  const flowers = await Promise.all(teams.flatMap((t, ti) => ["clover", "orchid"].map(async (kind) =>
-    ({ team: ti, kind, code: await runnable(config.language, t.programs[kind]) }))));
-  const beeCode = await Promise.all(teams.map((t) => runnable(config.language, t.programs.bee)));
-  const killers = [];
-  const problems = teams.map(() => ({ clover: null, orchid: null, bee: null }));
-  const memories = teams.map(() => ({ snapshot: null, bytes: 0, note: null }));
+const sleep = (ms) => new Promise((r) => setTimeout(r, Math.max(0, ms)));
+/** Wait until performance.now() reaches t (timers have whole-millisecond resolution and can fire early). */
+async function until(t) {
+  for (let left = t - performance.now(); left > 0; left = t - performance.now()) await sleep(Math.ceil(left));
+}
+const LATE = Symbol("late");
+/** `done`, or LATE if it hasn't settled `ms` after `from` (a performance.now() time). */
+function byDeadline(done, from, ms) {
+  let timer;
+  const late = new Promise((r) => { timer = setTimeout(() => r(LATE), Math.max(0, from + ms - performance.now())); });
+  return Promise.race([done, late]).finally(() => clearTimeout(timer));
+}
+// Replies handled outside the round flow must never become unhandled rejections (they'd take the server down).
+const logged = (p) => p.catch((e) => console.error("garden:", e));
+const isPair = (a, verb) => Array.isArray(a) && a.length === 2 && a[0] === verb;
+const shapeError = (a) => `forage must return ["ask", challenge], "feed", ["leave", challenge] or "leave" (got ${JSON.stringify(a)?.slice(0, 60)})`;
+const validShape = (a) => isPair(a, "ask") || isPair(a, "leave") || a === "feed" || a === "leave";
+const FRESH = 0; // a bee runner's `seen` is empty, ready for the next flower (visits are numbered from 1)
 
-  try {
-    for (const f of flowers) {
-      f.pool = new FlowerPool(config.language, flowerSetup(config, f.kind, f.code, game));
-      f.times = [];        // milliseconds per answered call: do clovers spend their compute as a signal?
-      f.firstError = null;
-      killers.push(f.pool);
-    }
-    const bees = teams.map((t, ti) => {
-      const proc = new ProgramProcess(config.language, "bee", {
-        code: beeCode[ti], ms: config.budgets.bee.ms, seed: (seed + 7919 * (ti + 1)) >>> 0, game: { ...game, ms: config.budgets.bee.ms },
-        maxChars: MAX_CHARS, memory: t.memory || [],
-      });
-      killers.push(proc);
-      return proc;
-    });
-    const loads = await Promise.all([...flowers.map((f) => f.pool.ready), ...bees.map((b) => b.ready)]);
-    flowers.forEach((f, i) => { if (!loads[i].ok) problems[f.team][f.kind] = loads[i].e; });
-    bees.forEach((_, ti) => { const r = loads[flowers.length + ti]; if (!r.ok) problems[ti].bee = r.e; });
-
-    function ask(flower, c) {
-      const t0 = performance.now();
-      return flower.pool.call({ c }).then((res) => {
-        flower.times.push(performance.now() - t0);
-        const bad = res.e || checkValue(rType, res.v, limits, "response");
-        if (bad) { flower.firstError ??= bad; return { r: null, flowerError: bad }; }
-        return { r: res.v };
-      });
-    }
-
-    const runBee = async (ti) => {
-      const bee = bees[ti];
-      const callBee = (obj) => withCpu(() => bee.call(obj));
-      const rand = mulberry32((seed ^ Math.imul(ti + 1, 2654435761)) >>> 0);
-      let deck = [];
-      const draw = () => {
-        if (!deck.length) {
-          deck = flowers.map((_, i) => i);
-          for (let i = deck.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [deck[i], deck[j]] = [deck[j], deck[i]]; }
-        }
-        return deck.pop();
-      };
-      const visits = [];
-      let turns = TURNS, logLen = 0;
-      const note = (visit, text) => {
-        if (!text || logLen >= MAX_LOG) return;
-        const t = text.slice(0, MAX_LOG - logLen);
-        logLen += t.length;
-        visit.beeLog = (visit.beeLog || "") + t;
-      };
-      if (problems[ti].bee) return visits;
-      while (turns > 0 && !bee.dead) {
-        const flower = flowers[draw()];
-        const visit = { bee: ti, patch: flower.team, kind: flower.kind, start: TURNS - turns, steps: [], action: null, nectar: null };
-        let fed = false, step = null, first = true;
-        for (;;) {
-          const res = await callBee({ op: "forage", new: first, step, turns, visit: { fed, nectar: visit.nectar } });
-          first = false;
-          step = null;
-          note(visit, res.out);
-          let action = res.a, err = res.e || null;
-          if (!err) {
-            if (Array.isArray(action) && action.length === 2 && action[0] === "ask") action = "ask";
-            else if (action !== "feed" && action !== "leave") err = `forage must return ["ask", challenge], "feed" or "leave" (got ${JSON.stringify(res.a)?.slice(0, 60)})`;
-          }
-          if (err) { // any mistake costs a turn and ends the visit, so a broken bee always runs out
-            turns -= 1;
-            if (!fed) visit.action = "error";
-            visit.beeError = err.slice(0, 300);
-            break;
-          }
-          if (action === "ask") {
-            turns -= 1;
-            const c = res.a[1];
-            const bad = checkValue(cType, c, limits, "challenge");
-            const s = bad ? { c, r: null, challengeError: bad } : { c, ...(await ask(flower, c)) };
-            if (fed) s.after = true; // asked after feeding
-            visit.steps.push(s);
-            step = [c, s.r];
-            if (turns <= 0) { if (!fed) visit.action = "leave"; break; }
-            continue;
-          }
-          if (action === "feed" && fed) break; // one feed per visit: after feeding, anything but an ask moves on
-          if (action === "feed") {
-            if (!visit.steps.length) { turns -= 1; visit.action = "error"; visit.beeError = "must ask at least once before feeding"; break; }
-            if (turns < config.feedCost) { visit.action = "leave"; visit.note = "not enough turns left to feed"; break; }
-            turns -= config.feedCost;
-            fed = true;
-            visit.action = "feed";
-            visit.nectar = flower.kind === "clover";
-            const t = await callBee({ op: "tasted", nectar: visit.nectar });
-            note(visit, t.out);
-            if (t.e) visit.beeError = ("tasted: " + t.e).slice(0, 300);
-            if (turns <= 0) break;
-            continue; // it may keep asking this flower, or leave
-          }
-          // leave: free once you've looked; a glance with no questions still costs a turn
-          if (!visit.steps.length) turns -= 1;
-          if (!fed) visit.action = "leave";
-          break;
-        }
-        visit.end = TURNS - turns;
-        visits.push(visit);
-      }
-      if (bee.dead && !problems[ti].bee) problems[ti].bee = bee.dead;
-      if (!problems[ti].bee) problems[ti].bee = visits.find((v) => v.beeError)?.beeError ?? null;
-      if (memoryBytes > 0 && !bee.dead) {
-        const snap = await withCpu(() => bee.call({ op: "snapshot", maxBytes: memoryBytes }, 10000));
-        if (snap.e) memories[ti].note = "memory not saved: " + snap.e;
-        else memories[ti] = { snapshot: snap.snap ?? null, bytes: snap.snap ? Buffer.byteLength(snap.snap) : 0, note: snap.note ?? null };
-      } else if (bee.dead) {
-        memories[ti].note = "the bee stopped responding, so nothing was kept this round";
-      }
-      return visits;
-    };
-
-    const perBee = await Promise.all(teams.map((_, ti) => runBee(ti)));
-    const feeds = zeroLedger(n), nectar = zeroLedger(n);
-    const visits = [];
-    perBee.forEach((vs, ti) => vs.forEach((v, k) => {
-      visits.push({ ...v, seq: k });
-      if (v.action === "feed") { feeds[ti][v.patch]++; if (v.nectar) nectar[ti][v.patch]++; }
+export class Garden {
+  /**
+   * teams: number of teams (ledger rows/columns are team indices).
+   * round: rounds already played; clockMs: the game time they took (round × roundMs for a game this engine
+   * started). endMs: game time at which run() stops (default config.minutes). maxRounds: stop after this
+   * many rounds instead (for trying a bee). lastSeq: the last action number already used. ledgers:
+   * { feeds, nectar } so far. paced: rounds last at least roundMs of wall time (false: back to back, for
+   * tests and the "try" tool).
+   */
+  constructor({ config, teams, clockMs = 0, round = 0, endMs = config.minutes * 60000, maxRounds = Infinity, lastSeq = 0, ledgers = null, paced = true }) {
+    this.config = config;
+    this.n = teams;
+    this.cType = parseType(config.challengeType);
+    this.rType = parseType(config.responseType);
+    this.limits = limitsOf(config);
+    this.roundMs = roundMs(config);
+    this.windowMs = config.budgets.cosmos.ms; // the flower window: answers are delivered at its end
+    this.beeMs = config.budgets.bee.ms;       // the bees' decision window
+    this.paced = paced;
+    this.endMs = endMs;
+    this.maxRounds = maxRounds;
+    this.rounds = 0;                  // rounds run by this garden
+    this.round = round;               // the game's rounds so far, counting the one in progress
+    this.roundBase = round;
+    this.clockBase = clockMs;
+    this.seq = lastSeq;
+    this.flowers = [];                // { team, kind, version, pool }
+    this.bees = Array.from({ length: teams }, (_, ti) => ({
+      ti, version: null, code: null, pending: null, proc: null, gen: 0, broken: false, loading: false,
+      sitOut: 0, visits: 0,
+      visit: null,       // { slot, pool, version (the flower's, pinned at arrival), no, asks, fed, nectar }
+      queued: null,      // the action for the bee's next slot: { act: "ask", c, beeMs, log } | { act: "feed", beeMs, log }
+      busy: false,       // a call is in flight (or the bee is acting this round): no other request goes to it
+      asking: null,      // a request outside the round flow (loading, a first challenge): { inTime }
+      askedRound: -1,    // the round of its latest request for a first challenge (one new one a round)
+      seen: FRESH,       // the visit whose steps the runner's `seen` holds
+      log: "",           // printed output not yet attached to an action
     }));
-    // Flower runtime errors (first one per flower) are reported privately to the owner.
-    for (const f of flowers) if (!problems[f.team][f.kind] && f.firstError) problems[f.team][f.kind] = f.firstError;
-    // Compute used per flower (wall ms per call, including ~1-3 ms of process overhead).
-    const compute = teams.map(() => ({ clover: null, orchid: null }));
-    for (const f of flowers) {
-      if (!f.times.length) continue;
-      const sorted = [...f.times].sort((a, b) => a - b);
-      compute[f.team][f.kind] = {
-        calls: sorted.length,
-        meanMs: +(sorted.reduce((a, b) => a + b, 0) / sorted.length).toFixed(1),
-        p90Ms: +sorted[Math.floor(0.9 * (sorted.length - 1))].toFixed(1),
-        budgetMs: config.budgets[f.kind].ms,
-      };
+    this.feeds = ledgers?.feeds ?? zeroLedger(teams);
+    this.nectar = ledgers?.nectar ?? zeroLedger(teams);
+    this.out = [];                    // actions not yet drained
+    this.problems = [];               // { team, kind, version, error }: the first error of each program version
+    this.seenProblem = new Set();
+    this.stopped = false;
+    this.halt = new Promise((resolve) => { this.halted = resolve; }); // settles on stop(): pacing waits end early
+    this.closed = false;
+    this.paused = false;
+    this.gate = null;
+    this.retiring = new Set();        // replaced flower pools still answering visits pinned to them
+    this.onArrive = null;             // called once a round's arrivals are recorded (live games flush them at once)
+  }
+
+  /** Game time: rounds × roundMs (the round in progress counts in full). It stands still between rounds. */
+  clockMs() {
+    return this.clockBase + (this.round - this.roundBase) * this.roundMs;
+  }
+
+  /** Game time at which round r starts. */
+  #startOf(r) {
+    return this.clockBase + (r - 1 - this.roundBase) * this.roundMs;
+  }
+
+  /** Put a program in play (or replace one). code is the source; the garden runs it minified. */
+  async setProgram(ti, kind, code, version) {
+    const minified = await runnable(this.config.language, code);
+    if (kind === "bee") {
+      // It takes over when the bee's visit ends; a bee between visits (or not started yet) at once.
+      const b = this.bees[ti];
+      b.pending = { code: minified, version };
+      if (this.running && !this.closed && !b.visit) this.#swapIn(b);
+      return;
     }
-    return { visits, feeds, nectar, problems, memories, compute, turns: TURNS };
-  } finally {
-    for (const k of killers) k.kill();
+    const pool = new FlowerPool(this.config.language, flowerSetup(this.config, kind, minified));
+    pool.ready.then((r) => { if (!r.ok) this.#problem(ti, kind, version, r.e); });
+    let slot = this.flowers.find((f) => f.team === ti && f.kind === kind);
+    if (!slot) this.flowers.push((slot = { team: ti, kind }));
+    else this.#retire(slot.pool);
+    Object.assign(slot, { version, pool }); // for visits that start from now on
+  }
+
+  /** Pause after the round in progress (the clock stands still until resume). */
+  pause() {
+    this.paused = true;
+  }
+
+  resume() {
+    if (!this.paused) return;
+    this.paused = false;
+    this.gate?.();
+  }
+
+  /** Stop the loop and every program (the round in progress finishes its asks, without waiting out its time). */
+  async stop() {
+    this.stopped = true;
+    this.halted();
+    this.gate?.();
+    await this.running;
+  }
+
+  /** Runs until the game clock reaches endMs (or maxRounds, or stop()). */
+  run() {
+    this.running ??= this.#loop().finally(() => this.#close());
+    return this.running;
+  }
+
+  /** Everything new since the last drain: actions, program problems, the clock and the ledgers. */
+  drain() {
+    return { actions: this.out.splice(0), problems: this.problems.splice(0), clockMs: Math.round(this.clockMs()), round: this.round, lastSeq: this.seq, feeds: this.feeds, nectar: this.nectar };
+  }
+
+  async #loop() {
+    while (!this.stopped) {
+      if (this.paused) { await new Promise((resolve) => { this.gate = resolve; }); this.gate = null; continue; }
+      if (this.clockMs() >= this.endMs || this.rounds >= this.maxRounds) break;
+      if (!this.flowers.length || !this.bees.some((b) => b.pending || b.proc)) { // nobody can play yet
+        this.rounds++;
+        await sleep(100);
+        continue;
+      }
+      await this.#round();
+    }
+  }
+
+  async #round() {
+    const t0 = performance.now();
+    this.rounds++;
+    const r = ++this.round;
+    const start = this.#startOf(r);
+    // The round boundary: new bees take over, crashed ones start afresh, idle ones are asked again.
+    for (const b of this.bees) this.#boundary(b, start);
+    if (!this.paced) await this.#settle();
+    // Arrivals and slots. Feeding bees sit out. A bee between visits is assigned its next flower, and the
+    // arrival is published at once; then a bee acts only if an action is queued as the round starts.
+    const acting = [];
+    let arrived = false;
+    for (const b of this.bees) {
+      if (!b.proc || b.broken || b.loading) continue;
+      if (b.sitOut > 0) { b.sitOut--; continue; }
+      if (!b.visit) arrived = this.#arrive(b, start) || arrived;
+      if (b.queued && !b.busy && b.visit) {
+        const q = b.queued;
+        b.queued = null;
+        b.busy = true;
+        acting.push({ b, q, gen: b.gen });
+      }
+    }
+    if (arrived) this.onArrive?.();
+    // The flower window: every ask goes to its flower at once.
+    const steps = await Promise.all(acting.map((s) => this.#act(s)));
+    for (const s of steps) if (s.rec) this.#record(s.b, s.v, s.rec, start);
+    if (this.paced) await Promise.race([until(t0 + this.windowMs), this.halt]);
+    // The decision window: answers are delivered and every bee that acted decides its next action.
+    const decided = await Promise.all(steps.map((s) => this.#decide(s)));
+    for (const d of decided) if (d) this.#record(d.b, d.v, d.rec, start + this.windowMs);
+    if (this.paced) await Promise.race([until(t0 + this.roundMs), this.halt]);
+  }
+
+  #close() {
+    this.closed = true;
+    for (const f of this.flowers) f.pool.kill();
+    for (const b of this.bees) b.proc?.kill();
+    for (const p of this.retiring) p.kill();
+  }
+
+  /** A replaced flower version goes once no visit is pinned to it. */
+  #retire(pool) {
+    pool.retired = true;
+    this.retiring.add(pool);
+    this.#reap(pool);
+  }
+
+  #reap(pool) {
+    if (pool.retired && pool.users <= 0) {
+      pool.kill();
+      this.retiring.delete(pool);
+    }
+  }
+
+  /** Assign a bee between visits its next flower, pinning the flower's version, and publish the arrival. */
+  #arrive(b, start) {
+    const slot = this.#draw();
+    if (!slot) return false;
+    slot.pool.users++;
+    b.visit = { slot, pool: slot.pool, version: slot.version, no: ++b.visits, asks: 0, fed: false, nectar: null };
+    this.#record(b, b.visit, { action: "arrive" }, start);
+    return true;
+  }
+
+  #endVisit(b) {
+    const v = b.visit;
+    if (!v) return;
+    b.visit = null;
+    v.pool.users--;
+    this.#reap(v.pool);
+  }
+
+  /** New code for a bee between visits takes over now: the old bee's queued action goes with it. */
+  #swapIn(b) {
+    const { code, version } = b.pending;
+    b.pending = null;
+    this.#startBee(b, code, version, null);
+  }
+
+  #problem(team, kind, version, error) {
+    const key = `${team}:${kind}:${version}`;
+    if (this.seenProblem.has(key)) return;
+    this.seenProblem.add(key);
+    this.problems.push({ team, kind, version, error: String(error).slice(0, 300) });
+  }
+
+  #record(b, v, fields, atMs) {
+    this.out.push({
+      seq: ++this.seq, atMs: Math.round(atMs), round: this.round, bee: b.ti, visit: v.no, patch: v.slot.team, kind: v.slot.kind,
+      beeVersion: b.version, flowerVersion: v.version,
+      c: null, r: null, after: false, nectar: null, ms: null, beeMs: null, error: null, by: null, log: null, ...fields,
+    });
+  }
+
+  /** What the bee printed since its last recorded action, plus `out`. */
+  #takeLog(b, out) {
+    const s = (b.log + (out || "")).slice(0, MAX_LOG);
+    b.log = "";
+    return s || null;
+  }
+
+  #keepLog(b, out) {
+    if (out) b.log = (b.log + out).slice(0, MAX_LOG);
+  }
+
+  #boundary(b, start) {
+    if (b.proc && !b.broken && b.proc.dead) { // crashed or hung: it starts afresh (with its new code, if any)
+      const { code, version } = b.pending ?? b;
+      b.pending = null;
+      this.#startBee(b, code, version, start);
+    } else if (b.pending && !b.visit) this.#swapIn(b);
+    else if (b.proc && !b.broken && !b.busy && !b.queued) this.#askFirst(b); // its last request gave no challenge
+  }
+
+  #startBee(b, code, version, start) {
+    if (b.visit) this.#record(b, b.visit, { action: "leave", error: version === b.version ? "the bee restarted" : "a new bee took over", by: "engine" }, start);
+    this.#endVisit(b);
+    b.queued = null;
+    b.log = "";
+    b.proc?.kill(); // its call in flight, if any, ends at once (and frees its core); the reply is ignored
+    b.gen++;
+    b.code = code;
+    b.version = version;
+    b.broken = false;
+    b.seen = FRESH;
+    const proc = (b.proc = new ProgramProcess(this.config.language, "bee", beeSetup(this.config, code)));
+    const gen = b.gen;
+    // Loading counts as a call in flight (and a loading bee isn't assigned a flower). Then the new bee is
+    // asked for its first challenge at once.
+    b.busy = true;
+    b.loading = true;
+    const loaded = logged(proc.ready.then((load) => {
+      if (gen !== b.gen || this.closed) return;
+      b.busy = false;
+      b.loading = false;
+      b.asking = null;
+      if (!load.ok) {
+        b.broken = true; // idle until its team sends new code
+        this.#problem(b.ti, "bee", b.version, load.e);
+        return;
+      }
+      this.#askFirst(b, true);
+    }));
+    b.asking = { inTime: loaded };
+  }
+
+  /**
+   * One request to the bee, on a core of its own: { gen, started (the performance.now() it got its core),
+   * done ({ res, ms }) }. The core stays held until the reply, however late.
+   */
+  #call(b, req) {
+    const proc = b.proc;
+    let began;
+    const started = new Promise((resolve) => { began = resolve; });
+    const done = withCpu(async () => {
+      const t0 = performance.now();
+      began(t0);
+      const res = await proc.call(req);
+      return { res, ms: performance.now() - t0 };
+    });
+    b.busy = true;
+    return { gen: b.gen, started, done };
+  }
+
+  /**
+   * Ask the bee for its first challenge at its next flower: forage([], {fed: false, ...}), with its
+   * runner's `seen` emptied. Outside the round flow; at most one in flight, and one new one a round.
+   */
+  #askFirst(b, force = false) {
+    if (this.closed || this.stopped || b.broken || b.pending || !b.proc || b.proc.dead || b.busy || b.queued) return;
+    if (!force && b.askedRound === this.round) return; // asked this round already: again at the next boundary
+    b.askedRound = this.round;
+    b.seen = FRESH;
+    const call = this.#call(b, { op: "forage", new: true, step: null, visit: { fed: false, nectar: null, flowers: this.flowers.length } });
+    const asking = {};
+    const handled = logged(call.done.then(({ res, ms }) => {
+      if (call.gen !== b.gen || this.closed) return;
+      b.busy = false;
+      if (b.asking === asking) b.asking = null;
+      this.#onFirst(b, res, ms);
+    }));
+    // An unpaced garden waits for it before the next round, as long as it answers within the bee's time.
+    asking.inTime = call.started.then((t) => byDeadline(handled, t, this.beeMs));
+    b.asking = asking;
+  }
+
+  /** Unpaced: the requests outside the round flow that answer in time make it into the next round. */
+  async #settle() {
+    const waited = new Set();
+    for (;;) {
+      const asks = this.bees.map((b) => b.asking).filter((a) => a && !waited.has(a));
+      if (!asks.length) return;
+      for (const a of asks) waited.add(a);
+      await Promise.all(asks.map((a) => a.inTime));
+    }
+  }
+
+  /** The reply to a request for a first challenge: ["ask", c] or ["leave", c] queue c; else ask again. */
+  #onFirst(b, res, ms) {
+    const a = res.a;
+    if (!res.e && (isPair(a, "ask") || isPair(a, "leave"))) {
+      const bad = checkValue(this.cType, a[1], this.limits, "challenge");
+      if (!bad) {
+        b.queued = { act: "ask", c: a[1], beeMs: ms, log: this.#takeLog(b, res.out) };
+        return;
+      }
+      this.#problem(b.ti, "bee", b.version, bad);
+    } else if (res.e || !validShape(a)) this.#problem(b.ti, "bee", b.version, res.e || shapeError(a));
+    this.#keepLog(b, res.out);
+    if (!res.dead) this.#askFirst(b);
+  }
+
+  /**
+   * The flower for a bee's next visit: any flower in the garden, uniformly at random, every time. (A deck
+   * that dealt each flower once per lap told viewers that a bee's two visits to a patch in a lap were one
+   * of each kind, and gave bees a clock: where they were in the lap, and so what was left to meet.)
+   */
+  #draw() {
+    return this.flowers.length ? this.flowers[Math.floor(Math.random() * this.flowers.length)] : null;
+  }
+
+  /** The answer from the flower version the visit is pinned to, labelled with that version. */
+  async #ask(v, c) {
+    const { pool, version, slot } = v;
+    const { res, ms } = await pool.call({ c });
+    const bad = res.e || checkValue(this.rType, res.v, this.limits, "response");
+    if (bad) {
+      this.#problem(slot.team, slot.kind, version, bad);
+      return { r: null, ms, error: String(bad).slice(0, 300), by: "flower", flowerVersion: version };
+    }
+    return { r: res.v, ms, flowerVersion: version };
+  }
+
+  /** A bee's slot, at the flower it's visiting: its queued ask or its feed. */
+  async #act({ b, q, gen }) {
+    const v = b.visit;
+    if (!v) return { b, gen };
+    if (q.act === "ask") {
+      const answer = await this.#ask(v, q.c);
+      v.asks++;
+      return { b, v, gen, step: [q.c, answer.r], rec: { action: "ask", c: q.c, after: v.fed, beeMs: q.beeMs, log: q.log, ...answer } };
+    }
+    v.fed = true;
+    v.nectar = v.slot.kind === "cosmos";
+    this.feeds[b.ti][v.slot.team]++;
+    if (v.nectar) this.nectar[b.ti][v.slot.team]++;
+    b.sitOut = this.config.feedCost; // feeding: no slot for the next feedCost rounds
+    return { b, v, gen, fed: true, rec: { action: "feed", nectar: v.nectar, beeMs: q.beeMs, log: q.log } };
+  }
+
+  /**
+   * The bee that acted decides its next action: forage with the answer (after a feed: tasted, then
+   * forage, in the same call). Returns the record to make at the end of the flower window, if any.
+   */
+  async #decide({ b, v, gen, step, fed }) {
+    if (gen !== b.gen) return null; // replaced meanwhile
+    b.busy = false;
+    if (!v || !b.proc || b.proc.dead || this.stopped) return null; // crashed: it starts afresh at the next boundary
+    const req = { op: "forage", new: b.seen !== FRESH && b.seen !== v.no, step: step ?? null, visit: { fed: v.fed, nectar: v.nectar, flowers: this.flowers.length } };
+    if (fed) req.tasted = v.nectar;
+    b.seen = v.no;
+    const call = this.#call(b, req);
+    const res = await byDeadline(call.done, await call.started, this.beeMs);
+    if (res !== LATE) {
+      if (call.gen !== b.gen) return null;
+      b.busy = false;
+      const out = this.#onReply(b, v, res.res, res.ms);
+      if (out) out.rec.beeVersion = b.version; // the version that decided it, whatever takes over next
+      if (b.pending && !b.visit) this.#swapIn(b); // the visit is over: new code takes over now
+      return out;
+    }
+    // Too slow: the bee loses its next slot and the visit ends, but the engine keeps listening.
+    this.#endVisit(b);
+    this.#problem(b.ti, "bee", b.version, `too slow: no reply within ${this.beeMs} ms`);
+    logged(call.done.then(({ res: late, ms }) => {
+      if (call.gen !== b.gen || this.closed) return;
+      b.busy = false;
+      this.#onLate(b, late, ms);
+    }));
+    const rec = { action: "error", error: `too slow: no reply within ${this.beeMs} ms`, by: "bee", beeVersion: b.version };
+    if (b.pending) this.#swapIn(b); // its late reply goes with the old bee
+    return { b, v, rec };
+  }
+
+  /** A reply in time. Queues the next action, or ends the visit (and asks again if it gave no challenge). */
+  #onReply(b, v, res, ms) {
+    const a = res.a;
+    const err = res.e || (validShape(a) ? null : shapeError(a));
+    if (err) { // a mistake ends the visit
+      this.#problem(b.ti, "bee", b.version, err);
+      this.#endVisit(b);
+      const rec = { action: "error", error: String(err).slice(0, 300), by: "bee", beeMs: ms, log: this.#takeLog(b, res.out) };
+      if (!res.dead) this.#askFirst(b);
+      return { b, v, rec };
+    }
+    if (isPair(a, "ask")) {
+      const bad = checkValue(this.cType, a[1], this.limits, "challenge");
+      if (!bad) {
+        b.queued = { act: "ask", c: a[1], beeMs: ms, log: this.#takeLog(b, res.out) };
+        return null;
+      }
+      this.#endVisit(b);
+      const rec = { action: "error", error: String(bad).slice(0, 300), by: "challenge", beeMs: ms, log: this.#takeLog(b, res.out) };
+      this.#askFirst(b);
+      return { b, v, rec };
+    }
+    if (a === "feed" && !v.fed) {
+      b.queued = { act: "feed", beeMs: ms, log: this.#takeLog(b, res.out) };
+      return null;
+    }
+    // "leave", ["leave", c], or a second feed (which also moves on)
+    this.#endVisit(b);
+    const rec = { action: "leave", beeMs: ms, log: this.#takeLog(b, res.out) };
+    if (isPair(a, "leave")) {
+      const bad = checkValue(this.cType, a[1], this.limits, "challenge");
+      if (!bad) {
+        b.queued = { act: "ask", c: a[1], beeMs: ms, log: null }; // the first ask at its next flower
+        return { b, v, rec };
+      }
+      Object.assign(rec, { error: String(bad).slice(0, 300), by: "challenge" });
+    }
+    this.#askFirst(b);
+    return { b, v, rec };
+  }
+
+  /**
+   * A reply after the deadline (its visit is already over). Only ["leave", c] carries a challenge for
+   * the next turn: c is the first ask at the next flower. Anything else (an ask or a feed meant for the
+   * abandoned visit, a plain leave, an error) doesn't, so the bee is asked again.
+   */
+  #onLate(b, res, ms) {
+    const a = res.a;
+    if (!res.e && isPair(a, "leave") && !checkValue(this.cType, a[1], this.limits, "challenge")) {
+      b.queued = { act: "ask", c: a[1], beeMs: ms, log: this.#takeLog(b, res.out) };
+      return;
+    }
+    if (res.e || !validShape(a)) this.#problem(b.ti, "bee", b.version, res.e || shapeError(a));
+    this.#keepLog(b, res.out);
+    if (!res.dead) this.#askFirst(b);
   }
 }
 
 /** Run a flower program on a list of challenges (for the "try it" tool). */
-export async function tryFlower({ config, code, kind, challenges, nTeams = 2 }) {
+export async function tryFlower({ config, code, kind, challenges }) {
   const cType = parseType(config.challengeType), rType = parseType(config.responseType);
   const limits = limitsOf(config);
-  const proc = new ProgramProcess(config.language, "flower", flowerSetup(config, kind, await runnable(config.language, code), gameInfo(config, nTeams)));
+  const proc = new ProgramProcess(config.language, "flower", flowerSetup(config, kind, await runnable(config.language, code)));
   try {
     const load = await proc.ready;
     if (!load.ok) return { error: load.e, results: [] };
@@ -267,15 +648,26 @@ export async function tryFlower({ config, code, kind, challenges, nTeams = 2 }) 
     for (const c of challenges.slice(0, 50)) {
       const bad = checkValue(cType, c, limits, "challenge");
       if (bad) { results.push({ c, r: null, error: bad }); continue; }
+      const t0 = performance.now();
       const res = await withCpu(() => proc.call({ c }));
-      if (res.e) results.push({ c, r: null, error: res.e });
+      const ms = +(performance.now() - t0).toFixed(1);
+      if (res.e) results.push({ c, r: null, error: res.e, ms });
       else {
         const badR = checkValue(rType, res.v, limits, "response");
-        results.push(badR ? { c, r: null, error: badR } : { c, r: res.v });
+        results.push(badR ? { c, r: null, error: badR, ms } : { c, r: res.v, ms });
       }
     }
     return { results };
   } finally {
     proc.kill();
   }
+}
+
+/** A bee foraging a garden of just its own team's two flowers for `rounds` rounds, unpaced (the "try it" tool). */
+export async function tryBee({ config, programs, rounds = 300 }) {
+  const garden = new Garden({ config, teams: 1, endMs: Infinity, maxRounds: rounds, paced: false });
+  await Promise.all(KINDS.map((k) => garden.setProgram(0, k, programs[k], 1)));
+  await garden.run();
+  const { actions, problems, feeds, nectar } = garden.drain();
+  return { actions, problems, feeds: feeds[0][0], nectar: nectar[0][0], rounds: garden.rounds };
 }

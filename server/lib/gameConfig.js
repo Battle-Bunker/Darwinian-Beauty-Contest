@@ -1,41 +1,46 @@
-// Per-game parameters, chosen by the room owner before round 1 and locked afterwards.
+// Per-game parameters, chosen by the room owner in the lobby and locked once the game starts.
 import { parseType, typeToString } from "./types.js";
 
-// Size and change budgets in each complexity mode (vendor/measure.js). The orchid is the reference:
-//   clover: half the orchid's size, 3× its compute: honest flowers can prove they spent effort
-//   orchid: room to build elaborate imitations and to change tack in its turn (70% change budget)
-//   bee:    5× the orchid's size for detector repertoires, half its compute: checks must be cheap
-// Clovers and bees may change 20% of a full-size program in their turn.
-//   chars: characters of the minified program; change in characters of edit between minified versions
-//   nodes: syntax-tree nodes, literals one per byte; change in node edits (literals byte by byte)
-// The clover's size is just enough for the longer of the two example clovers (arena/examples/v3: the
-// Paley clique chain is 2,252 characters minified, 1,024 nodes; the graceful labelling 850 and 427).
-export const SIZE_BUDGETS = Object.freeze({
-  chars: { clover: { size: 2400, changes: 480 }, orchid: { size: 4800, changes: 3360 }, bee: { size: 24000, changes: 4800 } },
-  nodes: { clover: { size: 1100, changes: 220 }, orchid: { size: 2200, changes: 1540 }, bee: { size: 11000, changes: 2200 } },
-});
-const COMPUTE_MS = { clover: 150, orchid: 50, bee: 25 }; // ms per call, one core each
+// Budgets per program kind, in weighted syntax-tree nodes of the minified program (vendor/measure.js).
+// The orchid is the reference:
+//   cosmos: half the orchid's size and the whole 150 ms flower window: honest flowers can prove they spent effort
+//   orchid: room for elaborate imitations, 7× a cosmos's change rate to chase what it imitates, and a
+//           shorter time limit (100 ms) than a cosmos's; its answer is still delivered at 150 ms
+//   bee:    5× the orchid's size for detector repertoires, and 50 ms to decide: checks must be cheap
+// Time: a round is one action slot for every bee, cosmos.ms (the flower window: every answer is
+// delivered then) + bee.ms (the bees' decision window) = 200 ms of game time.
+// Change budget accrues continuously while the game runs, `perMinute` nodes a minute, and banks up to
+// `cap` (one minute's worth): spend it whenever you like, on any change you can afford, and the new
+// program goes live at once. Before the game starts, writing programs is free. Over a default 2-minute
+// game a cosmos or bee can change 40% of a full-size program and an orchid 140%, as much as in the
+// round-based design's six rounds (two change turns per kind, of 20% and 70%).
+// The cosmos's size is just enough for the longer of the two example cosmos flowers (arena/examples: the
+// Paley clique chain is 1,024 nodes, the graceful labelling 427).
+const BUDGETS = {
+  cosmos: { size: 1100, perMinute: 220, cap: 220, ms: 150 },
+  orchid: { size: 2200, perMinute: 1540, cap: 1540, ms: 100 },
+  bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 50 },
+};
 
 export const DEFAULT_CONFIG = Object.freeze({
   language: "python",          // "python" | "typescript"
-  rounds: 6,                   // number of rounds: one to write, then bee, orchid, clover, bee, orchid turns
-  turnsPerFlower: 100,         // each bee gets this many turns per flower in the garden, every round
-  feedCost: 5,                 // turns a feed costs (an ask always costs 1)
+  minutes: 2,                  // how long the game runs (game time: it stops while paused)
+  feedCost: 10,                // rounds a feeding bee sits out after the round it feeds in
   challengeType: "int",        // type of the value a bee asks with
   responseType: "int",         // type of the value a flower answers with
   maxLen: 64,                  // max length of strings and lists in challenges/responses
   maxNodes: 512,               // max nodes in a tree or graph (graphs: at most 4× as many edges)
-  beeMemoryKb: 256,            // max size of what a bee keeps from one round to the next
-  flowerLogs: true,            // after each round, flower owners see who asked their flowers what
-  publicLogs: false,           // after each round, everyone sees every visit: challenges, responses, feeds, nectar, which flower
-  revealOnFinish: true,        // when the game ends, everyone can see all code and all logs
-  complexity: "chars",         // how program size and change are measured: "chars" or "nodes"
-  budgets: Object.fromEntries(["clover", "orchid", "bee"].map((k) => [k, { ...SIZE_BUDGETS.chars[k], ms: COMPUTE_MS[k] }])),
+  revealOnFinish: true,        // when the game ends, everyone can see all code and every bee's print output
+  budgets: BUDGETS,
 });
 
 const int = (v, lo, hi, dflt) => {
   const x = Number.parseInt(v, 10);
   return Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : dflt;
+};
+const num = (v, lo, hi, dflt) => {
+  const x = Number(v);
+  return v !== null && v !== undefined && v !== "" && Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : dflt;
 };
 const bool = (v, dflt) => (typeof v === "boolean" ? v : v === "true" ? true : v === "false" ? false : dflt);
 
@@ -44,37 +49,37 @@ export function normalizeConfig(input = {}, base = DEFAULT_CONFIG) {
   const c = input || {};
   const out = {
     language: c.language === "typescript" ? "typescript" : c.language === "python" ? "python" : base.language,
-    rounds: int(c.rounds, 1, 100, base.rounds),
-    turnsPerFlower: int(c.turnsPerFlower, 1, 1000, base.turnsPerFlower),
+    minutes: num(c.minutes, 0.1, 24 * 60, base.minutes),
     feedCost: int(c.feedCost, 0, 1000, base.feedCost),
     challengeType: typeToString(parseType(c.challengeType ?? base.challengeType)),
     responseType: typeToString(parseType(c.responseType ?? base.responseType)),
     maxLen: int(c.maxLen, 1, 1024, base.maxLen),
     maxNodes: int(c.maxNodes, 1, 4096, base.maxNodes),
-    beeMemoryKb: int(c.beeMemoryKb, 0, 4096, base.beeMemoryKb),
-    flowerLogs: bool(c.flowerLogs, base.flowerLogs),
-    publicLogs: bool(c.publicLogs, base.publicLogs),
     revealOnFinish: bool(c.revealOnFinish, base.revealOnFinish),
-    complexity: c.complexity === "nodes" || c.complexity === "chars" ? c.complexity : base.complexity,
     budgets: {},
   };
-  // Switching mode switches size and change budgets to that mode's defaults (unless given).
-  const switched = out.complexity !== base.complexity;
-  for (const kind of ["clover", "orchid", "bee"]) {
-    const b = (c.budgets && c.budgets[kind]) || {}, d = switched ? { ...base.budgets[kind], ...SIZE_BUDGETS[out.complexity][kind] } : base.budgets[kind];
+  for (const kind of ["cosmos", "orchid", "bee"]) {
+    const b = (c.budgets && c.budgets[kind]) || {}, d = base.budgets[kind];
     out.budgets[kind] = {
       size: int(b.size, 1, 1000000, d.size),
-      changes: int(b.changes, 0, 1000000, d.changes),
+      perMinute: num(b.perMinute, 0, 1000000, d.perMinute),
+      cap: int(b.cap, 0, 10000000, d.cap),
       ms: int(b.ms, 1, 10000, d.ms),
     };
   }
+  // The orchid's time limit is at most a cosmos's: every answer is delivered at the end of the
+  // cosmos's window anyway, so a longer one could never be used.
+  out.budgets.orchid.ms = Math.min(out.budgets.orchid.ms, out.budgets.cosmos.ms);
   return out;
 }
 
-/** Turns each bee gets per round in a garden of `nTeams` patches (2 flowers each). */
-export function turnsFor(config, nTeams) {
-  return config.turnsPerFlower * 2 * nTeams;
-}
+/** One round of game time: the flower window (a cosmos's time limit) plus the bees' decision window. */
+export const roundMs = (config) => config.budgets.cosmos.ms + config.budgets.bee.ms;
 
 /** Size limits applied to challenges and responses. */
 export const limitsOf = (config) => ({ maxLen: config.maxLen, maxNodes: config.maxNodes });
+
+/** A team's change budget for one program at game time `clockMs`: what's banked plus what has accrued since. */
+export function available(budget, bank, clockMs) {
+  return Math.min(budget.cap, bank.bank + (budget.perMinute * Math.max(0, clockMs - bank.atMs)) / 60000);
+}

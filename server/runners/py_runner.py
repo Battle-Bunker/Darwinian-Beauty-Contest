@@ -4,15 +4,19 @@
 #                                   `random` is freshly seeded on every call and `time` is
 #                                   available, so a flower can run an anytime search until its
 #                                   budget (GAME["ms"]) is nearly spent.
-#   python3 py_runner.py bee      — stateful for one round: module globals persist between calls.
-#                                   At the end of the round the top-level variable `keep` is saved;
-#                                   later rounds read those values, read-only, as MEMORY
+#   python3 py_runner.py bee      — stateful: module globals persist between calls for as long as
+#                                   this version of the bee plays (until its team submits a new bee,
+#                                   or it crashes). `random` is seeded once, freshly, at the start.
 # The code is the program's minified form (vendor/measure.js), so names can't carry data.
-# Protocol: JSON lines on stdin/stdout. First line is the setup {code, ms, seed, game, maxChars, memory}.
+# Protocol: JSON lines on stdin/stdout. First line is the setup {code, ms, limitMs, game, maxChars}.
 # Compute budgets are wall-clock time per call. The engine runs at most one program per CPU core, so
 # wall time is effectively CPU time. (CPU-time timers, ITIMER_PROF, fire late on tickless kernels.)
+# A flower is stopped at its budget, `ms`. A bee's budget is a deadline the engine keeps (a late reply
+# still counts, for the next turn), so the runner only stops a bee call at the hard limit `limitMs`.
+# Bee requests: {"op": "forage", "new": reset seen, "step": [c, r] to append, "tasted": nectar after
+# a feed (then tasted(seen, nectar) runs first, in the same call), "visit": {...}}.
 # NOT a security sandbox: restricted builtins + import whitelist + timeouts + memory cap only.
-import ast, builtins, copy, inspect, io, json, os, random, resource, select, signal, sys
+import builtins, inspect, io, json, os, random, resource, select, signal, sys
 
 ALLOWED_MODULES = {
     "math", "cmath", "random", "hashlib", "string", "itertools", "functools", "collections",
@@ -40,6 +44,10 @@ class Timeout(BaseException):
     pass
 
 
+class InTasted(Exception):
+    pass
+
+
 def _alarm(*_):
     raise Timeout("took too long")
 
@@ -49,61 +57,6 @@ signal.signal(signal.SIGALRM, _alarm)
 
 def cpu_timer(seconds):
     signal.setitimer(signal.ITIMER_REAL, seconds)
-
-
-# ---------- MEMORY: earlier rounds' bee globals, read-only ----------
-
-def _read_only(*_a, **_k):
-    raise TypeError("MEMORY is read-only: make a copy first, e.g. dict(x), list(x) or copy.deepcopy(x)")
-
-
-class FrozenDict(dict):
-    __slots__ = ()
-    __setitem__ = __delitem__ = clear = pop = popitem = setdefault = update = __ior__ = _read_only
-
-    def __copy__(self):
-        return dict(self)
-
-    def __deepcopy__(self, memo):
-        return {copy.deepcopy(k, memo): copy.deepcopy(v, memo) for k, v in self.items()}
-
-
-class FrozenList(list):
-    __slots__ = ()
-    __setitem__ = __delitem__ = append = extend = insert = pop = remove = clear = sort = reverse = _read_only
-    __iadd__ = __imul__ = _read_only
-
-    def __copy__(self):
-        return list(self)
-
-    def __deepcopy__(self, memo):
-        return [copy.deepcopy(x, memo) for x in self]
-
-
-def freeze(v):
-    if isinstance(v, dict):
-        return FrozenDict({k: freeze(x) for k, x in v.items()})
-    if isinstance(v, list):
-        return FrozenList(freeze(x) for x in v)
-    if isinstance(v, set):
-        return frozenset(v)
-    if isinstance(v, tuple):
-        return tuple(freeze(x) for x in v)
-    return v
-
-
-def snapshot(ns, max_bytes):
-    """The bee's top-level `keep` as a literal, if it's plain data (dict/list/tuple/set/str/numbers/bools/None)."""
-    if "keep" not in ns:
-        return None, None
-    try:
-        text = repr(ns["keep"])
-        ast.literal_eval(text)
-    except BaseException:
-        return None, "keep is not plain data (numbers, strings, True/False/None, lists, tuples, dicts, sets), so nothing was kept"
-    if len(text) > max_bytes:
-        return None, f"keep is over {max_bytes // 1024} KB, so nothing was kept this round"
-    return text, None
 
 
 # ---------- shared ----------
@@ -208,20 +161,21 @@ def run_flower(setup):
 
 
 def takes_visit(fn):
-    """forage(seen, turns_left, visit): the third argument is optional, for bees that want it."""
+    """forage(seen, visit): the second argument is optional, for bees that want it."""
     try:
         params = inspect.signature(fn).parameters.values()
     except (TypeError, ValueError):
         return False
     if any(p.kind == p.VAR_POSITIONAL for p in params):
         return True
-    return sum(p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD) for p in params) >= 3
+    return sum(p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD) for p in params) >= 2
 
 
 def run_bee(setup):
     ms = setup["ms"]
+    limit = setup.get("limitMs") or ms  # the hard stop per call
     max_chars = setup.get("maxChars", 20000)
-    random.seed(setup.get("seed", 0))
+    random.seed()
     ns = fresh_namespace(setup["game"])
     captured = io.StringIO()
     sys.stdout = captured
@@ -233,22 +187,32 @@ def run_bee(setup):
         captured.truncate()
         return s[:2000]
 
-    def timed(fn, *args, budget=ms):
+    def timed(fn, *args, budget=limit):
         cpu_timer(budget / 1000)
         try:
             return fn(*args)
         finally:
             cpu_timer(0)
 
-    try:
-        ns["MEMORY"] = tuple(None if s is None else freeze(ast.literal_eval(s)) for s in setup.get("memory") or [])
-    except BaseException as e:
-        ns["MEMORY"] = ()
-        print("MEMORY could not be restored: " + short(e))
+    def decide(req):
+        # One call, one time limit: tasted (after a feed) and then forage.
+        if req.get("tasted") is not None:
+            fn = ns.get("tasted")
+            if callable(fn):
+                try:
+                    fn(list(seen), bool(req["tasted"]))
+                except Timeout:
+                    raise
+                except BaseException as e:
+                    raise InTasted("tasted: " + short(e))
+        fn = ns["forage"]
+        args = (list(seen),) + ((dict(req["visit"]),) if takes_visit(fn) else ())
+        return fn(*args)
+
     try:
         timed(lambda: exec(compile(setup["code"], "<bee>", "exec"), ns), budget=ms * 10)
         if not callable(ns.get("forage")):
-            raise NameError("program must define forage(seen, turns_left)")
+            raise NameError("program must define forage(seen, visit)")
         reply({"ok": True, "out": take_output()})
     except BaseException as e:
         reply({"ok": False, "e": short(e), "out": take_output()})
@@ -262,25 +226,18 @@ def run_bee(setup):
                     seen = []
                 if req.get("step") is not None:
                     seen.append(req["step"])
-                fn = ns["forage"]
-                args = (list(seen), req["turns"]) + ((dict(req["visit"]),) if takes_visit(fn) else ())
-                a = timed(fn, *args)
+                a = timed(decide, req)
                 if isinstance(a, tuple):
                     a = list(a)
                 s, err = encode(a, max_chars)
                 reply({"e": "forage returned " + err, "out": take_output()} if err else {"a": json.loads(s), "out": take_output()})
-            elif req["op"] == "tasted":
+            elif req["op"] == "tasted":  # the older protocol: tasted in a call of its own
                 fn = ns.get("tasted")
                 if callable(fn):
                     timed(fn, list(seen), req["nectar"])
                 reply({"ok": True, "out": take_output()})
-            elif req["op"] == "snapshot":
-                cpu_timer(5)
-                try:
-                    snap, note = snapshot(ns, req["maxBytes"])
-                finally:
-                    cpu_timer(0)
-                reply({"snap": snap, "note": note})
+        except InTasted as e:
+            reply({"e": str(e)[:300], "out": take_output()})
         except BaseException as e:
             reply({"e": short(e), "out": take_output()})
 

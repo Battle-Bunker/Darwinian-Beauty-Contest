@@ -1,40 +1,63 @@
-// Owner controls: game settings (lobby only) and the Run round button. Plus a settings summary for everyone.
+// Owner controls: game settings (lobby only), start, pause / resume and finish. Plus a settings summary for everyone.
 import { useEffect, useState, type FormEvent } from "react";
 import { api, errorText } from "../api";
-import { KINDS, type GameConfig, type GameView, type Kind } from "../types";
-import { Alert, Spinner } from "./ui";
-import { PlayIcon } from "./Icons";
+import { KINDS, type GameConfig, type GameView, type Kind, type Team } from "../types";
+import { Alert, TeamChip } from "./ui";
+import { PauseIcon, PlayIcon } from "./Icons";
+import { fmtClock } from "../lib/format";
 
 const TYPES = ["int", "float", "bool", "str", "any", "list[int]", "list[float]", "list[bool]", "list[str]", "tree[int]", "graph", "digraph", "graph[any]", "graph[int]", "digraph[any]"];
 
-export function RunRound({ view, base }: { view: GameView; base: string }) {
+/** Whether a team has written all three programs (it plays if the game starts now). */
+export const isReady = (t: Team) => !!t.ready && KINDS.every((k) => t.ready![k]);
+
+export function OwnerControls({ view, base }: { view: GameView; base: string }) {
   const g = view.game;
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const next = g.roundsPlayed + 1;
-  const ready = view.teams.filter((t) => t.submitted.clover && t.submitted.orchid && t.submitted.bee).length;
-  const needTeams = g.roundsPlayed === 0 && ready < 2;
+  const ready = view.teams.filter(isReady);
+  const notReady = view.teams.filter((t) => !isReady(t));
 
-  const run = async () => {
-    setBusy(true); setError(null);
-    try { await api("POST", `${base}/rounds`); }
+  const call = async (what: string, path: string, body?: unknown) => {
+    setBusy(what); setError(null);
+    try { await api("POST", `${base}${path}`, body); }
     catch (e) { setError(errorText(e)); }
-    finally { setBusy(false); }
+    finally { setBusy(null); }
   };
+  const finish = () => { if (confirm("Finish the game now? It can't be resumed afterwards.")) call("finish", "/status", { action: "finish" }); };
 
-  if (g.status === "finished") return <p className="muted">All {g.config.rounds} rounds have been played.</p>;
   return (
-    <div className="run-round">
-      <button className="btn btn-big btn-honey" onClick={run} disabled={busy || !!g.runningRound || needTeams}>
-        {g.runningRound ? <Spinner label={`Round ${g.runningRound} running…`} /> : <><PlayIcon /> Run round {next}</>}
-      </button>
-      <div className="small">
-        {g.runningRound ? <span className="muted">The bees are out. Results appear here as soon as the round finishes.</span>
-          : needTeams ? <span className="warn-text">Round 1 needs at least 2 teams with all three programs submitted ({ready} so far).</span>
-          : g.roundsPlayed === 0 ? <span className="muted">{ready} teams are ready. Teams without all three programs won't play this game. Settings lock once round 1 runs.</span>
-          : <span className="muted">Round {next} of {g.config.rounds}. Teams that haven't submitted play last round's programs again.</span>}
-      </div>
-      {g.lastError && <Alert kind="error"><b>The last round didn't run:</b> {g.lastError}</Alert>}
+    <div className="owner-controls">
+      {g.status === "lobby" && (
+        <>
+          <div className="row">
+            <button className="btn btn-big btn-honey" onClick={() => call("start", "/start")} disabled={busy !== null || ready.length < 2}>
+              <PlayIcon /> {busy === "start" ? "Starting…" : "Start the game"}
+            </button>
+            <span className="small muted">{fmtClock(g.endMs)} of game time. Settings lock once it starts; teams that haven't written all three programs sit it out.</span>
+          </div>
+          <div className="who-plays">
+            <div><b>{ready.length ? `${ready.length} ${ready.length === 1 ? "team" : "teams"} will play:` : "Nobody is ready yet."}</b> {ready.map((t) => <TeamChip key={t.id} team={t} />)}</div>
+            {notReady.length > 0 && <div className="small muted">Not ready (missing a program): {notReady.map((t) => <span key={t.id} className="not-ready">{t.name} <span className="mono">({KINDS.filter((k) => !t.ready?.[k]).join(", ")})</span></span>)}</div>}
+            {ready.length < 2 && <div className="small warn-text">The game needs at least 2 teams with all three programs written.</div>}
+          </div>
+        </>
+      )}
+      {g.status === "running" && (
+        <div className="row">
+          <button className="btn btn-big" onClick={() => call("pause", "/status", { action: "pause" })} disabled={busy !== null}><PauseIcon /> {busy === "pause" ? "Pausing…" : "Pause"}</button>
+          <button className="btn btn-ghost" onClick={finish} disabled={busy !== null}>{busy === "finish" ? "Finishing…" : "Finish early"}</button>
+          <span className="small muted">Pausing stops the clock and the change budgets; teams can still submit changes they can afford.</span>
+        </div>
+      )}
+      {g.status === "paused" && (
+        <div className="row">
+          <button className="btn btn-big btn-honey" onClick={() => call("resume", "/status", { action: "resume" })} disabled={busy !== null}><PlayIcon /> {busy === "resume" ? "Resuming…" : "Resume"}</button>
+          <button className="btn btn-ghost" onClick={finish} disabled={busy !== null}>{busy === "finish" ? "Finishing…" : "Finish now"}</button>
+        </div>
+      )}
+      {g.status === "finished" && <p className="muted">The game is over.{g.revealed ? " All code and every bee's prints are now public." : ""}</p>}
+      {g.lastError && <Alert kind="error"><b>The garden stopped with an error</b> (resume to carry on): {g.lastError}</Alert>}
       {error && <Alert kind="error">{error}</Alert>}
     </div>
   );
@@ -42,7 +65,6 @@ export function RunRound({ view, base }: { view: GameView; base: string }) {
 
 export function SettingsForm({ view, base }: { view: GameView; base: string }) {
   const cfg: GameConfig = view.game.config;
-  const nTeams = Math.max(2, view.participants?.length ?? view.teams.length);
   const [draft, setDraft] = useState<GameConfig>(cfg);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: "ok" | "error" | "warn"; text: string } | null>(null);
@@ -51,24 +73,24 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
   const dirty = JSON.stringify(draft) !== cfgKey;
 
   const set = <K extends keyof GameConfig>(k: K, v: GameConfig[K]) => setDraft((d) => ({ ...d, [k]: v }));
-  const setBudget = (kind: Kind, k: "size" | "changes" | "ms", v: number) =>
+  const setBudget = (kind: Kind, k: "size" | "perMinute" | "cap" | "ms", v: number) =>
     setDraft((d) => ({ ...d, budgets: { ...d.budgets, [kind]: { ...d.budgets[kind], [k]: v } } }));
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true); setMsg(null);
     try {
-      const r = await api<{ config: GameConfig; clearedSubmissions: boolean }>("PATCH", `${base}/config`, { config: draft });
-      setMsg(r.clearedSubmissions
-        ? { kind: "warn", text: "Saved. Submitted programs were cleared because the language, types or size budgets changed, so teams need to submit again." }
+      const r = await api<{ config: GameConfig; clearedPrograms: boolean }>("PATCH", `${base}/config`, { config: draft });
+      setMsg(r.clearedPrograms
+        ? { kind: "warn", text: "Saved. Teams' programs were cleared because the language, types or a size budget changed, so they need to write them again." }
         : { kind: "ok", text: "Saved." });
     } catch (err) {
       setMsg({ kind: "error", text: errorText(err) });
     } finally { setBusy(false); }
   };
 
-  const num = (value: number, onChange: (v: number) => void, min: number, max: number, label: string) => (
-    <input type="number" inputMode="numeric" value={Number.isFinite(value) ? value : ""} min={min} max={max} aria-label={label}
+  const num = (value: number, onChange: (v: number) => void, min: number, max: number, label: string, step: number | "any" = 1) => (
+    <input type="number" inputMode="decimal" value={Number.isFinite(value) ? value : ""} min={min} max={max} step={step} aria-label={label}
       onChange={(e) => onChange(e.target.value === "" ? NaN : Number(e.target.value))} />
   );
   const typeSelect = (value: string, onChange: (v: string) => void, label: string) => (
@@ -76,6 +98,8 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
       {(TYPES.includes(value) ? TYPES : [value, ...TYPES]).map((t) => <option key={t} value={t}>{t}</option>)}
     </select>
   );
+  const seconds = Math.round(draft.minutes * 60);
+  const roundMs = draft.budgets.cosmos.ms + draft.budgets.bee.ms;
 
   return (
     <form className="settings" onSubmit={save}>
@@ -86,49 +110,39 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
             <option value="typescript">TypeScript</option>
           </select>
         </label>
-        <label className="field"><span>Rounds</span>{num(draft.rounds, (v) => set("rounds", v), 1, 100, "Rounds")}</label>
-        <label className="field"><span>Turns per flower</span>{num(draft.turnsPerFlower, (v) => set("turnsPerFlower", v), 1, 1000, "Turns per flower")}</label>
-        <label className="field"><span>Feed cost (turns)</span>{num(draft.feedCost, (v) => set("feedCost", v), 0, 1000, "Feed cost")}</label>
+        <label className="field"><span>Length (minutes)</span>{num(draft.minutes, (v) => set("minutes", v), 0.1, 1440, "Game length in minutes", "any")}</label>
+        <label className="field"><span>Feeding sits out (rounds)</span>{num(draft.feedCost, (v) => set("feedCost", v), 0, 1000, "Rounds a feeding bee sits out")}</label>
         <label className="field"><span>Challenge type</span>{typeSelect(draft.challengeType, (v) => set("challengeType", v), "Challenge type")}</label>
         <label className="field"><span>Response type</span>{typeSelect(draft.responseType, (v) => set("responseType", v), "Response type")}</label>
         <label className="field"><span>Max string/list length</span>{num(draft.maxLen, (v) => set("maxLen", v), 1, 1024, "Max string or list length")}</label>
         <label className="field"><span>Max tree/graph nodes</span>{num(draft.maxNodes, (v) => set("maxNodes", v), 1, 4096, "Max tree or graph nodes")}</label>
-        <label className="field"><span>Bee memory (KB, 0 = off)</span>{num(draft.beeMemoryKb, (v) => set("beeMemoryKb", v), 0, 4096, "Bee memory in KB")}</label>
-        <label className="field"><span>Program size measured in</span>
-          {/* Switching clears the size and change budgets; saving fills in that measure's defaults. */}
-          <select value={draft.complexity} aria-label="How program size is measured" onChange={(e) => {
-            const complexity = e.target.value as GameConfig["complexity"];
-            setDraft((d) => ({ ...d, complexity, budgets: Object.fromEntries(KINDS.map((k) => [k, { ...d.budgets[k], size: NaN, changes: NaN }])) as GameConfig["budgets"] }));
-          }}>
-            <option value="chars">characters after minifying</option>
-            <option value="nodes">nodes (literals one per byte)</option>
-          </select>
-        </label>
       </div>
       <p className="small muted settings-hint">
-        Every bee gets <b>{draft.turnsPerFlower}</b> turns per flower: <b>{(draft.turnsPerFlower * 2 * nTeams).toLocaleString()}</b> turns a round with {nTeams} teams ({2 * nTeams} flowers).
+        {Number.isFinite(seconds) && Number.isFinite(roundMs) && roundMs > 0
+          ? <>The game runs for <b>{fmtClock(seconds * 1000)}</b> of game time: <b>{Math.round((seconds * 1000) / roundMs).toLocaleString()}</b> rounds of <b>{roundMs} ms</b> (the clock stops while paused). </> : null}
+        In a round every bee acts at once: flowers have <b>{draft.budgets.cosmos.ms} ms</b> to answer (a cosmos the whole window, an orchid <b>{Math.min(draft.budgets.orchid.ms, draft.budgets.cosmos.ms)} ms</b>; every answer reaches the bee at {draft.budgets.cosmos.ms} ms), then bees have <b>{draft.budgets.bee.ms} ms</b> to decide.
+        A bee that feeds sits out the next <b>{Number.isFinite(draft.feedCost) ? draft.feedCost : "?"}</b> rounds.
       </p>
       <div className="settings-checks">
-        <label className="check"><input type="checkbox" checked={draft.flowerLogs} onChange={(e) => set("flowerLogs", e.target.checked)} /> Flower logs: teams see what bees asked their flowers</label>
-        <label className="check"><input type="checkbox" checked={draft.publicLogs} onChange={(e) => set("publicLogs", e.target.checked)} /> Public logs: after each round everyone sees every visit (challenges, responses, feeds, which flower)</label>
-        <label className="check"><input type="checkbox" checked={draft.revealOnFinish} onChange={(e) => set("revealOnFinish", e.target.checked)} /> Reveal all code and logs when the game ends</label>
+        <label className="check"><input type="checkbox" checked={draft.revealOnFinish} onChange={(e) => set("revealOnFinish", e.target.checked)} /> Reveal all code and every bee's prints when the game ends</label>
       </div>
       <div className="table-scroll">
         <table className="data-table budgets">
           <caption>Budgets per program
             <span className="budget-note">
-              The budgets are lopsided on purpose. <b>Clover</b>: small code but strong compute, so it can prove effort.{" "}
-              <b>Orchid</b>: big code and fast change between rounds. <b>Bee</b>: a big kit of detectors, but little time per decision.
-              Defaults: clover 150 / 30 / 150, orchid 300 / 210 / 50, bee 1500 / 300 / 25.
+              Size is in weighted syntax-tree nodes of the minified program (comments, spacing and name lengths are free; every byte of a literal counts).
+              Change budget fills by <i>per minute</i> nodes a minute of game time, up to <i>cap</i>; a change costs its node edits from the version playing.
+              The budgets are lopsided on purpose: the cosmos is small but has strong compute, the orchid changes fast, the bee carries a big kit with little time per decision.
             </span>
           </caption>
-          <thead><tr><th className="left">Program</th><th>Size ({draft.complexity === "chars" ? "characters after minifying" : "nodes"})</th><th>Changes per round</th><th>Time (ms per call)</th></tr></thead>
+          <thead><tr><th className="left">Program</th><th>Size (nodes)</th><th>Change per minute</th><th>Change cap</th><th title="Cosmos: the flower window (every answer is delivered at its end). Orchid: its own limit, at most the cosmos's. Bee: the decision window.">Time limit (ms)</th></tr></thead>
           <tbody>
             {KINDS.map((k) => (
               <tr key={k}>
                 <th scope="row" className="left">{k}</th>
                 <td>{num(draft.budgets[k].size, (v) => setBudget(k, "size", v), 1, 1000000, `${k} size budget`)}</td>
-                <td>{num(draft.budgets[k].changes, (v) => setBudget(k, "changes", v), 0, 100000, `${k} change budget`)}</td>
+                <td>{num(draft.budgets[k].perMinute, (v) => setBudget(k, "perMinute", v), 0, 1000000, `${k} change per minute`, "any")}</td>
+                <td>{num(draft.budgets[k].cap, (v) => setBudget(k, "cap", v), 0, 10000000, `${k} change cap`)}</td>
                 <td>{num(draft.budgets[k].ms, (v) => setBudget(k, "ms", v), 1, 10000, `${k} time budget`)}</td>
               </tr>
             ))}
@@ -144,29 +158,28 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
   );
 }
 
-export function SettingsSummary({ cfg, turnsNow }: { cfg: GameConfig; turnsNow?: number }) {
+export function SettingsSummary({ cfg }: { cfg: GameConfig }) {
   return (
     <div className="settings-summary">
       <div className="chips">
         <span className="chip">{cfg.language === "python" ? "Python" : "TypeScript"}</span>
-        <span className="chip">{cfg.rounds} rounds</span>
-        <span className="chip">{`${cfg.turnsPerFlower} turns per flower${turnsNow ? ` (${turnsNow.toLocaleString()} a round)` : ""}`}</span>
-        <span className="chip">feed costs {cfg.feedCost}</span>
+        <span className="chip">{fmtClock(cfg.minutes * 60000)} of game time</span>
+        <span className="chip" title={`Every bee acts at once each round: flowers answer within ${cfg.budgets.cosmos.ms} ms, then bees decide within ${cfg.budgets.bee.ms} ms`}>rounds of {cfg.budgets.cosmos.ms + cfg.budgets.bee.ms} ms</span>
+        <span className="chip">cosmos {cfg.budgets.cosmos.ms} ms · orchid {cfg.budgets.orchid.ms} ms · bee {cfg.budgets.bee.ms} ms</span>
+        <span className="chip">feeding sits out {cfg.feedCost} rounds</span>
         <span className="chip mono">{cfg.challengeType} → {cfg.responseType}</span>
-        <span className="chip">size in {cfg.complexity === "chars" ? "characters" : "nodes"}</span>
-        {[cfg.challengeType, cfg.responseType].some((t) => /str|list/i.test(t)) && <span className="chip">max length {cfg.maxLen}</span>}
+        {[cfg.challengeType, cfg.responseType].some((t) => /str|list|any/i.test(t)) && <span className="chip">max length {cfg.maxLen}</span>}
         {[cfg.challengeType, cfg.responseType].some((t) => /tree|graph/i.test(t)) && <span className="chip">max {cfg.maxNodes} nodes</span>}
-        {cfg.beeMemoryKb !== undefined && <span className="chip">{cfg.beeMemoryKb ? `bee memory ${cfg.beeMemoryKb} KB` : "bee memory off"}</span>}
-        <span className="chip">{cfg.publicLogs ? "public logs" : cfg.flowerLogs ? "flower logs on" : "flower logs off"}</span>
-        <span className="chip">{cfg.revealOnFinish ? "code revealed at the end" : "code stays secret"}</span>
+        <span className="chip">{cfg.revealOnFinish ? "code and prints revealed at the end" : "code stays secret"}</span>
       </div>
       <div className="table-scroll">
         <table className="data-table budgets compact">
           <thead><tr><th className="left">Budget</th>{KINDS.map((k) => <th key={k}>{k}</th>)}</tr></thead>
           <tbody>
-            <tr><th scope="row" className="left">size ({cfg.complexity === "chars" ? "characters" : "nodes"})</th>{KINDS.map((k) => <td key={k}>{cfg.budgets[k].size}</td>)}</tr>
-            <tr><th scope="row" className="left">changes / round</th>{KINDS.map((k) => <td key={k}>{cfg.budgets[k].changes}</td>)}</tr>
-            <tr><th scope="row" className="left">time (ms / call)</th>{KINDS.map((k) => <td key={k}>{cfg.budgets[k].ms}</td>)}</tr>
+            <tr><th scope="row" className="left">size (nodes)</th>{KINDS.map((k) => <td key={k}>{cfg.budgets[k].size.toLocaleString()}</td>)}</tr>
+            <tr><th scope="row" className="left">change per minute</th>{KINDS.map((k) => <td key={k}>{cfg.budgets[k].perMinute.toLocaleString()}</td>)}</tr>
+            <tr><th scope="row" className="left">change cap</th>{KINDS.map((k) => <td key={k}>{cfg.budgets[k].cap.toLocaleString()}</td>)}</tr>
+            <tr><th scope="row" className="left">time limit (ms)</th>{KINDS.map((k) => <td key={k}>{cfg.budgets[k].ms}</td>)}</tr>
           </tbody>
         </table>
       </div>

@@ -3,6 +3,8 @@
 Design note: theory and back-of-envelope arithmetic only (no simulations were run). Companion to
 [signal-forensics.md](signal-forensics.md).
 
+On the continuous-garden branch the rewarding flower is called **cosmos**; these notes are about the round-based games and use its old name, clover.
+
 ## Summary
 
 - **Clovers can't out-design their copiers.** Every team writes a bee *and* an orchid, flowers are pure functions, and

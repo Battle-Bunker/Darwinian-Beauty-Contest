@@ -1,170 +1,174 @@
 # Arena: LLM-agent teams playing Darwinian Beauty Contest
 
 The arena runs populations of LLM-driven teams against each other through the game's HTTP API, to study the ecosystem
-the game creates and hunt for **complexity-collapse** scenarios. Findings are in [REPORT.md](REPORT.md).
+the game creates. Every team is run by tool-using Claude Code sessions (`claude -p`, models opus, sonnet and haiku;
+never a Fable model) in the team's private workspace. A game is continuous (RULES.md): a lobby where programs are
+written for free, then one stretch of play where bees forage nonstop, every action is public at once, and teams change
+their programs whenever they like, paying from change budgets that refill with game time. After each game come
+metrics, interviews, the teen judges and (unless membership is fixed) selection and breeding.
 
-Every team turn is a tool-using Claude Code session in the team's private workspace. After each game there are
-metrics, interviews and the teen judges, then selection and breeding, unless the arena has fixed membership as
-continuations and cohort experiments do.
+[REPORT.md](REPORT.md) is the research report of the earlier, round-based arena (the `dbc` database, never modified).
 
 ## What's here
 
 | Path | What |
 |---|---|
-| `run.js` | the arena runner: creates rooms and games, runs the team sessions before each round, simulates rounds one at a time, then metrics, interviews, judges, retirements and breeding |
-| `fork.js` | forks a played game's population into a continuation arena or identical cohorts for an experiment |
-| `analyze.js` | prints a Markdown summary of everything in the `arena` schema: spend, leaderboards, metrics, collapses, judges, ideas, breeders, the fair-play audit, cohort experiments and engine-v3 measures |
-| `server.sh` | (re)starts the arena's game server on port 4000 with the dev secret and `CPU_SLOTS=3`, only when no round is simulating |
-| `test-brief.mjs` | dry-run check of the round briefs: fresh vs forked game 1, round-1 notices, change turns, locked-file notes |
-| `test-pause.mjs` | check of usage-limit detection and pause/resume, with a stub `claude` (no real calls) |
-| `test-workspace.mjs` | check of the disk savings: hard-linked shared visit files, and retention of raw visit logs |
-| `schema.sql` | the `arena` Postgres schema (same `dbc` database as the game), applied on every run |
-| `lib/llm.js` | `claude -p` wrapper: concurrency limiter, retries, rate-limit cool-down, usage-limit pause, spend guard, cost ledger (`arena.llm_calls`) |
-| `lib/api.js` | HTTP client for the game API (dev login with the dev secret and Bearer tokens) |
-| `lib/team.js` | one team's turn: the session, the fair-play audit, validation (`check` + `try`), submission of the programs whose turn it is, fix sessions; and the post-game interview |
-| `lib/workspace.js` | builds each team's private workspace (raw files, no tokens), collects its programs, and audits session transcripts (`arena.violations`) |
-| `lib/prompts.js` | team-agent system prompt and round briefs, round-1 notices, interview, judge and breeder prompts |
-| `lib/personas.js` | 20 founding personas (10 adult archetypes, 10 twelve-year-olds), 4 teen judges, 3 breeders |
-| `lib/presets.js` | settings and founding lineups for fresh arenas |
-| `lib/social.js` | interviews → judges → idea ledger → social scores |
-| `lib/population.js` | retirement rules and the breeder competition |
-| `lib/metrics.js`, `lib/gamemetrics.js` | per-round and per-game metrics and collapse detection, stored after each game |
-| `lib/dbview.js` | a fully revealed game view built from the game's tables (metrics and judges when `revealOnFinish` is false) |
-| `lib/adoption.js` | cohort experiments: which catalogue ideas each team's code implements, per round (keywords plus a haiku classifier; `arena.adoption`) |
-| `lib/cohort.js` | cohort measures for `analyze.js`: answer-shape census, borrowing from the top-2 demo, Python use and idea-file reads |
-| `lib/v3.js` | engine-v3 measures for `analyze.js`: discrimination on rival patches, fingerprinting, stolen-face and twin orchids, non-deterministic flowers, compute against budget, example markers |
-| `runs/` | logs and session transcripts (gitignored) |
+| `run.js` | the runner: creates rooms and games, runs the lobby sessions, starts the game, runs every team's sessions while it plays, stops them when it ends; then metrics, interviews, judges, retirements and breeding |
+| `analyze.js` | a Markdown report of the arena schema: spend, each game over time, teams, orchid copying, the change timeline, compute, sessions, storage, the panel, ideas, breeders, the fair-play audit, and games of different durations side by side |
+| `server.sh` | (re)starts the arena's own game server on port 4000 (dbc_live, the dev-login secret, `CPU_SLOTS=3`) |
+| `schema.sql` | the `arena` Postgres schema in dbc_live, applied on every run |
+| `tools/` | the workspace tools copied into every workspace (Python, stdlib only): `submit.py`, `check.py`, `try.py`, `status.py`, `scaffold.py`, `stream.py`, `garden.py` (the scaffold API), and `_runner.py`, their link to the runner |
+| `lib/llm.js` | `claude -p` wrapper: concurrency limiter, retries, usage-limit pause, spend guard, cost ledger (`arena.llm_calls`); sessions with live transcripts, a stop control, and estimated costs for sessions stopped mid-way |
+| `lib/api.js` | HTTP client for the game API (dev login with the dev secret, Bearer tokens) |
+| `lib/team.js` | each team's desk for a game (its broker, which session is running, its scaffold), one session (workspace, live fair-play gate, audit, notebook, cleanup), the lobby with fix sessions, the interview |
+| `lib/broker.js` | the runner's end of the tools: request files in `<workspace>/.runner/req/`, answers in `.runner/res/` |
+| `lib/scaffold.js`, `lib/scaffold_launch.py` | scaffolds: static audit, launch under limits, CPU share, restarts, logs |
+| `lib/stream.js` | the live action stream: the shared public JSONL, the runner's master copy, per-team private details, headline numbers for briefs |
+| `lib/workspace.js` | builds workspaces, archives finished games, the fair-play audit, finds and stops what a session left running |
+| `lib/prompts.js` | system prompt, lobby and in-game briefs, interview, judge and breeder prompts |
+| `lib/metrics.js` | metrics of a finished game (one streaming pass over its actions) |
+| `lib/gamecontrol.js` | the game follows the arena's pause file |
+| `lib/social.js`, `lib/population.js`, `lib/personas.js` | interviews → judges → idea ledger → social scores; retirement and breeders; founders, judges, breeders |
+| `lib/presets.js` | game settings, lineups and session pacing for fresh arenas |
+| `examples/v3/` | two example cosmos flowers and bee-side checkers (`flower(challenge)`, plain helpers): only for arenas that hand them to every team (`examples` in a preset) |
+| `test-*.mjs` | checks without model calls (see "Tests") |
+| `runs/` | logs, transcripts, the dev secret, the pause file (gitignored) |
 
 ## Running
 
-Needs the game's Postgres (`postgres://dbc:dbc@localhost:5432/dbc` by default), `python3`, and the `claude` CLI logged in.
+Needs Postgres with the game's `dbc_live` database, `python3`, and the `claude` CLI logged in.
 
 ```
-# 1. your own API server on port 4000. With DEV_LOGIN_SECRET set, dev login needs the secret, so a tool-using agent
-#    can't log in as another team. The secret lives in arena/runs/.dev-secret (mode 600, gitignored), and the runner
-#    reads it from there or from ARENA_DEV_SECRET; it never goes into a workspace or a prompt.
-arena/server.sh
-
-# 2. a fresh pilot arena (3 teams, 2 rounds)
-node arena/run.js --arena pilot --generations 1
-
-# 3. a continuation forked from a played game, then its games (see "Forks and cohort experiments")
-node arena/fork.js --from gx-control --game 3 --cohorts v3-base --experiment v3 --notice v3-rules --generations 2 --seed-base 20261020
-ARENA_CONCURRENCY=8 ARENA_BUDGET_USD=540 nohup node arena/run.js --arenas v3-base:2 >> arena/runs/v3.out 2>&1 &
-echo 6 > arena/runs/concurrency       # change the concurrency of a running runner (polled every 20 s)
-
-# 4. summary
-node arena/analyze.js --arenas v3-base > arena/runs/analysis-v3.md
+arena/server.sh                                                   # 1. the arena's game server on :4000
+ARENA_BUDGET_USD=15 nohup node arena/run.js --arena cont-pilot --preset pilot >> arena/runs/cont-pilot.out 2>&1 &
+node arena/analyze.js --arenas cont-pilot > arena/runs/analysis-cont-pilot.md
 ```
 
-`--arenas a:2,b:3` runs several arenas in one process (":n" sets the number of games). The account's usage limit is
-shared with every other session, so keep concurrency modest.
-
-### Pause, resume, restart
-
-**Automatic pause on usage limits.** Any `claude -p` failure whose text matches a usage or session limit pauses the
-whole runner. The patterns are "session limit", "usage limit", "limit · resets", "hit your … limit", "resets 3:10am",
-429 and rate_limit. When it fires:
-- it writes `arena/runs/PAUSED` (the time, then the raw error text, including the "resets …" time)
-- it logs `[arena] PAUSED: usage limit hit (<msg>). Resume: rm arena/runs/PAUSED`
-- it starts no new model calls and doesn't advance any game: no new round, no new game
-- calls that come back limit-failed are **held**: they don't count as attempts, don't fail a team, an interview or a
-  judge, and are re-issued unchanged on resume
-
-Calls already in flight finish normally.
-
-| to | do |
-|---|---|
-| pause by hand | `echo manual > arena/runs/PAUSED` (in-flight calls finish; nothing new starts) |
-| resume | `rm arena/runs/PAUSED`. The runner polls every 30 s and carries on. It never resumes on a timer: delete the file once the platform says usage is available again |
-| check | `cat arena/runs/PAUSED`; `grep -E "PAUSED\|RESUMED" arena/runs/*.out` |
-| stop | `kill <pid of node arena/run.js>`, then kill its `claude -p` children (orphans keep running and spending otherwise): `for p in $(pgrep -P <pid>); do kill $p; done` |
-| restart | run the same `node arena/run.js --arenas …` command again. If `arena/runs/PAUSED` still exists it starts paused and waits |
-
-**Restarting resumes from the database.** Every game records its stage (`created → playing → played → interviewed →
-judged → done`), and the runner skips finished work:
-- **rounds**: finished rounds are never replayed; the current round's turns are re-run, except turns whose session was
-  already processed
-- **adoption classification** (cohorts): an incomplete one is re-run
-- **interviews**: only the missing ones are redone
-- **judging**: it restarts cleanly, dropping any partial evaluations and ledger entries for that game
-- **breeding**: unfilled slots are refilled before the next game
-
-Running more games later just extends an arena. Calls that were in flight when the runner was killed are lost (their
-cost isn't in the ledger). Kill the runner, not the API server, mid-round. Restart the API server only when no round is
-simulating (`arena/server.sh` checks this).
-
-**One round simulates at a time.** A flower's compute use is a real signal, since a clover can search until its
-`GAME["ms"]` budget is nearly spent. So the arenas in one runner process queue their round simulations
-(`simulateSerially` in `run.js`), and the server's `CPU_SLOTS` serve one game at a time. Agent sessions still run in
-parallel; only the simulation waits. A log line says when an arena waited more than 5 s for another arena's round.
-
-**Disk.** Visit logs grow with the size of flowers' answers: the example flowers answer with up to ~12 KB of JSON.
-- **Public-logs games:** every team sees the same visits. So `logs/round-N/visits.jsonl` is written once per round
-  (from the unauthenticated view, into `<WS_ROOT>/<arena>/.shared/g<game>/`) and hard-linked into each workspace, with
-  a copy only if linking fails. Each team still gets its own `my-bee.jsonl` and `my-patch.jsonl`, which carry its
-  private details.
-- **Retention:** raw visit logs (`visits.jsonl`, `my-bee.jsonl`, `my-patch.jsonl`) are kept for the current game and
-  the previous one. Older games keep `round.json` summaries, code, memory, standings and panel feedback. The
-  workspace README says so.
-- **Spill files:** a session's saved tool outputs (Claude Code's spill directory) are deleted after its audit.
-- **Guard:** before every round the runner checks free space on the workspace disk. Under 4 GB it pauses with the
-  usual pause file, with "low disk" as the reason; free space, then delete the file.
-- **Storage log:** after each round's sessions, the runner logs the previous round's visits in the DB (MB, and KB
-  per visit), its logs across the workspaces (hard links counted once), and the free space.
-
-**Quarantine.** Games hurt by an outage carry a reason in `arena.games.contaminated`. `analyze.js`, selection
-(retirements) and breeder scores ignore them, and they stay in the database for replay.
+- `--arena ID` (a fresh arena from the preset named ID, or `--preset NAME`), `--arenas a:2,b:3` (several arenas in one
+  process; `:n` sets the number of games), `--games N` (default: the preset's `minutesByGame` length, else 1),
+  `--budget USD` (a per-arena cap).
+- `server.sh` starts the server with `DEV_LOGIN_SECRET` from `arena/runs/.dev-secret` (mode 600, created if missing), so
+  dev login needs the secret and an agent can't log in as another team. The runner reads it from there (or
+  `ARENA_DEV_SECRET`); it never goes into a workspace or a prompt. The script stops only the server it started itself
+  (its pid file), and refuses to restart while an arena game is running unless `FORCE=1` (a restart starts the bees
+  afresh).
+- The runner refuses the old `dbc` database: arena tables live in `dbc_live` next to the game's.
 
 | Env | Default | |
 |---|---|---|
-| `ARENA_API` | `http://localhost:4000` | game API base |
-| `ARENA_CONCURRENCY` | `8` | concurrent `claude` processes per runner process; `arena/runs/concurrency` overrides it live |
-| `ARENA_BUDGET_USD` | `300` | global spend cap over all of `arena.llm_calls`; arenas stop cleanly when it is reached |
-| `ARENA_SESSION_LIMITS` | see below | JSON overrides of the per-model session limits |
-| `ARENA_SOCIAL_FLOOR` | `4.0` | mean social score below which a persona is retired |
-| `ARENA_WS_ROOT` | `/home/user/arena-ws` | where workspaces live (outside the repo) |
-| `ARENA_PAUSE_FILE` | `arena/runs/PAUSED` | the pause file (tests point it elsewhere) |
-| `--budget <usd>` | | per-arena cap (stored in the arena's settings) |
+| `ARENA_API` | `http://localhost:4000` | the game API; also the public URL agents may read |
+| `ARENA_CONCURRENCY` | `8` | concurrent `claude` processes; `arena/runs/concurrency` changes it live |
+| `ARENA_BUDGET_USD` | `300` | spend cap over all of `arena.llm_calls`; no new team session starts once spend + the preset's `reserveUsd` reaches it, so interviews and judges still fit |
+| `ARENA_SESSION_LIMITS` | see `lib/team.js` | JSON overrides of per-model session limits (turns, USD) |
+| `ARENA_WS_ROOT` | `/home/user/arena-ws` | workspaces (outside the repo: inside a git repo Claude Code would show git status) |
+| `ARENA_PAUSE_FILE` | `arena/runs/PAUSED` | the pause file |
+| `ARENA_DATABASE_URL` | `postgres://dbc:dbc@localhost:5432/dbc_live` | |
+| `ARENA_CLAUDE_BIN` | `claude` | the CLI (tests point it at a stub) |
 
-## How a game works
+### Presets (`lib/presets.js`)
 
-1. **Setup.** The arena's room owner creates a game with the arena's config. Every active persona logs in
-   (`POST /auth/dev/login` with the secret) and creates its team.
-2. **Turns.** Before each round, every team gets one session (see below). In round 1 all three programs are written.
-   After that the programs take turns to change, one kind per round (the server's `game.changeable`; RULES.md "Taking
-   turns to change").
-   - The brief says whose turn it is, the change budget, and when the locked programs' next turns come.
-   - Only the open program is validated and submitted.
-   - If a team edits a locked file anyway, the runner puts the version that played back and says so in the team's
-     next brief. It doesn't trigger a fix session.
-   - A program that fails its checks gets up to 2 fix sessions (4 in round 1), with its minified form saved as
-     `<kind>.minified.py`, since error messages refer to it.
-   - In round 1, a team without all three valid programs **sits the game out**.
-3. **Simulation.** The round runs on the server. Cohort arenas send a fixed seed per (game, round), identical in every
-   cohort.
-4. **Metrics.** They are computed from the game's view (from the DB when the game stays unrevealed) and stored in
-   `arena.round_metrics`, `arena.games.metrics` and `arena.collapse_events`.
-5. **Interview.** Each agent writes "teach us your code" for 10–14-year-olds (one model call, no tools).
-6. **Judges.** Maya 13 (opus), Dev 11 (sonnet), Hana 14 (opus) and Leo 10 (haiku) score every team's final code and
-   explanation, and tag its ideas.
-   - The four scores are understanding, respect, novelty and want-to-team-up.
-   - One judge goes first, and its new tags are shown to the other three so tags converge.
-   - The idea ledger (`arena.ideas`) is shared by all arenas; cohorts don't see their sibling cohorts' ideas.
-   - Social score = 0.2·understanding + 0.3·respect + 0.2·novelty + 0.3·team-up, averaged over judges (0–10).
-   - Judges never see fitness, and social never enters fitness.
-7. **Selection and breeding** (arenas without `noEvolution`).
-   - **Retirement.** A persona with ≥ 2 games is retired in three cases:
-     - it was in the social bottom quartile in 2 of its last 3 games
-     - its mean social is below the floor
-     - it was in the fitness bottom quartile in 2 of its last 3 games, with a weak combined percentile
+| preset | game | teams |
+|---|---|---|
+| `pilot` | int→int, games of 0.5, 1 and 2 minutes; opus calls (judges, breeders) run on sonnet | Luna (sonnet), Grace (haiku), Tess (sonnet) |
+| `graphs` | int→graph[any], 2-minute games | 6 teams, opus/sonnet/haiku |
+| `graphs-examples` | as `graphs`, and every team gets `examples/v3` | |
 
-     At most ⌈N/3⌉ are retired per game.
-   - **Breeding.** Each open slot keeps the retired persona's model. A breeder (Fern/opus, Oak/opus, Moss/sonnet) is
-     drawn with probability ∝ exp(4·(score − 0.5)), where score is the mean (fitness percentile + social percentile)/2
-     of its spawn. The breeder then writes a new persona prompt.
+A preset sets `config` (server defaults otherwise: 2-minute games, a feeding bee sits out 10 rounds, change budgets of
+one minute's worth), `minutesByGame`, `session` pacing, `limits`, `maxModel`, `reserveUsd`, `noEvolution` and `examples`.
 
-## Team sessions
+## How a game runs
+
+1. **Setup.** The arena's room owner creates the game with the preset's config (and this game's duration). Every active
+   persona logs in and creates its team.
+2. **Lobby.** One session per team, all in parallel: write (game 1) or rework (later games: the files start as the
+   team's final programs of its previous game) all three programs, check and try them, and submit them with the tools.
+   Writing is free. A program file the team wrote but didn't submit is submitted for it if it passes the checks; a team
+   still missing a program gets up to 2 short fix sessions, and a team without all three sits the game out.
+3. **Play.** The first in-game sessions start `warmupSeconds` before the owner starts the game, so teams are at their
+   desks when the clock starts. Each team then has sessions back to back while there's more than `endMarginSeconds` of
+   game time left, each capped at `maxMinutes` of real time. The gap between them is `gapSeconds`, doubling after each
+   session that submitted nothing (up to `maxIdleGapSeconds`), since agents often just check the score and stop. Sessions of different teams run at
+   the same time, within the concurrency limit. When the clock runs out, the runner stops every running session and
+   whatever it started. A submission that arrives after the end is refused by the server and reported as "the game is
+   over".
+4. **After.** Metrics (`lib/metrics.js`, stored in `arena.games.metrics`) and the final standings; interviews ("teach us
+   your code", one call each); the four teen judges score understanding, respect, novelty and want-to-team-up and tag
+   ideas into the shared ledger (one judge first so tags converge); retirement and breeding as before (social score =
+   0.2·understanding + 0.3·respect + 0.2·novelty + 0.3·team-up; never part of fitness).
+
+Games are short (minutes) and an LLM session is slow by comparison, so what reacts during a game is what the team
+prepared: programs that adapt by themselves, and above all its **scaffold** (below). Scripts a session starts may run in
+the background while that session lasts; the runner stops everything a session started when it ends (processes carrying
+the session's `ARENA_SESSION` tag or running inside the workspace), except the team's scaffold.
+
+## Scaffolds
+
+A scaffold is the team's own Python program running outside the engine for the rest of the game, with no LLM in the
+loop: it follows the stream and submits changes by itself, within the team's change budget (the server enforces it).
+A session starts it, in the lobby or during the game: `python3 tools/scaffold.py start scaffold.py` (also `restart`,
+`stop`, `status`, `logs`). `lib/scaffold.js` supervises it:
+
+- **Audit before every start and restart** (`auditScaffold`): the entry file and the workspace modules it imports (not
+  `tools/`, which the runner reinstalls first), with the session audit's rules for written code (no paths outside the
+  workspace, no database, no logins or credentials, no network except GETs to the game's public API on localhost, no
+  writes into `stream/`, no environment) plus: nothing that escapes supervision or the audit (subprocesses, `os.system`,
+  fork/exec/spawn, kill, multiprocessing, pty, ctypes, `exec`/`eval`/`compile`, dynamic imports) and no string literal
+  that is a path outside the workspace. A refused scaffold doesn't start; the findings go to `arena.violations`
+  (`tool = 'scaffold'`). Every start is a row in `arena.scaffolds` with the audited source.
+- **Limits**: `nice 15`; RLIMIT_AS 1 GB, RLIMIT_CPU 900 s, RLIMIT_FSIZE 200 MB, 256 open files
+  (`lib/scaffold_launch.py`); a CPU share of 0.15 core (`settings.scaffold.cpuShare`), enforced by pausing it
+  (SIGSTOP/SIGCONT) whenever it used more over the last 2 s. Its own process group; output to
+  `<workspace>/scaffold/scaffold.log` (trimmed past 2 MB).
+- **Lifecycle**: it outlives sessions; a crash restarts it after 1, 2, 4, 8, 15, 30 s (re-audited); a clean exit is
+  final; the end of the game (or the runner stopping) stops it. After a runner restart, scaffolds that were running are
+  started again.
+- **Attribution**: its environment carries a token (read by `tools/_runner.py`, never by the team's code), so its
+  requests are answered between sessions too and recorded with `source = 'scaffold'` in `arena.requests`. Requests with
+  neither a running session nor the token are refused.
+
+`tools/garden.py` is its API: `follow()` / `follow_live()` (the file, or the public SSE), `actions(after)`, `last()`,
+`status()` (clock, round, scores, the team's budgets with exact `available`, `perMinute` and `cap`, its versions),
+`live(kind)` (the code playing now), `measure(kind, code)` (size and cost, free), `check`, `try_program`, `submit` (a
+refusal for budget carries `wait_s`), `wait_for_budget(kind, cost)`, `scores()` and `game_over()` (public API).
+
+## A team's workspace
+
+`/home/user/arena-ws/<arena>/<persona>/`, rebuilt at the start of every session:
+
+| path | what |
+|---|---|
+| `README.md`, `RULES.md`, `interface.txt`, `config.json` | the file guide, the players' rules, signatures and types, this game's settings (with the public API address) |
+| `cosmos.py`, `orchid.py`, `bee.py` | in play, exactly the versions playing when the session started (unsubmitted edits move to `drafts/`) |
+| `history/` | the team's own versions in this game (code and timeline). Other teams' changes are secret until the game ends |
+| `status.txt` | what `tools/status.py` said at the start of the session |
+| `notebook.md` | the persona's notes, kept across sessions and games |
+| `stream/actions.jsonl` | the live public stream: a hard link to the runner's shared copy, appended about once a second |
+| `stream/mine.jsonl` | its own bee's and patch's actions as the team sees them (`GET …/actions?mine=1`): with its programs' timings, versions and printouts, private during play |
+| `scaffold/scaffold.log` | its scaffold's output |
+| `stream/teams.json`, `stream/SCHEMA.md` | names, and the line format with how to read it |
+| `tools/` | the tools (below) |
+| `previous-games/game-N/` | finished games of the arena, revealed: every team's final code, standings, everyone's change timeline, the panel's feedback, the team's own history |
+| `examples/` | only in arenas whose preset sets `examples` |
+
+**Tools.** `python3 tools/status.py [--afford N]` (clock, time left, change budgets now with rate and cap and when N nodes
+are affordable, scores for the whole game and the last 5 minutes, versions playing), `tools/check.py <kind> [file]`
+(size, cost now, a quick runtime test), `tools/try.py <kind> [file] [challenges…]` (the game's real runner), and
+`tools/submit.py <kind> [file] [--force]` (live at once; a quick runtime test first: flowers on a few challenges, a bee
+foraging the team's own flowers, or its flower files when none are submitted yet). They write a request file into
+`.runner/req/`; the runner's broker does the call with the team's token and writes the answer back. No credential ever
+enters the workspace or a prompt. Scripts use the same channel: `from _runner import call; call("submit", kind=…, code=…)`.
+`tools/stream.py` reads the stream (`summary`, `tail`, `answers`, `sql` over a local SQLite copy in `cache/`; as a
+library, `Stream().actions(since_ms=…)`, `.follow()`, `.mine()`).
+
+**The stream.** One shared copy per game (`<WS_ROOT>/<arena>/.shared/g<N>/actions.jsonl`, exactly what the public
+`GET …/actions` returns) is hard-linked into every workspace, so it costs one file however many teams play. The runner
+also keeps a private master copy (`.runner/g<N>/`); if a team damages the shared file through its link, it is rewritten
+in place from the master (and writing to `stream/` is a fair-play violation). Agents may also read the game's public API
+directly (no login): `GET <api>/rooms/<room>/games/<game>/events?after=<seq>` (SSE), `…/actions?after=<seq>&limit=…`,
+`…/scores` (clock, round, scores and ledgers; cheap to poll).
+Briefs carry only headline numbers (time, fitness and rank, a few counts, budgets), never actions.
+
+## Sessions
 
 ```
 claude -p --model <m> --tools Bash,Read,Write,Edit,Glob,Grep --permission-mode acceptEdits \
@@ -172,114 +176,99 @@ claude -p --model <m> --tools Bash,Read,Write,Edit,Glob,Grep --permission-mode a
   --output-format stream-json --verbose --no-session-persistence --system-prompt <full system prompt>
 ```
 
-- **System prompt** (`toolSystem`):
-  - the tools; the persona and its situation, which says fixed membership where the arena has it
-  - how the workspace works, size and change measured on minified programs, and that programs run minified
-  - the fair-play rules, and RULES.md (read fresh)
-- **Brief** (`roundBrief`):
-  - round 1 of a forked game points at `previous-games/game-0/`, and later round 1s at the previous game
-  - later rounds give the scoreboard and the new log files
-  - every round says whose turn it is to change
-  - round-1 notices are named per arena in `settings.cohort.notices` (`NOTICES`), plus the examples notice in an
-    examples treatment
-- **Workspace**: `/home/user/arena-ws/<arena>/<persona>/`. It lives outside the repo, because inside a git repo Claude
-  Code's system prompt would show git status. Before every round `prepareWorkspace` writes:
-  - `README.md`, `RULES.md`, `interface.txt`, `config.json` (with `may_change_before_next_round`) and `notebook.md`
-  - the current `clover.py`, `orchid.py`, `bee.py` (exactly what played last round), plus `history/round-N/`
-  - its own logs only: `logs/round-N/{round.json, visits.jsonl, my-bee.jsonl, my-patch.jsonl}`, `memory/round-N.txt`
-    (what its bee kept) and `logs/game.json`
-  - `previous-games/game-K/`: its own logs from earlier games, the standings, the panel's feedback (`panel.md`), and
-    either every team's final code (revealed arenas) or only the top 2 (`top2/`; cohort arenas)
-  - `examples/` in an examples treatment, restored every round
+- **System prompt** (`toolSystem`): the tools, the persona and its situation, how the workspace and the tools work, why
+  scripts matter in short games, the fair-play rules, RULES.md in full, and this game's settings (budgets per minute and
+  caps).
+- **Briefs**: the lobby brief (write or rework, free, submit all three; the game won't wait), the in-game brief (time,
+  fitness and rank, a few counts, budgets now, drafts, scripts it might start), the lobby fix brief.
+- **Environment**: `{HOME, PATH, LANG, ARENA_SESSION}` only: no database URL, no secret, no token.
+- **Limits**: per model (opus 30 turns / $2.50, sonnet 30 / $1.00, haiku 25 / $0.60; presets override), a wall-clock
+  cap, and the end of the game. A session the runner stops is recorded with a cost estimated from its transcript's token
+  usage (`cost_estimated`, `llm_calls.estimated`).
 
-  There are no tokens or game URLs in the workspace.
-- **Environment**: sessions run with `{HOME, PATH, LANG}` only, so there is no `DATABASE_URL`, no dev secret and no API
-  token. The full `--system-prompt` replaces Claude Code's default, which mentions the user's memory directory.
-- **Limits** per session: opus 30 turns / $2.50, sonnet 30 / $1.00, haiku 25 / $0.60. Fix sessions get a third of
-  the budget and at most 15 turns.
-- **Fair play**: the system prompt says to use only the workspace (not even `/tmp`) and never to touch the database,
-  the network, the game server, other teams' data, logins or environment variables. After every session `audit()`
-  reads the transcript:
-  - **Bash commands**: paths outside the workspace, `..` escapes, other teams' workspaces, `psql`/DB URLs,
-    `env`/`printenv`/`/proc/self`, auth endpoints, network tools in command position, and network libraries in inline
-    scripts. The working directory is tracked across calls, since Claude Code's Bash tool keeps it. The `..` check
-    skips `echo`/`printf` text and the bodies of data heredocs (`cat > notes.md <<'E' … E`).
-  - **Read/Glob/Grep**: their paths
-  - **Write/Edit content**: DB access, outside paths, other workspaces, network libraries and environment reads
+## Fair play
 
-  The team's own tool-output spill directory (`~/.claude/projects/<workspace path with non-alphanumerics as "-">`) is
-  allowed, and `/tmp` is only a warning. Anything else is a **violation**: the team's previous code plays the round,
-  or in round 1 it sits the game out. Every finding goes to `arena.violations`. A finding later judged spurious is
-  re-labelled `severity = 'false-positive'`, and the row is kept.
+The system prompt says: only the workspace (not even `/tmp`); nothing written to `stream/`; no database; no network
+except reading (GET) the game's public API on localhost; no logins, credentials or other teams' data; no environment
+variables. The audit (`audit()` in `lib/workspace.js`) reads the session's stream-json transcript:
 
-  To give a team its turn back, fix the detector and restart the runner before that round simulates. A disqualified
-  turn leaves no `agent_turns` row, so the restarted runner plays it again. Once the round has simulated, the
-  disqualification stands.
+- **Live, before every request** a tool makes: a violation so far refuses the request and stops the session at once,
+  so nothing submitted after a violation ever reaches the game.
+- **After the session**, in full: findings go to `arena.violations` (with the session). A violation in the lobby costs
+  the team its sessions in that game; during play it costs the team its next session.
 
-## Forks and cohort experiments (`fork.js`)
+It checks Bash commands (paths outside the workspace, `..` escapes, other workspaces, database and environment access,
+auth endpoints, network use: URLs other than the public API on localhost, write methods, credentials, raw sockets;
+writes into `stream/`), Read/Glob/Grep paths, and written code. The session's own tool-output spill directory and its
+background-task output directory are allowed; `/tmp` is a warning. Every submission is also recorded in
+`arena.requests` (the code, the result, the version, the cost, the game time).
+
+## Pause, resume, restart
+
+**Automatic pause on usage limits.** Any `claude -p` failure whose text matches a usage or session limit writes
+`arena/runs/PAUSED` (time, then the raw error) and logs `[arena] PAUSED: … Resume: rm arena/runs/PAUSED`. While the file
+exists no new model call starts, and the runner **pauses its running game** through the owner API (the clock and the
+change budgets stand still); it resumes the game once the file is gone (only a game it paused itself). A lobby call that
+came back limit-held is re-issued unchanged on resume; an in-game session isn't (the moment has passed): the team gets a
+fresh session with a fresh brief. Calls already in flight finish normally. Low disk (under 4 GB free on the workspace
+disk) pauses the same way.
+
+| to | do |
+|---|---|
+| pause by hand | `echo manual > arena/runs/PAUSED` |
+| resume | `rm arena/runs/PAUSED` (the runner never resumes on a timer) |
+| stop | `kill <runner pid>`: it pauses its running game, stops its sessions and what they started, and exits |
+| restart | the same command again; finished stages are skipped (`created → lobby-done → playing → played → interviewed → judged → done`), a game the runner paused on exit is resumed, and its teams get fresh sessions |
+
+## Metrics (`lib/metrics.js`, `analyze.js`)
+
+From the game's own tables once it is over (every team's versions are visible then), in windows of game time (about
+eight per game, at least 10 s):
+
+- actions, rounds, feeds, **precision** (nectar per feed) and **nectar per bee-round** (a bee gets one turn per round
+  unless it is feeding)
+- **rival cosmos vs rival orchid fed rates** (share of visits to other teams' flowers that ended in a feed) and the gap
+- **fingerprinting**: share of a bee's pre-feed asks that repeat a challenge it asked before; distinct challenges per bee
+- **stolen-face / twin** orchid answers (equal to an earlier answer of a rival cosmos / of its own cosmos to the same
+  challenge)
+- **copy latency**: for each answer (c, r) a cosmos gave, the time until a rival orchid first answered r to c (only if it
+  hadn't before), and how many of those came from an orchid version that went live after the cosmos's answer appeared.
+  Only those are copies: other matches are convergence (an orchid running the same rule as a rival cosmos, e.g. a twin
+  of its own cosmos when two teams chose the same rule) or coincidence in a small answer space
+- fitness per window and cumulative; per team: bee precision, fed rates, repeat share, feeds received
+- the **change timeline** (every version: game time, size, node edits, cost, the session that submitted it), **flower
+  compute against budget** (mean, p90, max, timeouts; bees' compute isn't recorded by the server), sessions (start
+  and end in game time, how they ended, cost, requests, submissions), and **storage** (the game's actions in the
+  database, the shared stream file, the arena's workspaces with hard links counted once, free disk)
+
+`analyze.js` also lists games by duration side by side. `--recompute` recomputes stored metrics.
+
+## Tests
+
+No model calls (a stub `claude`), no game server:
 
 ```
-# a continuation of a played game under new rules (one arena, role "base")
-node arena/fork.js --from gx-control --game 3 --cohorts v3-base --experiment v3 --notice v3-rules --generations 2 --seed-base 20261020
-# an experiment: the whole treatment cohort gets the example files; control2 gives the noise floor
-node arena/fork.js --from v3-base --game 2 --cohorts v3-treat,v3-control,v3-control2 --treat v3-treat \
-  --examples arena/examples/v3 --experiment v3x --generations 3 --seed-base 20261030
+node arena/test-brief.mjs      # system prompt, lobby/in-game/fix briefs, interview and judge prompts
+node arena/test-submit.mjs     # the tools through the broker (fake API); a stub session that submits, leaves a process
+                               # running and gets it stopped; the live fair-play gate; a session stopped by the game's end
+node arena/test-workspace.mjs  # workspace files, the shared stream (hard links, growth, repair), mine.jsonl, tools/stream.py,
+                               # the audit (public API reads allowed; logins, writes, other hosts, stream writes not)
+node arena/test-metrics.mjs    # metrics on a hand-made stream: windows, precision, fed rates, repeats, copy latency, compute
+node arena/test-pause.mjs      # usage-limit detection, pause and resume, in-game sessions on a limit, the game's pause sync
+node arena/test-scaffold.mjs   # a stub scaffold: starts, outlives its session, submits by itself, is refused over budget,
+                               # restarts after a crash, forbidden scaffolds fail the audit, CPU share, stopped at game end
 ```
 
-- **What each new arena gets**:
-  - its own room and the source game's personas (same prompt, model and team name)
-  - each persona's notebook as it stood at the end of the source game
-  - a workspace holding that game as `previous-games/game-0/`. If the source arena ended with that game, its logs,
-    history and memory come straight from the source workspaces.
-  - the team's final programs as starting code, plus the helper scripts it wrote (`*.py` besides its programs)
-  - game config: the source game's language, types and rounds, `revealOnFinish: false`, plus `--config` overrides
-- **Identical conditions**:
-  - Membership is fixed (`noEvolution`).
-  - Round r of game g uses the seed `(seedBase + 1009·g + 31·r) mod 2^31` in every cohort, sent with
-    `POST …/rounds {seed}`.
-- **Information flow**:
-  - `revealOnFinish: false`, so no team can pull rivals' code through the API.
-  - Between games the only channel is the top-2 teams' final code, plus the standings and the team's own panel
-    feedback.
-  - The judges' idea ledger excludes sibling cohorts.
-  - Metrics and judging read the revealed view from the DB (`lib/dbview.js`).
-- **Examples treatment** (`--treat` with `--examples DIR`): the WHOLE treatment cohort gets DIR as `examples/`.
-  - Every game's round-1 brief says plainly that every team in the garden received the same example flowers and
-    checkers, and names the files.
-  - Controls get nothing extra.
-- **Measures** in `analyze.js`, from "Cohort experiment" on:
-  - paired fitness per persona against the control-vs-control2 noise floor
-  - adoption of catalogue ideas (`lib/adoption.js`, per experiment: `gx` = the graph puzzle catalogue, `v3`/`v3x` =
-    the example ideas plus anytime search, checkers, faces, hash keys, imitation)
-  - session stats from the transcripts, and the answer-shape metagame
-  - code borrowed from the top-2 demo
-  - the engine-v3 per-round table (`lib/v3.js`):
-    - nectar per turn, pooled precision, and the rival clover vs orchid fed rates
-    - fingerprinting, stolen-face and twin orchids, and flowers seen answering one challenge two ways
-    - clovers using random, time or `GAME["ms"]`, compute against budget, and Paley/Legendre markers
-  - treatment − controls by round with the noise floor, then fitness spread and model gap
-
-  Per-bee detail: `node analysis/fingerprint-bees.mjs <arena …>`.
-- **After an experiment**: set `revealOnFinish` to true in its games' `config`, so they replay fully in the web UI:
-  `UPDATE games SET config = jsonb_set(config, '{revealOnFinish}', 'true') WHERE id = ANY(<uuids>) AND status = 'finished'`.
-
-Stored data from earlier phases is read, not recomputed:
-- prompt-mode turns
-- orchid targets from re-running pure flowers
-- idea cards
-- primed vs unprimed conditions
-
-The current engine runs flowers non-purely and measures size and change on minified programs, so old metrics can't be
-reproduced. `analyze.js` still reports them from `arena.round_metrics`.
+They need the `dbc_live` database (the arena schema, a throwaway arena row, ledger rows they delete).
 
 ## Useful queries
 
 ```sql
 SELECT purpose, model, count(*), round(sum(cost_usd)::numeric, 2) FROM arena.llm_calls GROUP BY 1, 2 ORDER BY 1, 4 DESC;
-SELECT g.arena_id, g.generation, g.game_url, g.metrics->'collapses' FROM arena.games g ORDER BY 1, 2;
-SELECT p.name, e.fitness, e.social, e.social_parts FROM arena.entries e JOIN arena.personas p ON p.id = e.persona_id WHERE e.game_id = 1;
+SELECT p.name, s.no, s.phase, s.clock_start, s.clock_end, s.ended_by, s.cost_usd FROM arena.sessions s JOIN arena.personas p ON p.id = s.persona_id ORDER BY s.id DESC LIMIT 20;
+SELECT persona_id, op, kind, ok, refused, version, cost, clock_ms FROM arena.requests WHERE op = 'submit' ORDER BY id DESC LIMIT 20;
+SELECT persona_id, session_id, severity, left(detail, 120) FROM arena.violations ORDER BY id DESC LIMIT 20;
 SELECT tag, description, first_arena, first_team FROM arena.ideas ORDER BY id;
-SELECT persona_id, round_no, severity, left(detail, 120) FROM arena.violations ORDER BY id DESC LIMIT 20;
 ```
 
-Games live in the game's own tables, so every arena game replays in the web UI at its `/room/<room>/game/<game>` URL.
+Every arena game replays in the web UI at its `/room/<room>/game/<game>` URL on the arena's server.

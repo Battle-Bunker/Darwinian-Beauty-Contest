@@ -16,7 +16,7 @@ function rng(seed) {
 const question = (t, r) => ({ int: r(0, 999), float: r(0, 999) / 1000, bool: true, str: "hi" + r(0, 99) }[t.kind] ?? [question(t.of, r)]);
 
 const ORCHID_NOTE = `Orchid: a deceptive flower. Bees that feed here get no nectar,
-but your patch still earns the visit. Bees feed here when it answers like a clover they trust:
+but your patch still earns the visit. Bees feed here when it answers like a cosmos they trust:
 yours, or another team's. Your bee's log shows what other teams' flowers answered, and which paid.`;
 const comment = (text, mark) => text.split("\n").map((l) => `${mark} ${l}`).join("\n");
 
@@ -47,18 +47,18 @@ function python(cT, rT, r) {
   const q = pyLit(question(cT, r));
   const intInt = cT.kind === "int" && rT.kind === "int";
   const [a, b, c, d, salt] = [2 * r(1, 48) + 1, r(1, 999), 2 * r(1, 48) + 1, r(1, 999), r(1000, 9999)];
-  const clover = intInt
-    ? `# Clover: a rewarding flower. Bees that feed here get nectar.
+  const cosmos = intInt
+    ? `# Cosmos: a rewarding flower. Bees that feed here get nectar.
 # flower(challenge) runs fresh for every question: it keeps nothing between calls.
 def flower(challenge):
     return (challenge * ${a} + ${b}) % 1000
 `
-    : `# Clover: a rewarding flower. Bees that feed here get nectar.
+    : `# Cosmos: a rewarding flower. Bees that feed here get nectar.
 # flower(challenge) runs fresh for every question: it keeps nothing between calls.
 import hashlib, json
 
 def flower(challenge):
-    h = hashlib.sha256(("clover${salt}" + json.dumps(challenge)).encode()).hexdigest()
+    h = hashlib.sha256(("cosmos${salt}" + json.dumps(challenge)).encode()).hexdigest()
     return ${pyFromHex(rT)}
 `;
   const orchid = intInt
@@ -74,25 +74,27 @@ def flower(challenge):
     return ${pyFromHex(rT)}
 `;
   const bee = `# Bee: visits one flower at a time. Variables at the top level
-# last for the whole round, so your bee can learn as it goes.
+# last for as long as this version of the bee plays, so it can learn as it goes.
 QUESTION = ${q}
 tally = {}   # answer to QUESTION -> [times fed, times got nectar]
 
-def forage(seen, turns_left):
+def forage(seen, visit):
     # seen = [[challenge, response], ...] for the flower in front of you
     if not seen:
-        return ["ask", QUESTION]    # costs 1 turn
+        return ["ask", QUESTION]    # the first challenge at the next flower
+    if visit["fed"]:
+        return ["leave", QUESTION]  # move on, and ask QUESTION first at the next flower
     fed, got = tally.get(str(seen[0][1]), [0, 0])
     if fed < 2 or got / fed >= 0.5:   # taste each new answer twice
-        return "feed"               # costs GAME["feed_cost"] turns
-    return "leave"                  # free
+        return "feed"               # then sits out GAME["feed_cost"] rounds
+    return ["leave", QUESTION]
 
 def tasted(seen, nectar):
     key = str(seen[0][1])
     fed, got = tally.get(key, [0, 0])
     tally[key] = [fed + 1, got + (1 if nectar else 0)]
 `;
-  return { clover, orchid, bee };
+  return { cosmos, orchid, bee };
 }
 
 function typescript(cT, rT, r) {
@@ -111,18 +113,18 @@ function hex(s: string): string {
   return out;
 }
 `;
-  const clover = intInt
-    ? `// Clover: a rewarding flower. Bees that feed here get nectar.
+  const cosmos = intInt
+    ? `// Cosmos: a rewarding flower. Bees that feed here get nectar.
 // flower(challenge) runs fresh for every question: it keeps nothing between calls.
 function flower(challenge: number): number {
   return (((challenge * ${a} + ${b}) % 1000) + 1000) % 1000;
 }
 `
-    : `// Clover: a rewarding flower. Bees that feed here get nectar.
+    : `// Cosmos: a rewarding flower. Bees that feed here get nectar.
 // flower(challenge) runs fresh for every question: it keeps nothing between calls.
 ${hash}
 function flower(challenge: ${C}): ${R} {
-  const h = hex("clover${salt}" + JSON.stringify(challenge));
+  const h = hex("cosmos${salt}" + JSON.stringify(challenge));
   return ${tsFromHex(rT)};
 }
 `;
@@ -140,18 +142,19 @@ function flower(challenge: ${C}): ${R} {
 }
 `;
   const bee = `// Bee: visits one flower at a time. Variables at the top level
-// last for the whole round, so your bee can learn as it goes.
+// last for as long as this version of the bee plays, so it can learn as it goes.
 type Challenge = ${C};
 type Seen = [Challenge, ${R} | null][];
 
 const QUESTION: Challenge = ${q};
 const tally = new Map<string, [number, number]>(); // answer to QUESTION -> [times fed, times got nectar]
 
-function forage(seen: Seen, turnsLeft: number): ["ask", Challenge] | "feed" | "leave" {
-  if (seen.length === 0) return ["ask", QUESTION]; // costs 1 turn
+function forage(seen: Seen, visit: { fed: boolean }): ["ask", Challenge] | "feed" | ["leave", Challenge] | "leave" {
+  if (seen.length === 0) return ["ask", QUESTION]; // the first challenge at the next flower
+  if (visit.fed) return ["leave", QUESTION];        // move on, and ask QUESTION first at the next flower
   const [fed, got] = tally.get(JSON.stringify(seen[0][1])) ?? [0, 0];
-  if (fed < 2 || got / fed >= 0.5) return "feed"; // taste each new answer twice; costs GAME.feed_cost turns
-  return "leave";                                   // free
+  if (fed < 2 || got / fed >= 0.5) return "feed"; // taste each new answer twice; then sits out GAME.feed_cost rounds
+  return ["leave", QUESTION];
 }
 
 function tasted(seen: Seen, nectar: boolean): void {
@@ -160,7 +163,7 @@ function tasted(seen: Seen, nectar: boolean): void {
   tally.set(key, [fed + 1, got + (nectar ? 1 : 0)]);
 }
 `;
-  return { clover, orchid, bee };
+  return { cosmos, orchid, bee };
 }
 
 /** `seed` (e.g. the team id) varies the constants, so each team starts somewhere different. */

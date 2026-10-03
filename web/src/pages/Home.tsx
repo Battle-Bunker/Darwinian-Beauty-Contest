@@ -44,7 +44,7 @@ export function HomePage() {
           {error && <Alert kind="error">{error}</Alert>}
         </div>
         <div className="hero-cards">
-          <div className="mini-card"><FlowerHead color="#7a9e3f" size={34} /><div><b>Clover</b><span>an honest flower: bees that feed here get nectar</span></div></div>
+          <div className="mini-card"><FlowerHead color="#e0559a" petals={8} size={34} /><div><b>Cosmos</b><span>an honest flower: bees that feed here get nectar</span></div></div>
           <div className="mini-card"><FlowerHead color="#9b5de5" size={34} /><div><b>Orchid</b><span>a trickster: looks tasty, pays nothing</span></div></div>
           <div className="mini-card"><BeeGlyph color="#f2a541" size={36} /><div><b>Bee</b><span>asks flowers questions and decides where to feed</span></div></div>
         </div>

@@ -13,10 +13,11 @@ function command(language, role) {
 }
 
 export class ProgramProcess {
-  /** role: "flower" | "bee". setup: {code, ms, seed, game}. */
+  /** role: "flower" | "bee". setup: {code, ms, limitMs?, game, maxChars}: limitMs is a bee call's hard stop. */
   constructor(language, role, setup) {
     const [cmd, args] = command(language, role);
-    this.ms = setup.ms;
+    // Kill-on-hang backstop per call: well past the runner's own stop (the budget, or a bee's hard limit).
+    this.backstopMs = setup.limitMs ? setup.limitMs + 1500 : setup.ms * 2 + 1500;
     this.dead = null;
     this.queue = [];
     this.inflight = null;
@@ -72,8 +73,8 @@ export class ProgramProcess {
     });
   }
 
-  /** One request; the hard deadline is the program's budget plus slack, unless given. */
-  call(obj, timeoutMs = this.ms * 2 + 1500) {
+  /** One request; killed (and answered {e, dead}) if the runner hasn't replied by the backstop. */
+  call(obj, timeoutMs = this.backstopMs) {
     return this.#request(obj, timeoutMs);
   }
 
