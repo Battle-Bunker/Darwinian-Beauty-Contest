@@ -136,7 +136,19 @@ check("audit: paths outside the workspace are violations", sev(bash("cat /etc/ho
 check("audit: another team's workspace is a violation", sev(bash(`cat ${root}/${AID}/tess/cosmos.py`.replace(root, "/home/user/arena-ws"))) === "violation");
 check("audit: environment and database access are violations", sev(bash("env | head")) === "violation" && sev(bash("psql -c 'select 1'")) === "violation");
 check("audit: allowedUrl", allowedUrl(`${apiBase}/events?after=3`) && allowedUrl("http://127.0.0.1:4000/api/rooms/X") && !allowedUrl("http://localhost:4000/api/auth/dev/login") && !allowedUrl("http://localhost:5432/"));
+check("audit: a Python variable called nc is not netcat; netcat still is", sev(writePy(`nc = sum(1 for x in small if x)\nif nc >= 3 and no <= 0.1 * (nc + no):\n    nc += 1\n`)) === "ok" && sev(writePy(`import os\nos.system("cat f | nc localhost 80")\n`)) === "violation");
 check("audit: '..' inside the workspace is fine, leaving it isn't", !escapesWorkspace("cat history/cosmos/../orchid/v1.py", dir) && escapesWorkspace("cat ../../x", dir));
+// csig-a game 4: Mallory's lobby was stopped for a ".." in a Python comment inside a heredoc.
+const malloryCmd = "python3 - <<'EOF'\nsrc = open(\"bee.py\").read()\no = open(\"orchid.py\").read()\n# take shared recipe code from the orchid (ring .. recipe), minus knight/chain generators\nstart = o.index(\"def ring(\")\nend = o.index(\"def flower(\")\nshared = o[start:end]\na = shared.index(\"JUMPS = \")\nb = shared.index(\"def recipe(\")\nshared = shared[:a] + 'JUMPS = [(1, 2), (2, 1), (-1, 2), (-2, 1), (1, -2), (2, -1), (-1, -2), (-2, -1)]\\n\\n\\n' + shared[b:]\n# in the bee, km and chain are checked, not cooked\nshared = shared.replace('    if name == \"km\":\\n        return knight(c)\\n    if name == \"chain\":\\n        return chain(c)\\n', '')\nopen(\"_shared.txt\", \"w\").write(shared)\nprint(len(shared))\nEOF";
+const W = (c) => escapesWorkspace(c, dir);
+check("audit: '..' in prose (a comment in a python heredoc) isn't a path", !W(malloryCmd) && !W(`python3 - <<'EOF'\n# ring .. recipe\nx = 1  # a .. b\nprint("ring .. recipe", ...)\nEOF`));
+check("audit: python's ... and a '..' placeholder aren't paths", !W(`python3 - <<'EOF'\ndef f(x: int) -> int: ...\nk = {a: (x if x else '..') for a in b}\nEOF`) && !W(`python3 -c "print(...)"`));
+check("audit: shell comments and echo don't count; shell escapes still do",
+  !W(`ls # see .. later`) && !W(`echo ..`) && W(`cd ..`) && W(`cat ../x`) && W(`ls ${dir}/..`) && W(`ln -s .. up`) && W(`ln -s ../../other x`) && W(`python3 tools/try.py cosmos ../other/cosmos.py`));
+check("audit: escapes in python programs still count (heredoc and -c)",
+  W(`python3 - <<'EOF'\nopen("../x").read()\nEOF`) && W(`python3 - <<'EOF'\nimport os\nos.chdir("..")\nEOF`) && W(`python3 - <<'EOF'\nfrom pathlib import Path\nPath("..").iterdir()\nEOF`)
+  && W(`python3 -c "import os; os.chdir('..')"`) && W(`python3 - <<'EOF'\nimport os\nos.listdir(os.path.join('.', '..'))\nEOF`) && W(`python3 - <<'EOF'\nos.symlink("../../kenji", "k")\nEOF`)
+  && !W(`python3 - <<'EOF'\nopen("history/cosmos/../orchid/v1.py").read()\nEOF`));
 check("audit: '..' in a sed replacement isn't a path; a file argument or a non-sed command still is",
   !escapesWorkspace(`cd ${dir}; python3 tools/try.py cosmos cosmos.py 5 77 2>&1 | sed -E 's/"edges".*"labels"/../' | cut -c1-60`, dir)
   && !escapesWorkspace(`sed -e "s/x/../g" cosmos.py`, dir) && !escapesWorkspace(`perl -pe 's#a#../..#' f`, dir)

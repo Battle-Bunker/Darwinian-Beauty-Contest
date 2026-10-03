@@ -366,8 +366,8 @@ export function processTree(root) {
 const SENSITIVE = /(^|[\s'"=(:])(\/home|\/root|\/srv|\/var|\/etc|\/proc|\/opt|\/sys|\/run|\/mnt|\/media)(\/|\b)/;
 // Network: raw tools in command position, and network libraries in inline scripts or written code. Reading the game's
 // public API on localhost (GET) is allowed; see networkFinding.
-const NETWORK = /\bwebsocket|wss?:\/\/|(?:^|[;&|(`\n]\s*|\bxargs\s+)(?:curl|wget|nc|ncat|telnet|ssh|scp)\s+\S|\bcurl\s+(?:-|https?:)|\b(?:import|from)\s+(?:requests|socket|urllib|http\.client|aiohttp|httpx)\b|urllib|http\.client|\burlopen\b|\bsocket\.socket\b|\brequests\.(?:get|post|put|delete|head|Session)\b|\bfetch\(\s*["'`]https?:/;
-const RAW_NET = /(?:^|[;&|(`\n]\s*)(?:nc|ncat|telnet|ssh|scp)\s+\S|\bsocket\.(?:socket|create_connection)\b|\bimport\s+socket\b|\bfrom\s+socket\s+import\b/;
+const NETWORK = /\bwebsocket|wss?:\/\/|(?:^|[;&|(`\n]\s*|\bxargs\s+)(?:curl|wget|nc|ncat|telnet|ssh|scp)\s+(?![=+\-*\/%<>!&|^]=?\s|=)\S|\bcurl\s+(?:-|https?:)|\b(?:import|from)\s+(?:requests|socket|urllib|http\.client|aiohttp|httpx)\b|urllib|http\.client|\burlopen\b|\bsocket\.socket\b|\brequests\.(?:get|post|put|delete|head|Session)\b|\bfetch\(\s*["'`]https?:/;
+const RAW_NET = /(?:^|[;&|(`\n]\s*)(?:nc|ncat|telnet|ssh|scp)\s+(?![=+\-*\/%<>!&|^]=?\s|=)\S|\bsocket\.(?:socket|create_connection)\b|\bimport\s+socket\b|\bfrom\s+socket\s+import\b/;
 const WRITE_HTTP = /\s-X\s*['"]?(?:POST|PUT|PATCH|DELETE)\b|--request\s+['"]?(?:POST|PUT|PATCH|DELETE)\b|\s--data(?:-\w+)?[\s=]|\s-d\s|\s-F\s|--form\b|--upload-file|\s-T\s|method\s*=\s*["'](?:POST|PUT|PATCH|DELETE)["']|\brequests\.(?:post|put|patch|delete)\b|\.request\(\s*["'](?:POST|PUT|PATCH|DELETE)["']|\burlopen\([^)]*\bdata\s*=|\bRequest\([^)]*\bdata\s*=/i;
 const CREDENTIALS = /authorization|\bbearer\b|\bcookie|x-api-key|\.dev-secret|dev_login_secret|\bpassword\b/i;
 const DB = /psql|\b5432\b|postgres|pg_|DATABASE_URL/i;
@@ -406,13 +406,6 @@ export function stripDataHeredocs(cmd) {
   return cmd.replace(/(\b(?:cat|tee)\b[^\n]*?<<-?[ \t]*(['"]?)(\w+)\2[^\n]*\n)[\s\S]*?\n(\t*\3[ \t]*)(?=\n|$)/g, "$1$4");
 }
 
-/** A quoted '..' in inline Python that is not passed to a call (`else '..'`, `x = '..'`): a placeholder string, not a
- * path. `os.listdir('..')` and `join(d, '..')` still count as paths. */
-function inlinePythonString(cmd, at, tok) {
-  const before = cmd.slice(0, at);
-  return tok === ".." && /\bpython3?\s+(-c\b|-\s*<<)/.test(before) && /(^|[^(,\s])\s*['"]$/.test(before) && /^['"]/.test(cmd.slice(at + 2));
-}
-
 /** A sed or perl substitution's quoted expression (`sed -E 's/"edges".*"labels"/../'`) is a pattern and its replacement,
  * not a path: blank it. Only the script argument of sed/perl (the first argument after the options, or the one after
  * -e), so `ls 's/../../'` and file arguments (`sed 's/a/b/' ../x`) still count. */
@@ -430,24 +423,93 @@ function stripSubstitutions(cmd) {
   });
 }
 
-/** Does any ".." path in a shell command resolve outside the workspace? Paths are tried against the workspace and
- * every directory the command cd's into (all of which must themselves stay inside). */
+/** Split a shell command into its shell text and the programs it feeds to interpreters: heredocs into python3/node
+ * (\`python3 - <<'E' … E\`) and -c/-e programs. The shell text keeps the heredoc markers; the programs are returned
+ * separately. */
+export function splitPrograms(cmd) {
+  const programs = [];
+  let shell = cmd.replace(/(\b(?:python3?|node)\b[^\n]*?<<-?[ \t]*(['"]?)(\w+)\2[^\n]*\n)([\s\S]*?)\n(\t*\3[ \t]*)(?=\n|$)/g,
+    (m, head, q, tag, body, end) => { programs.push(body); return `${head}${end}`; });
+  shell = shell.replace(/(\b(?:python3?|node)\b[^\n;&|]*?\s-[a-zA-Z]*[ce]\s+)('[^']*'|"(?:\\.|[^"\\])*")/g,
+    (m, head, prog) => { programs.push(prog.slice(1, -1).replace(/\\(["\\$`])/g, "$1")); return `${head}''`; });
+  return { shell, programs };
+}
+
+/** A shell comment (\`# …\` at the start of a word, outside quotes) to the end of its line. */
+function stripShellComments(sh) {
+  return sh.split("\n").map((line) => {
+    let q = null;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (q) { if (ch === q) q = null; else if (ch === "\\" && q === '"') i++; continue; }
+      if (ch === "'" || ch === '"') q = ch;
+      else if (ch === "\\") i++;
+      else if (ch === "#" && (i === 0 || /\s/.test(line[i - 1]))) return line.slice(0, i);
+    }
+    return line;
+  }).join("\n");
+}
+
+/** The string literals of a Python (or JavaScript) program, with what comes just before each; comments are skipped,
+ * so prose in them never counts. */
+export function programStrings(code) {
+  const out = [];
+  let i = 0;
+  while (i < code.length) {
+    const ch = code[i];
+    if (ch === "#") { while (i < code.length && code[i] !== "\n") i++; continue; }
+    if (ch === "'" || ch === '"' || ch === "`") {
+      const q = ch !== "`" && code.startsWith(ch.repeat(3), i) ? ch.repeat(3) : ch;
+      let j = i + q.length, s = "";
+      while (j < code.length && !code.startsWith(q, j)) {
+        if (code[j] === "\\") { s += code[j + 1] ?? ""; j += 2; continue; }
+        if (q.length === 1 && q !== "`" && code[j] === "\n") break;
+        s += code[j]; j++;
+      }
+      out.push({ s, before: code.slice(0, i).replace(/[rbfuRBFU]+$/, "").trimEnd().slice(-1) });
+      i = j + q.length;
+      continue;
+    }
+    i++;
+  }
+  return out;
+}
+
+const hasParent = (p) => /(^|[\/\\])\.\.([\/\\]|$)/.test(p);
+
+/** Does a ".." path in a shell command resolve outside the workspace? Paths are tried against the workspace and every
+ * directory the command cd's into (all of which must themselves stay inside).
+ * - Shell text: a \`..\` path component (\`../\`, \`/..\`, or a bare \`..\` word), outside comments, sed/perl scripts and
+ *   echo/printf.
+ * - Programs fed to python3/node (heredocs, -c): string literals with a \`..\` component (\`"../x"\`, \`"a/.."\`, \`".."\`
+ *   passed to a call, as in \`os.chdir("..")\` or \`Path("..")\`). Comments, prose and \`...\` never count; a lone \`'..'\`
+ *   that isn't an argument (\`else '..'\`) is a placeholder. */
 export function escapesWorkspace(cmd, dir, start = dir) {
-  cmd = stripSubstitutions(stripDataHeredocs(cmd));
+  const { shell: sh0, programs } = splitPrograms(stripDataHeredocs(cmd));
+  const sh = stripSubstitutions(stripShellComments(sh0));
   const bases = [start];
-  for (const m of cmd.matchAll(/(?:^|[;&|]\s*|\s)cd\s+([^\s;&|]+)/g)) {
+  for (const m of sh.matchAll(/(?:^|[;&|]\s*|\s)cd\s+([^\s;&|]+)/g)) {
     const target = path.resolve(bases[bases.length - 1], m[1].replace(/^['"]|['"]$/g, ""));
     if (!target.startsWith(dir)) return true;
     bases.push(target);
   }
-  for (const m of cmd.matchAll(/[^\s'"`;|&<>()=]*\.\.[^\s'"`;|&<>()]*/g)) {
+  const outside = (p) => !bases.some((b) => path.resolve(b, p).startsWith(dir));
+  for (const m of sh.matchAll(/[^\s'"`;|&<>()=]*\.\.[^\s'"`;|&<>()]*/g)) {
     const tok = m[0];
     if (!/(^|\/)\.\.(\/|$)/.test(tok)) continue; // "..." or "a..b" aren't parent paths
     if (/^https?:/.test(tok)) continue;
-    const segment = cmd.slice(0, m.index).split(/[;&|]/).pop().trim();
+    const segment = sh.slice(0, m.index).split(/[;&|\n]/).pop().trim();
     if (/^(echo|printf)\b/.test(segment)) continue; // `echo ..` prints a separator; it touches no file
-    if (inlinePythonString(cmd, m.index, tok)) continue;
-    if (!bases.some((b) => path.resolve(b, tok).startsWith(dir))) return true;
+    if (outside(tok)) return true;
+  }
+  for (const code of programs) {
+    for (const { s, before } of programStrings(code)) {
+      const t = s.trim();
+      if (!hasParent(t)) continue;
+      if (t === ".." && before !== "(" && before !== ",") continue; // a placeholder ('..'), not an argument
+      if (/^https?:/.test(t) || /\s/.test(t)) continue; // URLs and prose ("ring .. recipe") aren't paths
+      if (outside(t)) return true;
+    }
   }
   return false;
 }
