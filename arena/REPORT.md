@@ -1359,6 +1359,145 @@ copies from are stale.
   rule-guessing, not effort signalling. Trivial programs also make the stream huge: 360–860 actions a
   second, about 15 MB of database per 2-minute 3-team game.
 
+## 21. Continuous garden on graphs: 2, 5 and 10 minute games with scaffolds
+
+**What changed since §20.**
+- Rounds are lockstep: 200 ms each. Flower answers arrive at 150 ms, then bees have 50 ms to decide.
+- Flowers are dealt uniformly at random, and every visit opens with a public `arrive`.
+- Flower and bee versions are pinned per visit.
+- Every action is public, including which flower (cosmos or orchid) answered. Bees still never learn
+  whose flower they are at.
+- Teams can run a **scaffold**: their own program outside the engine that follows the stream and submits
+  changes by itself for the whole game.
+
+**As run** (`cont-graphs`, room /room/EF, full tables in `arena/runs/analysis-cont-graphs.md`):
+- Graphs preset (int → graph[any]), one game each of 2, 5 and 10 minutes.
+- Four fixed teams (no evolution): Mallory (Red Team Petals) and Kenji (quiet bees) on opus; Rosalind
+  (Batesian Botanics) and Priya (Priyas Plan Bee) on sonnet.
+- $11.92 in all.
+- Kenji sat out game 1, because of an audit false positive (see Breakages below).
+- Games ran one after another, and each game's code is revealed before the next. So duration is
+  confounded with experience, and there is one game per duration: read the trends as anecdotes.
+
+| minutes | teams | scaffolds that submitted | in-game changes: sessions / scaffolds | bee precision | rival cosmos − orchid fed gap | proof-of-work cosmos: p90 compute, answer nodes, rival fed | other flowers: p90 compute, nodes | exact orchid copies (source) | repeat share | too slow / missed slots | USD |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 2 | 3 | 1 of 3 | 2 / 12 | 0.77 | 0.08 | Red 86%, 224, **20%** | 3–5%, 13–15 | none | 0% | 0 / 4 | 2.90 |
+| 5 | 4 | 2 of 4 | 3 / 19 | 0.60 | 0.25 | quiet bees 92%, 119, **79%** | 3–6%, 13–16 | Red's orchid = Priya's cosmos (from game 1) | 0% | 0 / 1 | 4.13 |
+| 10 | 4 | 2 of 4 | 2 / 34 | 0.77 | 0.40 | quiet bees 94%, 174, **100%** (165 of 165 rival visits) | 3–5%, 11–14 | quiet bees' orchid = Red's, then Batesian's game-2 cosmos | 6% (all quiet bees') | 0 / 5 | 4.89 |
+
+**Scaffolds: only the opus teams' did anything.**
+- Every team started one in every lobby, but the two sonnet teams' scaffolds never submitted anything:
+  - Rosalind's is one `print` line and exits at once.
+  - Priya's counts actions and logs them. It also crash-looped for 13 s in game 1: she left out
+    `sys.path.insert(0, "tools")`, then fixed it herself.
+- Mallory's scaffold was rewritten each game:
+  - Game 1, "the analyst": it builds cosmos/orchid counts per answer shape from the public log and pushes
+    them into the bee every 30 s. Every 12 s it dresses the orchid in the shape statistics of the most-fed
+    rival cosmos.
+  - Game 2, "the detective": it also cracks simple rival cosmos rules from the log, e.g. Priya's ring
+    labelled (7 + i·c) mod 97, and turns them into exact checks ("ID cards") in the bee.
+  - Game 3, "the forgery auditor": it runs the bee's cards against rival *orchid* answers. A card that
+    any orchid passes is switched off, and the proof-of-work threshold is raised above the best orchid.
+- Kenji's scaffold, "the librarian":
+  - It keeps a fading cosmos/orchid count per answer fingerprint and re-submits the bee's book every
+    ~25 s: 12 times in game 2, 26 in game 3, about 150 nodes each.
+  - In game 3 it also switches which rival cosmos the orchid impersonates.
+- Changes made by sessions stayed at 2–3 per game; scaffold changes grew with game length (12, 19, 34).
+  The agents' sessions didn't drive in-game adaptation:
+  - Sonnet sessions were 7–10 s check-ins: 3 turns, $0.02–0.04, usually nothing submitted.
+  - Opus sessions sat in `sleep` loops watching the scaffold. In game 3 the first two hit the 6-minute
+    wall-clock cap.
+
+**Effort signals: one cosmos per game spent its compute, and by 10 minutes every rival bee trusted it.**
+- **The proof-of-work cosmos.**
+  - Its edge labels are hashcash nonces (sha256 of "c:k" starting with 10 zero bits), searched until the
+    150 ms is nearly gone. Kenji's version used 92–94% of its budget (p90).
+  - Its answers are 120–220 nodes and 3–4k characters. Every other flower used 3–6% and answered with
+    11–16 nodes.
+  - Rival bees fed at it on 20% of visits in game 1 (Mallory's version, which nobody had seen yet), 79% in
+    game 2 and 100% in game 3.
+- **The cheap cosmos flowers.** In game 3 they got 38–90%, and orchids 12–41%.
+- **What the bees relied on.**
+  - Kenji's own bee re-hashes every nonce. The other bees used size: Priya's feeds at graphs of 50+ nodes,
+    and Mallory's has a proof-of-work card.
+  - No orchid tried a big graph of invalid nonces, which would have fooled the size-only bees.
+- **Mallory dropped proof of work after game 1**, when it went unrewarded in a 2-minute game. She moved
+  to cracked-rule ID cards. So effort signalling was sustained by one team, and the rest learned to feed
+  at it.
+
+**Discrimination grew with game length.**
+- Pooled over teams, the gap between the rival cosmos and rival orchid feed rates was 0.08, 0.25 and 0.40.
+- In game 3, per bee (rival cosmos / rival orchid feed rate, then precision):
+  - Red: 69% / 4%, precision 0.94.
+  - quiet bees: 70% / 13%, precision 0.88.
+  - Priya: 75% / 32%, precision 0.70.
+  - Batesian: 90% / 92%, precision 0.55. Its bee feeds at nearly everything.
+- **Feeding at your own orchid was the opus teams' problem in game 2.** Red's bee fed at its own orchid on
+  90% of visits, because that orchid wore Priya's cosmos rule, which Red's bee trusted. Kenji's bee did so
+  on 56%.
+- **Both fixed it in game 3 with a private tell**, and own-orchid feeds fell to 4% and 0%:
+  - Red's orchid lists its edges in sorted order.
+  - Kenji's bee only asks challenges ≡ 777 (mod 1009), and his orchid answers those with junk. That tell
+    is visible in the public log, but no rival's code used it.
+- **Forgery had collateral damage.** Kenji's game-3 orchid exactly reproduces Batesian's cosmos. Mallory's
+  auditor saw an orchid pass the Batesian card and switched it off within the first minute. Red's bee then
+  fed at Batesian's real cosmos on 9% of visits, against 52% in game 2.
+
+**Copying, and how fast.**
+- **The built-in copy metric found nothing:** 0 matches in 238, 443 and 1,094 distinct cosmos answers. It
+  needs the same challenge asked at both flowers, and with random int challenges none repeats across bees.
+- **So I replayed every orchid version on 20 recorded challenges of every rival cosmos version**, from the
+  same game and the game before, with the engine's own `tryFlower`.
+- **Every exact copy came from the previous game's revealed code and was live from the lobby.** The copy
+  latency is one game:
+  - Game 2: Red's orchid reproduces Priya's game-1 cosmos (20 of 20). Kenji's orchid matches Priya's on
+    about half the challenges and Batesian's on the other half, switching by challenge parity.
+  - Game 3: Kenji's orchid starts as Red's game-2 cosmos (20 of 20). Red had changed its cosmos, so the
+    costume was stale from the start. Kenji's scaffold noticed and switched to Batesian's game-2 cosmos at
+    0:32 (20 of 20).
+- **No orchid copied a rule cracked during play.** Mallory's game-1 scaffold mimicked shapes 8 times in
+  2 minutes but never matched exactly (at most 2 of 20).
+- **Cracking during play did happen, on the bee side:** Mallory's detective turned Priya's rule into an
+  exact check within seconds of seeing enough answers.
+
+**Fingerprinting moved from repeated challenges to the labelled log.**
+- No bee re-asked a challenge to test a flower's consistency. Repeats were 0% apart from Kenji's tell set,
+  which caused 23% repeats as a side effect of drawing from 991 values.
+- Both opus scaffolds instead treat the public `kind` as a free labelled training set: shape fingerprint →
+  cosmos/orchid counts, refreshed every 25–30 s.
+
+**Timing.**
+- No bee was ever too slow: no `too slow` errors, and a mean decision time of about 1 ms of the 50 ms.
+- Missed slots were 4, 1 and 5, all under 0.3%.
+- **But the server stalled.** 18 calls took 160–1,440 ms: flowers that normally take 3–5 ms, and bees that
+  normally take about 1 ms. Several often fell in the same round.
+  - Nothing was lost: every answer arrived and no bee lost a slot. The engine's wall-clock deadline fired
+    late along with everything else.
+  - These outliers inflate mean compute: quiet bees' cosmos shows "102%" of its budget in game 3. Use p90.
+  - The machine has 4 cores. CPU_SLOTS=3 keeps the gardens' programs to three at a time, but Postgres,
+    the runner, the agents' tool calls and the scaffolds share the same cores. This matters for running
+    several gardens at once.
+
+**Spend.**
+- $11.92 against a $40 cap; the whole ledger is now $14.86.
+- Opus lobbies were 44% of it: 6 sessions, $5.30.
+- In play: 12 opus sessions ($1.86) and 33 sonnet sessions ($1.24).
+- Judges and interviews: $2.87.
+
+**Breakages.**
+- **Kenji's false-positive violation.** It came from `sed -E 's/"edges".*"labels"/../'`: the audit read the
+  `..` in the replacement as a path. It stopped his game-1 lobby, so he had no programs and sat out game 1.
+  - Fixed in 0e2d795, which doesn't check the script argument of sed/perl as a path; it ships with a test.
+  - Violations 12 and 13 are relabelled `false-positive`.
+  - The running batch kept the old audit, but no session in games 2 and 3 tripped it: 57 sessions audited,
+    and none else had any finding.
+- **The end of a game waited for idle teams.** The runner waited for every team's session loop, including
+  idle gaps of up to 120 s, before stopping scaffolds and starting the interviews: about 100 s per game.
+  Fixed: the gap between sessions now ends with the game.
+- **Kenji's scaffold ran past the game.** It stopped itself at game over, about 1.5 minutes before the
+  runner would have.
+- Scaffolds were otherwise reliable: no audit refusals, no CPU-share pauses, and 13 s of CPU at most.
+
 ## Most interesting games
 
 1. [/room/T/game/W](/room/T/game/W) baseline gen 2: primed lock-in, starter clovers with secret handshakes, one team
