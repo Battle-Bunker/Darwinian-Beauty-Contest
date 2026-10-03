@@ -81,7 +81,7 @@ export function keywordBee(code) {
 
 // Labels are cached by skeleton (ARENA_MECH_CACHE overrides the file, e.g. for tests).
 const cacheFile = () => process.env.ARENA_MECH_CACHE || path.join(ARENA_DIR, "runs", "mechanisms-cache.json");
-const PROMPT_VERSION = 1;
+const PROMPT_VERSION = 2;
 let cache = null;
 function loadCache() {
   if (cache) return cache;
@@ -111,8 +111,10 @@ For each COSMOS: "mechanism", one of:
 - "anytime": an optimisation whose answer quality grows with time, graded by a score a bee can compute
 - "other"
 (for an answer that combines several kinds of proof, the costliest one, with the tag "combined")
-and "tags" (any that apply): "time-bounded" (uses the clock to spend most of its time limit), "adaptive" (difficulty or
-threshold changes with the challenge or over time), "combined" (two or more kinds of proof in one answer), "secret"
+and "tags" (any that apply): "time-bounded" (uses the clock to spend most of its time limit), "adaptive" (the amount of
+work proved or demanded changes with the challenge, the time left or over the game; a rule merely seeded by the challenge
+is not adaptive), "combined" (two or more different kinds of costly proof in one answer; a cheap badge next to a proof
+doesn't count), "secret"
 (relies on hidden constants only its own bee knows), "own-bee-handshake" (a private signal for its own bee),
 "challenge-tied" (the work depends on the challenge), plus "puzzle:<name>" for a certificate or anytime puzzle
 (e.g. "puzzle:paley-clique", "puzzle:graceful", "puzzle:hashcash"). Add "difficulty": a short phrase (e.g. "10 zero bits,

@@ -183,7 +183,10 @@ function gameSummary(G, seen) {
   const winnerCosmos = finals.find((c) => c.team.teamId === winner?.teamId);
   // New this game in this cohort: mechanisms and notable tags.
   const marks = new Set();
-  for (const c of cosmos) { marks.add(`mechanism:${c.label.mechanism}`); for (const tg of c.label.tags || []) if (/^(adaptive|combined|puzzle:|sequential)/.test(tg)) marks.add(tg); }
+  for (const c of cosmos) {
+    marks.add(`mechanism:${c.label.mechanism}`);
+    if (COSTLY.has(c.label.mechanism)) for (const tg of c.label.tags || []) if (/^(adaptive|combined|puzzle:)/.test(tg)) marks.add(tg);
+  }
   const fresh = [...marks].filter((m) => !seen.marks.has(m));
   for (const m of marks) seen.marks.add(m);
   const fitness = G.teams.map((t) => t.fitness).filter((x) => x != null);
