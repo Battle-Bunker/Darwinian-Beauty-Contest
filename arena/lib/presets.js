@@ -82,6 +82,7 @@ export const EXPERIMENTS = {
     description: "costly-signalling priming: A control, B a common-knowledge concept document, C common-knowledge example recipes",
     preset: "cohort6",
     games: 6,
+    gameUsd: 9, // a game starts only if every cohort has at least this left under its cap (an estimate of one game's cost)
     cohorts: [
       { id: "csig-a", arm: "control" },
       { id: "csig-b", arm: "concept", common: { dir: "arena/priming/concept" } },
@@ -92,6 +93,7 @@ export const EXPERIMENTS = {
     description: "dry run of csig with the stub claude",
     preset: "dry-cohort",
     games: 3,
+    gameUsd: 0,
     cohorts: [
       { id: "dry-csig-a", arm: "control" },
       { id: "dry-csig-b", arm: "concept", common: { dir: "arena/priming/concept" } },

@@ -4,6 +4,7 @@
 // cool-down on rate limits, a spend guard, and a cost ledger (arena.llm_calls).
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { ARENA_DIR, one, q } from "./db.js";
 
@@ -13,6 +14,7 @@ export const MODELS = ["opus", "sonnet", "haiku"];
 const EMPTY_CWD = path.join(ARENA_DIR, "runs", "cwd"); // no CLAUDE.md, no repo: nothing leaks into prompts
 // The CLI to run (tests point it at a stub that makes no model calls).
 const CLAUDE = process.env.ARENA_CLAUDE_BIN || "claude";
+const SESSION_NICE = 5; // team sessions (and their tools) run below the game server
 fs.mkdirSync(EMPTY_CWD, { recursive: true });
 
 export class BudgetError extends Error {}
@@ -259,6 +261,9 @@ function runSessionCli({ model, cwd, appendSystem, prompt, maxTurns, maxBudgetUs
     fs.mkdirSync(path.dirname(transcriptFile), { recursive: true });
     const out = fs.createWriteStream(transcriptFile);
     const child = spawn(CLAUDE, args, { cwd, stdio: ["pipe", "pipe", "pipe"], env: { HOME: process.env.HOME || "/root", PATH: SESSION_PATH, LANG: "C.UTF-8", ...env } });
+    // A team's own scripts (tests, stream analysis) yield the CPU to the garden's programs, whose time limits are wall
+    // clock: the session and everything it starts run at a lower priority (scaffolds lower still).
+    try { os.setPriority(child.pid, SESSION_NICE); } catch {}
     const lines = [];
     let buf = "", last = null, err = "", limitText = null, killed = null, closed = false;
     if (control) {

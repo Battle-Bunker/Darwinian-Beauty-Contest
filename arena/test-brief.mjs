@@ -30,7 +30,7 @@ check("system: the round timing: 200 ms rounds, queued actions, answers at 150 m
 check("system: everything is public to teams (which flower too), bees are in the dark; code, prints, changes, budgets, timings hidden",
   /which flower it\s+was \(cosmos or orchid\)/.test(sys) && /Bees, though, are in the dark/.test(sys) && /only through code you change/.test(sys)
   && /code, what bees print, code changes and change budgets, and how long any program took/.test(sys));
-check("system: arrivals are public; versions are pinned per visit; SSE only", /public `arrive` action/.test(sys) && /Versions are pinned per visit/.test(sys) && /applies from the next visit/.test(sys) && /There is no WebSocket/.test(sys) && !/\/ws\b/.test(sys));
+check("system: arrivals are public; versions are pinned per visit; SSE and the WebSocket", /public `arrive` action/.test(sys) && /Versions are pinned per visit/.test(sys) && /applies from the next visit/.test(sys) && /ws:\/\/localhost:4000\/api\/rooms\/R\/games\/G\/ws\?after=/.test(sys) && /from Python use the Server-Sent Events/.test(sys) && !/There is no WebSocket/.test(sys));
 check("system: this game's settings with per-minute change budgets and caps", /\| cosmos \| 1,100 \| 220 \| 220 \| 150 \|/.test(sys) && /busy feeding for the next 10 rounds/.test(sys));
 check("system: no round-based leftovers (MEMORY, turns_left, change turns)", !/MEMORY|turns_left|before each round|turn to change|change turn/.test(sys));
 const devSecret = fs.existsSync(new URL("./runs/.dev-secret", import.meta.url)) ? fs.readFileSync(new URL("./runs/.dev-secret", import.meta.url), "utf8").trim() : "no-secret-file";
@@ -46,6 +46,12 @@ const carried = lobbyBrief({ config: { ...config, minutes: 2 }, teamName: "Moonp
 check("lobby (later game): starts from last game's final programs; previous-games/", /final programs from game 2/.test(carried) && /previous-games\//.test(carried) && /2 minutes/.test(carried));
 const ex = lobbyBrief({ config, teamName: "M", generation: 1, maxTurns: 30, carried: false, examples: ["paley_cosmos.py", "checkers.py"] });
 check("lobby (examples arena): names the shared examples", /every team in this garden received the same example files/.test(ex) && /paley_cosmos\.py/.test(ex));
+// A primed cohort: its common-knowledge files are named in every session's system prompt and in the lobby brief.
+const primedSys = toolSystem(persona, config, "/home/user/arena-ws/a/luna", { apiBase, teams: 6, common: ["costly-signals.md"] });
+const primedLobby = lobbyBrief({ config, teamName: "M", generation: 2, maxTurns: 30, carried: true, common: ["costly-signals.md"] });
+check("common knowledge: named in the system prompt and the lobby brief of a primed cohort only",
+  /Common knowledge: every team in this garden, including any team that joins in a later game, received exactly the same files in common\/ \(costly-signals\.md\)/.test(primedSys)
+  && /Common knowledge: .*common\/ \(costly-signals\.md\)/.test(primedLobby) && !/Common knowledge|common\//.test(sys) && !/Common knowledge|common\//.test(fresh));
 const fix = lobbyBrief({ config, teamName: "M", generation: 1, maxTurns: 10, carried: false, fix: "- bee: Syntax error" });
 check("lobby fix: the errors, and submit", /bee: Syntax error/.test(fix) && /tools\/submit\.py/.test(fix) && /--json/.test(fix));
 

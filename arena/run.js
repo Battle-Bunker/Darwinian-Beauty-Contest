@@ -8,6 +8,8 @@
 //
 //   node arena/run.js --arena pilot --games 3      # a fresh arena from a preset (preset = id unless --preset)
 //   node arena/run.js --arenas a:2,b:3             # several arenas in one process (":n" = games)
+//   node arena/run.js --experiment csig --budget 50   # a cohort experiment (lib/presets.js EXPERIMENTS), interleaved;
+//                                                     # --budget caps each cohort
 //
 // Re-running the same command resumes from the database (arena schema): finished stages are skipped.
 // Env: ARENA_API (default http://localhost:4000), ARENA_CONCURRENCY (8), ARENA_BUDGET_USD (global cap, 300),
@@ -24,7 +26,7 @@ import { syncPause } from "./lib/gamecontrol.js";
 import { computeGameMetrics } from "./lib/metrics.js";
 import { FOUNDERS } from "./lib/personas.js";
 import { breed, decideRetirements, retire, seedBreeders } from "./lib/population.js";
-import { DEFAULT_SESSION, PRESETS } from "./lib/presets.js";
+import { DEFAULT_SESSION, EXPERIMENTS, PRESETS } from "./lib/presets.js";
 import { gameBrief, mmss } from "./lib/prompts.js";
 import { judgeGame, seedJudges } from "./lib/social.js";
 import { TeamDesk, finalPrograms, interview, lobby, runTeamSession } from "./lib/team.js";
@@ -53,7 +55,7 @@ const live = new Map(); // arena game id -> { ownerTok, gPath, controls: Map(per
 
 // ---------------------------------------------------------------- arena setup
 
-async function ensureArena(id, presetName, games) {
+async function ensureArena(id, presetName, games, extra = {}) {
   let arena = await one("SELECT * FROM arena.arenas WHERE id = $1", [id]);
   if (arena) return arena;
   const preset = PRESETS[presetName];
@@ -65,6 +67,7 @@ async function ensureArena(id, presetName, games) {
     config: preset.config, minutesByGame: preset.minutesByGame || null, teams: preset.lineup.length, games, description: preset.description,
     session: { ...DEFAULT_SESSION, ...(preset.session || {}) }, limits: preset.limits || null, maxModel: preset.maxModel || null,
     reserveUsd: preset.reserveUsd ?? 5, noEvolution: !!preset.noEvolution, examples: preset.examples || null, scaffold: preset.scaffold || null, budgetUsd: args.budget ? Number(args.budget) : null,
+    ...extra,
   };
   await q("INSERT INTO arena.arenas (id, preset, settings, owner_name, room_short_id, room_url) VALUES ($1,$2,$3,$4,$5,$6)",
     [id, presetName, settings, owner, room.shortId, room.url]);
@@ -436,37 +439,84 @@ async function evolve(arena, generation, isLast, gameRow, log) {
   await q("UPDATE arena.games SET stage = 'done' WHERE id = $1", [gameRow.id]);
 }
 
-async function runArena(id, presetName, games) {
+/** One game of an arena, from setup to evolution (finished stages are skipped). */
+async function runGeneration(arena, gen, games, log) {
+  const existing = await one("SELECT stage FROM arena.games WHERE arena_id = $1 AND generation = $2", [arena.id, gen]);
+  if (existing?.stage === "done") return;
+  const ctx = await setupGame(arena, gen, log);
+  if (!atLeast(ctx.gameRow.stage, "played")) await playGame(arena, ctx, log);
+  ctx.gameRow = await one("SELECT * FROM arena.games WHERE id = $1", [ctx.gameRow.id]);
+  ctx.entries = await all("SELECT * FROM arena.entries WHERE game_id = $1", [ctx.gameRow.id]);
+  if (!ctx.gameRow.metrics) await analyseGame(arena, ctx, log);
+  await socialEvaluation(arena, ctx, log);
+  await evolve(arena, gen, gen === games, ctx.gameRow, log);
+  const s = await spend(arena.id);
+  log(`game ${gen} done. Spend: arena $${s.arena.toFixed(2)}, all $${s.global.toFixed(2)}. LLM ${JSON.stringify(llmStats())}`);
+}
+
+async function startArena(id, presetName, games, extra = {}) {
   const log = logger(id);
-  let arena = await ensureArena(id, presetName, games);
+  const arena = await ensureArena(id, presetName, games, extra);
   arena.settings.games = games;
   await q("UPDATE arena.arenas SET settings = $2, status = 'running' WHERE id = $1", [id, arena.settings]);
   setArenaCap(id, arena.settings.budgetUsd);
-  log(`arena ${id} (${arena.preset}): room ${arena.room_url}, ${games} games`);
+  log(`arena ${id} (${arena.preset}): room ${arena.room_url}, ${games} games${arena.settings.common ? `, common knowledge from ${arena.settings.common.dir}` : ""}`);
+  return { arena, log };
+}
+
+async function stopped(ids, e, log) {
+  const status = e instanceof BudgetError ? "stopped-budget" : "error";
+  await q("UPDATE arena.arenas SET status = $2 WHERE id = ANY($1) AND status = 'running'", [ids, status]);
+  log(e instanceof BudgetError ? `STOPPED: ${e.message}` : `ERROR: ${e.stack || e.message}`);
+}
+
+async function runArena(id, presetName, games) {
+  const { arena, log } = await startArena(id, presetName, games);
   try {
-    for (let gen = 1; gen <= games; gen++) {
-      const existing = await one("SELECT stage FROM arena.games WHERE arena_id = $1 AND generation = $2", [id, gen]);
-      if (existing?.stage === "done") continue;
-      const ctx = await setupGame(arena, gen, log);
-      if (!atLeast(ctx.gameRow.stage, "played")) await playGame(arena, ctx, log);
-      ctx.gameRow = await one("SELECT * FROM arena.games WHERE id = $1", [ctx.gameRow.id]);
-      ctx.entries = await all("SELECT * FROM arena.entries WHERE game_id = $1", [ctx.gameRow.id]);
-      if (!ctx.gameRow.metrics) await analyseGame(arena, ctx, log);
-      await socialEvaluation(arena, ctx, log);
-      await evolve(arena, gen, gen === games, ctx.gameRow, log);
-      const s = await spend(id);
-      log(`game ${gen} done. Spend: arena $${s.arena.toFixed(2)}, all $${s.global.toFixed(2)}. LLM ${JSON.stringify(llmStats())}`);
-    }
+    for (let gen = 1; gen <= games; gen++) await runGeneration(arena, gen, games, log);
     await q("UPDATE arena.arenas SET status = 'done' WHERE id = $1", [id]);
     log(`arena ${id} finished`);
   } catch (e) {
-    if (e instanceof BudgetError) {
-      await q("UPDATE arena.arenas SET status = 'stopped-budget' WHERE id = $1", [id]);
-      log(`STOPPED: ${e.message}`);
-    } else {
-      await q("UPDATE arena.arenas SET status = 'error' WHERE id = $1", [id]);
-      log(`ERROR: ${e.stack || e.message}`);
+    await stopped([id], e, log);
+  }
+}
+
+/** A cohort experiment (lib/presets.js EXPERIMENTS): its cohorts play one game at a time, interleaved by game number, in an
+ * order that rotates every game. A stop (budget or error) in any cohort stops the whole experiment, so the cohorts stay
+ * matched game for game. */
+async function runExperiment(name) {
+  const exp = EXPERIMENTS[name];
+  if (!exp) throw new Error(`unknown experiment ${name} (${Object.keys(EXPERIMENTS).join(", ")})`);
+  const games = Number(args.games || exp.games);
+  const ids = exp.cohorts.map((c) => c.id);
+  const started = [];
+  for (const c of exp.cohorts) {
+    started.push(await startArena(c.id, exp.preset, games, {
+      common: c.common || null, ledgerExclude: ids.filter((x) => x !== c.id),
+      experiment: { name, arm: c.arm, cohorts: ids, description: exp.description },
+    }));
+  }
+  const elog = logger(name);
+  elog(`experiment ${name}: ${ids.join(", ")}; ${games} games each, interleaved`);
+  try {
+    for (let gen = 1; gen <= games; gen++) {
+      // Matched cohorts: a game starts only if every cohort can afford all of it (exp.gameUsd: a generous estimate).
+      if (!(await one("SELECT 1 FROM arena.games WHERE arena_id = ANY($1) AND generation = $2 AND stage = 'done' LIMIT 1", [ids, gen]))) {
+        const per = exp.gameUsd ?? 10;
+        for (const { arena } of started) {
+          const s = await spend(arena.id);
+          if (arena.settings.budgetUsd && s.arena + per > arena.settings.budgetUsd) throw new BudgetError(`${arena.id} has spent $${s.arena.toFixed(2)} of its $${arena.settings.budgetUsd}: not enough for game ${gen} (about $${per}), so no cohort plays it`);
+          if (s.global + per * started.length > GLOBAL_CAP) throw new BudgetError(`the ledger is at $${s.global.toFixed(2)} of $${GLOBAL_CAP}: not enough for game ${gen} in every cohort`);
+        }
+      }
+      const order = started.map((_, i) => started[(i + gen - 1) % started.length]);
+      elog(`game ${gen}: ${order.map((x) => x.arena.id).join(" → ")}`);
+      for (const { arena, log } of order) await runGeneration(arena, gen, games, log);
     }
+    await q("UPDATE arena.arenas SET status = 'done' WHERE id = ANY($1)", [ids]);
+    elog(`experiment ${name} finished`);
+  } catch (e) {
+    await stopped(ids, e, elog);
   }
 }
 
@@ -493,6 +543,7 @@ async function main() {
   await seedJudges();
   await seedBreeders();
   for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => shutdown(sig));
+  if (args.experiment) { await runExperiment(String(args.experiment)); await pool.end(); return; }
   const list = (args.arenas ? String(args.arenas).split(",") : [String(args.arena || "pilot")]).map((x) => x.split(":"));
   const presetOf = (id) => (args.preset && list.length === 1 ? String(args.preset) : id.replace(/-\d+$/, ""));
   const gamesOf = (id, n) => Number(n || args.games || args.generations || PRESETS[presetOf(id)]?.minutesByGame?.length || 1);

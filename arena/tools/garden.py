@@ -87,7 +87,8 @@ def _sse_messages(after):
 
 def follow_live(after=None):
     """Like follow(), but straight from the game's public API (Server-Sent Events): lower latency than the file (a few
-    times a second). Reconnects if the connection drops."""
+    times a second). Reconnects if the connection drops. (The API also has a WebSocket, API + "/ws?after=<seq>", with the
+    same messages; Python's standard library has no client for it, and raw sockets aren't allowed here.)"""
     if after is None:
         a = _s.last()
         after = a["seq"] if a else 0
