@@ -1,9 +1,25 @@
 import express from "express";
-import { authRouter, provider, requireUser } from "../auth/index.js";
+import { authRouter, provider, requireUser, sessionMiddleware } from "../auth/index.js";
 import * as G from "../games.js";
 import { gameStream, roomStream } from "../realtime.js";
 
 const wrap = (fn) => (req, res, next, ...rest) => Promise.resolve(fn(req, res, next, ...rest)).catch(next);
+
+/**
+ * The game feed for a WebSocket upgrade at /api/rooms/:room/games/:game/ws?after=<seq> (server/sockets.js):
+ * the same viewer, game and filtering as the SSE route below. The session comes from the cookie or an
+ * `Authorization: Bearer` token, as for every request; spectators need neither.
+ */
+export async function gameSocketFeed(req, roomId, gameId, url) {
+  await new Promise((resolve, reject) => sessionMiddleware(req, null, (e) => (e ? reject(e) : resolve())));
+  const room = await G.findRoom(roomId);
+  const game = await G.findGame(room, gameId);
+  return {
+    gameId: game.id, teamId: await G.myTeamId(game, req.user), version: game.version,
+    after: Number(url.searchParams.get("after") ?? game.last_seq) || 0,
+    fetchActions: (after) => G.viewActions(game, req.user, { after, limit: 1000 }),
+  };
+}
 
 export function apiRouter() {
   const r = express.Router();

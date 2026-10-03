@@ -37,6 +37,7 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 | GET | `base/actions` | anyone | `?after=<seq>&limit=<n ≤ 5000>` or `?before=<seq>&limit=<n>`; add `&mine=1` (team members) for only your bee's actions and those at your patch | `{ actions: [action], lastSeq, clockMs, round, status }`: the actions after `after`, oldest first; or the last `limit` before `before`, oldest first (`before = lastSeq + 1` gives the latest) |
 | GET | `base/scores` | anyone | | `{ status, clockMs, endMs, round, lastSeq, participants, scores, recent, ledgers }`: the live numbers, cheap enough to poll every second |
 | GET | `base/events` | anyone | `?after=<seq>` | Server-Sent Events: `{version}` when the view should be refetched; `{programs: true}` when your own team's programs changed (refetch too); `{actions, lastSeq, clockMs, round, status}` as the garden writes them (from `after`, in order, page after page until caught up); `{lastSeq, clockMs, round, status}` when there is nothing new |
+| GET (WebSocket) | `base/ws` | anyone | `?after=<seq>` | The same feed as `base/events`, over a WebSocket: exactly the same messages, one JSON text frame each, filtered for the viewer the same way (a session cookie or `Authorization: Bearer` token for a team member's private fields; spectators need neither). Server to client only; reconnect with `?after=` the last `seq` you got to resume without gaps. `ws://`, or `wss://` behind https |
 | PATCH | `base/config` | owner, in the lobby | `{ config: {...partial} }` | `{ config, clearedPrograms }` (changing the language or types, or shrinking a size budget, clears the programs written so far) |
 | POST | `base/start` | owner, in the lobby | | `{ status: "running", participants }`. Teams with all three programs play; at least 2 |
 | POST | `base/status` | owner | `{ action: "pause" \| "resume" \| "finish" }` | `{ status }`. The clock and change budgets stand still while paused; `finish` ends the game early |
@@ -175,7 +176,7 @@ no reply within 50 ms"), which ends its visit. An `engine` leave ends a visit th
 because it crashed and restarted (with new code, if its team sent some meanwhile). Submissions don't bump the public
 `game.version`, so other teams can't tell when a team changes its code.
 
-Every way of reading actions (pages, `before=`, `mine=1`, the event stream) applies the same rules, so
+Every way of reading actions (pages, `before=`, `mine=1`, the SSE and WebSocket streams) applies the same rules, so
 programs reading the API see exactly what the web page shows. Bees see none of it: `forage` gets only
 its own challenges and the answers (`seen`) and `visit = {fed, nectar, flowers}`, never whose patch or
 which flower.

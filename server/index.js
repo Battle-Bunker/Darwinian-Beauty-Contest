@@ -5,8 +5,9 @@ import { fileURLToPath } from "node:url";
 import { env } from "./config.js";
 import { migrate } from "./db/migrate.js";
 import { sessionMiddleware } from "./auth/index.js";
-import { apiRouter } from "./routes/api.js";
+import { apiRouter, gameSocketFeed } from "./routes/api.js";
 import { startListening } from "./realtime.js";
+import { attachGameSockets } from "./sockets.js";
 import { startLive, stopLive } from "./live.js";
 import { initMeasure } from "./lib/measure.js";
 
@@ -39,6 +40,8 @@ async function main() {
   await startLive();
   const app = await createApp();
   const server = app.listen(env.port, "0.0.0.0", () => console.log(`darwinian-beauty-contest on :${env.port} (auth: ${env.authProvider})`));
+  // The live game feed over WebSockets too (/api/rooms/:room/games/:game/ws): the same messages as SSE.
+  attachGameSockets(server, gameSocketFeed);
   // Write what the gardens did before going; another process (or this one, restarted) picks them up.
   for (const sig of ["SIGTERM", "SIGINT"]) {
     process.once(sig, async () => {

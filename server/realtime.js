@@ -36,13 +36,15 @@ export function roomStream(req, res, roomId) {
 }
 
 /**
- * SSE stream for one game: {version} whenever the view should be refetched, {programs: true} when the
- * viewer's own team's programs changed, and {actions, lastSeq, clockMs, round, status} as the garden
- * writes them, starting after `after` (without actions when there's nothing new). fetchActions(after) returns the viewer's filtered page of actions after a seq.
+ * What one viewer hears about one game, whatever carries it (SSE or WebSocket): {version} whenever the
+ * view should be refetched, {programs: true} when the viewer's own team's programs changed, and
+ * {actions, lastSeq, clockMs, round, status} as the garden writes them, starting after `after` (without
+ * actions when there's nothing new). fetchActions(after) returns the viewer's filtered page of actions
+ * after a seq. send(message) delivers one message; isOpen() says whether anyone is still listening.
+ * Returns stop(), which unsubscribes.
  */
-export function gameStream(req, res, { gameId, teamId, version, after, fetchActions }) {
+export function gameFeed({ gameId, teamId, version, after, fetchActions, send, isOpen }) {
   let last = after, busy = false, again = false;
-  const send = open(req, res, () => bus.off("change", onChange));
   const pump = async () => {
     if (busy) { again = true; return; }
     busy = true;
@@ -50,15 +52,16 @@ export function gameStream(req, res, { gameId, teamId, version, after, fetchActi
       do {
         again = false;
         const page = await fetchActions(last);
+        if (!isOpen()) return;
         const live = { lastSeq: page.lastSeq, clockMs: page.clockMs, round: page.round, status: page.status };
         if (page.actions.length) {
           last = page.actions[page.actions.length - 1].seq;
           send({ actions: page.actions, ...live });
           if (last < page.lastSeq) again = true;
         } else send(live);
-      } while (again && !res.writableEnded);
+      } while (again && isOpen());
     } catch (e) {
-      console.error("game stream:", e.message);
+      console.error("game feed:", e.message);
     } finally {
       busy = false;
     }
@@ -72,6 +75,14 @@ export function gameStream(req, res, { gameId, teamId, version, after, fetchActi
   bus.on("change", onChange);
   send({ version });
   pump();
+  return () => bus.off("change", onChange);
+}
+
+/** The game feed over Server-Sent Events. */
+export function gameStream(req, res, opts) {
+  let stop = () => {};
+  const send = open(req, res, () => stop());
+  stop = gameFeed({ ...opts, send, isOpen: () => !res.writableEnded });
 }
 
 function open(req, res, onClose) {

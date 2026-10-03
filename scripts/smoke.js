@@ -2,6 +2,7 @@
 // viewer can see.
 //   BASE=http://localhost:3000 node scripts/smoke.js
 import assert from "node:assert/strict";
+import { WebSocket } from "ws";
 
 const BASE = process.env.BASE || "http://localhost:3000";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -186,6 +187,39 @@ let text = "";
 while (!/"actions":\[/.test(text)) text += new TextDecoder().decode((await reader.read()).value);
 reader.cancel();
 assert.match(text, /"action":"arrive"/, "arrivals come over the stream");
+
+// The same feed over a WebSocket: the same messages, filtered for the viewer (a Bearer token here).
+const socketFeed = (query, token, enough) => new Promise((resolve, reject) => {
+  const ws = new WebSocket(`${BASE.replace(/^http/, "ws")}/api${g}/ws?${query}`, { headers: token ? { authorization: "Bearer " + token } : {} });
+  const msgs = [];
+  const t = setTimeout(() => { ws.terminate(); reject(new Error(`socket: timed out with ${msgs.length} messages`)); }, 15000);
+  ws.on("message", (d) => {
+    msgs.push(JSON.parse(String(d)));
+    if (enough(msgs)) { clearTimeout(t); ws.close(); resolve(msgs); }
+  });
+  ws.on("unexpected-response", (_req, res) => { clearTimeout(t); reject(new Error(`socket refused: ${res.statusCode}`)); });
+  ws.on("error", (e) => { clearTimeout(t); reject(e); });
+});
+const actionsOf = (msgs) => msgs.flatMap((m) => m.actions || []);
+const caughtUp = (msgs) => {
+  const target = msgs.find((m) => typeof m.lastSeq === "number")?.lastSeq;
+  const got = actionsOf(msgs);
+  return target !== undefined && got.length > 0 && got.at(-1).seq >= target;
+};
+const boSocket = await socketFeed("after=0", players[1].token, caughtUp);
+assert.equal(typeof boSocket[0].version, "number", "it opens with the game's version");
+const boActs = actionsOf(boSocket);
+assert.deepEqual(boActs.map((a) => a.seq), boActs.map((_, i) => i + 1), "every action from the start, in order");
+assert.ok(boActs.some((a) => a.action === "arrive") && boActs.some((a) => a.action === "ask"));
+assert.ok(boActs.every((a) => !("beeMs" in a) || a.bee === bo) && boActs.some((a) => a.bee === bo && "beeMs" in a), "Bo's own decision times");
+assert.ok(boActs.filter((a) => a.action === "ask").every((a) => ("ms" in a) === (a.patch === bo)), "answer times at Bo's patch only");
+const boHttp = (await api(players[1].token, "GET", `${g}/actions?after=0&limit=${boActs.length}`)).actions;
+assert.deepEqual(boActs, boHttp, "exactly what the HTTP API shows Bo");
+const watching = actionsOf(await socketFeed("after=0", null, caughtUp));
+assert.ok(watching.length && watching.every((a) => !("ms" in a) && !("beeMs" in a) && (a.kind === "cosmos" || a.kind === "orchid")), "a spectator: no timings, every flower");
+const resumeFrom = boActs[Math.floor(boActs.length / 2)].seq;
+const resumed = actionsOf(await socketFeed(`after=${resumeFrom}`, null, (m) => actionsOf(m).length > 0));
+assert.equal(resumed[0].seq, resumeFrom + 1, "?after= resumes right after it");
 
 // The owner pauses: the clock stops. Resumes, then finishes early: code and prints are revealed.
 assert.equal((await api(players[0].token, "POST", `${g}/status`, { action: "pause" }, { allow: [403] })).status, 403);

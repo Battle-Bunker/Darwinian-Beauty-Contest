@@ -43,6 +43,7 @@ To work on the web app with hot reload, run the server and then `API=http://loca
 | `server/games.js` | rooms, games, teams, programs and change budgets, start/pause/finish, and the **viewer-filtered views** |
 | `server/engine.js` | the garden: lockstep 200 ms rounds, one action slot per bee; queued challenges, answers delivered at 150 ms, 50 ms bee decisions with late replies; programs can be swapped at any moment; actions and ledgers out |
 | `server/live.js` | runs each running game's garden in one server process (advisory lock), writing actions, clock and ledgers 4× a second |
+| `server/realtime.js`, `server/sockets.js` | the live game feed for each viewer, over SSE and WebSocket (the same messages), fed by Postgres `LISTEN/NOTIFY` |
 | `server/runners/` | program runners. Python flowers fork per call (stateless); a bee is one process for as long as its version plays. TypeScript uses fresh `vm` contexts |
 | `server/lib/scoring.js` | rootsum → allure / forage → shares → fitness |
 | `server/lib/shortid.js` | Crockford base32 codes and shortest-unique-prefix allocation |
@@ -56,9 +57,10 @@ To work on the web app with hot reload, run the server and then `API=http://loca
 in Postgres. `GET /api/rooms/:room/games/:game` and `GET .../actions` rebuild the game for whoever is
 asking: everything is public except code (and what bees print), which is your own team's, or everyone's
 once a finished game is revealed. Loading a game page mid-game or a year later gives the same viewer the
-same information. Live clients listen on an SSE stream (fed by Postgres `LISTEN/NOTIFY`, so several server
-instances work) that carries new actions as they're written and tells clients to refetch the view when
-anything else changes.
+same information. Live clients follow a stream, over a WebSocket (`.../ws`) or Server-Sent Events
+(`.../events`), with the same messages either way: it carries new actions as they're written (each bee's
+arrival at a flower included, the moment it happens) and tells clients to refetch the view when anything
+else changes. It's fed by Postgres `LISTEN/NOTIFY`, so several server instances work.
 
 **Short ids.** Rooms and games have UUID primary keys and store their Crockford base32 `code` plus a
 `prefix_len` fixed at creation: the shortest prefix no earlier record shared. Since later records
