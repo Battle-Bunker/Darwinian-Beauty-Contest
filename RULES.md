@@ -80,7 +80,10 @@ A flower's **excess energy** for a turn, in node·ms, is
 Then:
 - **If the bee feeds:** it gets **nectar = percent/100 × E**, and the flower's team **surplus** gets the
   rest, (1 − percent/100) × E.
-- **If it doesn't** (it leaves, it's late, it crashes): the flower's surplus gets all of E.
+- **If it doesn't** (it leaves, it's late, it crashes): nobody gets anything. That turn's energy is lost,
+  and the flower's surplus doesn't change.
+
+So a flower's surplus grows only when bees feed at it.
 
 ## The ledger
 
@@ -93,7 +96,8 @@ oldest first, plus your team's private details. One entry per turn:
  "fed": True,
  "nectar": 30871.5,                          # your turns only: your bee fed, or a bee fed at your flower
  "percent": 25, "energy": 123486.0,          # visits to your own flower only
- "ms": 2.1, "surplus": 92614.5}              #   (ms: your flower's compute time)
+ "ms": 2.1, "surplus": 92614.5}              #   (ms: your flower's compute time; surplus: what
+                                             #    this turn added to it, 0 if the bee didn't feed)
 ```
 
 Fields you aren't allowed to see are `None` (`null`): `nectar` unless your bee fed or a bee fed at your
@@ -268,7 +272,7 @@ Three numbers per team, each from the whole game:
 |---|---|
 | **allure** | the sum over bee teams of √(times that team's bee fed at your flower). How widely you're pollinated |
 | **forage** | the sum over flower teams of √(nectar your bee got there). How widely your bee eats |
-| **surplus** | the energy your flower kept |
+| **surplus** | the energy your flower kept from the turns where bees fed at it: (1 − percent/100) × E each |
 
 Each becomes a **share**: your value ÷ the sum over all teams (when that sum is 0, every share is 1/N).
 

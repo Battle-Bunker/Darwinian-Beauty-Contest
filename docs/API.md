@@ -9,8 +9,8 @@ RULES.md has the game itself. In short: each team has one **flower** and one **b
 each bee that isn't feeding takes one **turn**: the engine draws a flower at random (own included), the
 flower answers `[response, percent]` within 150 ms, and the bee decides `["feed" | "leave", next]` within
 50 ms. Excess energy E = (flower size cap − flower size) × max(0, 150 − flower CPU ms); a feed pays
-nectar = percent/100 × E to the bee and the rest to the flower team's surplus; otherwise all of E goes to
-surplus. fitness = N³ × allure share × forage share × surplus share.
+nectar = percent/100 × E to the bee and the rest to the flower team's surplus; a turn without a feed pays
+nobody (its energy is lost). fitness = N³ × allure share × forage share × surplus share.
 
 ## Auth
 
@@ -166,7 +166,8 @@ A turn makes two actions: its **arrival**, written to the stream at once, and it
   "percent",                     // 0–100 (null if the flower failed)
   "energy",                      // E, node·ms (0 if the flower failed)
   "ms",                          // the flower's CPU time for the call
-  "surplus",                     // what this turn added to the flower team's surplus
+  "surplus",                     // what this turn added to the flower team's surplus: (1 − percent/100) × E
+                                 // on a feed, 0 on a leave
   "flowerError",                 // why the response is null (a timeout, an error, a malformed return)
   "flowerVersion",               // also on arrive
   // the bee's team and the flower's team (everyone after finish):
@@ -190,7 +191,7 @@ plus `seq` (the turn's `feed`/`leave` action) for paging. Team numbers are indic
 { "seq": 812, "round": 41, "bee": 2, "flower": 0, "challenge": 17, "response": 52, "fed": true,
   "nectar": 30871.5,                 // null unless your bee fed or a bee fed at your flower (and it fed)
   "percent": 25, "energy": 123486.0, // null except at your own flower
-  "ms": 2.1, "surplus": 92614.5 }    // null except at your own flower
+  "ms": 2.1, "surplus": 92614.5 }    // null except at your own flower; surplus is 0 when the bee didn't feed
 ```
 
 Once the game is over, `GET base/ledger` fills in every field for everyone. Programs get these entries
@@ -237,7 +238,8 @@ Every program reads `GAME`: `team`, `teams`, `feed_cost`, `challenge_type`, `res
 
 - `allure` = Σ over bee teams b of √feeds[b][me]; `pollinators` = how many bee teams fed at your flower.
 - `forage` = Σ over flower teams f of √nectar[me][f]; `nectarSources` = how many flower teams paid your bee.
-- `surplus` = what your flower kept. `nectarCollected` = nectar your bee got; `nectarGiven` = nectar your flower paid.
+- `surplus` = what your flower kept: the sum of (1 − percent/100) × E over the turns where a bee fed at it
+  (a turn without a feed adds nothing). `nectarCollected` = nectar your bee got; `nectarGiven` = nectar your flower paid.
 - each share = your value ÷ the sum over all teams (1/N when that sum is 0).
 - `fitness` = N³ × allureShare × forageShare × surplusShare. Par is 1.0.
 
