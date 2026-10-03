@@ -175,7 +175,7 @@ export interface ProgramInterface {
 }
 
 export interface TryFlowerRow { c: unknown; r: unknown; percent: number | null; energy: number | null; ms: number | null; error?: string }
-export interface TryFlowerResult { results: TryFlowerRow[]; error?: string }
+export interface TryFlowerResult { size?: number; results: TryFlowerRow[]; error?: string }
 export interface TryBeeResult {
   actions: Action[];
   problems: { kind?: Kind | string; version?: number; error: string; team?: number }[];

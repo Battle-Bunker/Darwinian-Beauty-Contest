@@ -597,11 +597,13 @@ input[type="range"] { accent-color: var(--honey); }
 .garden-overlay .bee { pointer-events: visiblePainted; }
 .garden-overlay .fx, .garden-overlay .readout { pointer-events: none; }
 .garden-running .flower, .garden-stage.offscreen .flower { animation: none; }
-.garden-play { cursor: pointer; border: 0; font: inherit; font-weight: 800; color: var(--honey-ink); background: var(--honey); top: 50%; transform: translate(-50%, -50%); padding: 10px 20px; font-size: 17px; }
+
 .garden-play:hover { background: var(--honey-hover); }
 .garden-banner { position: absolute; left: 50%; transform: translateX(-50%); background: color-mix(in srgb, var(--surface) 92%, transparent); color: var(--ink); border-radius: 999px; padding: 6px 16px; font-weight: 800; font-size: 15px; box-shadow: var(--shadow); display: flex; align-items: center; gap: 8px; max-width: calc(100% - 24px); text-align: center; }
 .garden-banner { top: 10px; }
 .garden-banner-paused { color: var(--warn); }
+.garden-banner.garden-play { cursor: pointer; border: 0; font: inherit; font-weight: 800; font-size: 16px; color: var(--honey-ink); background: var(--honey); white-space: nowrap; }
+.garden-banner.garden-play:hover { background: var(--honey-hover); }
 .garden-banner-done { color: var(--ink-soft); }
 .garden-note { margin: 0; font-weight: 700; }
 .garden-legend { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 14px; color: var(--ink-soft); }

@@ -454,7 +454,10 @@ function TryPanel({ kind, code, base, challengeType, flowerCode, view }: {
         flower.error ? <Alert kind="error">{flower.error}</Alert> : (
           <>
             {energies.length > 0 && (
-              <p className="small">Energy per visit: typically <b>{fmtE(median(energies))}</b>, at most <b>{fmtE(Math.max(...energies))}</b> node·ms. A bee that feeds gets percent/100 of it; your flower keeps the rest. A bee that leaves: nobody gets it.</p>
+              <p className="small">
+                {typeof flower.size === "number" && <>At {flower.size.toLocaleString()} nodes, E = ({cfg.budgets.flower.size.toLocaleString()} − {flower.size.toLocaleString()}) × (150 − CPU ms). </>}
+                Energy per visit: typically <b>{fmtE(median(energies))}</b>, at most <b>{fmtE(Math.max(...energies))}</b> node·ms. A bee that feeds gets percent/100 of it; your flower keeps the rest. A bee that leaves: nobody gets it.
+              </p>
             )}
             <TimingPanel data={{ values: fr.filter((x) => !x.error && typeof x.ms === "number").map((x) => x.ms!), misses: fr.filter((x) => x.error).length }}
               limit={cfg.budgets.flower.ms} title="How long your flower took (CPU)" unit="calls" missLabel="no answer" />

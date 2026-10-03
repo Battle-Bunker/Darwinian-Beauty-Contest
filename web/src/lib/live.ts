@@ -1,5 +1,5 @@
-// The live side of a game page: a bounded ring of recent actions fed by the SSE stream, and the game
-// clock interpolated locally between server updates. Lives outside React: actions can arrive at
+// The live side of a game page: a bounded ring of recent actions fed by the game's stream (WebSocket, or
+// SSE where there's none), and the game clock interpolated locally between server updates. Lives outside React: actions can arrive at
 // hundreds a second, so components read it at their own pace (useLiveTick) instead of re-rendering on
 // every message.
 import { useEffect, useRef, useState } from "react";

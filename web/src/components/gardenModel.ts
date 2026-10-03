@@ -13,7 +13,7 @@ import { fed, type Turn, type TurnIndex } from "../lib/turns";
 export const CELL_W = 170;
 export const CELL_H = 214;
 export const TOP_PAD = 58;
-export const SIDE_PAD = 16;
+export const SIDE_PAD = 36;
 /** Ground point → flower head. */
 export const HEAD_Y = -62;
 const HOVER_R = 54;
@@ -265,7 +265,4 @@ export function computeFrame(idx: TurnIndex, layout: Layout, p: FrameParams, now
   }
   return { bees, glow, ping, fx, labels, trail, readout };
 }
-
-/** The game time a bee's latest turn starts at, for a status line ("round r"). */
-export const roundAt = (D: number, roundMs: number) => Math.max(0, Math.floor(D / roundMs) + 1);
 
