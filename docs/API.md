@@ -43,7 +43,7 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 | GET | `base` | anyone | | the **game view** (below), filtered for the viewer |
 | GET | `base/actions` | anyone | `?after=<seq>&limit=<n ≤ 5000>`, or `?before=<seq>&limit=<n>`; `&mine=1` (team members) for only turns of your bee or at your flower | `{ actions: [action], lastSeq, clockMs, round, status }`: the actions after `after`, oldest first; or the last `limit` before `before`, oldest first (`before = lastSeq + 1` gives the latest) |
 | GET | `base/ledger` | anyone | `?after=<seq>&limit=<n ≤ 5000>` | `{ participants, team, entries: [entry], lastSeq, round, status }`: the **team ledger**, exactly what your programs get (below). `team` is your team's index in `participants` (null for a spectator, who gets the public fields only) |
-| GET | `base/scores` | anyone | | `{ status, clockMs, endMs, round, lastSeq, participants, scores, ledgers }`, filtered for the viewer (see Scores); cheap enough to poll every second |
+| GET | `base/scores` | anyone | | `{ status, clockMs, endMs, round, lastSeq, participants, scores, ledgers }`: the live scoreboard (public) and the ledgers (filtered for the viewer); cheap enough to poll every second |
 | GET | `base/events` | anyone | `?after=<seq>` | Server-Sent Events: `{version}` when the view should be refetched; `{programs: true}` when your own team's programs changed (refetch too); `{actions, lastSeq, clockMs, round, status}` as the garden writes them (from `after`, in order, page after page until caught up); `{lastSeq, clockMs, round, status}` when there is nothing new |
 | GET (WebSocket) | `base/ws` | anyone | `?after=<seq>` | The same feed as `base/events` over a WebSocket: exactly the same messages, one JSON text frame each, filtered for the viewer the same way (a session cookie or `Authorization: Bearer` token for a team member's private fields). Server to client only; reconnect with `?after=` the last `seq` you got. `ws://`, or `wss://` behind https |
 | PATCH | `base/config` | owner, in the lobby | `{ config: {...partial} }` | `{ config, clearedPrograms }` (changing the language or types, or shrinking a size budget, clears the programs written so far) |
@@ -106,9 +106,10 @@ Types: `int`, `float`, `bool`, `str`, `any`, `list[T]`, `tree[T]`, `graph`, `dig
 | `log` (what the bee printed) | the bee's team | everyone if `revealOnFinish` |
 | code | own team | everyone if `revealOnFinish` |
 | program versions, sizes, costs, change budgets, problems | own team | everyone |
-| scores: allure, feed counts, the feed ledger | everyone | everyone |
-| scores: forage, surplus, nectar; the nectar ledger's cells | own team (own row and column of the nectar ledger) | everyone |
-| shares and fitness | nobody | everyone |
+| scores: every team's totals (allure, forage, surplus, shares, fitness, feed and nectar counts), live | everyone | everyone |
+| `ledgers.feeds` | everyone | everyone |
+| `ledgers.nectar[b][f]` | teams b and f (own row and column) | everyone |
+| `ledgers.surplus[b][f]` | team f (own column) | everyone |
 
 A field you may not see is **absent** from actions, and **null** in ledger entries, scores and ledgers.
 Every way of reading actions (pages, `before=`, `mine=1`, the SSE and WebSocket streams) and the team
@@ -136,7 +137,7 @@ don't bump the public `game.version`, so other teams can't tell when a team chan
   "myTeam": { "id", "name", "joinCode", "index" } | null,
   "interface": { "flower", "bee", "types": { "challenge", "response", "challengeMeans", "responseMeans", "rules": [..] } },
   "scores": [teamScore] | null,
-  "ledgers": { "feeds": [[int]], "nectar": [[number | null]], "surplus": [number | null] } | null
+  "ledgers": { "feeds": [[int]], "nectar": [[number | null]], "surplus": [[number | null]] } | null
 }
 ```
 
@@ -145,8 +146,9 @@ oldest first; `atMs` = game time it went live, 0 for the lobby; `problem` = the 
 `programs` and `banks` are your own team's during play (others: null), everyone's after finish; `code`
 only where you may see it.
 
-`ledgers` (row = bee team, column = flower team, participants order; whole game so far): `feeds` is public;
-`nectar[b][f]` is shown to teams b and f (else null); `surplus[f]` to team f (else null). Everything after
+`ledgers` (row = bee team, column = flower team, participants order; whole game so far): `feeds[b][f]` (times
+b's bee fed at f's flower) is public; `nectar[b][f]` (nectar b's bee got there) is shown to teams b and f;
+`surplus[b][f]` (what f's flower kept from b's bee's feeds) to team f; hidden cells are null. Everything after
 finish.
 
 ## Actions
@@ -231,10 +233,13 @@ Every program reads `GAME`: `team`, `teams`, `feed_cost`, `challenge_type`, `res
 
 ```jsonc
 { "teamId",
-  "allure", "feedsReceived", "feedsGiven", "pollinators",       // everyone, live
-  "forage", "surplus", "nectarCollected", "nectarGiven", "nectarSources",  // own team live; null for others
-  "allureShare", "forageShare", "surplusShare", "fitness" }     // null until the game is over
+  "allure", "forage", "surplus",
+  "allureShare", "forageShare", "surplusShare", "fitness",
+  "feedsReceived", "feedsGiven", "pollinators", "nectarCollected", "nectarGiven", "nectarSources" }
 ```
+
+The scoreboard is live and public: every team's numbers, for everyone (spectators included), during play
+and after.
 
 - `allure` = Σ over bee teams b of √feeds[b][me]; `pollinators` = how many bee teams fed at your flower.
 - `forage` = Σ over flower teams f of √nectar[me][f]; `nectarSources` = how many flower teams paid your bee.

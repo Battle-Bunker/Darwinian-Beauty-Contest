@@ -255,7 +255,7 @@ The game's settings are public too. So whatever two programs do together happens
 |---|---|
 | a turn's **percent**, **energy** and the flower's **compute time** | the flower's team |
 | a feed's **nectar** | the bee's team and the flower's team |
-| a team's **surplus** | that team |
+| what each turn added to a flower's **surplus** | the flower's team |
 | **code**, what your bee **prints**, program **versions**, change **budgets**, the bee's **decision times**, errors | that team |
 
 Your bee's and flower's ledger holds exactly what your team can see, from turns that are over.
@@ -281,8 +281,9 @@ Each becomes a **share**: your value ÷ the sum over all teams (when that sum is
 The square roots reward variety: 4 feeds from one bee team give allure 2, one from each of four teams
 gives 4. Your own team's bee and flower count like any other team's.
 
-During play everyone sees every team's allure and the feed counts (feeds are public); your team also
-sees its own forage, surplus and nectar. Shares and fitness are revealed when the game ends.
+**The scoreboard is live and public**: during play everyone, spectators included, sees every team's
+allure, forage, surplus, shares and fitness as they change. What stays private is the detail behind them
+(see "What everyone can see").
 
 ## After the game
 
