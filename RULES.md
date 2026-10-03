@@ -82,9 +82,6 @@ Then:
   rest, (1 − percent/100) × E.
 - **If it doesn't** (it leaves, it's late, it crashes): the flower's surplus gets all of E.
 
-So a flower chooses how to split what it saves: offer too little and bees may stop feeding; offer too
-much and its surplus suffers. Being small and fast makes the pie bigger.
-
 ## The ledger
 
 Your bee, your flower and your team all see the same **team ledger**: every turn of every bee so far,
@@ -110,81 +107,58 @@ percent, the energy or the nectar it would get. (Whatever either can work out fr
 answer and the ledger is fair game.)
 
 **The ledger is free to receive, not to read.** It is delivered to your programs as it grows, outside
-their timed calls. Reading it is part of your compute: a bee should remember how far it has read
-(`ledger[done:]`); a flower, which can't remember, should look at the tail (`ledger[-50:]`), since
-every millisecond it spends is energy it doesn't have. Treat it as read-only.
+their timed calls, so its size costs you nothing until you read it. Reading it is part of your compute.
+Your bee keeps its variables between calls; a flower can't remember anything between calls. Treat the
+ledger as read-only.
 
 ## The programs
 
 ### Python
 
 ```python
-# flower: called fresh for every turn at your flower. ledger is optional: def flower(challenge) works too.
+# flower: runs fresh for every turn at your flower. The ledger argument is optional: def flower(challenge).
 def flower(challenge, ledger):
-    response = (challenge * 7 + 3) % 1000
-    recent = [e for e in ledger[-50:] if e["flower"] == GAME["team"]]
-    fed = sum(e["fed"] for e in recent)
-    percent = 20 if fed * 2 > len(recent) else 40      # popular? keep more
-    return response, percent
+    # challenge: a value of the game's challenge type
+    # ledger:    the team ledger (list of entries, oldest first; see "The ledger")
+    # GAME["team"], GAME["size"], GAME["flower_size_cap"], GAME["flower_ms"], ... (see below)
+    return challenge, 50            # (response, percent): your answer, and 0-100% of E if the bee feeds
 ```
 
 ```python
-# bee: one long-running program. first() and decide() may also leave out the ledger argument.
+# bee: one long-running program. first and decide may also leave out the ledger argument.
 import random
 
-trusted = set()   # responses that have paid well
-done = 0          # how much of the ledger we have read
-
-def learn(ledger):
-    global done
-    for e in ledger[done:]:
-        if e["bee"] == GAME["team"] and e["fed"] and e["nectar"] > 10000:
-            trusted.add((e["challenge"], e["response"]))
-    done = len(ledger)
-
 def first(ledger):
-    learn(ledger)
-    return random.randint(0, 999)           # the challenge for the next turn
+    # called when your bee needs a challenge and has none queued (it starts, or its last reply gave none)
+    return random.randint(0, 9)     # the challenge for its next turn
 
 def decide(challenge, response, ledger):
-    learn(ledger)
-    nxt = random.randint(0, 999)
-    if response is not None and ((challenge, response) in trusted or random.random() < 0.3):
-        return "feed", nxt                  # then sit out GAME["feed_cost"] rounds
-    return "leave", nxt
+    # challenge: what your bee asked this turn; response: the flower's answer (None if it failed)
+    # ledger:    the team ledger, up to the end of the last round
+    return "leave", random.randint(0, 9)    # ("feed" or "leave", the challenge for its next turn)
 ```
 
 ### TypeScript
 
 ```ts
 type Entry = {
-  round: number; bee: number; flower: number;
+  round: number; bee: number; flower: number;       // team indices
   challenge: Challenge; response: Response | null; fed: boolean;
-  nectar: number | null;                                   // your turns only
-  percent: number | null; energy: number | null;           // your own flower only
-  ms: number | null; surplus: number | null;
+  nectar: number | null;                            // your turns only
+  percent: number | null; energy: number | null;    // your own flower only
+  ms: number | null; surplus: number | null;        // your own flower only
 };
 
 function flower(challenge: number, ledger: readonly Entry[]): [number, number] {
-  return [(challenge * 7 + 3) % 1000, 30];
+  return [challenge, 50];                           // [response, percent]
 }
 
-let done = 0;
-const trusted = new Set<string>();
-function learn(ledger: readonly Entry[]) {
-  for (const e of ledger.slice(done)) {
-    if (e.bee === GAME.team && e.fed && (e.nectar ?? 0) > 10000) trusted.add(`${e.challenge}:${e.response}`);
-  }
-  done = ledger.length;
-}
 function first(ledger: readonly Entry[]): number {
-  learn(ledger);
-  return Math.floor(Math.random() * 1000);
+  return Math.floor(Math.random() * 10);            // the challenge for the bee's next turn
 }
+
 function decide(challenge: number, response: number | null, ledger: readonly Entry[]): ["feed" | "leave", number] {
-  learn(ledger);
-  const next = Math.floor(Math.random() * 1000);
-  return response !== null && trusted.has(`${challenge}:${response}`) ? ["feed", next] : ["leave", next];
+  return ["leave", Math.floor(Math.random() * 10)]; // ["feed" | "leave", next challenge]
 }
 ```
 
@@ -269,8 +243,7 @@ never can be: make it in steps.
 
 **Public to everyone, as it happens** (including spectators without a team): for every turn of every bee,
 the **arrival** (whose bee, whose flower), the **challenge**, the **response** and **whether the bee fed**.
-The game's settings are public too. So whatever two programs do together, including a secret handshake
-between your own bee and your own flower, happens in plain view, and anyone can copy it.
+The game's settings are public too. So whatever two programs do together happens in plain view.
 
 **Private during play:**
 

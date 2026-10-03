@@ -1,22 +1,28 @@
-# Python runner for Darwinian Beauty Contest programs.
-#   python3 py_runner.py flower   — stateless: every call forks a fresh process that runs the
-#                                   whole program from scratch, then calls flower(challenge).
-#                                   `random` is freshly seeded on every call and `time` is
-#                                   available, so a flower can run an anytime search until its
-#                                   budget (GAME["ms"]) is nearly spent.
-#   python3 py_runner.py bee      — stateful: module globals persist between calls for as long as
-#                                   this version of the bee plays (until its team submits a new bee,
-#                                   or it crashes). `random` is seeded once, freshly, at the start.
+# Python runner for Darwinian Beauty Contest programs (one flower per team).
+#   python3 py_runner.py flower   - stateless: every call forks a fresh process that runs the whole
+#                                   program from scratch, then calls flower(challenge, ledger).
+#                                   `random` is freshly seeded on every call and `time` is available,
+#                                   so a flower can run an anytime search until its budget is nearly spent.
+#   python3 py_runner.py bee      - stateful: module globals persist between calls for as long as this
+#                                   version of the bee plays (until its team submits a new bee, or it
+#                                   crashes). `random` is seeded once, freshly, at the start.
 # The code is the program's minified form (vendor/measure.js), so names can't carry data.
-# Protocol: JSON lines on stdin/stdout. First line is the setup {code, ms, limitMs, game, maxChars}.
-# Compute budgets are wall-clock time per call. The engine runs at most one program per CPU core, so
-# wall time is effectively CPU time. (CPU-time timers, ITIMER_PROF, fire late on tickless kernels.)
-# A flower is stopped at its budget, `ms`. A bee's budget is a deadline the engine keeps (a late reply
-# still counts, for the next turn), so the runner only stops a bee call at the hard limit `limitMs`.
-# Bee requests: {"op": "forage", "new": reset seen, "step": [c, r] to append, "tasted": nectar after
-# a feed (then tasted(seen, nectar) runs first, in the same call), "visit": {...}}.
+#
+# Protocol: JSON lines on stdin/stdout, one reply per request, in order. The first line is the setup
+# {code, ms, limitMs, game, maxChars, ledger}: `ledger` is the team ledger so far (a list of entries).
+# Requests:
+#   {"op": "ledger", "entries": [...]}   append to the team ledger (between calls, never timed)
+#   flower: {"op": "call", "c": challenge} -> {"v": the return value, "cpu": ms} | {"e": error, "cpu": ms}
+#   bee:    {"op": "first"}                -> {"a": first(ledger), "out": printed}
+#           {"op": "decide", "c", "r"}     -> {"a": decide(c, r, ledger), "out": printed}
+# A flower's `cpu` is the CPU time of its forked process for the call: running the program, then
+# flower(). The ledger is already in memory when the call starts (the fork inherits it), so receiving it
+# costs nothing; reading it is the flower's own compute. Time limits are wall-clock: a flower is stopped
+# at `ms`; a bee's `ms` is a deadline the engine keeps (a late reply still counts for the next turn), so
+# the runner only stops a bee call at the hard limit `limitMs`. The engine runs at most one program per
+# CPU core, so wall time and CPU time stay close.
 # NOT a security sandbox: restricted builtins + import whitelist + timeouts + memory cap only.
-import builtins, inspect, io, json, os, random, resource, select, signal, sys
+import builtins, gc, inspect, io, json, os, random, resource, select, signal, sys, time
 
 ALLOWED_MODULES = {
     "math", "cmath", "random", "hashlib", "string", "itertools", "functools", "collections",
@@ -44,10 +50,6 @@ class Timeout(BaseException):
     pass
 
 
-class InTasted(Exception):
-    pass
-
-
 def _alarm(*_):
     raise Timeout("took too long")
 
@@ -55,7 +57,7 @@ def _alarm(*_):
 signal.signal(signal.SIGALRM, _alarm)
 
 
-def cpu_timer(seconds):
+def timer(seconds):
     signal.setitimer(signal.ITIMER_REAL, seconds)
 
 
@@ -70,13 +72,27 @@ def short(e):
 
 
 def encode(v, max_chars):
+    if isinstance(v, tuple):
+        v = list(v)
     try:
         s = json.dumps(v, allow_nan=False)
     except (TypeError, ValueError) as e:
-        return None, "response is not plain data: " + short(e)
+        return None, "not plain data: " + short(e)
     if len(s) > max_chars:
-        return None, f"response too large (over {max_chars} characters)"
+        return None, f"too large (over {max_chars} characters)"
     return s, None
+
+
+def call_with(fn, args):
+    """Call fn with as many of args as it takes: the ledger (the last argument) is optional."""
+    try:
+        params = list(inspect.signature(fn).parameters.values())
+    except (TypeError, ValueError):
+        return fn(*args)
+    if any(p.kind == p.VAR_POSITIONAL for p in params):
+        return fn(*args)
+    n = sum(p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD) for p in params)
+    return fn(*args[:max(n, len(args) - 1)]) if n < len(args) else fn(*args)
 
 
 PROTO = os.fdopen(os.dup(1), "w")  # protocol channel; programs' print() never reaches it
@@ -87,9 +103,13 @@ def reply(obj):
     PROTO.flush()
 
 
+# ---------- flower ----------
+
 def run_flower(setup):
     ms = setup["ms"]
     max_chars = setup.get("maxChars", 20000)
+    ledger = list(setup.get("ledger") or [])
+    gc.freeze()  # the ledger lives in the permanent generation: a forked flower's GC never walks it
     try:
         code = compile(setup["code"], "<flower>", "exec")
         reply({"ok": True})
@@ -98,8 +118,13 @@ def run_flower(setup):
         code = None
     for line in sys.stdin:
         req = json.loads(line)
+        if req.get("op") == "ledger":
+            ledger.extend(req["entries"])
+            gc.freeze()
+            reply({"ok": True})
+            continue
         if code is None:
-            reply({"e": "flower failed to load"})
+            reply({"e": "flower failed to load", "cpu": 0})
             continue
         r, w = os.pipe()
         pid = os.fork()
@@ -108,30 +133,31 @@ def run_flower(setup):
             devnull = os.open(os.devnull, os.O_WRONLY)
             os.dup2(devnull, 1)
             os.dup2(devnull, 2)
-            out = {}
+            random.seed()  # fresh entropy: the forked child would otherwise repeat the parent's sequence
+            t0 = time.process_time()
             try:
-                random.seed()  # fresh entropy: the forked child would otherwise repeat the parent's sequence
-                cpu_timer(ms / 1000)
+                timer(ms / 1000)
                 ns = fresh_namespace(setup["game"])
                 exec(code, ns)
                 fn = ns.get("flower")
                 if not callable(fn):
-                    raise NameError("program must define flower(challenge)")
-                v = fn(req["c"])
-                cpu_timer(0)
+                    raise NameError("program must define flower(challenge, ledger)")
+                v = call_with(fn, (req["c"], ledger))
+                timer(0)
+                cpu = (time.process_time() - t0) * 1000
                 s, err = encode(v, max_chars)
-                out = {"e": err} if err else {"v": s}
+                out = {"e": "flower returned something " + err, "cpu": cpu} if err else {"v": s, "cpu": cpu}
             except BaseException as e:
-                cpu_timer(0)
-                out = {"e": short(e)}
+                timer(0)
+                out = {"e": "Timeout: took too long" if isinstance(e, Timeout) else short(e), "cpu": (time.process_time() - t0) * 1000}
             data = json.dumps(out).encode()
             while data:
                 n = os.write(w, data)
                 data = data[n:]
             os._exit(0)
         os.close(w)
-        # Wall-clock backstop for a child that ignores its CPU timer (the engine keeps the machine
-        # from being oversubscribed, so CPU time and wall time stay close).
+        # Wall-clock backstop for a child that ignores its timer (the engine keeps the machine from being
+        # oversubscribed, so CPU time and wall time stay close).
         chunks, deadline_s = [], 2 * ms / 1000 + 0.5
         ok = True
         while True:
@@ -148,33 +174,25 @@ def run_flower(setup):
             os.kill(pid, signal.SIGKILL)
         os.waitpid(pid, 0)
         if not ok:
-            reply({"e": "Timeout: took too long"})
+            reply({"e": "Timeout: took too long", "cpu": None})
             continue
         try:
             out = json.loads(b"".join(chunks) or b"{}")
         except ValueError:
             out = {}
         if "v" in out:
-            reply({"v": json.loads(out["v"])})
+            reply({"v": json.loads(out["v"]), "cpu": out.get("cpu")})
         else:
-            reply({"e": out.get("e", "flower crashed")})
+            reply({"e": out.get("e", "flower crashed"), "cpu": out.get("cpu")})
 
 
-def takes_visit(fn):
-    """forage(seen, visit): the second argument is optional, for bees that want it."""
-    try:
-        params = inspect.signature(fn).parameters.values()
-    except (TypeError, ValueError):
-        return False
-    if any(p.kind == p.VAR_POSITIONAL for p in params):
-        return True
-    return sum(p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD) for p in params) >= 2
-
+# ---------- bee ----------
 
 def run_bee(setup):
     ms = setup["ms"]
     limit = setup.get("limitMs") or ms  # the hard stop per call
     max_chars = setup.get("maxChars", 20000)
+    ledger = list(setup.get("ledger") or [])
     random.seed()
     ns = fresh_namespace(setup["game"])
     captured = io.StringIO()
@@ -188,63 +206,46 @@ def run_bee(setup):
         return s[:2000]
 
     def timed(fn, *args, budget=limit):
-        cpu_timer(budget / 1000)
+        timer(budget / 1000)
         try:
             return fn(*args)
         finally:
-            cpu_timer(0)
-
-    def decide(req):
-        # One call, one time limit: tasted (after a feed) and then forage.
-        if req.get("tasted") is not None:
-            fn = ns.get("tasted")
-            if callable(fn):
-                try:
-                    fn(list(seen), bool(req["tasted"]))
-                except Timeout:
-                    raise
-                except BaseException as e:
-                    raise InTasted("tasted: " + short(e))
-        fn = ns["forage"]
-        args = (list(seen),) + ((dict(req["visit"]),) if takes_visit(fn) else ())
-        return fn(*args)
+            timer(0)
 
     try:
         timed(lambda: exec(compile(setup["code"], "<bee>", "exec"), ns), budget=ms * 10)
-        if not callable(ns.get("forage")):
-            raise NameError("program must define forage(seen, visit)")
+        for name in ("first", "decide"):
+            if not callable(ns.get(name)):
+                raise NameError("program must define first(ledger) and decide(challenge, response, ledger)")
         reply({"ok": True, "out": take_output()})
     except BaseException as e:
         reply({"ok": False, "e": short(e), "out": take_output()})
         return
-    seen = []
     for line in sys.stdin:
         req = json.loads(line)
+        op = req.get("op")
+        if op == "ledger":
+            ledger.extend(req["entries"])
+            reply({"ok": True})
+            continue
         try:
-            if req["op"] == "forage":
-                if req.get("new"):
-                    seen = []
-                if req.get("step") is not None:
-                    seen.append(req["step"])
-                a = timed(decide, req)
-                if isinstance(a, tuple):
-                    a = list(a)
-                s, err = encode(a, max_chars)
-                reply({"e": "forage returned " + err, "out": take_output()} if err else {"a": json.loads(s), "out": take_output()})
-            elif req["op"] == "tasted":  # the older protocol: tasted in a call of its own
-                fn = ns.get("tasted")
-                if callable(fn):
-                    timed(fn, list(seen), req["nectar"])
-                reply({"ok": True, "out": take_output()})
-        except InTasted as e:
-            reply({"e": str(e)[:300], "out": take_output()})
+            if op == "first":
+                a = timed(call_with, ns["first"], (ledger,))
+            elif op == "decide":
+                a = timed(call_with, ns["decide"], (req["c"], req["r"], ledger))
+            else:
+                raise ValueError("unknown request")
+            s, err = encode(a, max_chars)
+            reply({"e": f"{op} returned something " + err, "out": take_output()} if err else {"a": json.loads(s), "out": take_output()})
+        except Timeout:
+            reply({"e": "Timeout: took too long", "out": take_output()})
         except BaseException as e:
             reply({"e": short(e), "out": take_output()})
 
 
 if __name__ == "__main__":
     try:
-        resource.setrlimit(resource.RLIMIT_AS, (768 * 1024 * 1024, 768 * 1024 * 1024))
+        resource.setrlimit(resource.RLIMIT_AS, (1024 * 1024 * 1024, 1024 * 1024 * 1024))
     except (ValueError, OSError):
         pass
     setup = json.loads(sys.stdin.readline())
