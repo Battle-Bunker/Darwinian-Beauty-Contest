@@ -1,4 +1,5 @@
-// My team's ledger, from GET .../ledger: exactly the entries my team's programs get, teams as indices.
+// My team's ledger, from GET .../ledger: every finished turn as my team may see it, teams as indices (the
+// `turns` entity of docs/QUERY.md; programs get no history, but teams and their scripts do).
 // During play it holds every turn's public fields, every feed's details (public), and my own flower's
 // and bee's private ones; once the game is over, everything. With it: where my flower's energy went
 // (including what it lost on visits where the bee didn't feed, which only my team sees until the end)
@@ -84,7 +85,7 @@ export function LedgerPanel({ view, ledger }: { view: GameView; ledger: LedgerSt
     <div className="stack ledger-panel">
       <p className="small muted">
         {me !== null
-          ? <>Exactly what your programs get: one entry per finished turn, oldest first, teams as numbers. Your team is <b>{me}</b> (<code>GAME["team"]</code>).
+          ? <>Every finished turn as your team may see it, oldest first, teams as numbers (your programs don't see this: it's for your team and its scripts). Your team is <b>{me}</b> (<code>GAME["team"]</code> in your programs).
             {!over && " Feeds show their nectar, pollen, percent and energy to everyone; your own flower's unfed visits and compute times, and your own bee's timings, only to you."}</>
           : over ? "Every turn of the game, every field filled in (the game is over)." : "Every finished turn, with what spectators may see: who visited whom, the challenge, the response, and on feeds the nectar, pollen, percent and energy."}
       </p>

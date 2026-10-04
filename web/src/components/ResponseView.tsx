@@ -3,6 +3,9 @@
 // text, and the whole of it is at GET base/responses/:seq, fetched only when someone asks for it.
 import { useState } from "react";
 import { Value } from "./Value";
+import { fmtBytes } from "../lib/format";
+
+export { fmtBytes };
 
 export interface ResponseParts { r: unknown; bytes?: number | null; hash?: string | null; preview?: string | null }
 
@@ -14,12 +17,6 @@ export const noResponse = (p: ResponseParts) => (p.r === null || p.r === undefin
 export const partsOfAction = (a: { r?: unknown; rBytes?: number | null; rHash?: string | null; rPreview?: string | null }): ResponseParts =>
   ({ r: a.r ?? null, bytes: a.rBytes ?? null, hash: a.rHash ?? null, preview: a.rPreview ?? null });
 
-export function fmtBytes(n: number | null | undefined): string {
-  if (n === null || n === undefined || !Number.isFinite(n)) return "?";
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(n < 10240 ? 1 : 0)} KB`;
-  return `${(n / 1024 / 1024).toFixed(n < 10 * 1024 * 1024 ? 2 : 1)} MB`;
-}
 
 /** The URL of a turn's whole response (seq: the turn's feed or leave action). */
 export const responseUrl = (base: string, seq: number) => `/api${base}/responses/${seq}`;
@@ -33,16 +30,16 @@ export function ResponseView({ p, url, max = 24, failedText }: { p: ResponsePart
     if (p.r === null || p.r === undefined) return <span className="bad-text mono" title={failedText ?? "no response"}>None</span>;
     return <Value v={p.r} role="response" max={max} />;
   }
-  const head = (p.preview ?? "").slice(0, Math.max(8, max - 10));
+  const head = p.preview ? `${p.preview.slice(0, Math.max(8, max - 10))}…` : "not shown inline";
   return (
     <details className="val big-r">
       <summary title={`A ${fmtBytes(p.bytes)} response: shown as its first 4 KB${p.hash ? ` · SHA-256 ${p.hash}` : ""}`}>
-        <span className="big-r-size">{fmtBytes(p.bytes)}</span> <span className="mono val-sum">{head}…</span>
+        <span className="big-r-size">{fmtBytes(p.bytes)}</span> <span className="mono val-sum">{head}</span>
       </summary>
       <div className="val-full big-r-full">
-        {p.preview !== null && p.preview !== undefined && <pre className="val-json">{p.preview}…</pre>}
+        {p.preview ? <pre className="val-json">{p.preview}…</pre> : null}
         <span className="small muted">
-          The first 4 KB of {(p.bytes ?? 0).toLocaleString()} bytes of JSON{p.hash ? <> · SHA-256 <span className="mono">{p.hash.slice(0, 16)}…</span></> : null}
+          {p.preview ? "The first 4 KB of " : "A response of "}{(p.bytes ?? 0).toLocaleString()} bytes of JSON{p.hash ? <> · SHA-256 <span className="mono">{p.hash.slice(0, 16)}…</span></> : null}
         </span>
         {url && <FullResponse url={url} bytes={p.bytes ?? null} hash={p.hash ?? null} />}
       </div>

@@ -16,15 +16,16 @@ import { useLiveTick, type LiveStore } from "../lib/live";
 import { Value } from "./Value";
 import { FeedRow } from "./Feed";
 import { beeTiming, flowerTiming, TimingPanel } from "./Timing";
-import { MemoryView, pretty } from "./Memory";
+import { MemoryEntries, memorySize, MemoryView } from "./Memory";
+import { partsOfAction, ResponseView } from "./ResponseView";
 
 /** When a submitted change takes effect (versions are pinned per turn). */
 export const takesEffect = (kind: Kind) =>
   kind === "bee" ? "once your bee's current turn is over (it's asked first() straight away)" : "for turns that start from now (a turn under way finishes with the old one)";
 
 const BLURB: Record<Kind, string> = {
-  flower: "Your flower is a species: every visit is a bee meeting one of its flowers. flower(challenge) returns [response, percent]. It allocates its energy between compute, nectar and pollen: its size and its CPU time use up part of each visit's budget, leaving E = (size cap − size) × max(0, 150 − CPU ms); a bee that feeds gets percent% of E as nectar and the rest as pollen, which it carries to other flowers. An unfed visit's E is lost. It runs fresh for every turn, remembers nothing, and can query HISTORY.",
-  bee: "Your bee takes one turn a round at one flower of a random species, never told whose: first() gives a challenge when it has none queued, and decide(challenge, response) returns [\"feed\" or \"leave\", next challenge]. Feeding gets it nectar (and pollen to carry) and sits it out for the feed cost in rounds. It runs fresh for every call: only MEMORY, a small JSON value only it can write, carries over, and a new version starts it empty. It can query HISTORY; what it prints shows up for your team below and in the feed.",
+  flower: "Your flower is a species: every visit is a bee meeting one of its flowers. flower(challenge) returns [response, percent]. It allocates its energy between compute, nectar and pollen: its size and its CPU time use up part of each visit's budget, leaving E = (size cap − size) × max(0, 150 − CPU ms); a bee that feeds gets percent% of E as nectar and the rest as pollen, which it carries to other flowers. An unfed visit's E is lost. It runs fresh for every turn and remembers nothing: it sees only its challenge and GAME.",
+  bee: "Your bee takes one turn a round at one flower of a random species, never told whose: first() gives a challenge when it has none queued, and decide(challenge, response) returns [\"feed\" or \"leave\", next challenge]. Feeding gets it nectar (and pollen to carry) and sits it out for the feed cost in rounds; if you define fed(nectar), it runs right after a feed decided in time, in the same program instance as that decide, and is told the nectar. Each turn runs fresh: only MEMORY, a tiny key–value store only the bee can write, carries over, and a new version starts it empty. What it prints shows up for your team below and in the feed.",
 };
 
 const SCALARS = ["int", "float", "bool", "str"];
@@ -377,10 +378,12 @@ function InterfaceBox({ iface, kind, language }: { iface: ProgramInterface; kind
       </dl>
       {t.rules.length > 0 && <ul className="iface-rules">{t.rules.map((r, i) => <li key={i}>{r}</li>)}</ul>}
       <p className="small muted">
-        Programs can also read <code>GAME</code>: {language === "python" ? 'GAME["team"]' : "GAME.team"} (your team's number), teams, feed_cost, challenge_type, response_type, max_len, max_nodes, round_ms, ms (this program's limit per call), flower_ms and flower_size_cap; a flower also gets size, its own.
-        {" "}And <code>HISTORY</code>: every finished turn your team may see, as a query ({language === "python" ? 'HISTORY.turns.my_bee().eq("fed", True).group_by("flower").sum("nectar").rows()' : 'HISTORY.turns.myBee().eq("fed", true).groupBy("flower").sum("nectar").rows()'}). Querying it is part of the program's compute.
-        {kind === "bee" && <>{" "}A bee also has <code>MEMORY</code>: a JSON value it changes in place or reassigns ({language === "python" ? "after global MEMORY" : "MEMORY = …"}), saved after every call if it fits in {language === "python" ? 'GAME["memory"]' : "GAME.memory"} bytes. It's the only thing a bee keeps between calls.</>}
-        {" "}A late answer, a crash or a malformed return reaches the bee as <code>{none}</code> and makes no energy.
+        Programs see only their arguments and <code>GAME</code>: {language === "python" ? 'GAME["team"]' : "GAME.team"} (your team's number), teams, feed_cost, challenge_type, response_type, max_len and max_nodes (challenge limits), max_response_bytes, round_ms, ms (this program's limit per call), flower_ms and flower_size_cap; a flower also gets size, its own; a bee also memory, its MEMORY cap. No program sees any history: your team can query it over the API.
+        {kind === "bee" && <>
+          {" "}A bee also has <code>MEMORY</code>: a flat key–value store (string keys; string, number, boolean or {none} values) that it changes inside first, decide and fed ({language === "python" ? "MEMORY[\"n\"] = 3" : "MEMORY.n = 3"}). It's saved after each of them if it fits in {language === "python" ? 'GAME["memory"]' : "GAME.memory"} bytes, each entry counting its key's bytes plus its value's JSON bytes ({'{"n": 7, "best": "a7"}'} is 2 + 8 = 10). It's the only thing a bee keeps from one turn to the next.
+          {" "}Optional: <code>fed(nectar)</code> runs after a feed decided in time, in the same program instance as that decide (its globals still there), within {language === "python" ? 'GAME["ms"]' : "GAME.ms"}; MEMORY is saved after it.
+        </>}
+        {" "}A late answer, a crash, a malformed return or a response over max_response_bytes reaches the bee as <code>{none}</code> and makes no energy. A response over 4 KB is shown on the page as its size and first 4 KB.
       </p>
     </details>
   );
@@ -390,7 +393,6 @@ function TryPanel({ kind, code, base, challengeType, flowerCode, view }: {
   kind: Kind; code: string; base: string; challengeType: string; flowerCode: string; view: GameView;
 }) {
   const [text, setText] = useState(() => storage.get(`dbc:try:${challengeType}`) ?? "");
-  const [ledgerText, setLedgerText] = useState("");
   const [rounds, setRounds] = useState(300);
   const [memoryText, setMemoryText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -400,6 +402,10 @@ function TryPanel({ kind, code, base, challengeType, flowerCode, view }: {
   const fmt = challengeFormat(challengeType);
   const cfg = view.game.config;
   const hasFlower = !!flowerCode.trim();
+  const memoryCap = cfg.budgets.bee.memory ?? 50;
+  // Whether this bee defines fed(nectar), from its code (the try run calls it after every feed, as a game does).
+  const definesFed = kind === "bee" && (cfg.language === "python" ? /^def\s+fed\s*\(/m.test(code) : /(^|\n)\s*(export\s+)?(async\s+)?function\s+fed\s*\(|(^|\n)\s*(const|let|var)\s+fed\s*=/.test(code));
+  const startSize = (() => { try { return memoryText.trim() ? memorySize(json(memoryText.trim())) : 0; } catch { return null; } })();
   const teams = useMemo(() => Object.fromEntries(view.teams.map((t) => [t.id, t])), [view.teams]);
 
   const run = async () => {
@@ -411,7 +417,10 @@ function TryPanel({ kind, code, base, challengeType, flowerCode, view }: {
         const n = Math.max(1, Math.min(5000, Math.round(rounds) || 300));
         let memory: unknown;
         if (memoryText.trim()) {
-          try { memory = json(memoryText.trim()); } catch { throw new Error("Couldn't read the starting MEMORY: write it as JSON, like {\"seen\": 3}."); }
+          try { memory = json(memoryText.trim()); } catch { throw new Error("Couldn't read the starting MEMORY: write it as JSON, like {\"n\": 3}."); }
+          const size = memorySize(memory);
+          if (size === null) throw new Error("A MEMORY is a flat key–value store: string keys, and string, number, boolean or null values (nothing nested).");
+          if (size > memoryCap) throw new Error(`That MEMORY is ${size} bytes, over the cap of ${memoryCap}.`);
         }
         setBee(await api<TryBeeResult>("POST", `${base}/try`, { kind, code, rounds: n, ...(hasFlower ? { flower: flowerCode } : {}), ...(memory !== undefined ? { memory } : {}) }));
       } else {
@@ -420,12 +429,8 @@ function TryPanel({ kind, code, base, challengeType, flowerCode, view }: {
         try { challenges = parseChallenges(text, challengeType); } catch {
           throw new Error(`Couldn't read the challenges. Write them ${fmt.label}, like ${fmt.placeholder}`);
         }
-        let ledger: unknown[] | undefined;
-        if (ledgerText.trim()) {
-          try { const v = json(ledgerText.trim()); ledger = Array.isArray(v) ? v : [v]; } catch { throw new Error("Couldn't read the history: write it as a JSON list of turn records."); }
-        }
         storage.set(`dbc:try:${challengeType}`, text || null);
-        setFlower(await api<TryFlowerResult>("POST", `${base}/try`, { kind, code, challenges, ...(ledger ? { ledger } : {}) }));
+        setFlower(await api<TryFlowerResult>("POST", `${base}/try`, { kind, code, challenges }));
       }
     } catch (e) {
       setError(errorText(e));
@@ -445,9 +450,12 @@ function TryPanel({ kind, code, base, challengeType, flowerCode, view }: {
           </p>
           <details className="try-ledger">
             <summary className="small">Start the test bee with a MEMORY (optional; {"{}"} by default)</summary>
-            <textarea value={memoryText} onChange={(e) => setMemoryText(e.target.value)} className="mono try-input" spellCheck={false} rows={2} placeholder='{"seen": 3}'
+            <textarea value={memoryText} onChange={(e) => setMemoryText(e.target.value)} className="mono try-input" spellCheck={false} rows={2} placeholder='{"n": 3, "best": "a7"}'
               aria-label="Starting MEMORY for the test bee" />
-            <span className="small muted">For this test run only: your game bee's MEMORY is never changed by anyone but the bee.</span>
+            <span className={`small ${startSize === null || startSize > memoryCap ? "bad-text" : "muted"}`}>
+              {startSize === null ? "Not a flat key–value store yet: string keys; string, number, boolean or null values." : `${startSize} of ${memoryCap} bytes.`}
+              {" "}For this test run only: your game bee's MEMORY is never changed by anyone but the bee.
+            </span>
           </details>
           <label className="field try-rounds"><span className="small">Rounds</span>
             <input type="number" min={1} max={5000} value={rounds} onChange={(e) => setRounds(Number(e.target.value))} />
@@ -460,11 +468,6 @@ function TryPanel({ kind, code, base, challengeType, flowerCode, view }: {
             <textarea value={text} onChange={(e) => setText(e.target.value)} className="mono try-input" spellCheck={false}
               rows={SCALARS.includes(normType(challengeType)) ? 1 : 3} placeholder={fmt.placeholder} />
           </label>
-          <details className="try-ledger">
-            <summary className="small">With a history (optional: turn records for HISTORY.turns; empty by default)</summary>
-            <textarea value={ledgerText} onChange={(e) => setLedgerText(e.target.value)} className="mono try-input" spellCheck={false} rows={3}
-              placeholder='[{"round": 1, "bee": 1, "flower": 0, "challenge": 3, "response": 4, "fed": true, "percent": 20, "energy": 5000, "nectar": 1000, "pollen": 4000}]' />
-          </details>
         </>
       )}
       <button className="btn btn-ghost" onClick={run} disabled={busy}>{busy ? <Spinner label="Running…" /> : kind === "bee" ? "Try my bee" : "Ask my flower"}</button>
@@ -488,7 +491,7 @@ function TryPanel({ kind, code, base, challengeType, flowerCode, view }: {
                   {fr.map((x, i) => (
                     <tr key={i}>
                       <td className="left"><Value v={x.c} role="challenge" max={60} /></td>
-                      <td className={`left ${x.error ? "bad" : ""}`}>{x.error ? <span className="mono">{`None (${x.error})`}</span> : <Value v={x.r} role="response" max={60} />}</td>
+                      <td className={`left ${x.error ? "bad" : ""}`}>{x.error ? <span className="mono">{`None (${x.error})`}</span> : <ResponseView p={partsOfAction(x)} max={60} />}</td>
                       <td>{x.percent ?? "–"}</td>
                       <td title={fmtEExact(x.energy)}>{fmtE(x.energy)}</td>
                       <td className="nowrap">{fmtMs(x.ms)}</td>
@@ -507,15 +510,15 @@ function TryPanel({ kind, code, base, challengeType, flowerCode, view }: {
             <b>{plural(turns.length, "turn")}</b> in <b>{bee.rounds.toLocaleString()}</b> rounds · fed <b>{bee.feeds}</b> {bee.feeds === 1 ? "time" : "times"} · <DropIcon size={14} /> nectar <b title={fmtEExact(bee.nectar)}>{fmtE(bee.nectar)}</b> · pollen <b title={fmtEExact(bee.pollen)}>{fmtE(bee.pollen)}</b>
           </p>
           {bee.problems.map((p, i) => <Alert key={i} kind="error"><b>{p.kind ?? "program"}{p.version ? ` v${p.version}` : ""}:</b> {p.error}</Alert>)}
-          {bee.memory !== undefined && (
-            <details className="try-ledger">
-              <summary className="small">The test bee's MEMORY at the end ({new TextEncoder().encode(JSON.stringify(sortKeys(bee.memory))).length.toLocaleString()} bytes)</summary>
-              <pre className="memory-value">{pretty(bee.memory)}</pre>
-            </details>
-          )}
+          <p className="small">
+            {definesFed
+              ? <><span className="fed-ran">fed(nectar)</span> Your bee defines fed: it ran after each of the {plural(bee.feeds, "feed")}, in the same program instance as the decision, and MEMORY was saved after it. What it printed shows with the turn after.</>
+              : <span className="muted">Your bee doesn't define fed(nectar), so nothing runs after a feed.</span>}
+          </p>
+          {bee.memory !== undefined && <TryMemory memory={bee.memory} cap={memoryCap} />}
           <TimingPanel data={beeTiming(turns, null)} limit={cfg.budgets.bee.ms} title="Your bee's decision times" unit="turns" missLabel="too slow" />
           <ol className="feed-list try-list">
-            {turns.slice(0, 300).map((a) => <FeedRow key={a.seq} a={a} teams={teams} myTeamId={null} own budgets={cfg.budgets} />)}
+            {turns.slice(0, 300).map((a) => <FeedRow key={a.seq} a={a} teams={teams} myTeamId={null} own budgets={cfg.budgets} fedRuns={definesFed} />)}
           </ol>
           {turns.length > 300 && <p className="small muted">…and {(turns.length - 300).toLocaleString()} more turns.</p>}
         </div>
@@ -524,11 +527,18 @@ function TryPanel({ kind, code, base, challengeType, flowerCode, view }: {
   );
 }
 
-/** JSON with sorted keys, as the game measures MEMORY. */
-function sortKeys(v: unknown): unknown {
-  if (Array.isArray(v)) return v.map(sortKeys);
-  if (v && typeof v === "object") return Object.fromEntries(Object.keys(v as object).sort().map((k) => [k, sortKeys((v as Record<string, unknown>)[k])]));
-  return v;
+/** The test bee's MEMORY at the end: the server's { value, bytes, cap, error } (or, from an older server, just the value). */
+function TryMemory({ memory, cap }: { memory: unknown; cap: number }) {
+  const m = memory && typeof memory === "object" && "value" in memory && "bytes" in memory
+    ? memory as { value: unknown; bytes: number; cap?: number; error?: string | null }
+    : { value: memory, bytes: memorySize(memory) ?? 0, cap, error: null };
+  return (
+    <details className="try-ledger" open>
+      <summary className="small">The test bee's MEMORY at the end: {m.bytes} of {m.cap ?? cap} bytes</summary>
+      {m.error && <p className="small warn-text memory-empty">Its last save failed: <span className="mono">{m.error}</span></p>}
+      <MemoryEntries value={m.value} label="The test bee's MEMORY at the end" />
+    </details>
+  );
 }
 
 function median(xs: number[]) {

@@ -92,7 +92,7 @@ export function Replay({ view, history }: { view: GameView; history: HistoryStor
       <GardenControls teams={teams} mine={mine} focus={focus} setFocus={setFocus} bubbles={bubbles} setBubbles={setBubbles} names={names} setNames={setNames} />
       <div className="garden">
         <GardenStage teams={teams} driver={driver} status="running" roundMs={roundMs} flowerMs={cfg.budgets.flower.ms} beeMs={cfg.budgets.bee.ms}
-          focus={focus} mine={mine >= 0 ? mine : null} bubbles={bubbles} names={names} tallies={tallies}
+          focus={focus} mine={mine >= 0 ? mine : null} bubbles={bubbles} names={names} tallies={tallies} apiBase={base}
           banner={!driver.playing && t === 0 ? <button className="garden-banner garden-play" onClick={() => driver.play()}><PlayIcon size={16} /> Play the replay</button> : null} />
         <Transport driver={driver} roundMs={roundMs} endMs={endMs} loadedT={loadedT} round={round} />
         <GardenLegend own={false} />
@@ -102,7 +102,7 @@ export function Replay({ view, history }: { view: GameView; history: HistoryStor
       {teams.some((x) => x.memory) && (
         <section>
           <h3>Every bee's MEMORY, as the game ended</h3>
-          <p className="small muted">The one thing a bee keeps between calls, written only by the bee and started afresh by each new bee version. Read only.</p>
+          <p className="small muted">The one thing a bee keeps from one turn to the next: a small key–value store, written only by the bee (in first, decide and fed) and started afresh by each new bee version. Read only.</p>
           <MemoryTable view={view} teams={teams} />
         </section>
       )}

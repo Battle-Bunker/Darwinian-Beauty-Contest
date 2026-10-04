@@ -602,6 +602,8 @@ input[type="range"] { accent-color: var(--honey); }
 .garden-overlay { position: absolute; left: 0; top: 0; pointer-events: none; will-change: transform; }
 .garden-overlay .bee { pointer-events: visiblePainted; }
 .garden-overlay .fx, .garden-overlay .readout { pointer-events: none; }
+.garden-overlay .readout-link { pointer-events: auto; cursor: pointer; }
+.readout-3 { font: 700 11px var(--mono); text-anchor: middle; fill: var(--accent); text-decoration: underline; }
 .garden-running .flower, .garden-stage.offscreen .flower { animation: none; }
 
 .garden-play:hover { background: var(--honey-hover); }
@@ -944,6 +946,12 @@ input[type="range"] { accent-color: var(--honey); }
 .memory-head .meter { flex: 0 1 260px; }
 .memory-value { margin: 0; padding: 8px 10px; background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; font: 12.5px/1.45 var(--mono); white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow: auto; }
 .memory-empty { margin: 0; }
+.big-r > summary { display: inline-flex; align-items: center; gap: 6px; }
+.big-r-size { font: 800 11.5px var(--font-body); padding: 0 6px; border-radius: 6px; background: var(--info-soft); color: var(--info); white-space: nowrap; }
+.big-r-full { display: grid; gap: 6px; }
+.big-r-load { display: grid; gap: 4px; }
+.big-r-text { max-height: 320px; max-width: min(640px, 100%); }
+.fed-ran { font-size: 12px; font-weight: 800; padding: 0 7px; border-radius: 999px; background: var(--ok-soft); color: var(--ok); white-space: nowrap; }
 .memory-grid { display: grid; gap: 8px; }
 .memory-card { border: 1px solid var(--line); border-left: 4px solid var(--team); border-radius: 10px; padding: 6px 12px; background: var(--surface); }
 .memory-card > summary { cursor: pointer; display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; }
@@ -1000,6 +1008,8 @@ input[type="range"] { accent-color: var(--honey); }
   .tl-lane { grid-template-columns: 64px minmax(0, 1fr) 26px; }
   .tl-axis { grid-template-columns: 64px minmax(0, 1fr) 26px; }
   .split-row { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .split-track { flex-wrap: wrap; gap: 2px 8px; }
+  .split-bar { flex: 1 1 100%; }
   .qc-line { grid-template-columns: minmax(0, 1fr); }
   .qc-label { padding-top: 0; }
   .qc-val { width: 120px; }

@@ -12,6 +12,8 @@ import { fmtClock, fmtE, plural, poss } from "../lib/format";
 import { computeFrame, HEAD_Y, layoutGarden, PATCH_AT, PATCH_SCALE, TOP_PAD, type Layout, type Pt } from "./gardenModel";
 import { GardenPainter } from "./gardenPainter";
 import { DropIcon } from "./Icons";
+import { responseUrl } from "./ResponseView";
+import { gameBase } from "../api";
 
 /** Says which game time the garden shows, every animation frame. */
 export interface GardenDriver {
@@ -65,9 +67,11 @@ interface StageProps {
   tallies: string[];
   dim?: boolean[];
   banner?: ReactNode;
+  /** The game's API base: the readout links a big response to the whole of it. */
+  apiBase?: string;
 }
 
-export function GardenStage({ teams, driver, status, roundMs, flowerMs, beeMs, focus, mine, bubbles, names, tallies, dim, banner }: StageProps) {
+export function GardenStage({ teams, driver, status, roundMs, flowerMs, beeMs, focus, mine, bubbles, names, tallies, dim, banner, apiBase }: StageProps) {
   const n = teams.length;
   const [boxRef, width] = useElementWidth<HTMLDivElement>();
   const layout = useMemo(() => layoutGarden(n, width), [n, width]);
@@ -84,9 +88,9 @@ export function GardenStage({ teams, driver, status, roundMs, flowerMs, beeMs, f
   const painter = useRef<GardenPainter | null>(null);
   useEffect(() => {
     if (!dyn.current) return;
-    painter.current = new GardenPainter(dyn.current, layout, teams, clipId);
+    painter.current = new GardenPainter(dyn.current, layout, teams, clipId, apiBase ? (seq) => responseUrl(apiBase, seq) : undefined);
     return () => { painter.current?.destroy(); painter.current = null; };
-  }, [layout, teamKey, clipId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [layout, teamKey, clipId, apiBase]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The loop: one frame per animation frame while time moves and the garden is on screen; it stops when
   // nothing moves and wakes on new actions, a status change, a scrub or a setting.
@@ -303,7 +307,8 @@ export function LiveGarden({ view, store, wasted }: { view: GameView; store: Liv
         <GardenControls teams={teams} mine={mine} focus={focus} setFocus={setFocus} bubbles={bubbles} setBubbles={setBubbles} names={names} setNames={setNames} />
       )}
       <GardenStage teams={teams} driver={driver} status={status} roundMs={cfg.budgets.flower.ms + cfg.budgets.bee.ms} flowerMs={cfg.budgets.flower.ms}
-        beeMs={cfg.budgets.bee.ms} focus={focus} mine={mine >= 0 ? mine : null} bubbles={bubbles} names={names} tallies={tallies} dim={dim} banner={banner} />
+        beeMs={cfg.budgets.bee.ms} focus={focus} mine={mine >= 0 ? mine : null} bubbles={bubbles} names={names} tallies={tallies} dim={dim} banner={banner}
+        apiBase={gameBase(view.room.shortId, g.shortId)} />
       {status !== "lobby" && (
         <div className="garden-bar">
           {status === "running" && (

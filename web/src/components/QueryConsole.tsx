@@ -12,6 +12,7 @@ import {
 } from "../lib/query";
 import { Alert, CopyButton, ErrorBoundary, Spinner } from "./ui";
 import { Value } from "./Value";
+import { fmtBytes } from "../lib/format";
 
 interface DCond { id: number; field: string; op: Op; a: string; b: string }
 interface DAgg { id: number; fn: AggFn; field: string; as: string }
@@ -173,7 +174,7 @@ function Console({ target }: { target: QueryTarget }) {
         {target.kind === "game"
           ? "Query this game's history as you may see it: during play, fields that aren't yours to see read as null everywhere (in rows, filters and aggregates); once the game is over, everything."
           : "Query every finished game in this room at once, fully revealed (the game field tells them apart)."}
-        {" "}The same queries run in programs on <code>HISTORY</code> and in scripts through the generated clients (docs/QUERY.md).
+        {" "}For operators: the code below runs the same query from a script or a scaffold through the generated clients (docs/QUERY.md). Game programs can't query history.
       </p>
       <div className="qc-presets">
         <label className="feed-filter"><span>Start from</span>
@@ -377,7 +378,11 @@ function Results({ res, ms, ast, target }: { res: QueryResult; ms: number; ast: 
   const [limit, setLimit] = useState(200);
   const base = `query-${ast.from}-${target.kind === "game" ? target.game : `room-${target.room}`}`;
   const teams = target.kind === "game" ? target.teams : null;
-  const cell = (k: string, v: unknown): ReactNode => {
+  const cell = (k: string, v: unknown, row: Record<string, unknown>): ReactNode => {
+    // A response over 4 KB comes as null with its size and hash (the whole of it: GET .../responses/:seq).
+    if (k === "response" && v === null && typeof row.responseHash === "string") {
+      return <span className="big-r-size" title={`not inline: SHA-256 ${row.responseHash}`}>{fmtBytes(row.responseBytes as number)} response</span>;
+    }
     if (v === null || v === undefined) return <span className="null">null</span>;
     if (teams && TEAM_FIELDS.has(k) && typeof v === "number" && teams[v]) {
       return <span className="team-chip" title={teams[v].name}><span className="mono idx">{v}</span><span className="swatch" style={{ background: teams[v].color }} /><span className="team-name">{teams[v].name}</span></span>;
@@ -403,7 +408,7 @@ function Results({ res, ms, ast, target }: { res: QueryResult; ms: number; ast: 
             <thead><tr>{columns.map((k) => <th key={k} className={numeric(k) ? "" : "left"}>{k}</th>)}</tr></thead>
             <tbody>
               {res.rows.slice(0, limit).map((r, i) => (
-                <tr key={i}>{columns.map((k) => <td key={k} className={numeric(k) ? "" : "left"}>{cell(k, r[k])}</td>)}</tr>
+                <tr key={i}>{columns.map((k) => <td key={k} className={numeric(k) ? "" : "left"}>{cell(k, r[k], r)}</td>)}</tr>
               ))}
             </tbody>
           </table>

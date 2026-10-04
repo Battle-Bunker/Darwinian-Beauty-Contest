@@ -68,3 +68,11 @@ export function timeAgo(iso: string | null | undefined): string {
 
 /** "Ada's", but "Honey Hunters'" */
 export const poss = (name: string | undefined) => (!name ? "?'s" : /s$/i.test(name) ? `${name}'` : `${name}'s`);
+
+/** A size in bytes: 512 B, 4.1 KB, 1.00 MB. */
+export function fmtBytes(n: number | null | undefined): string {
+  if (n === null || n === undefined || !Number.isFinite(n)) return "?";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(n < 10240 ? 1 : 0)} KB`;
+  return `${(n / 1024 / 1024).toFixed(n < 10 * 1024 * 1024 ? 2 : 1)} MB`;
+}

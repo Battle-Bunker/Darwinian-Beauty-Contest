@@ -4,6 +4,7 @@
 import type { BeeDraw, Frame, Layout } from "./gardenModel";
 import { headOf } from "./gardenModel";
 import { PATCH } from "../lib/turns";
+import { fmtBytes } from "../lib/format";
 
 const NS = "http://www.w3.org/2000/svg";
 type Attrs = Record<string, string | number>;
@@ -52,10 +53,11 @@ export class GardenPainter {
   private pings: SVGCircleElement[] = [];
   private fxPool: FxNodes[] = [];
   private trail: SVGPathElement;
-  private readout: { g: SVGGElement; rect: SVGRectElement; t1: SVGTextElement; t2: SVGTextElement };
+  private readout: { g: SVGGElement; rect: SVGRectElement; t1: SVGTextElement; t2: SVGTextElement; link: SVGAElement; t3: SVGTextElement };
   private layout: Layout;
 
-  constructor(private root: SVGGElement, layout: Layout, teams: PainterTeam[], clipId: string) {
+  /** responseUrl: where a turn's whole response is (for the readout's link to a big one). */
+  constructor(private root: SVGGElement, layout: Layout, teams: PainterTeam[], clipId: string, private responseUrl?: (seq: number) => string) {
     this.layout = layout;
     root.replaceChildren();
     const defs = el("defs", {}, root);
@@ -112,12 +114,13 @@ export class GardenPainter {
     }
 
     const rg = el("g", { class: "readout", display: "none" }, root);
-    this.readout = {
-      g: rg,
-      rect: el("rect", { rx: 8, height: 34, class: "readout-box" }, rg),
-      t1: el("text", { y: 13, class: "readout-1" }, rg),
-      t2: el("text", { y: 28, class: "readout-2" }, rg),
-    };
+    const rect = el("rect", { rx: 8, height: 34, class: "readout-box" }, rg);
+    const t1 = el("text", { y: 13, class: "readout-1" }, rg);
+    const t2 = el("text", { y: 28, class: "readout-2" }, rg);
+    // A big response: a link to the whole of it (opened only when clicked).
+    const link = el("a", { target: "_blank", rel: "noreferrer", display: "none", class: "readout-link" }, rg);
+    const t3 = el("text", { y: 43, class: "readout-3" }, link);
+    this.readout = { g: rg, rect, t1, t2, link, t3 };
   }
 
   paint(frame: Frame, names: boolean) {
@@ -166,7 +169,8 @@ export class GardenPainter {
     if (!r || !this.layout.pos[r.flower]) c.set(ro.g, "display", "none");
     else {
       const p = this.layout.pos[r.flower];
-      const w = Math.max(r.line1.length, r.line2.length) * 6.3 + 16;
+      const line3 = r.big ? `full response (${fmtBytes(r.big.bytes)}) ↗` : "";
+      const w = Math.max(r.line1.length, r.line2.length, line3.length) * 6.3 + 16;
       c.set(ro.g, "display", "inline");
       c.set(ro.g, "transform", `translate(${f1(p.x)} ${f1(p.y + 52)})`);
       c.set(ro.g, "class", `readout readout-${r.kind} ${r.age < 140 ? "fresh" : ""}`);
@@ -174,6 +178,12 @@ export class GardenPainter {
       c.set(ro.rect, "width", f1(w));
       c.text(ro.t1, r.line1);
       c.text(ro.t2, r.line2);
+      c.set(ro.rect, "height", r.big ? "49" : "34");
+      if (r.big && this.responseUrl) {
+        c.set(ro.link, "display", "inline");
+        c.set(ro.link, "href", this.responseUrl(r.big.seq));
+        c.text(ro.t3, line3);
+      } else c.set(ro.link, "display", "none");
     }
   }
 

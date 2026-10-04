@@ -4,7 +4,7 @@ import { api, errorText } from "../api";
 import { KINDS, type GameConfig, type GameView, type Kind, type Team } from "../types";
 import { Alert, TeamChip } from "./ui";
 import { PauseIcon, PlayIcon } from "./Icons";
-import { fmtClock } from "../lib/format";
+import { fmtBytes, fmtClock } from "../lib/format";
 
 const TYPES = ["int", "float", "bool", "str", "any", "list[int]", "list[float]", "list[bool]", "list[str]", "tree[int]", "graph", "digraph", "graph[any]", "graph[int]", "digraph[any]"];
 
@@ -117,6 +117,7 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
         <label className="field"><span>Response type</span>{typeSelect(draft.responseType, (v) => set("responseType", v), "Response type")}</label>
         <label className="field"><span>Max string/list length</span>{num(draft.maxLen, (v) => set("maxLen", v), 1, 1024, "Max string or list length")}</label>
         <label className="field"><span>Max tree/graph nodes</span>{num(draft.maxNodes, (v) => set("maxNodes", v), 1, 4096, "Max tree or graph nodes")}</label>
+        <label className="field"><span>Max response (bytes)</span>{num(draft.maxResponseBytes ?? 1048576, (v) => set("maxResponseBytes", v), 16, 16777216, "Max response size in bytes")}</label>
       </div>
       <p className="small muted settings-hint">
         {Number.isFinite(seconds) && Number.isFinite(roundMs) && roundMs > 0
@@ -124,7 +125,8 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
         Each round every bee that isn't feeding visits a random flower: the flower has <b>{draft.budgets.flower.ms} ms</b> to answer (every answer reaches the bee at {draft.budgets.flower.ms} ms), then the bee has <b>{draft.budgets.bee.ms} ms</b> to feed or leave.
         A bee that feeds sits out the next <b>{Number.isFinite(draft.feedCost) ? draft.feedCost : "?"}</b> rounds.
         Each team's flower is a species; every visit is a bee meeting one of its flowers, which spends its budget on its size and compute and, if the bee feeds, gives it nectar and pollen from what's left: E = ({Number.isFinite(cap) ? cap.toLocaleString() : "?"} − its size) × max(0, {draft.budgets.flower.ms} − its CPU ms), so a {Number.isFinite(cap) ? Math.round(cap / 2).toLocaleString() : "?"}-node flower answering in 10 ms has up to {Number.isFinite(cap) ? (Math.round(cap / 2) * Math.max(0, draft.budgets.flower.ms - 10)).toLocaleString() : "?"} node·ms to give.
-        {" "}Bees run fresh for every call and keep only their MEMORY, at most <b>{(draft.budgets.bee.memory ?? 1024).toLocaleString()}</b> bytes.
+        {" "}Bees run fresh for every turn and keep only their MEMORY, a key–value store of at most <b>{(draft.budgets.bee.memory ?? 50).toLocaleString()}</b> bytes (each entry: its key's bytes plus its value's JSON bytes).
+        {" "}String and list lengths and tree and graph sizes limit challenges; a response may be up to <b>{fmtBytes(draft.maxResponseBytes ?? 1048576)}</b> of JSON (over that it counts as no answer), and one over 4 KB is shown on the page as its first 4 KB.
       </p>
       <div className="settings-checks">
         <label className="check"><input type="checkbox" checked={draft.revealOnFinish} onChange={(e) => set("revealOnFinish", e.target.checked)} /> Reveal all code and every bee's prints when the game ends</label>
@@ -138,7 +140,7 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
               The flower's size is also the cap in its energy formula and its time is the flower window; the bee's time is its decision window. A round is the two windows together.
             </span>
           </caption>
-          <thead><tr><th className="left">Program</th><th>Size (nodes)</th><th>Change per minute</th><th>Change cap</th><th title="Flower: the flower window (every answer is delivered at its end; its CPU time within it sets the energy). Bee: the decision window.">Time limit (ms)</th><th title="The most bytes a bee's MEMORY may hold, as compact JSON (sorted keys, no spaces). The only thing a bee keeps between calls.">Memory (bytes)</th></tr></thead>
+          <thead><tr><th className="left">Program</th><th>Size (nodes)</th><th>Change per minute</th><th>Change cap</th><th title="Flower: the flower window (every answer is delivered at its end; its CPU time within it sets the energy). Bee: the decision window.">Time limit (ms)</th><th title="The most bytes a bee's MEMORY may hold: a key–value store, each entry its key's bytes plus its value's JSON bytes. The only thing a bee keeps from one turn to the next.">Memory (bytes)</th></tr></thead>
           <tbody>
             {KINDS.map((k) => (
               <tr key={k}>
@@ -147,7 +149,7 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
                 <td>{num(draft.budgets[k].perMinute, (v) => setBudget(k, "perMinute", v), 0, 1000000, `${k} change per minute`, "any")}</td>
                 <td>{num(draft.budgets[k].cap, (v) => setBudget(k, "cap", v), 0, 10000000, `${k} change cap`)}</td>
                 <td>{num(draft.budgets[k].ms, (v) => setBudget(k, "ms", v), 1, 10000, `${k} time budget`)}</td>
-                <td>{k === "bee" ? num(draft.budgets.bee.memory ?? 1024, (v) => setBudget("bee", "memory", v), 0, 1000000, "Bee memory cap in bytes") : <span className="muted">–</span>}</td>
+                <td>{k === "bee" ? num(draft.budgets.bee.memory ?? 50, (v) => setBudget("bee", "memory", v), 0, 1000000, "Bee memory cap in bytes") : <span className="muted">–</span>}</td>
               </tr>
             ))}
           </tbody>
@@ -175,6 +177,8 @@ export function SettingsSummary({ cfg }: { cfg: GameConfig }) {
         <span className="chip mono">{cfg.challengeType} → {cfg.responseType}</span>
         {[cfg.challengeType, cfg.responseType].some((t) => /str|list|any/i.test(t)) && <span className="chip">max length {cfg.maxLen}</span>}
         {[cfg.challengeType, cfg.responseType].some((t) => /tree|graph/i.test(t)) && <span className="chip">max {cfg.maxNodes} nodes</span>}
+        <span className="chip" title="The most bytes of a response's JSON; over it, no answer">responses up to {fmtBytes(cfg.maxResponseBytes ?? 1048576)}</span>
+        <span className="chip" title="A bee's MEMORY: a flat key–value store">bee MEMORY {(cfg.budgets.bee.memory ?? 50).toLocaleString()} bytes</span>
         <span className="chip">{cfg.revealOnFinish ? "code and prints revealed at the end" : "code stays secret"}</span>
       </div>
       <div className="table-scroll">
@@ -185,7 +189,7 @@ export function SettingsSummary({ cfg }: { cfg: GameConfig }) {
             <tr><th scope="row" className="left">change per minute</th>{KINDS.map((k) => <td key={k}>{cfg.budgets[k].perMinute.toLocaleString()}</td>)}</tr>
             <tr><th scope="row" className="left">change cap</th>{KINDS.map((k) => <td key={k}>{cfg.budgets[k].cap.toLocaleString()}</td>)}</tr>
             <tr><th scope="row" className="left">time limit (ms)</th>{KINDS.map((k) => <td key={k}>{cfg.budgets[k].ms}</td>)}</tr>
-            <tr><th scope="row" className="left">memory (bytes)</th>{KINDS.map((k) => <td key={k}>{k === "bee" ? (cfg.budgets.bee.memory ?? 1024).toLocaleString() : "–"}</td>)}</tr>
+            <tr><th scope="row" className="left">memory (bytes)</th>{KINDS.map((k) => <td key={k}>{k === "bee" ? (cfg.budgets.bee.memory ?? 50).toLocaleString() : "–"}</td>)}</tr>
           </tbody>
         </table>
       </div>

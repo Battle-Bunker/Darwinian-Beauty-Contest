@@ -1,6 +1,7 @@
-// The history query interface (docs/QUERY.md): the schema as the server serves it, the query AST, and
-// the equivalent builder code in Python and TypeScript (the generated clients in /vendor/query/), so a
-// query built in the console can be pasted into a program or a script.
+// The history query interface (docs/QUERY.md), for operators: the schema as the server serves it, the
+// query AST, and the equivalent builder code in Python and TypeScript (the generated clients in
+// /vendor/query/), so a query built in the console can be pasted into a script or a scaffold. (Game
+// programs get no history.)
 import { api } from "../api";
 
 export type FieldType = "int" | "float" | "bool" | "str" | "json";
@@ -122,21 +123,13 @@ export function pythonCode(ast: QueryAst, t: CodeTarget): string {
   const steps = chain(ast, "py");
   const conn = `connect(${JSON.stringify(t.origin)}, room=${JSON.stringify(t.room)}${t.game ? `, game=${JSON.stringify(t.game)}` : ""}, token=TOKEN)`;
   const body = [`h.${ast.from}`, ...steps.map((s) => `.${s}`), ".rows()"];
-  let code = `from history import connect   # ${t.origin}/vendor/query/history.py (stdlib only)\n\nh = ${conn}\nrows = (\n    ${body.join("\n    ")}\n)\nfor row in rows:\n    print(row)\n`;
-  if (ast.from === "turns" && t.game) {
-    code += `\n# In a program, the same query runs on your team's HISTORY:\n# HISTORY.turns${steps.map((s) => `.${s}`).join("")}.rows()\n`;
-  }
-  return code;
+  return `# For scripts and scaffolds (game programs can't query history).\nfrom history import connect   # ${t.origin}/vendor/query/history.py (stdlib only)\n\nh = ${conn}\nrows = (\n    ${body.join("\n    ")}\n)\nfor row in rows:\n    print(row)\n`;
 }
 
 export function typescriptCode(ast: QueryAst, t: CodeTarget): string {
   const steps = chain(ast, "ts");
   const conn = `connect({ base: ${JSON.stringify(t.origin)}, room: ${JSON.stringify(t.room)}${t.game ? `, game: ${JSON.stringify(t.game)}` : ""}, token })`;
-  let code = `import { connect } from "./history.ts";   // ${t.origin}/vendor/query/history.ts\n\nconst h = ${conn};\nconst rows = await h.${ast.from}\n  ${[...steps.map((s) => `.${s}`), ".rows()"].join("\n  ")};\nconsole.table(rows);\n`;
-  if (ast.from === "turns" && t.game) {
-    code += `\n// In a program, the same query runs on your team's HISTORY (synchronously):\n// HISTORY.turns${steps.map((s) => `.${s}`).join("")}.rows()\n`;
-  }
-  return code;
+  return `// For scripts and scaffolds (game programs can't query history).\nimport { connect } from "./history.ts";   // ${t.origin}/vendor/query/history.ts\n\nconst h = ${conn};\nconst rows = await h.${ast.from}\n  ${[...steps.map((s) => `.${s}`), ".rows()"].join("\n  ")};\nconsole.table(rows);\n`;
 }
 
 export function curlCode(ast: QueryAst, t: CodeTarget): string {

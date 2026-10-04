@@ -7,7 +7,7 @@
 // challenge, the response is delivered at flower.ms (150), and the bee decides: a feed lands it on the
 // flower, where it sits out its feed_cost rounds until its next arrival; a leave keeps it hovering until
 // its next turn takes it somewhere else.
-import { showValue, fmtE } from "../lib/format";
+import { showValue, fmtBytes, fmtE } from "../lib/format";
 import { fed, PATCH, type Turn, type TurnIndex } from "../lib/turns";
 
 export const CELL_W = 170;
@@ -114,7 +114,11 @@ export interface BeeDraw {
 /** A feed: a drop and sparkles, with the nectar the flower gave (public on every feed). */
 export interface FxDraw { x: number; y: number; u: number; text: string | null; pollen: string | null }
 /** The latest visit at the focus team's flower, with the details only that team sees (everyone, once revealed). */
-export interface Readout { flower: number; line1: string; line2: string; kind: "fed" | "left" | "fail"; age: number }
+export interface Readout {
+  flower: number; line1: string; line2: string; kind: "fed" | "left" | "fail"; age: number;
+  /** A response over 4 KB: its size and its turn's seq (for the link to the whole of it). */
+  big: { bytes: number | null; seq: number } | null;
+}
 
 export interface Frame {
   bees: BeeDraw[];
@@ -212,8 +216,9 @@ export function computeFrame(idx: TurnIndex, layout: Layout, p: FrameParams, now
         kind = "ask";
         pop = Math.min(1, (u - FLY * 0.5) / 80);
       } else if (end) {
-        const failed = end.r === null || end.r === undefined || !!end.flowerError;
-        bubble = `→ ${failed ? "None" : short(end.r)}`;
+        const big = !!end.rHash;
+        const failed = !big && (end.r === null || end.r === undefined || !!end.flowerError);
+        bubble = `→ ${big ? fmtBytes(end.rBytes) : failed ? "None" : short(end.r)}`;
         kind = end.beeError && u >= DEC ? "err" : failed ? "none" : u < DEC ? "answer" : isFed ? "fed" : "left";
         pop = Math.min(1, (u - F) / 80);
       }
@@ -258,15 +263,16 @@ export function computeFrame(idx: TurnIndex, layout: Layout, p: FrameParams, now
   if (readT && readT.end) {
     const e = readT.end;
     const age = p.D - readT.t0 - DEC;
-    if (e.flowerError || e.r === null) {
-      readout = { flower: readT.flower, line1: "no answer in time: E = 0", line2: fed(readT) ? "fed, but nothing to share" : "left", kind: "fail", age };
+    const big = e.rHash ? { bytes: e.rBytes ?? null, seq: e.seq } : null;
+    if (e.flowerError || (e.r === null && !big)) {
+      readout = { flower: readT.flower, line1: "no answer (E = 0)", line2: fed(readT) ? "fed, but nothing to give" : "left", kind: "fail", age, big: null };
     } else {
       const E = e.energy ?? 0;
       // Compute first (it shrinks what's left), then E, then how E went: nectar and pollen, or lost.
       const line1 = `${typeof e.ms === "number" ? `${e.ms < 10 ? e.ms.toFixed(1) : Math.round(e.ms)} ms CPU → ` : ""}E ${fmtE(E)}, offers ${e.percent ?? "?"}%`;
       readout = fed(readT)
-        ? { flower: readT.flower, line1, line2: `fed: nectar ${fmtE(e.nectar ?? 0)} · pollen ${fmtE(e.pollen ?? 0)}`, kind: "fed", age }
-        : { flower: readT.flower, line1, line2: `left: ${fmtE(E)} lost`, kind: "left", age };
+        ? { flower: readT.flower, line1, line2: `fed: nectar ${fmtE(e.nectar ?? 0)} · pollen ${fmtE(e.pollen ?? 0)}`, kind: "fed", age, big }
+        : { flower: readT.flower, line1, line2: `left: ${fmtE(E)} lost`, kind: "left", age, big };
     }
   }
   return { bees, glow, ping, fx, trail, readout };
