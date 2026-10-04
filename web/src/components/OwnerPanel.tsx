@@ -73,7 +73,7 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
   const dirty = JSON.stringify(draft) !== cfgKey;
 
   const set = <K extends keyof GameConfig>(k: K, v: GameConfig[K]) => setDraft((d) => ({ ...d, [k]: v }));
-  const setBudget = (kind: Kind, k: "size" | "perMinute" | "cap" | "ms" | "memory", v: number) =>
+  const setBudget = (kind: Kind, k: "size" | "perMinute" | "cap" | "ms" | "memory" | "minMs", v: number) =>
     setDraft((d) => ({ ...d, budgets: { ...d.budgets, [kind]: { ...d.budgets[kind], [k]: v } } }));
 
   const save = async (e: FormEvent) => {
@@ -133,7 +133,7 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
       <p className="small muted settings-hint">
         {Number.isFinite(seconds) && Number.isFinite(roundMs) && roundMs > 0
           ? <>The game runs for <b>{fmtClock(seconds * 1000)}</b> of game time: <b>{Math.round((seconds * 1000) / roundMs).toLocaleString()}</b> rounds of <b>{roundMs} ms</b> (the clock stops while paused). </> : null}
-        Each round every bee that isn't feeding visits a random flower: the flower has <b>{draft.budgets.flower.ms} ms</b> to answer (every answer reaches the bee at {draft.budgets.flower.ms} ms), then the bee has <b>{draft.budgets.bee.ms} ms</b> to feed or leave.
+        Each round every bee that isn't feeding visits a random flower: the flower has a hidden time budget R, drawn each call from <b>{draft.budgets.flower.minMs ?? 50}</b> to <b>{draft.budgets.flower.ms} ms</b>, to answer (every answer reaches the bee at {draft.budgets.flower.ms} ms, so timing hides R), then the bee has <b>{draft.budgets.bee.ms} ms</b> to feed or leave.
         A bee that feeds sits out the next <b>{Number.isFinite(draft.feedCost) ? draft.feedCost : "?"}</b> rounds.
         Each team's flower is a species; every visit is a bee meeting one of its flowers, which spends its budget on its size and compute and, if the bee feeds, gives it nectar and pollen from what's left: E = ({Number.isFinite(cap) ? cap.toLocaleString() : "?"} − its size) × max(0, {draft.budgets.flower.ms} − its CPU ms), so a {Number.isFinite(cap) ? Math.round(cap / 2).toLocaleString() : "?"}-node flower answering in 10 ms has up to {Number.isFinite(cap) ? (Math.round(cap / 2) * Math.max(0, draft.budgets.flower.ms - 10)).toLocaleString() : "?"} node·ms to give.
         {" "}Bees run fresh for every turn and keep only their MEMORY, a key–value store of at most <b>{(draft.budgets.bee.memory ?? 50).toLocaleString()}</b> bytes (each entry: its key's bytes plus its value's JSON bytes).
@@ -152,7 +152,7 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
               The flower's size is also the cap in its energy formula and its time is the flower window; the bee's time is its decision window. A round is the two windows together.
             </span>
           </caption>
-          <thead><tr><th className="left">Program</th><th>Size (nodes)</th><th>Change per minute</th><th>Change cap</th><th title="Flower: the flower window (every answer is delivered at its end; its CPU time within it sets the energy). Bee: the decision window.">Time limit (ms)</th><th title="The most bytes a bee's MEMORY may hold: a key–value store, each entry its key's bytes plus its value's JSON bytes. The only thing a bee keeps from one turn to the next.">Memory (bytes)</th></tr></thead>
+          <thead><tr><th className="left">Program</th><th>Size (nodes)</th><th>Change per minute</th><th>Change cap</th><th title="Flower: the most a call's hidden time budget R can be, and the flower window (every answer is delivered at its end). Bee: the decision window.">Time limit (ms)</th><th title="Flower: the least a call's hidden time budget R can be (R is drawn uniformly from this to the time limit)">Min time (ms)</th><th title="The most bytes a bee's MEMORY may hold: a key–value store, each entry its key's bytes plus its value's JSON bytes. The only thing a bee keeps from one turn to the next.">Memory (bytes)</th></tr></thead>
           <tbody>
             {KINDS.map((k) => (
               <tr key={k}>
@@ -161,6 +161,7 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
                 <td>{num(draft.budgets[k].perMinute, (v) => setBudget(k, "perMinute", v), 0, 1000000, `${k} change per minute`, "any")}</td>
                 <td>{num(draft.budgets[k].cap, (v) => setBudget(k, "cap", v), 0, 10000000, `${k} change cap`)}</td>
                 <td>{num(draft.budgets[k].ms, (v) => setBudget(k, "ms", v), 1, 10000, `${k} time budget`)}</td>
+                <td>{k === "flower" ? num(draft.budgets.flower.minMs ?? 50, (v) => setBudget("flower", "minMs", v), 1, 10000, "Flower minimum time budget") : <span className="muted">–</span>}</td>
                 <td>{k === "bee" ? num(draft.budgets.bee.memory ?? 50, (v) => setBudget("bee", "memory", v), 0, 1000000, "Bee memory cap in bytes") : <span className="muted">–</span>}</td>
               </tr>
             ))}
@@ -183,7 +184,7 @@ export function SettingsSummary({ cfg }: { cfg: GameConfig }) {
         <span className="chip">{cfg.language === "python" ? "Python" : "TypeScript"}</span>
         <span className="chip">{fmtClock(cfg.minutes * 60000)} of game time</span>
         <span className="chip" title={`Each round every bee that isn't feeding visits a random flower: it answers within ${cfg.budgets.flower.ms} ms, then the bee decides within ${cfg.budgets.bee.ms} ms`}>rounds of {cfg.budgets.flower.ms + cfg.budgets.bee.ms} ms</span>
-        <span className="chip">flower {cfg.budgets.flower.ms} ms · bee {cfg.budgets.bee.ms} ms</span>
+        <span className="chip" title="Each flower call's hidden time budget R is drawn uniformly from this range">flower R {cfg.budgets.flower.minMs ?? 50}–{cfg.budgets.flower.ms} ms · bee {cfg.budgets.bee.ms} ms</span>
         <span className="chip">a feed costs {cfg.feedCost} rounds</span>
         <span className="chip" title="E = (flower size cap − flower size) × max(0, flower ms − CPU ms)">energy cap {cfg.budgets.flower.size.toLocaleString()} nodes</span>
         <span className="chip mono">{cfg.challengeType} → {cfg.responseType}</span>
@@ -203,7 +204,7 @@ export function SettingsSummary({ cfg }: { cfg: GameConfig }) {
             <tr><th scope="row" className="left">size (nodes)</th>{KINDS.map((k) => <td key={k}>{cfg.budgets[k].size.toLocaleString()}</td>)}</tr>
             <tr><th scope="row" className="left">change per minute</th>{KINDS.map((k) => <td key={k}>{cfg.budgets[k].perMinute.toLocaleString()}</td>)}</tr>
             <tr><th scope="row" className="left">change cap</th>{KINDS.map((k) => <td key={k}>{cfg.budgets[k].cap.toLocaleString()}</td>)}</tr>
-            <tr><th scope="row" className="left">time limit (ms)</th>{KINDS.map((k) => <td key={k}>{cfg.budgets[k].ms}</td>)}</tr>
+            <tr><th scope="row" className="left">time limit (ms)</th>{KINDS.map((k) => <td key={k}>{k === "flower" ? `${cfg.budgets.flower.minMs ?? 50}–${cfg.budgets.flower.ms} (hidden R)` : cfg.budgets[k].ms}</td>)}</tr>
             <tr><th scope="row" className="left">memory (bytes)</th>{KINDS.map((k) => <td key={k}>{k === "bee" ? (cfg.budgets.bee.memory ?? 50).toLocaleString() : "–"}</td>)}</tr>
           </tbody>
         </table>

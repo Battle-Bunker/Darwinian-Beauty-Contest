@@ -15,7 +15,7 @@ export const roundMsOf = (view: GameView) => view.game.config.budgets.flower.ms 
 /** One line on how a round works, for the clock and the settings. */
 export const roundLine = (view: GameView) => {
   const b = view.game.config.budgets;
-  return `A round is ${b.flower.ms + b.bee.ms} ms of game time: every bee that isn't feeding visits a random flower, the flower has ${b.flower.ms} ms to answer, then the bee has ${b.bee.ms} ms to feed or leave. A feed sits it out ${view.game.config.feedCost} rounds.`;
+  return `A round is ${b.flower.ms + b.bee.ms} ms of game time: every bee that isn't feeding visits a random flower, the flower has a hidden ${b.flower.minMs ?? 50}–${b.flower.ms} ms to answer (delivered at ${b.flower.ms} ms), then the bee has ${b.bee.ms} ms to feed or leave. A feed sits it out ${view.game.config.feedCost} rounds.`;
 };
 
 export function GameClock({ store, view }: { store: LiveStore; view: GameView }) {

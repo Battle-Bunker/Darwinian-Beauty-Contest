@@ -8,7 +8,7 @@ export const KINDS: Kind[] = ["flower", "bee"];
  * also the "size cap" of the energy formula). Change budget accrues `perMinute` nodes a minute of game
  * time, banking up to `cap`. ms: time per call (flower: the 150 ms window; bee: the 50 ms decision).
  */
-export interface Budget { size: number; perMinute: number; cap: number; ms: number; memory?: number }
+export interface Budget { size: number; perMinute: number; cap: number; ms: number; memory?: number; minMs?: number }
 
 export interface GameConfig {
   language: "python" | "typescript";
