@@ -8,7 +8,7 @@ and so does lowercase). Pages live at `/room/<roomShortId>/game/<gameShortId>`.
 RULES.md has the game itself. In short: each team has one **flower** and one **bee**; every 200 ms round,
 each bee that isn't feeding takes one **turn**: the engine draws a flower at random (own included), the
 flower answers `[response, percent]` within 150 ms, and the bee decides `["feed" | "leave", next]` within
-50 ms. Excess energy E = (flower size cap − flower size) × max(0, 150 − flower CPU ms); a feed pays
+50 ms; after a feed, the bee's optional `fed(nectar)` runs in the same program instance. Excess energy E = (flower size cap − flower size) × max(0, 150 − flower CPU ms); a feed pays
 nectar = percent/100 × E and pollen = the rest to the bee (pollen is what the flower wants carried); a
 turn without a feed pays
 nobody (its energy is lost). fitness = N² × pollination share × forage share, where pollination is the
@@ -44,7 +44,8 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 |---|---|---|---|---|
 | GET | `base` | anyone | | the **game view** (below), filtered for the viewer |
 | GET | `base/actions` | anyone | `?after=<seq>&limit=<n ≤ 5000>`, or `?before=<seq>&limit=<n>`; `&mine=1` (team members) for only turns of your bee or at your flower | `{ actions: [action], lastSeq, clockMs, round, status }`: the actions after `after`, oldest first; or the last `limit` before `before`, oldest first (`before = lastSeq + 1` gives the latest) |
-| GET | `base/ledger` | anyone | `?after=<seq>&limit=<n ≤ 5000>` | `{ participants, team, entries: [entry], lastSeq, round, status }`: the **team ledger**, exactly what your programs get (below). `team` is your team's index in `participants` (null for a spectator, who gets the public fields only) |
+| GET | `base/ledger` | anyone | `?after=<seq>&limit=<n ≤ 5000>` | `{ participants, team, entries: [entry], lastSeq, round, status }`: the **team ledger** (below): every finished turn as your team may see it. `team` is your team's index in `participants` (null for a spectator, who gets the public fields only) |
+| GET | `base/responses/:seq` | anyone | | the whole response of the turn whose `feed`/`leave` action is `seq`, as its JSON text (`application/json`; responses are public). For responses over 4 KB, which actions, ledger entries, live feeds and query rows show only as a preview, size and hash; **404** if that turn has no response |
 | GET | `base/scores` | anyone | | `{ status, clockMs, endMs, round, lastSeq, participants, scores, ledgers }`: the live scoreboard and ledgers (public); cheap enough to poll every second |
 | GET | `base/events` | anyone | `?after=<seq>` | Server-Sent Events: `{version}` when the view should be refetched; `{programs: true}` when your own team's programs changed (refetch too); `{actions, lastSeq, clockMs, round, status}` as the garden writes them (from `after`, in order, page after page until caught up); `{lastSeq, clockMs, round, status}` when there is nothing new |
 | GET (WebSocket) | `base/ws` | anyone | `?after=<seq>` | The same feed as `base/events` over a WebSocket: exactly the same messages, one JSON text frame each, filtered for the viewer the same way (a session cookie or `Authorization: Bearer` token for a team member's private fields). Server to client only; reconnect with `?after=` the last `seq` you got. `ws://`, or `wss://` behind https |
@@ -53,9 +54,9 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 | POST | `base/status` | owner | `{ action: "pause" \| "resume" \| "finish" }` | `{ status }`. The clock and change budgets stand still while paused |
 | POST | `base/teams` | user, in the lobby | `{ name }` | `{ id, name, joinCode }` |
 | POST | `base/teams/join` | user | `{ joinCode }` | `{ id, name }` |
-| POST | `base/check` | team member | `{ kind, code }` | `{ ok, kind, size, minified, budget, distance, cost, available, errors[] }`. Validates without saving: syntax, the entry points (`flower`; for a bee `first` and `decide`, at the top level), size, and once the game runs the change budget: `distance` is the node edits from the version playing now, `cost` what the change would spend, `available` the budget now (floored) |
+| POST | `base/check` | team member | `{ kind, code }` | `{ ok, kind, size, minified, budget, distance, cost, available, errors[] }`. Validates without saving: syntax, the entry points (`flower`; for a bee `first` and `decide`, and optionally `fed`, at the top level), size, and once the game runs the change budget: `distance` is the node edits from the version playing now, `cost` what the change would spend, `available` the budget now (floored) |
 | POST | `base/programs` | team member | `{ kind, code }` | same as check plus `submitted: true, version, atMs` (the game time it went live; 0 in the lobby) and `available` after paying. **422** with `errors` if it's too big or can't be afforded yet |
-| POST | `base/try` | team member | flower: `{ kind: "flower", code, challenges?, ledger? }`; bee: see the reply column | flower: `{ size, results: [{ c, r, percent, energy, ms, error? }] }` (`ledger`: turn records for its `HISTORY.turns`, default none; `size` is the flower's size, used for `energy`). bee: `{ kind: "bee", code, flower?, rounds?, memory? }` → `{ actions, problems, feeds, nectar, pollen, rounds, memory }`: `rounds` (default 300, at most 1000) unpaced rounds in a garden of just your own flower (`flower`, else your latest), the test bee starting with `memory` (default `{}`); `memory` in the reply is what it ended with. This never touches a game bee's memory. In both, the programs run as team 0 of 1 (`GAME.team` 0, `GAME.teams` 1) |
+| POST | `base/try` | team member | flower: `{ kind: "flower", code, challenges? }`; bee: see the reply column | flower: `{ size, results: [{ c, r, rBytes, rHash?, rPreview?, percent, energy, ms, error? }] }` (`size` is the flower's size, used for `energy`; a response over 4 KB comes as `rPreview`, `rBytes` and `rHash` with `r` null, as in actions). bee: `{ kind: "bee", code, flower?, rounds?, memory? }` → `{ actions, problems, feeds, nectar, pollen, rounds, memory }`: `rounds` (default 300, at most 1000) unpaced rounds in a garden of just your own flower (`flower`, else your latest), with `fed` called after each feed as in a game, the test bee starting with `memory` (default `{}`, a MEMORY within the cap); `memory` in the reply is `{ value, bytes, cap, error }`, what it ended with. This never touches a game bee's memory. In both, the programs run as team 0 of 1 (`GAME.team` 0, `GAME.teams` 1) |
 
 ### Config
 
@@ -63,11 +64,11 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 {
   "language": "python",
   "minutes": 2, "feedCost": 10,
-  "challengeType": "int", "responseType": "int", "maxLen": 64, "maxNodes": 512,
+  "challengeType": "int", "responseType": "int", "maxLen": 64, "maxNodes": 512, "maxResponseBytes": 1048576,
   "revealOnFinish": true,
   "budgets": {
     "flower": { "size": 1100,  "perMinute": 220,  "cap": 220,  "ms": 150 },
-    "bee":    { "size": 11000, "perMinute": 2200, "cap": 2200, "ms": 50, "memory": 1024 }
+    "bee":    { "size": 11000, "perMinute": 2200, "cap": 2200, "ms": 50, "memory": 50 }
   }
 }
 ```
@@ -89,9 +90,16 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
   with `bank` and `atMs` from `teams[i].banks[kind]`. Writing programs in the lobby is free.
 - `ms`: time per call (wall clock; the engine runs at most one program per CPU core). A flower that isn't
   done in `flower.ms` answers null (E = 0). `bee.ms` is a deadline, not a cut-off: a late bee's call runs on
-  (up to 2 s), its turn is settled as not fed, and only a late `["leave", c]` queues `c`.
-- `budgets.bee.memory`: the most bytes a bee's `MEMORY` may hold (canonical JSON: sorted keys, no spaces, UTF-8).
-- `maxLen` bounds strings and lists. `maxNodes` bounds trees and graphs (graphs: ≤ 4 × maxNodes edges).
+  (up to 2 s), its turn is settled as not fed, and only a late `["leave", c]` queues `c`. A bee's `fed` is
+  stopped at `bee.ms`.
+- `budgets.bee.memory` (default 50, 0 to 1,000,000): the most bytes a bee's `MEMORY` may hold. `MEMORY` is a
+  key–value store (string keys; string, number, boolean or null values); its size is Σ over entries of
+  (UTF-8 bytes of the key + UTF-8 bytes of the value's JSON text): `{"n": 7, "best": "a7"}` is 2 + 8 = 10.
+- `maxLen` bounds the challenge's strings and lists; `maxNodes` its trees and graphs (graphs: ≤ 4 × maxNodes
+  edges).
+- `maxResponseBytes` (default 1,048,576; 16 to 16,777,216): the most UTF-8 bytes of a response's JSON text
+  (no spaces). Checked by the runner inside the flower's time; over it, the response is null and E = 0.
+  `maxLen` and `maxNodes` don't apply to responses; responses nest at most 256 levels.
 - `revealOnFinish`: when the game ends, everyone can see all code and every bee's print output (everything
   else is revealed at the end regardless).
 
@@ -102,7 +110,7 @@ Types: `int`, `float`, `bool`, `str`, `any`, `list[T]`, `tree[T]`, `graph`, `dig
 
 | Field | During play | After finish |
 |---|---|---|
-| arrivals (`bee` → `flower`), `c`, `r`, fed or not (`action`), `turn`, `round`, `atMs` | everyone, spectators included, as it happens | everyone |
+| arrivals (`bee` → `flower`), `c`, `r` (and `rBytes`, `rHash`, `rPreview`), fed or not (`action`), `turn`, `round`, `atMs` | everyone, spectators included, as it happens | everyone |
 | on a `feed`: `percent`, `energy`, `nectar`, `pollen` | everyone | everyone |
 | on a `leave`: `pollen` (always 0) | everyone | everyone |
 | on a `leave`: `percent`, `energy` | the flower's team | everyone |
@@ -111,12 +119,12 @@ Types: `int`, `float`, `bool`, `str`, `any`, `list[T]`, `tree[T]`, `graph`, `dig
 | `log` (what the bee printed) | the bee's team | everyone if `revealOnFinish` |
 | code | own team | everyone if `revealOnFinish` |
 | program versions, sizes, costs, change budgets, problems | own team | everyone |
-| the bee's `MEMORY` (`teams[i].memory`; query `teams.memory`, `teams.memoryBytes`) | own team, read only | everyone |
+| the bee's `MEMORY` (`teams[i].memory`; query `teams.memory`, `teams.memoryBytes`, `teams.memoryError`) | own team, read only | everyone |
 | the scoreboard (every team's totals, shares and fitness) and `ledgers` (feeds, nectar, pollen) | everyone, live | everyone |
 
 A field you may not see is **absent** from actions, and **null** in ledger entries and query rows.
 Every way of reading actions (pages, `before=`, `mine=1`, the SSE and WebSocket streams) and the team
-ledger and history queries apply these rules, so programs reading the API see exactly what the web page shows. Submissions
+ledger and history queries apply these rules, so agents reading the API see exactly what the web page shows. Submissions
 don't bump the public `game.version`, so other teams can't tell when a team changes its code.
 
 ## The game view
@@ -137,8 +145,9 @@ don't bump the public `game.version`, so other teams can't tell when a team chan
               "ready": { "flower": bool, "bee": bool },   // in the lobby
               "programs": { "flower": [version], "bee": [version] } | null,
               "banks": { "flower": { bank, atMs }, "bee": { bank, atMs } } | null,
-              "memory": { "value", "bytes", "cap", "version" } | null }],   // the bee's MEMORY: your own team's
-                                          // during play, everyone's after finish (version: the bee version it belongs to)
+              "memory": { "value", "bytes", "cap", "version", "error" } | null }],   // the bee's MEMORY: your own
+                                          // team's during play, everyone's after finish (version: the bee version it
+                                          // belongs to; error: why the last save failed, if it did)
   "myTeam": { "id", "name", "joinCode", "index" } | null,
   "interface": { "flower", "bee", "types": { "challenge", "response", "challengeMeans", "responseMeans", "rules": [..] } },
   "scores": [teamScore] | null,
@@ -167,7 +176,11 @@ A turn makes two actions: its **arrival**, written to the stream at once, and it
   "bee", "flower",               // team ids: whose bee, whose flower
   "action": "arrive|feed|leave", // feed = the bee fed; leave = it didn't (left, was late, or broke)
   // on feed and leave, public:
-  "c", "r",                      // the challenge and the response (null if the flower failed)
+  "c", "r",                      // the challenge and the response (null if the flower failed, or over 4 KB)
+  "rBytes",                      // the response's size: UTF-8 bytes of its JSON text (null if none)
+  "rHash", "rPreview",           // responses over 4 KB only: the SHA-256 (hex) of its JSON text and the
+                                 // text's first 4 KB (cut at a whole character). The whole response:
+                                 // GET base/responses/:seq
   "pollen",                      // what the flower kept: (1 − percent/100) × E on a feed, 0 on a leave
   "nectar",                      // feed only: what the bee got, percent/100 × E
   // on a feed public; on a leave the flower's team only (everyone after finish):
@@ -180,9 +193,10 @@ A turn makes two actions: its **arrival**, written to the stream at once, and it
   // the bee's team (everyone after finish):
   "beeMs",                       // how long the bee took to decide
   "beeError",                    // e.g. "too slow: no reply within 50 ms", a crash, a bad next challenge,
-                                 // a MEMORY over its cap (the decision still counts; the old memory is kept)
+                                 // a MEMORY over its cap or of the wrong shape (the decision still counts;
+                                 // the old memory is kept)
   "beeVersion",                  // also on arrive
-  "log" }                        // what the bee printed (in decide, and in first since its last turn):
+  "log" }                        // what the bee printed (in decide, and in first and fed since its last turn):
                                  // its own team, or everyone once a finished game is revealed
 ```
 
@@ -192,7 +206,7 @@ A queued challenge appears only when its turn ends: nothing shows a bee's next c
 
 docs/QUERY.md has the whole query interface: the schema (`turns`, `versions`, `teams`, `pairs`, `scores`),
 the JSON query AST, and the generated Python and TypeScript clients (`/vendor/query/history.py`,
-`/vendor/query/history.ts`), which build the same queries programs run on `HISTORY`.
+`/vendor/query/history.ts`) for teams, operators and agents. Programs can't query history.
 
 | Method | Path | Who | Body | Returns |
 |---|---|---|---|---|
@@ -205,13 +219,15 @@ the JSON query AST, and the generated Python and TypeScript clients (`/vendor/qu
 
 ## The team ledger
 
-`GET base/ledger` returns the turn records the team's programs see in `HISTORY.turns` (the `turns` entity
-of docs/QUERY.md), oldest first by `seq` (the turn's `feed`/`leave` action), plus that `seq` for paging.
-Team numbers are indices into `participants`.
+`GET base/ledger` returns the turn records (the `turns` entity of docs/QUERY.md) as your team may see
+them, oldest first by `seq` (the turn's `feed`/`leave` action). Team numbers are indices into
+`participants`.
 
 ```jsonc
 { "seq": 812, "game": "7", "round": 41, "atMs": 8000, "turn": 12, "bee": 2, "flower": 0,
   "challenge": 17, "response": 52, "fed": true,
+  "responseBytes": 2, "responseHash": null,   // a response over 4 KB: response null, its size and SHA-256 here
+                                              // (GET base/responses/812 has it)
   "percent": 25, "energy": 123486.0, // public on a feed; on a leave null except at your own flower
   "nectar": 30871.5,                 // on a feed; null on a leave
   "pollen": 92614.5,                 // on a feed; 0 on a leave
@@ -219,8 +235,7 @@ Team numbers are indices into `participants`.
   "beeMs": 0.4, "beeVersion": 2, "beeError": null }     // null except for your own bee
 ```
 
-Once the game is over, every field is filled in for everyone. A round's turns reach the programs after the
-round is over, before the next round's flowers are called, brought up to date between timed calls.
+Once the game is over, every field is filled in for everyone.
 
 ## Program interfaces
 
@@ -235,6 +250,9 @@ def first():
 
 def decide(challenge, response):            # response is None if the flower failed
     return "feed", next_challenge           # or "leave", next_challenge
+
+def fed(nectar):                            # optional: after a feed decided in time, same instance as decide
+    pass
 ```
 
 **TypeScript**
@@ -243,17 +261,20 @@ def decide(challenge, response):            # response is None if the flower fai
 function flower(challenge: Challenge): [Response, number]
 function first(): Challenge
 function decide(challenge: Challenge, response: Response | null): ["feed" | "leave", Challenge]
+function fed(nectar: number): void          // optional
 ```
 
-Every program runs fresh for every call and reads two globals: `GAME` (`team`, `teams`, `feed_cost`,
-`challenge_type`, `response_type`, `max_len`, `max_nodes`, `round_ms`, `ms` (its own limit), `flower_ms`,
-`flower_size_cap`; a flower also `size`, its own; a bee also `memory`, its memory cap) and `HISTORY`
-(`HISTORY.turns`: the team's history, a query builder; docs/QUERY.md). A bee also has **`MEMORY`**: a
-JSON value (`{}` for a new version) that the bee changes in place or reassigns; after each call that
-returns, the game saves it if its canonical JSON is at most `memory` bytes (else it keeps the old one and
-records the error on the turn's `beeError`; the decision still counts). It is the only thing that carries
-over between a bee's calls. No endpoint writes it. `interface` in the game view has the signatures for the
-game's language and types.
+Programs see only their arguments and `GAME` (`team`, `teams`, `feed_cost`, `challenge_type`,
+`response_type`, `max_len`, `max_nodes`, `max_response_bytes`, `round_ms`, `ms` (its own limit),
+`flower_ms`, `flower_size_cap`; a flower also `size`, its own; a bee also `memory`, its memory cap): no
+history. Every flower call and every bee turn runs a fresh program. A bee also has **`MEMORY`**, a
+key–value store (`{}` for a new version) that it changes in place or reassigns; after each `first`,
+`decide` or `fed` that returns, the game saves it if it has the right shape and fits `memory` bytes (else
+it keeps the old one and records the error: on the turn's `beeError` for `decide`, and in the team's
+`memory.error`; the decision still counts). `fed(nectar)`, if defined, runs after a feed decided in time,
+in the same program instance as that `decide`, stopped at `bee.ms`. `MEMORY` is the only thing that
+carries over from one turn to the next. No endpoint writes it. `interface` in the game view has the
+signatures for the game's language and types.
 
 ## Scores
 
