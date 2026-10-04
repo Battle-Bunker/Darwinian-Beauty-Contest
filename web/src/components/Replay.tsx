@@ -190,6 +190,7 @@ function RoundInspector({ index, round, roundMs, teams, mine, focus, rev, base }
 }) {
   const turns = useMemo(() => index.between((round - 1) * roundMs, round * roundMs), [index, round, roundMs, rev]); // eslint-disable-line react-hooks/exhaustive-deps
   const [onlyFocus, setOnlyFocus] = useState(false);
+  const hasR = turns.some((t) => t.end?.budgetMs != null);
   const shown = onlyFocus && focus !== null ? turns.filter((t) => t.bee === focus || t.flower === focus) : turns;
   return (
     <details className="inspector" open>
@@ -202,11 +203,11 @@ function RoundInspector({ index, round, roundMs, teams, mine, focus, rev, base }
               <tr>
                 <th className="left">Bee → flower</th><th className="left">Challenge → response</th><th className="left">Decision</th>
                 <th title="Share of E offered">%</th><th title="Excess energy, node·ms">E</th><th>Nectar</th><th>Pollen</th><th title="Energy lost: the bee didn't feed">Lost</th>
-                <th title="The flower call's hidden time budget R">R</th><th title="The flower's CPU time">Flower ms</th><th title="How long the bee took to decide">Bee ms</th><th className="left">Versions</th>
+                {hasR && <th title="The flower call's hidden time budget R">R</th>}<th title="The flower's CPU time">Flower ms</th><th title="How long the bee took to decide">Bee ms</th><th className="left">Versions</th>
               </tr>
             </thead>
             <tbody>
-              {shown.map((t) => <InspectorRow key={`${t.bee}:${t.turn}`} t={t} teams={teams} mine={mine} focus={focus} base={base} />)}
+              {shown.map((t) => <InspectorRow key={`${t.bee}:${t.turn}`} t={t} teams={teams} mine={mine} focus={focus} base={base} hasR={hasR} />)}
             </tbody>
           </table>
         </div>
@@ -215,7 +216,7 @@ function RoundInspector({ index, round, roundMs, teams, mine, focus, rev, base }
   );
 }
 
-function InspectorRow({ t, teams, mine, focus, base }: { t: Turn; teams: Team[]; mine: number; focus: number | null; base: string }) {
+function InspectorRow({ t, teams, mine, focus, base, hasR }: { t: Turn; teams: Team[]; mine: number; focus: number | null; base: string; hasR: boolean }) {
   const e = t.end;
   const isFed = fed(t);
   const chip = (i: number) => (
@@ -232,7 +233,7 @@ function InspectorRow({ t, teams, mine, focus, base }: { t: Turn; teams: Team[];
       <td title={fmtEExact(e?.nectar)}>{isFed ? fmtE(e?.nectar) : ""}</td>
       <td title={fmtEExact(e?.pollen)}>{isFed ? fmtE(e?.pollen) : ""}</td>
       <td className="muted" title={fmtEExact(isFed ? 0 : e?.energy)}>{!isFed && e && typeof e.energy === "number" ? fmtE(e.energy) : ""}</td>
-      <td>{fmtMs(e?.budgetMs)}</td>
+      {hasR && <td>{fmtMs(e?.budgetMs)}</td>}
       <td>{fmtMs(e?.ms)}</td>
       <td>{fmtMs(e?.beeMs)}</td>
       <td className="left small muted nowrap">{e ? `bee v${e.beeVersion ?? "?"} · flower v${e.flowerVersion ?? "?"}` : ""}</td>
