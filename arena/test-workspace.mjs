@@ -5,20 +5,23 @@
 // 1. prepareWorkspace writes the files a team needs (rules, interface, config, tools, its own versions, status), the
 //    public stream as a hard link to the runner's shared copy, and nothing secret; other teams' versions never appear.
 // 2. The shared stream grows in every workspace at once, a team damaging it through its link gets it repaired;
-//    stream/history.jsonl (the programs' HISTORY) and stream/mine.jsonl carry the team's own private fields and nobody
-//    else's. tools/stream.py, tools/garden.py and tools/query.py read them (the query checks need vendor/query/history.py,
+//    stream/history.jsonl (the team's history) and stream/mine.jsonl carry the team's own private fields and nobody
+//    else's. A response over 4 KB is its size, hash and a short preview in the files, fetched whole on request.
+//    tools/stream.py, tools/garden.py and tools/query.py read them (the query checks need vendor/query/history.py,
 //    the generated client: they are skipped while it doesn't exist).
 // 3. The audit: reading the game's public API on localhost is fine; logins, credentials, writes, other hosts and
 //    ports, raw sockets, paths outside the workspace and writes into stream/ are violations.
 import { spawnSync } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "arena-ws-test-"));
 process.env.ARENA_WS_ROOT = root;
 const { prepareWorkspace, audit, allowedUrl, escapesWorkspace } = await import("./lib/workspace.js");
-const { GameStream } = await import("./lib/stream.js");
+const { GameStream, STREAM_PREVIEW } = await import("./lib/stream.js");
 const { DB_URL, migrate, pool, q } = await import("./lib/db.js");
 const HAVE_CLIENT = fs.existsSync(new URL("../vendor/query/history.py", import.meta.url));
 await migrate();
@@ -54,10 +57,14 @@ const viewFor = (me) => ({
 const IDS = ["T1", "T2"];
 const turns = [];
 const acts = [];
+// Every 10th turn's response is a graph of about 10 KB: over 4 KB, the API gives it as its size, hash and first 4 KB.
+const bigGraph = (k) => ({ nodes: 400, edges: Array.from({ length: 399 }, (_, i) => [i, i + 1]), labels: Array.from({ length: 400 }, (_, i) => `label-${k}-${i}`) });
 const addTurns = (n) => {
   for (let i = 0; i < n; i++) {
     const k = turns.length + 1, bee = IDS[k % 2], flower = IDS[Math.floor(k / 2) % 2], fed = k % 3 === 0, percent = 10 * (k % 7), energy = 1000 * k;
-    const t = { k, round: k, bee, flower, c: k % 5, r: (k % 5) * 3, fed, percent, energy, ms: 1.5, beeMs: 3, log: `hi ${k}` };
+    const r = k % 10 === 0 ? bigGraph(k) : (k % 5) * 3, text = JSON.stringify(r);
+    const t = { k, round: k, bee, flower, c: k % 5, r, text, bytes: Buffer.byteLength(text), big: text.length > 4096, hash: crypto.createHash("sha256").update(text).digest("hex"),
+      fed, percent, energy, ms: 1.5, beeMs: 3, log: `hi ${k}` };
     turns.push(t);
     acts.push({ seq: acts.length + 1, atMs: (k - 1) * 200, round: k, turn: k, bee, flower, action: "arrive", _t: t });
     acts.push({ seq: acts.length + 1, atMs: (k - 1) * 200 + 150, round: k, turn: k, bee, flower, action: fed ? "feed" : "leave", _t: t });
@@ -67,7 +74,7 @@ const addTurns = (n) => {
 const publicOf = (a) => {
   const { _t: t, ...x } = a;
   if (a.action === "arrive") return x;
-  return { ...x, c: t.c, r: t.r, pollen: t.fed ? (1 - t.percent / 100) * t.energy : 0, ...(t.fed ? { nectar: (t.percent / 100) * t.energy, percent: t.percent, energy: t.energy } : {}) };
+  return { ...x, c: t.c, r: t.big ? null : t.r, rBytes: t.bytes, ...(t.big ? { rHash: t.hash, rPreview: t.text.slice(0, 4096) } : {}), pollen: t.fed ? (1 - t.percent / 100) * t.energy : 0, ...(t.fed ? { nectar: (t.percent / 100) * t.energy, percent: t.percent, energy: t.energy } : {}) };
 };
 const mineOf = (a, me) => {
   const x = publicOf(a), t = a._t;
@@ -76,7 +83,8 @@ const mineOf = (a, me) => {
   return x;
 };
 /** A turn record as GET .../ledger gives it to a team (the turns entity, masked for that team). */
-const entryOf = (t, me) => ({ seq: t.seq, game: "G", round: t.round, atMs: (t.round - 1) * 200, turn: t.k, bee: IDS.indexOf(t.bee), flower: IDS.indexOf(t.flower), challenge: t.c, response: t.r, fed: t.fed,
+const entryOf = (t, me) => ({ seq: t.seq, game: "G", round: t.round, atMs: (t.round - 1) * 200, turn: t.k, bee: IDS.indexOf(t.bee), flower: IDS.indexOf(t.flower), challenge: t.c, response: t.big ? null : t.r,
+  responseBytes: t.bytes, responseHash: t.big ? t.hash : null, fed: t.fed,
   percent: t.fed || t.flower === me ? t.percent : null, energy: t.fed || t.flower === me ? t.energy : null,
   nectar: t.fed ? (t.percent / 100) * t.energy : null, pollen: t.fed ? (1 - t.percent / 100) * t.energy : 0,
   ms: t.flower === me ? t.ms : null, flowerVersion: t.flower === me ? 1 : null, flowerError: null,
@@ -150,18 +158,58 @@ const pyc = (code) => spawnSync("python3", ["-c", code], { cwd: dir, encoding: "
 let r = py("stream", "tail", "-n", "4");
 check("stream.py tail: the latest public actions", r.status === 0 && r.stdout.trim().split("\n").length === 4 && /arrive|feed|leave/.test(r.stdout), r.stdout + r.stderr);
 r = pyc("from stream import Stream; s=Stream(); t=list(s.turns(since_round=40)); print(len(t), s.last()['seq'], s.name(1), s.my_index, s.n, sorted(k for k in t[0] if '_' in k))");
-check("stream.py as a library: turns(since_round) with the Python field names, last(), names, your index", r.stdout.trim() === "6 90 Show Your Work 0 2 ['at_ms', 'bee_error', 'bee_ms', 'bee_version', 'flower_error', 'flower_version']", r.stdout + r.stderr);
+check("stream.py as a library: turns(since_round) with the Python field names, last(), names, your index", r.stdout.trim() === "6 90 Show Your Work 0 2 ['at_ms', 'bee_error', 'bee_ms', 'bee_version', 'flower_error', 'flower_version', 'response_bytes', 'response_hash']", r.stdout + r.stderr);
+
+// Big responses: in the files only their size, hash and a short preview; the counts don't take them for failures.
+const bigLines = shared.filter((a) => a.rHash);
+check("big responses: the public file keeps their size, hash and a preview cut short (no response body)", bigLines.length === 4 && bigLines.every((a) => a.r === null && a.rBytes > 4096 && a.rPreview.length === STREAM_PREVIEW)
+  && fs.statSync(stream.sharedFile).size < 40000, bigLines.map((a) => [a.rBytes, a.rPreview?.length]));
+check("big responses: history.jsonl has their size and hash; mine.jsonl their short preview", led1.filter((e) => e.responseHash).length === 4 && led1.every((e) => e.responseHash ? e.response === null && e.responseBytes > 4096 : e.response !== null)
+  && mine1.filter((a) => a.rHash).every((a) => a.rPreview.length === STREAM_PREVIEW));
+check("big responses are answers, not failures, in the headline counts", stream.headline("T1").flower.noResponse === 0 && stream.headline("T2").flower.noResponse === 0, JSON.stringify(stream.headline("T1")));
+r = py("stream", "tail", "-n", "90");
+check("stream.py tail: a big response as its size and how to fetch it", r.status === 0 && /r=<\d+ bytes: tools\/stream\.py response \d+>/.test(r.stdout), r.stdout.slice(-600) + r.stderr);
+// The whole response, fetched on request from the game's public API (a fake one here).
+const respServer = http.createServer((req, res) => {
+  const m = req.url.match(/\/responses\/(\d+)$/), t = m && turns.find((x) => x.seq === Number(m[1]));
+  if (!t) { res.writeHead(404, { "content-type": "application/json" }); return res.end('{"error":"That turn has no response"}'); }
+  res.writeHead(200, { "content-type": "application/json" }); res.end(t.text);
+});
+await new Promise((ok) => respServer.listen(0, "127.0.0.1", ok));
+const cfgFile = path.join(dir, "config.json"), cfgText = fs.readFileSync(cfgFile, "utf8");
+fs.writeFileSync(cfgFile, JSON.stringify({ ...JSON.parse(cfgText), public_api: `http://127.0.0.1:${respServer.address().port}/api/rooms/R/games/G` }));
+const bigT = turns.find((t) => t.big);
+// (spawnSync would block this process, and with it the fake server: these run asynchronously.)
+const { spawn: spawnA } = await import("node:child_process");
+const run = (argv) => new Promise((ok) => { const c = spawnA("python3", argv, { cwd: dir, env: pyEnv }); let stdout = "", stderr = "";
+  c.stdout.on("data", (d) => (stdout += d)); c.stderr.on("data", (d) => (stderr += d)); c.on("close", (status) => ok({ status, stdout, stderr })); });
+const pyA = (tool, ...a) => run([`tools/${tool}.py`, ...a]), pycA = (code) => run(["-c", code]);
+r = await pyA("stream", "response", String(bigT.seq));
+check("stream.py response: a whole response, its size, hash and shape", r.status === 0 && r.stdout.includes(`${bigT.bytes} bytes, sha256 ${bigT.hash}; graph: 400 nodes, 399 edges, 400 labels`) && r.stdout.includes("--out FILE"), r.stdout + r.stderr);
+r = await pyA("stream", "response", String(bigT.seq), "--out", "big.json");
+check("stream.py response --out: saved in the workspace", r.status === 0 && fs.readFileSync(path.join(dir, "big.json"), "utf8") === bigT.text, r.stdout + r.stderr);
+r = await pyA("stream", "response", String(bigT.seq), "--out", "../escape.json");
+check("stream.py response --out: never outside the workspace or in stream/", r.status !== 0 && (await pyA("stream", "response", String(bigT.seq), "--out", "stream/x.json")).status !== 0
+  && !fs.existsSync(path.join(dir, "..", "escape.json")), r.stdout + r.stderr);
+if (HAVE_CLIENT) {
+  r = await pycA(`import garden\nt = [t for t in garden.local.turns.rows() if t.response_hash][0]\nr = garden.response(t)\nprint(t.seq, t.response, t.response_bytes, r["nodes"], len(r["labels"]), garden.response(t.seq) == r, garden.response(garden.local.turns.order_by("round").first()))`);
+  check("garden.response: a turn's whole response, fetched when it is over 4 KB; a small one is the turn's own", r.status === 0 && r.stdout.trim() === `${bigT.seq} None ${bigT.bytes} 400 400 True 3`, r.stdout + r.stderr);
+}
+fs.writeFileSync(cfgFile, cfgText);
+await new Promise((ok) => respServer.close(ok));
 r = pyc("import garden; print(garden.MY_INDEX, garden.N, garden.name(1), garden.API)");
 check("garden.py imports with tools/ on the path: your index, the teams, the public API", r.stdout.trim() === `0 2 Show Your Work ${apiBase}`, r.stdout + r.stderr);
 if (HAVE_CLIENT) {
-  r = pyc("import garden; H = garden.HISTORY; print(H.turns.count().value(), H.turns.my_flower().count().value(), H.turns.eq('fed', True).count().value(), H.turns.my_flower().eq('fed', False).not_null('percent').count().value(), H.turns.eq('flower', 1).eq('fed', False).not_null('percent').count().value())");
+  r = pyc("import garden; H = garden.local; print(H.turns.count().value(), H.turns.my_flower().count().value(), H.turns.eq('fed', True).count().value(), H.turns.my_flower().eq('fed', False).not_null('percent').count().value(), H.turns.eq('flower', 1).eq('fed', False).not_null('percent').count().value())");
   const nMine = led1.filter((e) => e.flower === 0).length, nFed = led1.filter((e) => e.fed).length;
-  check("garden.HISTORY: your programs' HISTORY over history.jsonl, masked as theirs (unfed percent only at your own flower)",
+  check("garden.local: your team's history over history.jsonl, masked as the team may see it (unfed percent only at your own flower)",
     r.stdout.trim() === `45 ${nMine} ${nFed} ${led1.filter((e) => e.flower === 0 && !e.fed).length} 0`, r.stdout + r.stderr);
-  r = pyc("import garden; t = garden.HISTORY.turns.order_by('round', desc=True).limit(1).rows()[0]; print(t.round, t.bee, t.flower, t.fed, type(t).__name__)");
-  check("garden.HISTORY: rows are the programs' Turn records", /^45 \d \d (True|False) \w+$/.test(r.stdout.trim()), r.stdout + r.stderr);
+  r = pyc("import garden; t = garden.local.turns.order_by('round', desc=True).limit(1).rows()[0]; print(t.round, t.bee, t.flower, t.fed, t.seq, type(t).__name__)");
+  check("garden.local: rows are Turn records, with seq", /^45 \d \d (True|False) 90 \w+$/.test(r.stdout.trim()), r.stdout + r.stderr);
+  r = pyc("import garden; garden.HISTORY");
+  check("garden.HISTORY is gone (programs see no history), with a pointer to garden.local", r.status !== 0 && /garden\.HISTORY is now garden\.local/.test(r.stderr), r.stdout + r.stderr);
   r = py("query", "--local", 'turns.my_flower().group_by("fed").count()');
-  check("query.py --local: the builder's chain on HISTORY, as a table", r.status === 0 && /fed\s+count/.test(r.stdout) && /True/.test(r.stdout) && /False/.test(r.stdout), r.stdout + r.stderr);
+  check("query.py --local: the builder's chain on the team's history file, as a table", r.status === 0 && /fed\s+count/.test(r.stdout) && /True/.test(r.stdout) && /False/.test(r.stdout), r.stdout + r.stderr);
   r = py("query", "--local", 'turns.eq("fed", True).sum("nectar").value()');
   const sumN = led1.filter((e) => e.fed).reduce((a, e) => a + e.nectar, 0);
   check("query.py --local: .value()", r.status === 0 && Math.abs(Number(r.stdout.trim()) - sumN) < 1e-6, r.stdout + r.stderr);

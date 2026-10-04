@@ -192,7 +192,7 @@ export function requestHandler(ctx) {
       }
       if (op === "query") {
         // A history query (docs/QUERY.md) with the team's token: this game as the team may see it, or (room) the room's
-        // finished games, fully revealed. The team's own programs see the same turns as HISTORY.turns.
+        // finished games, fully revealed. (Programs see no history: this is for the team.)
         const ast = req.ast;
         if (!ast || typeof ast !== "object" || Array.isArray(ast) || typeof ast.from !== "string") return { ok: false, error: "ast must be a query object with `from`", text: "error: ast must be a query object with `from` (docs/QUERY.md)" };
         if (JSON.stringify(ast).length > 20000) return { ok: false, error: "query too large", text: "error: query too large" };

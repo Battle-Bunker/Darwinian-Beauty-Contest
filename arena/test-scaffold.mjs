@@ -27,7 +27,7 @@ const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { retu
 
 // ---------------------------------------------------------------- a fake game: clock, budgets, submissions
 const config = { language: "python", minutes: 2, feedCost: 10, challengeType: "int", responseType: "int", maxLen: 64, maxNodes: 512,
-  budgets: { flower: { size: 1100, perMinute: 600, cap: 600, ms: 150 }, bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 50, memory: 1024 } } };
+  budgets: { flower: { size: 1100, perMinute: 600, cap: 600, ms: 150 }, bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 50, memory: 50 } } };
 const t0 = Date.now();
 const clock = () => Date.now() - t0;
 const bank = { flower: { bank: 80, atMs: 0 } };
@@ -36,7 +36,7 @@ const avail = (k) => Math.min(config.budgets[k].cap, (bank[k]?.bank ?? 0) + conf
 const fakeApi = {
   view: async () => ({ game: { status: "running", clockMs: clock(), endMs: 120000, round: Math.floor(clock() / 200), config },
     teams: [{ id: "T1", name: "Moonpetal", banks: { flower: bank.flower, bee: { bank: 0, atMs: 0 } },
-      programs: { flower: [{ version: submits.length + 1, size: 10, atMs: 0, code: "def flower(c):\n    return c, 50\n" }], bee: [] }, memory: { value: {}, bytes: 2, cap: 1024, version: 1 } },
+      programs: { flower: [{ version: submits.length + 1, size: 10, atMs: 0, code: "def flower(c):\n    return c, 50\n" }], bee: [] }, memory: { value: {}, bytes: 0, cap: 50, version: 1, error: null } },
       { id: "T2", name: "Rival", programs: null, banks: null }], scores: [{ teamId: "T1", fitness: 1 }, { teamId: "T2", fitness: 1 }] }),
   check: async (tok, g, kind, code) => ({ ok: true, size: code.length, budget: config.budgets[kind], cost: code.length, available: Math.floor(avail(kind)), errors: [] }),
   tryFlower: async (tok, g, code, ch) => ({ results: (ch || [1]).map((c) => ({ c, r: 0, percent: 50, energy: 1000, ms: 1 })) }),
@@ -88,7 +88,7 @@ for t in garden.follow(from_start=True):
         continue
     seen += 1
     if seen == 1:
-        n = garden.HISTORY.turns.eq("flower", 1).count().value()
+        n = garden.local.turns.eq("flower", 1).count().value()
         r = garden.submit("flower", helper.table_flower({t.challenge: t.response}))
         print("copied", t.challenge, "->", t.response, "ok", r["ok"], "cost", r.get("cost"), "seen", n, flush=True)
     elif seen == 2:
@@ -112,7 +112,7 @@ check("start: recorded with its audited source (the entry file and its own modul
 desk.session = null;
 const killed = await killLeftovers("no-such-tag", dir, () => desk.scaffold.pids());
 check("the end of the session doesn't stop the scaffold", pid1 && alive(pid1) && !killed.includes(pid1));
-const ready = await until("scaffold up", () => /scaffold up; me = T1 0 ; flower budget [\d.]+ ; memory 2/.test(desk.scaffold.logTail()));
+const ready = await until("scaffold up", () => /scaffold up; me = T1 0 ; flower budget [\d.]+ ; memory 0/.test(desk.scaffold.logTail()));
 check("import garden works with tools/ on the path; it talks to the runner between sessions", !!ready, desk.scaffold.logTail());
 
 // 2. Its history shows a rival species' answer: the scaffold copies it into its flower and submits it by itself.

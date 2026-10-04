@@ -8,7 +8,8 @@ import { GAME_SUMMARY, gameBrief, interviewPrompt, judgePrompt, judgeSystem, lob
 let failed = 0;
 const check = (name, ok, extra = "") => { console.log(`${ok ? "ok  " : "FAIL"} ${name}${ok || !extra ? "" : `: ${String(extra).slice(0, 400)}`}`); if (!ok) failed++; };
 const config = { language: "python", minutes: 0.5, feedCost: 10, challengeType: "int", responseType: "int", maxLen: 64, maxNodes: 512,
-  budgets: { flower: { size: 1100, perMinute: 220, cap: 220, ms: 150 }, bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 50, memory: 1024 } } };
+  maxResponseBytes: 1048576,
+  budgets: { flower: { size: 1100, perMinute: 220, cap: 220, ms: 150 }, bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 50, memory: 50 } } };
 const persona = { persona_prompt: "You are Luna, 12.", team_name: "Moonpetal" };
 const apiBase = "http://localhost:4100/api/rooms/R/games/G";
 const OLD = /\bcosmos|\borchid|\bpatch(?:es)?\b|turns_left|before each round|change turn|surplus|allure|\bledger\b|N³|three shares/i;
@@ -19,36 +20,41 @@ const head0 = sys.slice(0, sys.indexOf("# The rules (also in RULES.md)")); // th
 check("system: the tools", ["tools/submit.py", "tools/check.py", "tools/try.py", "tools/status.py", "tools/query.py", "tools/scaffold.py"].every((t) => sys.includes(t)) && !/ledger\.py/.test(sys));
 check("system: two programs, flower.py and bee.py: a species and a bee", /flower\.py and bee\.py/.test(sys) && /your flower species and your bee/.test(sys));
 check("system: submissions go live at once and pay their change cost", /goes live at once/.test(sys) && /pays its change cost/.test(sys));
-check("system: history queries with the programs' builder, on the game, locally or across the room", /tools\/query\.py/.test(sys) && /same typed query builder your programs use on HISTORY/.test(sys)
-  && /--local` runs on stream\/history\.jsonl, exactly your programs' HISTORY/.test(sys) && /--room` runs across this arena's finished games/.test(sys) && /turns, versions, teams/.test(sys), head0);
-check("system: the files are queried, not printed; the public API", /stream\/history\.jsonl holds your programs' HISTORY/.test(sys) && /stream\/actions\.jsonl is the public stream/.test(sys)
+check("system: history queries for the team (programs see none), on the game, locally or across the room", /tools\/query\.py/.test(sys) && /Your programs see no history, but your team can/.test(sys)
+  && /--local` runs on stream\/history\.jsonl, your team's history file/.test(sys) && /--room` runs across this arena's finished games/.test(sys) && /turns, versions, teams/.test(sys)
+  && !/HISTORY/.test(head0), head0);
+check("system: big responses: size and hash in queries, the whole one on request", /A response over 4 KB shows as its size and hash/.test(sys) && /tools\/stream\.py response <seq>/.test(sys)
+  && /garden\.response\(seq\)/.test(sys) && /A response may be at most 1,048,576 bytes of JSON/.test(sys), head0);
+check("system: the files are queried, not printed; the public API", /stream\/history\.jsonl holds your team's history/.test(sys) && /stream\/actions\.jsonl is the public stream/.test(sys)
   && /query them, never print them whole/.test(sys) && sys.includes(`${apiBase}/events`) && sys.includes(`${apiBase}/scores`) && sys.includes(`POST ${apiBase}/query`));
 check("system: session scripts stop with the session; only the scaffold outlives sessions", /stopped\s+when that session ends; only the scaffold outlives sessions/.test(sys));
 check("system: the scaffold: what it's for, how to start it, tools/ on its path, the garden API, its audit",
   /SCAFFOLD/.test(sys) && /tools\/scaffold\.py start scaffold\.py/.test(sys) && /start it in the\s+lobby/.test(sys) && /import garden/.test(sys)
-  && ["HISTORY", "game", "room", "follow()", "follow_live()", "status()", "memory()", "live(kind)", "measure(kind, code)", "try_flower(code, challenges)", "try_bee(code)", "submit(kind, code)", "wait_for_budget(kind, cost)"].every((x) => sys.includes(`\`${x}\``))
+  && ["local", "game", "room", "follow()", "response(seq)", "follow_live()", "status()", "memory()", "live(kind)", "measure(kind, code)", "try_flower(code, challenges)", "try_bee(code)", "submit(kind, code)", "wait_for_budget(kind, cost)"].every((x) => sys.includes(`\`${x}\``))
   && /audited before every start and restart/.test(sys));
 check("system: the bee's MEMORY: read only, written by the deployed bee alone, emptied by a code change", /Your bee's MEMORY is written only by your deployed bee/.test(sys)
   && /nothing you or your tools do can set it/.test(sys) && /emptied whenever your bee's code changes/.test(sys) && /try to change any bee's MEMORY/.test(sys));
 check("system: the game is short", /30 seconds/.test(sys));
 check("system: fair play allows reading the public API and its history queries, nothing else", /except to read \(GET\) the game's public API/.test(sys) && /post history queries to its query endpoints/.test(sys)
   && /Do not write to stream\//.test(sys) && /not even \/tmp/.test(sys) && /raw\s+sockets/.test(sys));
-check("system: RULES.md in full (species, pollen, MEMORY, HISTORY)", /## A turn/.test(sys) && /## Energy: compute, nectar and pollen/.test(sys) && /### Bee memory/.test(sys) && /## History/.test(sys) && /## What everyone can see/.test(sys));
+check("system: RULES.md in full (species, pollen, MEMORY, fed, no history for programs)", /## A turn/.test(sys) && /## Energy: compute, nectar and pollen/.test(sys) && /### Bee memory/.test(sys)
+  && /### After a feed: `fed\(nectar\)`/.test(sys) && /## History is for teams, not programs/.test(sys) && /## What everyone can see/.test(sys));
 const tt = timingText(config);
 check("timing: 200 ms rounds, the flower's 150 ms and the bee's 50 ms, a feed costs 10 rounds", /Rounds of 200 ms/.test(tt) && /about\s+150 rounds/.test(tt) && /150 ms to return \[response, percent\]/.test(tt)
   && /50 ms to return \["feed" or "leave", next\s+challenge\]/.test(tt) && /out for 10 rounds/.test(tt), tt);
 check("timing: species; energy goes to compute, nectar and pollen; the flower gives both on a feed", /flower program is its flower species/.test(tt) && /one flower of a species/.test(tt)
   && /energy goes to compute, nectar and pollen/.test(tt) && /E = \(1,100 − flower size\) × max\(0, 150 − the flower's CPU ms\)/.test(tt)
   && /the flower gives it\s+percent\/100 × E as nectar and the rest as pollen/.test(tt) && /If it doesn't feed, that energy is lost/.test(tt), tt);
-check("timing: the interface: fresh calls, GAME, HISTORY and the bee's MEMORY", /flower\(challenge\), first\(\), decide\(challenge, response\)/.test(tt) && /HISTORY/.test(tt)
-  && /MEMORY: a JSON value of at most 1,024 bytes that it alone writes/.test(tt) && /a new bee version starts with \{\}/.test(tt), tt);
+check("timing: the interface: fresh calls, fed, GAME, no history, the bee's 50-byte key-value MEMORY", /flower\(challenge\), first\(\), decide\(challenge, response\), and the bee's optional\s+fed\(nectar\)/.test(tt)
+  && /in the same instance as that decide/.test(tt) && /no history/.test(tt) && !/HISTORY/.test(tt) && /MEMORY: a flat key-value store/.test(tt) && /of at most 50 bytes \(each key's bytes plus\s+its value's JSON bytes\)/.test(tt)
+  && /a new bee version starts\s+with \{\}/.test(tt), tt);
 check("timing and system: a feed is public with its percent, energy, nectar and pollen; unfed percent and energy and compute time are the flower team's",
   /a feed's percent, energy, nectar and\s+pollen/.test(tt) && /percent and energy of turns without a feed, and every compute time, stay with the flower's team/.test(tt)
   && /on a\s+feed, its percent, energy, nectar and pollen/.test(sys) && /Private to the\s+flower's team during play: the percent and energy of turns without a feed, and the flower's compute time/.test(sys)
   && /live scoreboard/.test(sys), tt);
 check("system: arrivals public; SSE and the WebSocket", /every arrival \(whose bee at whose species\)/.test(sys) && /ws:\/\/localhost:4100\/api\/rooms\/R\/games\/G\/ws\?after=/.test(sys) && /from Python use the Server-Sent Events/.test(sys));
 check("system: this game's settings with per-minute change budgets, caps and the memory cap", /\| flower \| 1,100 \| 220 \| 220 \| 150 \|/.test(sys) && /\| bee \| 11,000 \| 2,200 \| 2,200 \| 50 \|/.test(sys)
-  && /3 teams: 3 flower species and 3 bees/.test(sys) && /MEMORY holds at most\s+1,024 bytes/.test(sys));
+  && /3 teams: 3 flower species and 3 bees/.test(sys) && /MEMORY holds at most\s+50 bytes/.test(sys));
 check("system: no leftovers of earlier variants (in the arena's text)", !OLD.test(OLDX(head0)), OLDX(head0).match(OLD)?.[0]);
 const devSecret = fs.existsSync(new URL("./runs/.dev-secret", import.meta.url)) ? fs.readFileSync(new URL("./runs/.dev-secret", import.meta.url), "utf8").trim() : "no-secret-file";
 check("system: no secrets, tokens or database URLs", !sys.includes(devSecret) && !/postgres:|Bearer |DATABASE_URL|DEV_LOGIN|\.dev-secret/i.test(sys));
@@ -57,9 +63,9 @@ check("no starter strategies in the system prompt", !/(?<!no )starter (code|stra
 
 const fresh = lobbyBrief({ config, teamName: "Moonpetal", generation: 1, maxTurns: 30, carried: false });
 check("lobby (first game): write both from scratch to the interface, no starter code", /program files are empty/.test(fresh) && /Write both from scratch/.test(fresh) && /no starter code/.test(fresh)
-  && /flower\(challenge\), first\(\) and decide\(challenge, response\), with GAME, HISTORY and the bee's MEMORY/.test(fresh), fresh);
+  && /flower\(challenge\), first\(\) and decide\(challenge, response\), optionally fed\(nectar\), with GAME and the bee's MEMORY/.test(fresh) && !/HISTORY/.test(fresh), fresh);
 check("lobby: free, check/try, submit both; size sets energy; the memory cap", /Writing is free in the lobby/.test(fresh) && /submit both/.test(fresh) && /needs both submitted to play/.test(fresh) && /flower's size also sets its energy/.test(fresh)
-  && /MEMORY holds 1,024 bytes/.test(fresh));
+  && /MEMORY holds 50 bytes/.test(fresh));
 check("lobby: the game won't wait; prepare what should react", /won't wait for you/.test(fresh) && /must be ready now/.test(fresh) && /flower 220 and bee 2,200 nodes a minute/.test(fresh));
 check("lobby: the scaffold can start now and runs through the game", /tools\/scaffold\.py start scaffold\.py/.test(fresh) && /keeps running through the whole game/.test(fresh));
 check("lobby: nothing of earlier variants", !OLD.test(fresh), fresh.match(OLD)?.[0]);
@@ -79,12 +85,12 @@ const head = { turns: 1234, bee: { turns: 40, feeds: 8, ownFeeds: 1, nectar: 600
 const scores = [{ teamId: "a", fitness: 1.4, pollinationShare: 0.4, forageShare: 0.3 }, { teamId: "me", fitness: 1.05, pollinationShare: 0.33, forageShare: 0.31 },
   { teamId: "c", fitness: 0.5, pollinationShare: 0.27, forageShare: 0.39 }];
 const gb = gameBrief({ config: { ...config, minutes: 2 }, teamName: "Moonpetal", teamId: "me", generation: 2, sessionNo: 1, status: "running", clockMs: 12000, budgets, scores,
-  head, memory: { bytes: 37, cap: 1024, version: 2 }, drafts: ["flower"], maxTurns: 30, scripts: ["follow.py"] });
+  head, memory: { bytes: 37, cap: 50, version: 2, error: "MEMORY is 61 bytes, over the cap of 50" }, drafts: ["flower"], maxTurns: 30, scripts: ["follow.py"] });
 check("game brief: time played, team, session", /Game 2 is running: 0:12 of 2:00 played\. You are team "Moonpetal"\. Session 1\./.test(gb), gb);
 check("game brief: live scores with the two shares", /fitness 1\.05 \(#2 of 3; par is 1\.00\)/.test(gb) && /shares: pollination 0\.33, forage 0\.31\./.test(gb), gb);
 check("game brief: headline numbers only", /So far: 1,234 turns/.test(gb) && /8 feeds at 3 teams' species \(1 at your own\), 60,000 nectar/.test(gb) && /mean percent on feeds 25/.test(gb)
   && /250,000 pollen given, 2 turns with no response/.test(gb) && /flower 44 of 220 \(\+220\/min\)/.test(gb), gb);
-check("game brief: the bee's MEMORY size, read only, and the query tool", /Your bee's MEMORY: 37 of 1,024 bytes \(bee v2/.test(gb) && /tools\/query\.py/.test(gb) && !OLD.test(gb), gb);
+check("game brief: the bee's MEMORY size, read only, and the query tool", /Your bee's MEMORY: 37 of 50 bytes \(bee v2/.test(gb) && /its last save failed: MEMORY is 61 bytes/.test(gb) && !/HISTORY/.test(gb) && /tools\/query\.py/.test(gb) && !OLD.test(gb), gb);
 check("game brief: drafts and the workspace's python files", /drafts\/flower\.py/.test(gb) && /follow\.py/.test(gb));
 check("game brief: no scaffold yet: how to start one", /no scaffold running/.test(gb));
 const gbs = gameBrief({ config, teamName: "M", generation: 1, sessionNo: 2, status: "running", clockMs: 5000, budgets, maxTurns: 30, scaffold: { file: "scaffold.py", state: "running", restarts: 1 }, automatic: 4 });
@@ -101,7 +107,7 @@ const jp = judgePrompt({ config, teams: [{ name: "A", explanation: "x", code: { 
 check("judge prompt: a 30 seconds game, feeding sits out rounds, flower and bee code", /a game of 30 seconds, a feeding bee sits out 10 rounds/.test(jp) && /flower:\n```python\nf/.test(jp) && /bee:\n```python\nb/.test(jp));
 const js = judgeSystem({ prompt: "You are Ada.", age: 12 });
 check("judges: the one-flower game in plain words: species, nectar and pollen given, the bee's small memory", /two programs, a flower species and a bee/.test(GAME_SUMMARY)
-  && /the flower gives it the nectar and the pollen/.test(GAME_SUMMARY) && /that energy is lost/.test(GAME_SUMMARY) && /only the bee keeps a small\s+memory/.test(GAME_SUMMARY)
+  && /the flower gives it the nectar and the pollen/.test(GAME_SUMMARY) && /that energy is lost/.test(GAME_SUMMARY) && /only the bee keeps a tiny memory \(50 bytes\)/.test(GAME_SUMMARY) && /never see what happened before/.test(GAME_SUMMARY)
   && /multiplied together/.test(GAME_SUMMARY) && !OLD.test(js.replace(/\bledger\b/g, "")) && /the flower species and the bee really do/.test(js), js.replace(/\bledger\b/g, "").match(OLD)?.[0]);
 
 console.log(failed ? `${failed} check(s) failed` : "all brief checks passed");

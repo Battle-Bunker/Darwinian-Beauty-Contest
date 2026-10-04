@@ -8,9 +8,12 @@ the flower answers `[response, percent]`, and the bee feeds or leaves. A feed gi
 energy E = (1100 − flower size) × max(0, 150 − CPU ms) as nectar and the rest as pollen, for it to carry; an unfed
 turn's energy is lost. Fitness = N² × pollination share × forage share (pollination: Σ over bee teams of √pollen the
 species gave them; forage: Σ over species of √nectar the bee got). Programs run fresh for every call
-(`flower(challenge)`, `first()`, `decide(challenge, response)`) and read `GAME` and `HISTORY` (the team's history, a
-typed query builder: docs/QUERY.md); a bee also has `MEMORY`, about a kilobyte of JSON that only it writes and that a new
-bee version starts empty. A game is a lobby where programs are written for free, then one stretch of play where teams
+(`flower(challenge)`, `first()`, `decide(challenge, response)`, and the bee's optional `fed(nectar)`, which runs after
+a feed decided in time in the same instance as that decide) and see only their arguments and `GAME`: no history. A bee
+also has `MEMORY`, a flat key-value store of 50 bytes (key bytes + value JSON bytes) that only it writes and that a new
+bee version starts empty. Teams (not programs) query the history with a typed builder (docs/QUERY.md). Responses may be
+up to `maxResponseBytes` (1 MiB, set in every preset: `MAX_RESPONSE_BYTES` in lib/presets.js); one over 4 KB is its
+size, hash and preview in streams and queries, fetched whole on request. A game is a lobby where programs are written for free, then one stretch of play where teams
 change their programs whenever they like, paying from change budgets that refill with game time. After each game come
 metrics, interviews, the teen judges and (unless membership is fixed) selection and breeding.
 
@@ -178,13 +181,14 @@ A session starts it, in the lobby or during the game: `python3 tools/scaffold.py
   neither a running session nor the token are refused.
 
 It runs with `tools/` on its `PYTHONPATH`, so `import garden` works. `tools/garden.py` is its API: `MY_INDEX`, `N`,
-`name(i)`; `HISTORY` (the programs' HISTORY, in memory over the team's history file, kept up to date), `game` and `room`
+`name(i)`; `local` (the team's history file in memory as a query builder, kept up to date), `game` and `room`
 (the same builder run by the game server through the runner: this game as the team may see it, every entity; the room's
 finished games, fully revealed); `follow()` (each new turn, a `Turn` record), `turns()`, `actions()`, `mine()`,
+`response(turn or seq)` (a whole response, fetched from the public API when it is over 4 KB),
 `follow_live()` (the public SSE); `status()` (clock, round, live scores, the team's budgets with exact `available`,
-`perMinute` and `cap`, its versions), `memory()` (the bee's MEMORY, read only), `live(kind)` (the code playing now),
-`measure(kind, code)` (size and cost, free), `check`, `try_flower(code, challenges, history)`, `try_bee(code, rounds,
-flower, memory)` (a test bee; a game bee's MEMORY is never touched), `submit` (a refusal for budget carries `wait_s`),
+`perMinute` and `cap`, its versions), `memory()` (the bee's MEMORY with its last save error, read only), `live(kind)`
+(the code playing now), `measure(kind, code)` (size and cost, free), `check`, `try_flower(code, challenges)`,
+`try_bee(code, rounds, flower, memory)` (a test bee, `fed` called after each feed; a game bee's MEMORY is never touched), `submit` (a refusal for budget carries `wait_s`),
 `wait_for_budget(kind, cost)`, `scores()` and `game_over()` (public API).
 
 ## A team's workspace
@@ -198,7 +202,7 @@ flower, memory)` (a test bee; a game bee's MEMORY is never touched), `submit` (a
 | `history/` | the team's own versions in this game (code and timeline). Other teams' changes are secret until the game ends |
 | `status.txt` | what `tools/status.py` said at the start of the session |
 | `notebook.md` | the persona's notes, kept across sessions and games |
-| `stream/history.jsonl` | the team's **history** (`GET …/ledger` with the team's token): one turn record per finished turn, exactly what its programs get as `HISTORY.turns`, appended about once a second |
+| `stream/history.jsonl` | the team's **history** (`GET …/ledger` with the team's token): one turn record per finished turn as the team may see it (programs see no history), appended about once a second |
 | `stream/actions.jsonl` | the live public stream: a hard link to the runner's shared copy, appended about once a second |
 | `stream/mine.jsonl` | its own bee's turns and those at its flower as the team sees them (`GET …/actions?mine=1`): with unfed turns' percent and energy at its flower, compute times, versions and printouts, private during play |
 | `scaffold/scaffold.log` | its scaffold's output |
@@ -210,19 +214,22 @@ flower, memory)` (a test bee; a game bee's MEMORY is never touched), `submit` (a
 
 **Tools.** `<kind>` is `flower` or `bee`. `python3 tools/status.py [--afford N] [--memory]` (clock, time left, change
 budgets now with rate and cap and when N nodes are affordable, the live scoreboard with the two shares, versions playing
-and the flower's maximum energy, the bee's MEMORY size, and its value with `--memory`), `tools/check.py <kind> [file]`
-(size, cost now, the flower's energy at that size, a quick runtime test), `tools/try.py flower [file] [challenges…]
-[--history FILE]` (response, percent, energy and CPU time per challenge on the game's real runner, with those turn
-records as its HISTORY), `tools/try.py bee [file] [--flower FILE] [--rounds N] [--memory JSON]` (a test bee in a garden
-of just the team's own flower, starting with that MEMORY; it never touches the game bee's), and
+and the flower's maximum energy, the bee's MEMORY size and last save error, and its value with `--memory`),
+`tools/check.py <kind> [file]` (size, cost now, the flower's energy at that size, a quick runtime test, which fails on a
+crashing `fed`), `tools/try.py flower [file] [challenges…]` (response, its size, percent, energy and CPU time per
+challenge on the game's real runner; a response over 4 KB as its size, hash and first characters), `tools/try.py bee
+[file] [--flower FILE] [--rounds N] [--memory JSON]` (a test bee in a garden of just the team's own flower, starting
+with that MEMORY, with `fed(nectar)` after each feed: how often it ran and whether it failed; it never touches the game
+bee's), and
 `tools/submit.py <kind> [file] [--force]` (live at once; a quick runtime test first). They write a request file into
 `.runner/req/`; the runner's broker does the call with the team's token and writes the answer back. No credential ever
 enters the workspace or a prompt, and no request can set a bee's MEMORY (only the deployed bee writes it).
-`tools/query.py '<query>' [--local|--room] [--ast] [--json]` asks the history with the typed builder the programs use:
-on this game through the runner (the team's view), on the history file in memory (`--local`: exactly the programs'
-HISTORY), or across the room's finished games (`--room`); `summary` and `schema` are built in. The expression is parsed,
-not evaluated: only builder methods with literal arguments. `tools/stream.py tail` shows the latest public actions; as a
-library, `Stream().turns()`, `.follow()`, `.actions()`, `.mine()`.
+`tools/query.py '<query>' [--local|--room] [--ast] [--json]` asks the history with the typed builder: on this game
+through the runner (the team's view), on the history file in memory (`--local`), or across the room's finished games
+(`--room`); `summary` and `schema` are built in. The expression is parsed, not evaluated: only builder methods with
+literal arguments. `tools/stream.py tail` shows the latest public actions and `tools/stream.py response SEQ [--out FILE]`
+a whole response (its size, hash, shape and first characters; `--out` saves it in the workspace); as a library,
+`Stream().turns()`, `.follow()`, `.actions()`, `.mine()`, and `response(seq)`.
 
 **The streams.** One shared public copy per game (`<WS_ROOT>/<arena>/.shared/g<N>/actions.jsonl`, exactly what the
 public `GET …/actions` returns without a login) is hard-linked into every workspace, so it costs one file however many
@@ -231,9 +238,14 @@ pollen. The runner also keeps a private master copy (`.runner/g<N>/`); if a team
 link, it is rewritten in place from the master (and writing to `stream/` is a fair-play violation). Each team's
 `history.jsonl` and `mine.jsonl` are fetched separately with that team's token, so the server decides what each holds:
 the percent and energy of unfed turns only at the team's own flower, compute times only for its own flower, printouts,
-decision times and versions only for its own programs. Agents may also read the game's public API directly (no login):
+decision times and versions only for its own programs. Responses can be up to a megabyte: the server gives one over
+4 KB as its size, hash and first 4 KB, and the files keep only the first 256 characters of that preview
+(`STREAM_PREVIEW`), so a turn costs at most about 4 KB of file; the whole response is fetched only when asked for
+(`GET …/responses/<seq>`: `tools/stream.py response`, `garden.response`, and the metrics, which fetch distinct big
+responses for their shapes up to 64 MB a game). Agents may also read the game's public API directly (no login):
 `GET <api>/rooms/<room>/games/<game>/events?after=<seq>` (SSE), `…/actions?after=<seq>&limit=…`, `…/scores` (the live
-scoreboard and the nectar and pollen ledgers; cheap to poll), and `POST …/query` (history queries, public fields).
+scoreboard and the nectar and pollen ledgers; cheap to poll), `…/responses/<seq>`, and `POST …/query` (history queries,
+public fields).
 Briefs carry only headline numbers (time, fitness and rank, the two shares, a few counts, budgets, the bee's MEMORY
 size), never actions.
 
@@ -300,14 +312,18 @@ game, at least 10 s):
 
 - per window: turns, feeds and the feed rate, excess energy produced, **energy lost** to unfed turns (and its share),
   nectar, pollen, the mean percent offered, flower failures, self-feeds
-- **distributions** (min, p10, p50, p90, max, mean) of the percent (answered turns), the energy (every turn), and the
-  nectar and pollen (feeds)
+- **distributions** (min, p10, p50, p90, max, mean) of the response size in bytes and the percent (answered turns), the
+  energy (every turn), and the nectar and pollen (feeds)
 - per team, its **species** (visits, feeds, pollinators, percent, energy, energy lost, nectar and pollen given, compute
-  against the 150 ms window, failures) and its **bee** (turns, feeds, nectar, nectar per feed, species fed at, decision
+  against the 150 ms window, response sizes and how many were over 4 KB, failures) and its **bee** (turns, feeds, nectar, nectar per feed, species fed at, decision
   times, too-slow decisions, errors)
-- each bee's **MEMORY**: its size at the end against the cap (and its value), saves refused for the cap, its size during
-  play (the runner samples each team's own view every 5 s), and **how often the team changed its bee** (each change
-  empties MEMORY): versions, in-game changes, changes per minute, mean time between them
+- each bee's **MEMORY**: its size at the end against the cap (its keys and value), saves `decide` had refused (over the
+  cap or of the wrong shape), failed `fed()` calls and the last save error (`teams.memoryError` and the samples), its
+  size during play (the runner samples each team's own view every 5 s), and **how often the team changed its bee**
+  (each change empties MEMORY): versions, in-game changes, changes per minute, mean time between them
+- **big responses** (over 4 KB, which the history gives as size and hash): equal hashes are equal answers; the metrics
+  fetch distinct ones for their shapes (`GET …/responses/:seq`, up to 64 MB a game, `BIG_FETCH_BYTES`), and past that a
+  big response's shape is its hash
 - **flower versions**: size and compute against the energy they made (max energy = (cap − size) × 150), the percent they
   offered, their feed rate and pollen
 - **self-feeding** (a bee at its own species) and **handshakes**: a flower whose own bee feeds there 30 points more often
@@ -342,12 +358,14 @@ No model calls (a stub `claude`), no game server:
 
 ```
 node arena/test-brief.mjs       # system prompt, lobby/in-game/fix briefs, interview and judge prompts
-node arena/test-submit.mjs      # the tools through the broker (fake API): submit, check, try flower (with a history) and a test
-                                # bee (with a MEMORY), status (the bee's MEMORY, read only), history queries; no request sets MEMORY;
+node arena/test-submit.mjs      # the tools through the broker (fake API): submit, check, try flower (a big response) and a test
+                                # bee (with a MEMORY, fed() and its failures), status (the bee's MEMORY and its last error,
+                                # read only), history queries; no request sets MEMORY;
                                 # a stub session that submits, leaves a process running and gets it stopped; the live
                                 # fair-play gate; a session stopped by the game's end
 node arena/test-workspace.mjs   # workspace files, the shared stream (hard links, growth, repair), each team's history.jsonl
-                                # and mine.jsonl with only its own private fields, garden.HISTORY and tools/query.py (the
+                                # and mine.jsonl with only its own private fields, big responses (short previews, fetched
+                                # whole by tools/stream.py response and garden.response), garden.local and tools/query.py (the
                                 # generated client), indices completed at the start, the audit (history queries allowed),
                                 # the audit (public API reads allowed; logins, writes, other hosts and ports, stream writes not)
 node arena/test-metrics.mjs     # metrics on a hand-made game: windows, energy lost, distributions, flowers and bees,
