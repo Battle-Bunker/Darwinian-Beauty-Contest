@@ -1,5 +1,5 @@
 // One team's sessions: a tool-using Claude Code session in the team's private workspace, with the runner answering
-// the workspace tools (tools/*.py: submit, check, try, status, ledger) through lib/broker.js. Before every request the runner
+// the workspace tools (tools/*.py: submit, check, try, status, query) through lib/broker.js. Before every request the runner
 // audits the live transcript (a fair-play violation stops the session at once and refuses the request); after the
 // session it audits the whole transcript, stops anything the session left running, and keeps the notebook.
 // Also the lobby (write both programs, with fix sessions) and the post-game interview.
@@ -16,6 +16,8 @@ import { TRANSCRIPTS, audit, collect, commonFiles, extOf, killLeftovers, prepare
 
 const KINDS = ["flower", "bee"];
 const n0 = (x) => Math.floor(x).toLocaleString("en-US");
+/** JSON as the game measures MEMORY: sorted keys, no spaces. */
+const canonical = (v) => JSON.stringify(v, (k, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map((key) => [key, x[key]])) : x)) ?? "null";
 
 export const SESSION_LIMITS = {
   // max agent turns and USD per session, by model; an arena can override them (settings.limits)
@@ -80,20 +82,21 @@ export const availableNow = (budget, bank, clockMs) => Math.min(budget.cap, bank
 
 const num = (x, d = 2) => (x == null ? "-" : Number(x).toFixed(d));
 const big = (x) => (x == null ? "-" : Math.abs(x) >= 1e6 ? `${(x / 1e6).toFixed(2)}M` : Math.abs(x) >= 1e3 ? `${(x / 1e3).toFixed(1)}k` : Number(x).toFixed(0));
-/** The live scoreboard, one line per team: fitness and the three components with their shares (a field the viewer may
- * not see shows "-"). Sorted by fitness when known, else by allure. */
+/** The live scoreboard, one line per team: fitness, pollination and forage with their shares, and some information
+ * (pollen, feeds). Sorted by fitness. */
 export function scoreboard(scores, name, teamId = null) {
-  const rows = [...scores].sort((a, b) => (b.fitness ?? -1) - (a.fitness ?? -1) || (b.allure ?? 0) - (a.allure ?? 0));
+  const rows = [...scores].sort((a, b) => (b.fitness ?? -1) - (a.fitness ?? -1) || (b.pollination ?? 0) - (a.pollination ?? 0));
   return rows.map((x, i) => `  ${i + 1}. ${name[x.teamId] ?? x.teamId}${x.teamId === teamId ? " (you)" : ""}: fitness ${num(x.fitness)}; ` +
-    `allure ${num(x.allure)} (share ${num(x.allureShare)}, fed by ${x.pollinators ?? "-"} bee teams), ` +
-    `forage ${num(x.forage, 1)} (share ${num(x.forageShare)}), surplus ${big(x.surplus)} (share ${num(x.surplusShare)})`).join("\n");
+    `pollination ${num(x.pollination, 1)} (share ${num(x.pollinationShare)}, from ${x.pollinators ?? "-"} bee teams), ` +
+    `forage ${num(x.forage, 1)} (share ${num(x.forageShare)}, from ${x.nectarSources ?? "-"} flower species); pollen ${big(x.pollen)}, ` +
+    `feeds received ${x.feedsReceived ?? "-"}, given ${x.feedsGiven ?? "-"}`).join("\n");
 }
 
-export function statusOf(view, teamId, { afford = null, code = false } = {}) {
+export function statusOf(view, teamId, { afford = null, code = false, memory = false } = {}) {
   const g = view.game, config = g.config, endMs = g.endMs ?? config.minutes * 60000;
   const name = Object.fromEntries(view.teams.map((t) => [t.id, t.name]));
   const mine = view.teams.find((t) => t.id === teamId);
-  const out = { ok: true, status: g.status, clockMs: g.clockMs, endMs, leftMs: Math.max(0, endMs - g.clockMs), round: g.round ?? null, budgets: null, scores: null, versions: {} };
+  const out = { ok: true, status: g.status, clockMs: g.clockMs, endMs, leftMs: Math.max(0, endMs - g.clockMs), round: g.round ?? null, budgets: null, scores: null, versions: {}, memory: null };
   const lines = [];
   if (g.status === "lobby") lines.push(`The game hasn't started (lobby). It will last ${mmss(endMs)} of game time.`);
   else lines.push(`Game ${g.status}: ${mmss(g.clockMs)} of ${mmss(endMs)} played (${mmss(out.leftMs)} left)${g.round != null ? `, round ${g.round}` : ""}.`);
@@ -131,6 +134,13 @@ export function statusOf(view, teamId, { afford = null, code = false } = {}) {
     lines.push(`Your programs ${g.status === "lobby" ? "submitted" : "playing"}: ${parts.join(", ")}.`);
     const fl = out.versions.flower, cap = config.budgets?.flower?.size, fms = config.budgets?.flower?.ms;
     if (fl && cap && fms) lines.push(`Your flower's size ${n0(fl.size)} of ${n0(cap)}: its excess energy per turn is at most (${n0(cap)} − ${n0(fl.size)}) × ${fms} = ${n0((cap - fl.size) * fms)} node·ms, less ${n0(cap - fl.size)} for every ms of compute.`);
+  }
+  // The bee's MEMORY: read only (only the deployed bee writes it; it starts as {} with every new bee version).
+  const mem = mine?.memory;
+  if (mem) {
+    out.memory = { bytes: mem.bytes, cap: mem.cap ?? config.budgets?.bee?.memory ?? null, version: mem.version ?? null, ...(memory ? { value: mem.value } : {}) };
+    lines.push(`Your bee's MEMORY: ${n0(mem.bytes ?? 0)} of ${n0(out.memory.cap ?? 0)} bytes (bee v${mem.version ?? "-"}; only your bee writes it)` +
+      (memory ? `:\n  ${JSON.stringify(mem.value ?? null).slice(0, 4000)}` : ". tools/status.py --memory shows it."));
   }
   out.text = lines.join("\n");
   return out;
@@ -170,17 +180,20 @@ export function requestHandler(ctx) {
     try {
       if (op === "status") {
         const view = await api.view(tok, gPath);
-        const s = statusOf(view, teamId, { afford: Number.isFinite(req.afford) ? req.afford : null, code: !!req.code });
+        const s = statusOf(view, teamId, { afford: Number.isFinite(req.afford) ? req.afford : null, code: !!req.code, memory: !!req.memory });
         await record({ op, ok: true, result: { clockMs: s.clockMs, budgets: s.budgets }, clockMs: s.clockMs });
         return s;
       }
-      if (op === "ledger") {
-        // The team ledger, fresh from the game (the same entries as stream/ledger.jsonl, which the runner updates every second).
-        const after = Number.isFinite(req.after) ? req.after : 0;
-        const r = await api.ledger(tok, gPath, after, Math.min(5000, Number(req.limit) || 5000));
-        await record({ op, ok: true, result: { after, n: (r.entries || []).length } });
-        return { ok: true, participants: r.participants, team: r.team, entries: r.entries || [], lastSeq: r.lastSeq, round: r.round, status: r.status,
-          text: `${(r.entries || []).length} ledger entries after seq ${after} (last seq ${r.lastSeq ?? "-"}, round ${r.round ?? "-"}, ${r.status ?? "?"})` };
+      if (op === "query") {
+        // A history query (docs/QUERY.md) with the team's token: this game as the team may see it, or (room) the room's
+        // finished games, fully revealed. The team's own programs see the same turns as HISTORY.turns.
+        const ast = req.ast;
+        if (!ast || typeof ast !== "object" || Array.isArray(ast) || typeof ast.from !== "string") return { ok: false, error: "ast must be a query object with `from`", text: "error: ast must be a query object with `from` (docs/QUERY.md)" };
+        if (JSON.stringify(ast).length > 20000) return { ok: false, error: "query too large", text: "error: query too large" };
+        const room = gPath.split("/")[2];
+        const r = req.room ? await api.roomQuery(tok, room, ast) : await api.query(tok, gPath, ast);
+        await record({ op, ok: true, result: { from: ast.from, room: !!req.room, n: (r.rows || []).length, truncated: !!r.truncated } });
+        return { ok: true, rows: r.rows || [], truncated: !!r.truncated, text: `${(r.rows || []).length} rows${r.truncated ? " (truncated: more matched)" : ""}` };
       }
       if (op === "check") {
         const c = await api.check(tok, gPath, kind, req.code);
@@ -198,13 +211,15 @@ export function requestHandler(ctx) {
         let out;
         if (kind === "flower") {
           const challenges = Array.isArray(req.challenges) && req.challenges.length ? req.challenges : sampleChallenges(config);
-          const t = await api.tryFlower(tok, gPath, req.code, challenges, Array.isArray(req.ledger) ? req.ledger : undefined);
+          const t = await api.tryFlower(tok, gPath, req.code, challenges, Array.isArray(req.history) ? req.history : undefined);
           const res = t.results || [];
           out = { ok: !t.error && res.every((r) => !r.error), error: t.error, results: res, size: t.size ?? null,
             text: t.error ? `fails to load: ${t.error}` : (t.size != null ? `size ${n0(t.size)} nodes\n` : "") + res.map((r) => `flower(${JSON.stringify(r.c).slice(0, 50)}) -> ${r.error ? `ERROR ${r.error}` : `${JSON.stringify(r.r).slice(0, 160)}, percent ${r.percent}`}` +
               `  (energy ${r.energy != null ? n0(r.energy) : "-"}, ${r.ms ?? "?"} ms CPU)`).join("\n") };
         } else {
-          const opts = { rounds: Number.isFinite(req.rounds) ? req.rounds : undefined, flower: typeof req.flower === "string" ? req.flower : undefined };
+          // memory: what the TEST bee starts with (default {}); the game's bee's MEMORY is never touched by a try.
+          const opts = { rounds: Number.isFinite(req.rounds) ? req.rounds : undefined, flower: typeof req.flower === "string" ? req.flower : undefined,
+            memory: req.memory !== undefined && req.memory !== null ? req.memory : undefined };
           let t;
           try { t = await api.tryBee(tok, gPath, req.code, opts); }
           catch (e) { if (e.status !== 409 || opts.flower || !fileFlower()) throw e; t = await api.tryBee(tok, gPath, req.code, { ...opts, flower: fileFlower() }); }
@@ -213,10 +228,11 @@ export function requestHandler(ctx) {
           const probs = (t.problems || []).map((p) => `${p.kind ?? "?"}: ${p.error}`);
           const slowN = acts.filter((a) => /too slow/i.test(a.beeError || "")).length;
           const ms = acts.map((a) => a.beeMs).filter((x) => x != null).sort((a, b) => a - b);
-          out = { ok: !probs.some((p) => p.startsWith("bee") && !/too slow/i.test(p)), rounds: t.rounds, feeds: t.feeds, nectar: t.nectar, surplus: t.surplus, problems: probs, tooSlow: slowN,
+          out = { ok: !probs.some((p) => p.startsWith("bee") && !/too slow/i.test(p)), rounds: t.rounds, feeds: t.feeds, nectar: t.nectar, pollen: t.pollen, memory: t.memory, problems: probs, tooSlow: slowN,
             actions: acts.slice(0, 200),
             text: `${t.rounds ?? "?"} rounds in a garden of just your own flower: ${acts.length} turns, ${by("feed")} feeds, ${by("leave")} leaves; ` +
-              `your bee got ${n0(t.nectar ?? 0)} nectar and your flower kept ${n0(t.surplus ?? 0)} surplus.` +
+              `your bee got ${n0(t.nectar ?? 0)} nectar and ${n0(t.pollen ?? 0)} pollen.` +
+              (t.memory !== undefined ? ` The test bee's MEMORY at the end (${n0(Buffer.byteLength(canonical(t.memory)))} bytes): ${canonical(t.memory).slice(0, 300)}.` : "") +
               `${slowN ? ` ${slowN} decisions were too slow (each costs a turn).` : ""}` +
               (ms.length ? ` Decision time: median ${ms[Math.floor(ms.length / 2)].toFixed(1)} ms, slowest ${ms[ms.length - 1].toFixed(1)} ms (limit ${config.budgets?.bee?.ms ?? "?"} ms).` : "") +
               (probs.length ? `\nProblems:\n- ${probs.join("\n- ")}` : "") +
@@ -251,7 +267,7 @@ export function requestHandler(ctx) {
           clockMs: r.submitted ? r.atMs ?? undefined : undefined, result: { size: r.size, distance: r.distance, cost: r.cost, available: r.available, errors: r.errors } });
         return out;
       }
-      return { ok: false, error: `unknown request ${op}`, text: `unknown request ${op} (submit, check, try, status, ledger, scaffold)` };
+      return { ok: false, error: `unknown request ${op}`, text: `unknown request ${op} (submit, check, try, status, query, scaffold)` };
     } catch (e) {
       await record({ op, kind, code: req.code, ok: false, result: { error: e.message } }).catch(() => {});
       return { ok: false, error: e.message, text: `error: ${e.message}` };

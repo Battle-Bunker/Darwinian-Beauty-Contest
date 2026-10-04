@@ -19,8 +19,10 @@ export function levelOf(label) {
   return Math.min(4, base + extra);
 }
 /** How a flower sets its percent (the share of the turn's excess energy it gives a feeding bee). */
-export const PERCENT_POLICIES = ["fixed", "by-challenge", "by-ledger", "by-visitor", "random", "other"];
-export const BEE_CHECKS = ["none", "shape-stats", "exact-rule", "work-count", "certificate-check", "ledger-value", "mixed"];
+export const PERCENT_POLICIES = ["fixed", "by-challenge", "by-history", "by-visitor", "random", "other"];
+export const BEE_CHECKS = ["none", "shape-stats", "exact-rule", "work-count", "certificate-check", "history-value", "mixed"];
+/** How a bee uses its MEMORY (the only state it keeps between calls). */
+export const BEE_MEMORY = ["none", "counters", "table", "plan", "mixed"];
 export const BEE_FEEDS = ["always", "never", "by-check", "by-learned-value", "handshake-only", "random", "mixed"];
 
 /** Code without comments and docstrings (prose mentions mechanisms it doesn't use). */
@@ -66,11 +68,11 @@ export function keywordFlower(code) {
   if (kinds.length > 1) tags.push("combined?");
   let mechanism = kinds[0] || (timed ? "work-unchecked" : "rule");
   if (puzzle && timed && SCORE.test(c) && !hash) mechanism = /cliq|paley|factori|prime/i.test(c) ? "certificate" : "anytime";
-  if (/\bledger\b/.test(c.replace(/def\s+flower\s*\([^)]*\)/, ""))) tags.push("reads-ledger");
+  if (/\bHISTORY\b/.test(c)) tags.push("reads-history");
   if (/GAME\s*\[\s*["']team["']\s*\]/.test(c)) tags.push("knows-own-team");
   // The percent: the last item of every pair returned is a constant, or it is computed.
   const rets = [...c.matchAll(/^[ \t]*return[ \t]*\(?(.+),[ \t]*([^,\n()]+?)[ \t]*\)?[ \t]*$/gm)].map((m) => m[2]);
-  const percent = rets.length && rets.every((x) => /^\d+(?:\.\d+)?$/.test(x)) ? "fixed" : /random\./.test(c) && /percent|pct/i.test(c) ? "random?" : tags.includes("reads-ledger") ? "by-ledger?" : "computed";
+  const percent = rets.length && rets.every((x) => /^\d+(?:\.\d+)?$/.test(x)) ? "fixed" : /random\./.test(c) && /percent|pct/i.test(c) ? "random?" : tags.includes("reads-history") ? "by-history?" : "computed";
   return { mechanism, tags, percent };
 }
 
@@ -80,7 +82,8 @@ export function keywordBee(code) {
   const checks = [];
   if (HASH.test(c)) checks.push("work-count");
   if (PUZZLE.test(c)) checks.push("certificate-check");
-  if (/nectar|ledger/.test(c) && /\{\s*\}|dict\(|defaultdict|Counter/.test(c)) checks.push("learns");
+  if (/\bHISTORY\b/.test(c) && /nectar/.test(c)) checks.push("learns");
+  if (/\bMEMORY\b/.test(c)) checks.push("uses-memory");
   if (/random\.(?:randint|randrange|getrandbits|random)\(/.test(c)) checks.push("random-challenges");
   return { checks, threshold: /\b(?:T|THRESH\w*|threshold|need|enough|min_\w+)\s*=\s*\d/.test(c) };
 }
@@ -90,7 +93,7 @@ export function keywordBee(code) {
 // Labels are cached by skeleton (ARENA_MECH_CACHE overrides the file, e.g. for tests).
 const cacheFile = () => process.env.ARENA_MECH_CACHE || path.join(ARENA_DIR, "runs", "mechanisms-cache.json");
 // Bump a kind's version when its definitions change: its labels are classified again.
-const KIND_VERSION = { flower: 1, bee: 1 };
+const KIND_VERSION = { flower: 2, bee: 2 };
 let cache = null;
 function loadCache() {
   if (cache) return cache;
@@ -103,8 +106,11 @@ export const CLASSIFIER_SYSTEM = `You classify programs from a coding game. Repl
 The game: each team writes a FLOWER and a BEE. Every round each bee asks a flower drawn at random (its own team's too) a
 challenge. The flower returns [response, percent] within 150 ms; the bee then has 50 ms to feed or leave. The flower's excess
 energy for the turn is E = (1100 - its size in nodes) x max(0, 150 - its CPU ms): small, fast flowers have more to give. If
-the bee feeds, it gets percent% of E as nectar and the flower's team keeps the rest as surplus; if not, E is lost. Bees and
-flowers aren't told whose counterpart they met until the turn is over, but both read a ledger of earlier turns.`;
+the bee feeds, the flower gives it percent% of E as nectar and the rest as pollen (for the bee to carry to other flowers of
+the species); if not, E is lost. A team's flower program is its species: every turn is one independent flower of it. Bees
+and flowers aren't told whose counterpart they met until the turn is over, but both query HISTORY, the finished turns.
+Programs run fresh for every call: flower(challenge), first(), decide(challenge, response). The bee's only state between
+calls is MEMORY, a JSON value of about a kilobyte that only the bee writes and that empties when its code changes.`;
 
 const take = (s, n) => (s.length > n ? s.slice(0, n) + "\n# ... (cut)" : s);
 
@@ -122,20 +128,22 @@ For each FLOWER: "mechanism" (what its response proves), one of:
 - "anytime": an optimisation whose answer quality grows with time, graded by a score a bee can compute
 - "other"
 (for an answer that combines several kinds of proof, the costliest one, with the tag "combined")
-"percent_policy", one of: "fixed" (a constant), "by-challenge" (depends on the challenge), "by-ledger" (adapts to what the
-ledger shows, e.g. how often bees fed), "by-visitor" (guesses who is asking, e.g. its own bee, and pays differently),
+"percent_policy", one of: "fixed" (a constant), "by-challenge" (depends on the challenge), "by-history" (adapts to what
+HISTORY shows, e.g. how often bees fed), "by-visitor" (guesses who is asking, e.g. its own bee, and pays differently),
 "random", "other"; "percent": its typical percent as a number, or null if it varies;
 and "tags" (any that apply): "time-bounded" (spends most of its time limit: energy it gives up), "lean" (written to keep size
-and CPU small, for energy), "adaptive" (deliberately sets how much work it proves per challenge or from the ledger; NOT just
+and CPU small, for energy), "adaptive" (deliberately sets how much work it proves per challenge or from HISTORY; NOT just
 running until the time limit), "combined" (two or more kinds of costly proof), "own-bee-handshake" (a private signal between
-its own bee and flower), "secret" (relies on hidden constants), "challenge-tied", "reads-ledger", plus "puzzle:<name>".
+its own bee and flower), "secret" (relies on hidden constants), "challenge-tied", "reads-history", plus "puzzle:<name>".
 Add "difficulty": a short phrase (e.g. "10 zero bits, as many nonces as fit in 40 ms") or "".
 
 For each BEE: "checks", one of: "none", "shape-stats" (learns or counts answer shapes), "exact-rule" (recomputes a known rule
 and compares), "work-count" (verifies proof-of-work items and counts them), "certificate-check" (verifies a puzzle solution
-or grades its quality), "ledger-value" (estimates from the ledger how much nectar answers like this pay), "mixed";
+or grades its quality), "history-value" (estimates from HISTORY how much nectar answers like this pay), "mixed";
 "feeds", one of: "always", "never", "by-check", "by-learned-value", "handshake-only", "random", "mixed";
-"threshold": "none", "fixed" or "adaptive"; "tags": any of "learns" (updates from the ledger or nectar), "reads-ledger",
+"threshold": "none", "fixed" or "adaptive"; "memory": how it uses MEMORY, one of "none", "counters" (tallies or running
+averages), "table" (remembers specific answers or challenges), "plan" (a schedule or a challenge sequence), "mixed";
+"tags": any of "learns" (updates from HISTORY or nectar), "reads-history", "memory-tight" (works to fit MEMORY's cap),
 "random-challenges", "handshake" (recognises its own team's flower), "avoids-own-flower", "prefers-own-flower".
 
 Every item also gets "summary": one sentence.
@@ -159,7 +167,8 @@ function clean(it) {
   if (it.kind === "flower") return { mechanism: MECHANISMS.includes(it.mechanism) ? it.mechanism : "other", percentPolicy: PERCENT_POLICIES.includes(it.percent_policy) ? it.percent_policy : "other",
     percent: Number.isFinite(Number(it.percent)) && it.percent !== null ? Number(it.percent) : null, tags, difficulty: String(it.difficulty || "").slice(0, 120), summary: String(it.summary || "").slice(0, 300) };
   return { checks: BEE_CHECKS.includes(it.checks) ? it.checks : "none", feeds: BEE_FEEDS.includes(it.feeds) ? it.feeds : "mixed",
-    threshold: ["none", "fixed", "adaptive"].includes(it.threshold) ? it.threshold : "none", tags, summary: String(it.summary || "").slice(0, 300) };
+    threshold: ["none", "fixed", "adaptive"].includes(it.threshold) ? it.threshold : "none", memory: BEE_MEMORY.includes(it.memory) ? it.memory : "none", tags,
+    summary: String(it.summary || "").slice(0, 300) };
 }
 
 /** A combined flower answer gets the mechanism of its costliest proof (the classifier sometimes says "other"). */
@@ -184,7 +193,7 @@ export function unlabelled(versions) {
 /**
  * Classify programs (any teams, any kinds) in batches of up to 8 programs or ~40k characters. versions:
  * [{ kind, version, code, ... }]. Returns a function label(v) -> label with keyword evidence ({ kw }) attached.
- * callModel: lib/llm.js callModel (null: cached labels and keyword evidence only); ctx: its ledger context.
+ * callModel: lib/llm.js callModel (null: cached labels and keyword evidence only); ctx: its cost-ledger context.
  */
 export async function classifyPrograms(versions, { callModel, ctx = {}, model = "haiku", log = () => {} } = {}) {
   if (/fable/i.test(model)) throw new Error("never a Fable model");

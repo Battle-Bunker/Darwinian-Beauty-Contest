@@ -6,13 +6,14 @@ import type { GameView, Team } from "../types";
 import type { HistoryStore } from "../lib/history";
 import { useLiveTick, type Ticking } from "../lib/live";
 import { fed, type Turn, type TurnIndex } from "../lib/turns";
-import { binTurns, binWidth, recFromTurn, totalsOf, type MetricKey, type TurnRec } from "../lib/stats";
+import { binTurns, binWidth, recFromTurn, sizeLookup, totalsOf, type MetricKey, type TurnRec } from "../lib/stats";
 import { fmtClock, fmtE, fmtEExact, fmtMs, plural } from "../lib/format";
 import { GardenControls, GardenLegend, GardenStage, type BubbleMode, type GardenDriver } from "./Garden";
 import { EnergySplit, MetricPicker, TeamSeriesChart } from "./Charts";
 import { PauseIcon, PlayIcon, ReplayIcon } from "./Icons";
 import { Progress } from "./ui";
 import { Value } from "./Value";
+import { MemoryTable } from "./Memory";
 
 const SPEEDS = [0.1, 0.25, 0.5, 1, 2, 5, 10];
 
@@ -95,6 +96,13 @@ export function Replay({ view, history }: { view: GameView; history: HistoryStor
       </div>
       <RoundInspector index={history.turns} round={round} roundMs={roundMs} teams={teams} mine={mine} focus={focus} rev={hrev} />
       <ReplayCharts view={view} history={history} teams={teams} mine={mine} focus={focus} setFocus={setFocus} cursor={t} onSeek={(x) => driver.seek(x)} hrev={hrev} />
+      {teams.some((x) => x.memory) && (
+        <section>
+          <h3>Every bee's MEMORY, as the game ended</h3>
+          <p className="small muted">The one thing a bee keeps between calls, written only by the bee and started afresh by each new bee version. Read only.</p>
+          <MemoryTable view={view} teams={teams} />
+        </section>
+      )}
     </div>
   );
 }
@@ -169,7 +177,7 @@ function RoundInspector({ index, round, roundMs, teams, mine, focus, rev }: {
             <thead>
               <tr>
                 <th className="left">Bee → flower</th><th className="left">Challenge → response</th><th className="left">Decision</th>
-                <th title="Share of E offered">%</th><th title="Excess energy, node·ms">E</th><th>Nectar</th><th>Kept</th><th title="Energy lost: the bee didn't feed">Lost</th>
+                <th title="Share of E offered">%</th><th title="Excess energy, node·ms">E</th><th>Nectar</th><th>Pollen</th><th title="Energy lost: the bee didn't feed">Lost</th>
                 <th title="The flower's CPU time">Flower ms</th><th title="How long the bee took to decide">Bee ms</th><th className="left">Versions</th>
               </tr>
             </thead>
@@ -198,7 +206,7 @@ function InspectorRow({ t, teams, mine, focus }: { t: Turn; teams: Team[]; mine:
       <td>{e?.percent ?? "–"}</td>
       <td title={fmtEExact(e?.energy)}>{fmtE(e?.energy)}</td>
       <td title={fmtEExact(e?.nectar)}>{isFed ? fmtE(e?.nectar) : ""}</td>
-      <td title={fmtEExact(e?.surplus)}>{isFed ? fmtE(e?.surplus) : ""}</td>
+      <td title={fmtEExact(e?.pollen)}>{isFed ? fmtE(e?.pollen) : ""}</td>
       <td className="muted" title={fmtEExact(isFed ? 0 : e?.energy)}>{!isFed && e && typeof e.energy === "number" ? fmtE(e.energy) : ""}</td>
       <td>{fmtMs(e?.ms)}</td>
       <td>{fmtMs(e?.beeMs)}</td>
@@ -214,12 +222,13 @@ function ReplayCharts({ view, history, teams, mine, focus, setFocus, cursor, onS
   const cfg = view.game.config;
   const roundMs = cfg.budgets.flower.ms + cfg.budgets.bee.ms;
   const endMs = Math.max(roundMs, view.game.clockMs);
-  const [metric, setMetric] = useState<MetricKey>("surplus");
+  const [metric, setMetric] = useState<MetricKey>("fitness");
+  const model = useMemo(() => ({ cap: cfg.budgets.flower.size, window: cfg.budgets.flower.ms, sizeOf: sizeLookup(teams) }), [cfg.budgets.flower.size, cfg.budgets.flower.ms, teams]);
   const data = useMemo(() => {
     const recs: TurnRec[] = [];
     for (const list of history.turns.bees) for (const t of list) { const r = recFromTurn(t); if (r) recs.push(r); }
-    return binTurns(recs, teams.length, endMs, binWidth(endMs, roundMs));
-  }, [history, hrev, teams.length, endMs, roundMs]); // eslint-disable-line react-hooks/exhaustive-deps
+    return binTurns(recs, teams.length, endMs, binWidth(endMs, roundMs), model);
+  }, [history, hrev, teams.length, endMs, roundMs, model]); // eslint-disable-line react-hooks/exhaustive-deps
   const upto = history.done ? data.bins : Math.floor(Math.max(0, history.turns.lastT) / data.binMs);
   const rows = teams.map((_, i) => i);
   return (
@@ -231,7 +240,7 @@ function ReplayCharts({ view, history, teams, mine, focus, setFocus, cursor, onS
       </section>
       <section>
         <h3>Where each flower's energy went</h3>
-        <p className="small muted">Every visit makes E = (size cap − size) × (150 − compute ms). A feed splits it between the bee (nectar) and the flower (surplus); a visit without a feed loses it.</p>
+        <p className="small muted">A flower allocates every visit's energy budget ({cfg.budgets.flower.size.toLocaleString()} × {cfg.budgets.flower.ms} node·ms) between compute, nectar and pollen. Its size shrinks the budget and its CPU time uses part of it; what's left, E, goes to a bee that feeds, as nectar (the percent offered) and pollen (the rest), or is lost when the bee doesn't feed.</p>
         <EnergySplit rows={rows.map((i) => ({ team: teams[i], t: totalsOf(data.teams[i]), you: i === mine }))} />
       </section>
     </div>

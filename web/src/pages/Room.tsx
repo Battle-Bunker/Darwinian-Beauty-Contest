@@ -6,6 +6,7 @@ import type { RoomGame, RoomView } from "../types";
 import { Alert, CopyButton, Progress, StatusBadge } from "../components/ui";
 import { PlusIcon } from "../components/Icons";
 import { fmtClock, timeAgo } from "../lib/format";
+import { QueryConsole } from "../components/QueryConsole";
 
 export function RoomPage({ room }: { room: string }) {
   useDocumentTitle(`Room ${room} · Darwinian Beauty Contest`);
@@ -75,11 +76,18 @@ export function RoomPage({ room }: { room: string }) {
         ) : (
           <ul className="list">
             {games.map((g) => (
-              <li key={g.id}><GameRow g={g} since={fetchedAt.current} /></li>
+              <li key={g.shortId}><GameRow g={g} since={fetchedAt.current} /></li>
             ))}
           </ul>
         )}
       </section>
+
+      {games.some((g) => g.status === "finished") && (
+        <section className="card" id="query">
+          <header className="card-head"><h2>Query the finished games</h2></header>
+          <QueryConsole target={{ kind: "room", room: view.shortId }} />
+        </section>
+      )}
     </div>
   );
 }

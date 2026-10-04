@@ -66,10 +66,10 @@ CREATE TABLE IF NOT EXISTS arena.entries (
   sat_out      boolean NOT NULL DEFAULT false,  -- no valid programs when the game started
   fitness      double precision,
   fitness_rank int,
-  allure       double precision,
-  forage       double precision,
-  surplus      double precision,
-  shares       jsonb,                           -- {allure, forage, surplus}: the three score shares (after the game)
+  pollination  double precision,                -- Σ over bee teams of √(pollen its flower kept from them)
+  forage       double precision,                -- Σ over flower teams of √(nectar its bee got there)
+  pollen       double precision,                -- all its flower kept (information only)
+  shares       jsonb,                           -- {pollination, forage}: the two score shares (after the game)
   explanation  text,                            -- the interview ("teach us your code")
   social       double precision,                -- mean judge score, 0..10 (never mixed into fitness)
   social_rank  int,
@@ -248,3 +248,8 @@ CREATE INDEX IF NOT EXISTS scaffolds_game ON arena.scaffolds(game_id, persona_id
 ALTER TABLE arena.requests ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'session';
 ALTER TABLE arena.requests ADD COLUMN IF NOT EXISTS scaffold_id int;
 ALTER TABLE arena.violations ADD COLUMN IF NOT EXISTS scaffold_id int;
+-- One flower, scored by pollination (4ab3eaf) and with surplus renamed pollen (2661f14).
+ALTER TABLE arena.entries ADD COLUMN IF NOT EXISTS pollination double precision;
+ALTER TABLE arena.entries ADD COLUMN IF NOT EXISTS pollen double precision;
+ALTER TABLE arena.entries DROP COLUMN IF EXISTS allure;
+ALTER TABLE arena.entries DROP COLUMN IF EXISTS surplus;

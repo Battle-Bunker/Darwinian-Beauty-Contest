@@ -12,8 +12,9 @@ export interface Turn {
   t0: number;               // game time of the arrival
   arrive: Action | null;
   end: Action | null;       // the feed or leave, once known
-  slot: number;             // this bee's place among the round's visitors at this flower
-  of: number;               // how many bees visited this flower this round
+  inst: number;             // which flower of the species' patch the bee met (drawn, not part of the game)
+  slot: number;             // this bee's place among the round's visitors at that flower
+  of: number;               // how many bees visited that flower this round
 }
 
 export const fed = (t: Turn) => t.end?.action === "feed";
@@ -27,6 +28,14 @@ export function indexAfter(actions: Action[], after: number): number {
   }
   return lo;
 }
+
+/**
+ * How many flowers of each species the garden draws, and which one a turn's bee met: every turn is a bee
+ * meeting one independent flower of a species, so the garden spreads the visits over a small patch,
+ * picked by a hash of (bee, turn) so it's the same live and in the replay.
+ */
+export const PATCH = 3;
+export const instanceOf = (bee: number, turn: number) => (((Math.imul(bee + 1, 0x9e3779b1) ^ Math.imul(turn, 0x85ebca6b)) >>> 7) & 0xffff) % PATCH;
 
 /** Index of the first turn in `list` (sorted by t0) arriving after game time t. */
 function firstAfterIn(list: Turn[], t: number): number {
@@ -83,7 +92,7 @@ export class TurnIndex {
     let t = this.byKey.get(key);
     if (!t) {
       const t0 = a.action === "arrive" ? a.atMs : a.atMs - this.flowerMs;
-      t = { bee: b, flower: f, round: a.round, turn: a.turn, t0, arrive: null, end: null, slot: 0, of: 1 };
+      t = { bee: b, flower: f, round: a.round, turn: a.turn, t0, arrive: null, end: null, inst: instanceOf(b, a.turn), slot: 0, of: 1 };
       this.byKey.set(key, t);
       const list = this.bees[b];
       // Turns come in order per bee; insert in place if one ever doesn't (a page loaded out of order).
@@ -94,7 +103,7 @@ export class TurnIndex {
       if (!fl.length || fl[fl.length - 1].t0 <= t0) fl.push(t);
       else fl.splice(firstAfterIn(fl, t0), 0, t);
       if (fl.length > this.keep * 4) fl.splice(0, fl.length - this.keep * 2);
-      const gk = `${a.round}:${f}`;
+      const gk = `${a.round}:${f}:${t.inst}`;
       const g = this.groups.get(gk);
       if (g) {
         g.push(t);
@@ -113,7 +122,7 @@ export class TurnIndex {
     const drop = list.splice(0, list.length - this.keep);
     for (const t of drop) {
       this.byKey.delete(`${b}:${t.turn}`);
-      this.groups.delete(`${t.round}:${t.flower}`);
+      this.groups.delete(`${t.round}:${t.flower}:${t.inst}`);
     }
   }
 

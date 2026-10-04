@@ -13,7 +13,7 @@ import { all, one, pool } from "./lib/db.js";
 import { Api, gamePath } from "./lib/api.js";
 import { callModel } from "./lib/llm.js";
 import { BASE_LEVEL, classifyPrograms, keywordBee, keywordFlower, levelOf, unlabelled } from "./lib/mechanisms.js";
-import { computeGameMetrics } from "./lib/metrics.js";
+import { computeGameMetrics, queryAll } from "./lib/metrics.js";
 import { EXPERIMENTS } from "./lib/presets.js";
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((acc, a, i, arr) => {
@@ -39,16 +39,16 @@ const PLAYED = ["played", "interviewed", "judged", "done"];
 
 async function loadGame(arena, row) {
   const gPath = gamePath(arena.room_short_id, row.game_short_id);
-  const view = await Api.view(null, gPath); // after the finish: every team's versions, with code when revealed
+  // After the finish every team's versions are visible (with code when the game is revealed): the versions entity.
+  const [view, teamRows, versionRows] = await Promise.all([Api.view(null, gPath), queryAll(Api, gPath, { from: "teams" }), queryAll(Api, gPath, { from: "versions" })]);
+  const idOf = Object.fromEntries(teamRows.map((t) => [t.index, t.id]));
   const m = row.metrics || await computeGameMetrics(gPath); // in memory only: this script doesn't write to the games
   const ents = await all(`SELECT e.*, p.name AS persona_name, p.model, p.breeder_id FROM arena.entries e JOIN arena.personas p ON p.id = e.persona_id WHERE e.game_id = $1`, [row.id]);
-  const ids = view.participants || [];
+  const ids = teamRows.map((t) => t.id);
   const teams = ents.filter((e) => !e.sat_out && ids.includes(e.team_id)).map((e) => ({ teamId: e.team_id, name: e.team_name, persona: e.persona_id, model: e.model,
     bred: !!e.breeder_id, fitness: e.fitness, rank: e.fitness_rank }));
-  const programs = [];
-  for (const t of view.teams || []) for (const kind of ["flower", "bee"]) for (const v of t.programs?.[kind] || []) {
-    if (teams.some((x) => x.teamId === t.id)) programs.push({ team: t.id, kind, version: v.version, code: v.code ?? null, size: v.size, atMs: Number(v.atMs) || 0 });
-  }
+  const programs = versionRows.filter((v) => teams.some((x) => x.teamId === idOf[v.team]))
+    .map((v) => ({ team: idOf[v.team], kind: v.kind, version: v.version, code: v.code ?? null, size: v.size, atMs: Number(v.atMs) || 0 }));
   const ideas = await one("SELECT count(DISTINCT idea_id) FILTER (WHERE new_in_game)::int AS new FROM arena.idea_sightings WHERE game_id = $1", [row.id]);
   return { arena, row, gen: row.generation, config: view.game.config, teams, programs, metrics: m, newIdeas: ideas?.new || 0 };
 }
@@ -65,8 +65,9 @@ async function labelGame(G) {
   for (const v of versions) {
     const l = label(v);
     G.labels.set(`${v.team}:${v.kind}:${v.version}`, v.kind === "bee"
-      ? { checks: l.checks ?? (l.kw.checks.find((c) => c !== "learns" && c !== "random-challenges") || (l.kw.checks.includes("learns") ? "shape-stats" : "none")),
-        feeds: l.feeds ?? "?", threshold: l.threshold ?? (l.kw.threshold ? "fixed" : "none"), tags: l.tags ?? l.kw.checks, summary: l.summary || "", llm: l.llm }
+      ? { checks: l.checks ?? (l.kw.checks.find((c) => !["learns", "random-challenges", "uses-memory"].includes(c)) || (l.kw.checks.includes("learns") ? "shape-stats" : "none")),
+        feeds: l.feeds ?? "?", threshold: l.threshold ?? (l.kw.threshold ? "fixed" : "none"), memory: l.memory ?? (l.kw.checks.includes("uses-memory") ? "?" : "none"),
+        tags: l.tags ?? l.kw.checks, summary: l.summary || "", llm: l.llm }
       : { mechanism: l.mechanism ?? l.kw.mechanism, percentPolicy: l.percentPolicy ?? l.kw.percent, percent: l.percent ?? null, tags: l.tags ?? l.kw.tags,
         difficulty: l.difficulty || "", summary: l.summary || "", llm: l.llm });
   }
@@ -84,14 +85,16 @@ function gameSummary(G, seen) {
     const l = G.labels.get(`${pr.team}:flower:${pr.version}`) || { mechanism: pr.code ? keywordFlower(pr.code).mechanism : "?", tags: [] };
     const s = vm.get(`${pr.team}:${pr.version}`) || {};
     return { team: t, version: pr.version, last: pr.version === lastVersion(pr.team, "flower"), label: l, level: levelOf(l), size: pr.size, turns: s.turns || 0, feeds: s.feeds || 0,
-      feedRate: s.feedRate, meanMs: s.meanMs, meanEnergy: s.meanEnergy, meanPercent: s.meanPercent, nectarPerFeed: s.nectarPerFeed, surplus: s.surplus, failures: s.failures || 0 };
+      feedRate: s.feedRate, meanMs: s.meanMs, meanEnergy: s.meanEnergy, meanPercent: s.meanPercent, nectarPerFeed: s.nectarPerFeed, pollen: s.pollen, failures: s.failures || 0 };
   });
   const bees = G.teams.map((t) => {
     const v = lastVersion(t.teamId, "bee");
     const code = G.programs.find((x) => x.team === t.teamId && x.kind === "bee" && x.version === v)?.code;
     const l = G.labels.get(`${t.teamId}:bee:${v}`) || { checks: code ? keywordBee(code).checks[0] || "none" : "?", feeds: "?" };
     const mt = m.teams?.[t.teamId] || {}, d = m.discrimination?.perBee?.[t.teamId] || {};
-    return { team: t, version: v, label: l, p90: mt.bee?.decisionMs?.p90, feedRate: mt.bee?.feedRate, nectar: mt.bee?.nectar, tooSlow: mt.bee?.tooSlow, offerFed: d.offerWhenFed, offerLeft: d.offerWhenLeft };
+    const mem = (m.memory?.teams || []).find((x) => x.teamId === t.teamId) || {};
+    return { team: t, version: v, label: l, p90: mt.bee?.decisionMs?.p90, feedRate: mt.bee?.feedRate, nectar: mt.bee?.nectar, tooSlow: mt.bee?.tooSlow, offerFed: d.offerWhenFed, offerLeft: d.offerWhenLeft,
+      memBytes: mem.finalBytes ?? null, memShare: mem.finalShare ?? null, memOverCap: mem.overCap ?? 0, beeChanges: mem.beeChanges ?? 0 };
   });
   const finals = flowers.filter((f) => f.last);
   const feeds = sum(flowers.map((f) => f.feeds));
@@ -107,7 +110,7 @@ function gameSummary(G, seen) {
     marks.add(`percent:${f.label.percentPolicy}`);
     for (const tg of f.label.tags || []) if (/^(adaptive|combined|own-bee-handshake|puzzle:)/.test(tg)) marks.add(tg);
   }
-  for (const b of bees) marks.add(`bee:${b.label.checks}/${b.label.feeds}`);
+  for (const b of bees) { marks.add(`bee:${b.label.checks}/${b.label.feeds}`); if (b.label.memory && b.label.memory !== "none") marks.add(`memory:${b.label.memory}`); }
   const fresh = [...marks].filter((x) => !seen.marks.has(x) && !/[?]/.test(x));
   for (const x of marks) seen.marks.add(x);
   const fitness = G.teams.map((t) => t.fitness).filter((x) => x != null);
@@ -183,31 +186,31 @@ async function cohortReport(arenaId) {
   if (hidden) p(`(${hidden} program versions had no code to read: the games didn't reveal it.)\n`);
 
   p("Flower versions (energy = mean excess energy per turn; percent = mean percent offered):");
-  table(["game", "team", "v", "mechanism", "percent policy (typical)", "tags", "difficulty / summary", "level", "size", "mean ms", "energy", "percent", "turns", "feed rate", "nectar/feed", "surplus", "label from"],
+  table(["game", "team", "v", "mechanism", "percent policy (typical)", "tags", "difficulty / summary", "level", "size", "mean ms", "energy", "percent", "turns", "feed rate", "nectar/feed", "pollen given", "label from"],
     sums.flatMap((x) => x.flowers.map((f) => [x.G.gen, f.team?.name, f.version, f.label.mechanism, `${f.label.percentPolicy}${f.label.percent != null ? ` (${f.label.percent})` : ""}`, (f.label.tags || []).join(" "),
-      (f.label.difficulty || f.label.summary || "").slice(0, 110), f.level ?? "-", f.size ?? "-", f2(f.meanMs), big(f.meanEnergy), f2(f.meanPercent), f.turns, pct(f.feedRate), big(f.nectarPerFeed), big(f.surplus),
+      (f.label.difficulty || f.label.summary || "").slice(0, 110), f.level ?? "-", f.size ?? "-", f2(f.meanMs), big(f.meanEnergy), f2(f.meanPercent), f.turns, pct(f.feedRate), big(f.nectarPerFeed), big(f.pollen),
       f.label.llm ? "haiku" : "keywords"])));
 
   p("Bees (final version of each game; offer = percent × energy, the nectar a feed would have paid):");
-  table(["game", "team", "model", "checks", "feeds", "threshold", "summary", "p90 decision ms", "too slow", "feed rate", "nectar", "mean offer when it fed / left"],
-    sums.flatMap((x) => x.bees.map((b) => [x.G.gen, b.team.name, b.team.model, b.label.checks, b.label.feeds, b.label.threshold || "-", (b.label.summary || "").slice(0, 110), f2(b.p90), b.tooSlow ?? "-",
-      pct(b.feedRate), big(b.nectar), `${big(b.offerFed)} / ${big(b.offerLeft)}`])));
+  table(["game", "team", "model", "checks", "feeds", "threshold", "MEMORY use", "summary", "p90 decision ms", "too slow", "feed rate", "nectar", "mean offer when it fed / left", "MEMORY at the end (share of cap)", "saves over the cap", "in-game bee changes"],
+    sums.flatMap((x) => x.bees.map((b) => [x.G.gen, b.team.name, b.team.model, b.label.checks, b.label.feeds, b.label.threshold || "-", b.label.memory || "-", (b.label.summary || "").slice(0, 110), f2(b.p90), b.tooSlow ?? "-",
+      pct(b.feedRate), big(b.nectar), `${big(b.offerFed)} / ${big(b.offerLeft)}`, `${b.memBytes ?? "-"} (${pct(b.memShare)})`, b.memOverCap, b.beeChanges])));
 
   // Pooled over games: by mechanism and by percent policy.
   const pool_ = (keyOf) => {
     const acc = {};
     for (const x of sums) for (const f of x.flowers) {
-      const q = (acc[keyOf(f)] ||= { versions: 0, turns: 0, feeds: 0, energy: 0, surplus: 0, percent: 0, pn: 0 });
-      q.versions++; q.turns += f.turns; q.feeds += f.feeds; q.energy += (f.meanEnergy || 0) * f.turns; q.surplus += f.surplus || 0;
+      const q = (acc[keyOf(f)] ||= { versions: 0, turns: 0, feeds: 0, energy: 0, pollen: 0, percent: 0, pn: 0 });
+      q.versions++; q.turns += f.turns; q.feeds += f.feeds; q.energy += (f.meanEnergy || 0) * f.turns; q.pollen += f.pollen || 0;
       if (f.meanPercent != null) { q.percent += f.meanPercent * f.turns; q.pn += f.turns; }
     }
-    return Object.entries(acc).map(([k, q]) => [k, q.versions, q.turns, pct(q.turns ? q.feeds / q.turns : null), big(q.turns ? q.energy / q.turns : null), f2(q.pn ? q.percent / q.pn : null), big(q.turns ? q.surplus / q.turns : null)]);
+    return Object.entries(acc).map(([k, q]) => [k, q.versions, q.turns, pct(q.turns ? q.feeds / q.turns : null), big(q.turns ? q.energy / q.turns : null), f2(q.pn ? q.percent / q.pn : null), big(q.turns ? q.pollen / q.turns : null)]);
   };
   p("By flower mechanism, pooled over games:");
-  table(["mechanism (level)", "versions", "turns", "feed rate", "energy per turn", "mean percent", "surplus per turn"],
+  table(["mechanism (level)", "versions", "turns", "feed rate", "energy per turn", "mean percent", "pollen per turn"],
     pool_((f) => `${f.label.mechanism} (${BASE_LEVEL[f.label.mechanism] ?? "-"})`).sort((a, b) => b[2] - a[2]));
   p("By percent policy, pooled over games:");
-  table(["percent policy", "versions", "turns", "feed rate", "energy per turn", "mean percent", "surplus per turn"], pool_((f) => f.label.percentPolicy).sort((a, b) => b[2] - a[2]));
+  table(["percent policy", "versions", "turns", "feed rate", "energy per turn", "mean percent", "pollen per turn"], pool_((f) => f.label.percentPolicy).sort((a, b) => b[2] - a[2]));
   p(`Dominant mechanism by game (most feeds): ${tenure(sums.map((x) => x.dominant?.mechanism))}. Sophistication (feed-weighted level) by game: ${sums.map((x) => f2(x.feedLevel)).join(", ")}: ${trajectoryWord(sums.map((x) => x.feedLevel))}.`);
   p();
   return { arenaId, arena, sums };
@@ -256,6 +259,8 @@ async function main() {
       ["feed rate at low / high offers by game", ...per((x) => `${pct(x.lowHigh[0])}/${pct(x.lowHigh[1])}`)],
       ["bees that verify by game", ...per((x) => `${x.verifying}/${x.G.teams.length}`)],
       ["self-feeds of feeds by game", ...per((x) => pct(x.selfShare))],
+      ["bee MEMORY used at the end (median share) by game", ...per((x) => pct(median(x.bees.map((b) => b.memShare))))],
+      ["bee changes per team by game", ...per((x) => f2(sum(x.bees.map((b) => b.beeChanges)) / Math.max(1, x.bees.length)))],
       ["own-bee handshakes by game", ...per((x) => x.handshakes)],
       ["copies by game", ...per((x) => x.copies)],
       ["new mechanisms, policies or tags by game", ...per((x) => x.fresh.length)],

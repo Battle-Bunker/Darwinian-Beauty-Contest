@@ -1,7 +1,7 @@
 // The action feed: every turn as it ends, newest first, filterable by bee team, flower team and feeds only.
 // A turn's end (feed or leave) carries the whole turn, so arrivals are hidden unless asked for. Each row
 // shows what the viewer may see: public (who, the challenge, the response, fed or not; on a feed, the
-// percent, energy, nectar and surplus) and, for your own team, the private rest (energy lost on unfed
+// percent, energy, nectar and pollen) and, for your own team, the private rest (energy lost on unfed
 // visits at your flower, its compute time, your bee's decision time and errors, versions, prints).
 import { memo, useMemo, useState } from "react";
 import type { Action, Budget, GameView, Kind, Team } from "../types";
@@ -158,9 +158,9 @@ export const FeedRow = memo(function FeedRow({ a, teams, myTeamId, tenths = true
         {isFed && <span className="ok-text nowrap"><DropIcon size={15} /> fed{typeof a.nectar === "number" && <>: <b title={fmtEExact(a.nectar)}>{fmtE(a.nectar)}</b> nectar</>}</span>}
         {a.action === "leave" && <span className="muted">left</span>}
         {a.action !== "arrive" && hasE && (
-          <span className="feed-energy" title={`E = ${fmtEExact(a.energy)}; offered ${a.percent ?? "?"}%`}>
+          <span className="feed-energy" title={`E = ${fmtEExact(a.energy)}: what was left after size and compute. ${a.percent ?? "?"}% offered as nectar; on a feed the rest is given as pollen.`}>
             {a.percent ?? "?"}% of {fmtE(a.energy)}
-            {isFed ? typeof a.surplus === "number" && <> · kept <b>{fmtE(a.surplus)}</b></> : (a.energy ?? 0) > 0 && <> · <span className="lost-text">{fmtE(a.energy)} lost</span></>}
+            {isFed ? typeof a.pollen === "number" && <> · pollen <b>{fmtE(a.pollen)}</b></> : (a.energy ?? 0) > 0 && <> · <span className="lost-text">{fmtE(a.energy)} lost</span></>}
           </span>
         )}
         {typeof a.ms === "number" && budgets && <Took ms={a.ms} limit={budgets.flower.ms} what="flower" />}

@@ -9,7 +9,7 @@ import { useElementWidth } from "../hooks";
 import { useLiveTick, type LiveStore } from "../lib/live";
 import { TurnIndex } from "../lib/turns";
 import { fmtClock, fmtE, plural, poss } from "../lib/format";
-import { computeFrame, HEAD_Y, layoutGarden, TOP_PAD, type Layout, type Pt } from "./gardenModel";
+import { computeFrame, HEAD_Y, layoutGarden, PATCH_AT, PATCH_SCALE, TOP_PAD, type Layout, type Pt } from "./gardenModel";
 import { GardenPainter } from "./gardenPainter";
 import { DropIcon } from "./Icons";
 
@@ -227,16 +227,17 @@ const FlowerCell = memo(function FlowerCell({ team, p, mine, focus, dim, tally, 
   const name = team.name.length > maxChars ? team.name.slice(0, maxChars - 1) + "…" : team.name;
   return (
     <g transform={`translate(${p.x} ${p.y})`} className={`flower-cell ${dim ? "dim" : ""}`}>
-      <title>{`${poss(team.name)} flower`}</title>
-      {focus && <circle cy={HEAD_Y} r={70} className="flower-focus" />}
-      <ellipse cy={6} rx={40} ry={9} className="soil" />
-      <g className="flower">
-        <path d={`M0 6 C -5 -12, 5 -34, 0 ${HEAD_Y}`} className="stem" />
-        <ellipse cx="-9" cy="-14" rx="10" ry="4" transform="rotate(-30 -9 -14)" className="leaf" />
-        <ellipse cx="9" cy="-28" rx="10" ry="4" transform="rotate(30 9 -28)" className="leaf" />
-        <g transform={`translate(0 ${HEAD_Y})`}><CosmosHead color={team.color} scale={1.38} /></g>
-      </g>
-      {mine && <text x={30} y={HEAD_Y - 28} className="you-flag">you</text>}
+      <title>{`${poss(team.name)} flower species: every visit is a bee meeting one of its flowers`}</title>
+      {focus && <ellipse cy={HEAD_Y + 2} rx={78} ry={64} className="flower-focus" />}
+      <ellipse cy={6} rx={66} ry={10} className="soil" />
+      {PATCH_AT.map(([dx, hy], i) => (
+        <g key={i} className="flower" style={{ animationDelay: `${-i * 1.7}s` }}>
+          <path d={`M${dx} 6 C ${dx - 4} ${(hy * 0.25).toFixed(0)}, ${dx + 4} ${(hy * 0.6).toFixed(0)}, ${dx} ${hy}`} className="stem" />
+          <ellipse cx={dx + (i === 0 ? 7 : -7)} cy={hy * 0.3} rx="8" ry="3.4" transform={`rotate(${i === 0 ? 30 : -30} ${dx + (i === 0 ? 7 : -7)} ${hy * 0.3})`} className="leaf" />
+          <g transform={`translate(${dx} ${hy})`}><CosmosHead color={team.color} scale={PATCH_SCALE} /></g>
+        </g>
+      ))}
+      {mine && <text x={44} y={HEAD_Y - 36} className="you-flag">you</text>}
       <text y={26} className="flower-label"><tspan fill={team.color} className="flower-label-dot">●</tspan> {name}</text>
       <text y={44} className="flower-tally">{tally}</text>
     </g>
@@ -348,6 +349,8 @@ export function GardenControls({ teams, mine, focus, setFocus, bubbles, setBubbl
   );
 }
 
+const fmtScore = (x: number) => (x < 100 ? x.toFixed(2) : Math.round(x).toLocaleString());
+
 /** The followed team at a glance: its bee and its flower over the game so far. */
 export function FocusStrip({ team, own, score, fedHere, fedBy, wasted }: {
   team: Team; own: boolean; score: TeamScore | null; fedHere: number; fedBy: number; wasted: number | null;
@@ -356,15 +359,19 @@ export function FocusStrip({ team, own, score, fedHere, fedBy, wasted }: {
   return (
     <div className="focus-strip" style={{ ["--team" as string]: team.color }}>
       <div className="focus-tile">
-        <span className="focus-label"><span className="swatch" style={{ background: team.color }} /> {who} flower</span>
+        <span className="focus-label"><span className="swatch" style={{ background: team.color }} /> {who} flower species</span>
         <span>fed at <b>{fedHere.toLocaleString()}×</b>{score ? <> by <b>{score.pollinators}</b> {score.pollinators === 1 ? "team" : "teams"}</> : null}</span>
-        {score && score.surplus !== null && <span>kept <b title="surplus">{fmtE(score.surplus)}</b>{score.nectarGiven !== null ? <>, paid <b>{fmtE(score.nectarGiven)}</b></> : null}</span>}
-        {wasted !== null && <span className="muted" title="Energy from turns where the bee didn't feed: nobody gets it. Only your team sees this until the game ends.">lost on unfed visits <b>{fmtE(wasted)}</b></span>}
+        {score && typeof score.pollination === "number" && <span title="Σ over bee teams of √(pollen given to that team's bee)">pollination <b>{fmtScore(score.pollination)}</b></span>}
+        {score && (score.pollen !== null || score.nectarGiven !== null) && <span>gave pollen <b>{fmtE(score.pollen)}</b>, nectar <b>{fmtE(score.nectarGiven)}</b></span>}
+        {wasted !== null && <span className="muted" title="Energy from visits where the bee didn't feed: nobody gets it. Only your team sees this until the game ends.">lost on unfed visits <b>{fmtE(wasted)}</b></span>}
       </div>
       <div className="focus-tile">
         <span className="focus-label"><span className="swatch" style={{ background: team.color }} /> {who} bee</span>
         <span>fed <b>{fedBy.toLocaleString()}×</b>{score && score.nectarSources !== null ? <> at <b>{score.nectarSources}</b> {score.nectarSources === 1 ? "flower" : "flowers"}</> : null}</span>
+        {score && typeof score.forage === "number" && <span title="Σ over flower teams of √(nectar got there)">forage <b>{fmtScore(score.forage)}</b></span>}
         {score && score.nectarCollected !== null && <span><DropIcon size={14} /> nectar <b>{fmtE(score.nectarCollected)}</b></span>}
+        {score && typeof score.fitness === "number" && <span title="N² × pollination share × forage share">fitness <b>{score.fitness.toFixed(3)}</b></span>}
+        {team.memory && <span title={`The bee's MEMORY, read only: bee v${team.memory.version}'s`}>MEMORY <b>{team.memory.bytes.toLocaleString()}</b> / {team.memory.cap.toLocaleString()} bytes</span>}
       </div>
     </div>
   );
@@ -377,7 +384,7 @@ export const GardenLegend = memo(function GardenLegend({ own }: { own: boolean }
       <li><DropIcon size={16} /> it fed: the nectar it got; it sits out its rounds on the flower</li>
       <li><span className="lg lg-left">→</span> a faded bubble: it left</li>
       <li><span className="lg lg-mine" /> the followed team's bee; <span className="lg lg-visitor" /> a bee at its flower</li>
-      {own && <li><span className="lg lg-readout">25%</span> your flower's latest visit: percent, energy, compute time, what it kept or lost (only your team sees unfed visits)</li>}
+      {own && <li><span className="lg lg-readout">E</span> your flower's latest visit: compute time, excess energy E and the percent offered, then the nectar and pollen it gave, or what was lost (only your team sees unfed visits)</li>}
     </ul>
   );
 });

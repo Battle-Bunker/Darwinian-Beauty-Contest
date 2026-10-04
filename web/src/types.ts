@@ -8,7 +8,7 @@ export const KINDS: Kind[] = ["flower", "bee"];
  * also the "size cap" of the energy formula). Change budget accrues `perMinute` nodes a minute of game
  * time, banking up to `cap`. ms: time per call (flower: the 150 ms window; bee: the 50 ms decision).
  */
-export interface Budget { size: number; perMinute: number; cap: number; ms: number }
+export interface Budget { size: number; perMinute: number; cap: number; ms: number; memory?: number }
 
 export interface GameConfig {
   language: "python" | "typescript";
@@ -67,6 +67,15 @@ export interface Team {
   programs: Record<Kind, ProgramVersion[]> | null;      // oldest first; the last one is playing
   banks: Partial<Record<Kind, Bank>> | null;
   ready?: Record<Kind, boolean>;                        // lobby: which programs the team has written
+  memory?: BeeMemory | null;                            // the bee's MEMORY: own team during play, everyone's after
+}
+
+/** A bee's MEMORY: only the bee writes it; a new bee version starts with {}. Read only, everywhere. */
+export interface BeeMemory {
+  value: unknown;     // a JSON value
+  bytes: number;      // its size as canonical JSON (sorted keys, no spaces, UTF-8)
+  cap: number;        // budgets.bee.memory
+  version: number;    // the bee version it belongs to (it was cleared when that version went live)
 }
 
 export interface MyTeam { id: string; name: string; joinCode: string; index?: number | null }
@@ -88,7 +97,7 @@ export interface Action {
   // feed and leave, public:
   c?: unknown;
   r?: unknown;              // null if the flower failed
-  surplus?: number | null;  // what the turn added to the flower team's surplus: (1 − percent/100) × E on a feed, 0 on a leave
+  pollen?: number | null;   // what the flower kept: (1 − percent/100) × E on a feed, 0 on a leave
   nectar?: number | null;   // feed only: percent/100 × E
   // public on a feed; on a leave the flower's team only (everyone after finish):
   percent?: number | null;
@@ -106,13 +115,17 @@ export interface Action {
 
 export interface ActionsPage { actions: Action[]; lastSeq: number; clockMs: number; round: number; status: GameStatus }
 
-/** One entry of the team ledger: exactly what the team's programs get (plus seq). Teams are indices. */
+/**
+ * One turn record of the team ledger: what the team's programs see in HISTORY.turns (plus seq for paging).
+ * Teams are indices. A field the viewer may not see is null.
+ */
 export interface LedgerEntry {
-  seq: number; round: number; bee: number; flower: number;
+  seq: number; game?: string; round: number; atMs?: number; turn?: number; bee: number; flower: number;
   challenge: unknown; response: unknown; fed: boolean;
-  nectar: number | null;
-  percent: number | null; energy: number | null;
-  ms: number | null; surplus: number | null;   // surplus: 0 on a leave
+  percent: number | null; energy: number | null;   // public on a feed, else the flower's team's
+  nectar: number | null; pollen: number | null;    // nectar null and pollen 0 on a leave
+  ms: number | null; flowerVersion?: number | null; flowerError?: string | null;  // the flower's team's
+  beeMs?: number | null; beeVersion?: number | null; beeError?: string | null;     // the bee's team's
 }
 
 export interface LedgerPage {
@@ -122,21 +135,26 @@ export interface LedgerPage {
   lastSeq: number; round: number; status: GameStatus;
 }
 
-/** Whole-game numbers per team: the scoreboard, live and public. (Null only defensively: shown as "–".) */
+/**
+ * Whole-game numbers per team: the scoreboard, live and public. fitness = N² × pollinationShare ×
+ * forageShare; the rest is information. (Null only defensively: shown as "–".)
+ */
 export interface TeamScore {
   teamId: string;
-  allure: number; feedsReceived: number; feedsGiven: number; pollinators: number;
-  forage: number | null; surplus: number | null;
+  pollination: number | null;      // Σ over bee teams of √(pollen this flower kept from their feeds)
+  forage: number | null;           // Σ over flower teams of √(nectar this bee got there)
+  pollinationShare: number | null; forageShare: number | null; fitness: number | null;
+  pollen: number | null;           // all this flower kept
+  feedsReceived: number; feedsGiven: number; pollinators: number;
   nectarCollected: number | null; nectarGiven: number | null; nectarSources: number | null;
-  allureShare: number | null; forageShare: number | null; surplusShare: number | null; fitness: number | null;
 }
 
 /**
  * Whole-game ledgers, public, rows = bee team, columns = flower team, in participants order: feeds[b][f]
- * (times b's bee fed at f's flower), nectar[b][f] (nectar b's bee got there), surplus[b][f] (what f's
+ * (times b's bee fed at f's flower), nectar[b][f] (nectar b's bee got there), pollen[b][f] (what f's
  * flower kept from b's bee's feeds).
  */
-export interface Ledgers { feeds: number[][]; nectar: (number | null)[][]; surplus: (number | null)[][] }
+export interface Ledgers { feeds: number[][]; nectar: (number | null)[][]; pollen: (number | null)[][] }
 
 /** GET .../scores: the live numbers, cheap enough to poll. Scores, ledgers and lastSeq are from one moment. */
 export interface ScoresView {
@@ -179,5 +197,6 @@ export interface TryFlowerResult { size?: number; results: TryFlowerRow[]; error
 export interface TryBeeResult {
   actions: Action[];
   problems: { kind?: Kind | string; version?: number; error: string; team?: number }[];
-  feeds: number; nectar: number; surplus: number; rounds: number;
+  feeds: number; nectar: number; pollen: number; rounds: number;
+  memory?: unknown;   // what the test bee's MEMORY ended with
 }

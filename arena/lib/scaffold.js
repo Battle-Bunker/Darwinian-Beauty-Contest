@@ -18,7 +18,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ARENA_DIR, one, q } from "./db.js";
-import { codeFindings, installTools, otherWorkspaces, processTree } from "./workspace.js";
+import { codeFindings, installTools, otherWorkspaces, processTree, toolSource } from "./workspace.js";
 
 const LAUNCHER = path.join(ARENA_DIR, "lib", "scaffold_launch.py");
 const BACKOFF = [1, 2, 4, 8, 15, 30];
@@ -28,10 +28,10 @@ export const SCAFFOLD_LIMITS = { cpuShare: 0.15, memMB: 1024, fileMB: 200, nice:
 const SPAWN = /\bsubprocess\b|\bos\s*\.\s*(?:system|popen|fork|forkpty|exec\w*|spawn\w*|posix_spawn\w*|kill|killpg|setsid|setpgid|setpgrp|daemon|nice|setpriority|chdir)\b|\bmultiprocessing\b|\bimport\s+pty\b|\bfrom\s+pty\b|ProcessPoolExecutor|\bctypes\b|\bimportlib\b|__import__|(?<![\w.])(?:exec|eval|compile)\s*\(|\bsys\s*\.\s*modules\b|\bbuiltins\b|\bresource\s*\.\s*setrlimit\b|\bsignal\s*\.\s*(?:signal|SIGSTOP|SIGCONT|pthread_kill)\b/;
 const PY_STRINGS = /(?:'''[\s\S]*?'''|"""[\s\S]*?"""|'(?:\\.|[^'\\\n])*'|"(?:\\.|[^"\\\n])*")/g;
 
-/** The runner's own tool files, by name: a workspace copy that is byte for byte the runner's needn't be audited. */
-const TOOLS_SRC = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "tools");
+/** The runner's own tool files (and the history client), by name: a workspace copy that is byte for byte the runner's
+ * needn't be audited. */
 const pristineTool = (file) => {
-  try { return fs.readFileSync(file, "utf8") === fs.readFileSync(path.join(TOOLS_SRC, path.basename(file)), "utf8"); } catch { return false; }
+  try { return fs.readFileSync(file, "utf8") === fs.readFileSync(toolSource(path.basename(file)), "utf8"); } catch { return false; }
 };
 
 /** Static audit of a scaffold: the entry file and the workspace modules it imports, including anything in tools/ (on its

@@ -41,10 +41,11 @@ import { checkValue, parseType } from "./lib/types.js";
 import { zeroLedger } from "./lib/scoring.js";
 import { KINDS, excessEnergy, limitsOf, roundMs } from "./lib/gameConfig.js";
 import { size as measure } from "./lib/measure.js";
+import { mask } from "./query/mask.js";
 
 export { KINDS };
 
-/** What programs may read as GAME (each program also gets its own `ms`, and a flower its `size`). */
+/** What programs may read as GAME (each program also gets its own `ms`; a flower its `size`, a bee `memory`). */
 export function gameInfo(config, team, teams) {
   const { maxLen, maxNodes } = limitsOf(config);
   return {
@@ -54,20 +55,22 @@ export function gameInfo(config, team, teams) {
   };
 }
 
-/**
- * One finished turn as team `ti`'s programs (and operators) see it. Public: the arrival, challenge,
- * response and whether the bee fed; on a feed also the percent, energy, nectar and pollen (on a turn
- * without a feed, pollen is 0 and nectar null). The flower's own team also sees the percent and energy of
- * turns without a feed, and the flower's CPU time (ms) of every turn. Hidden: null.
- */
-export function entryFor(t, ti) {
-  const own = t.flower === ti;
-  return {
-    round: t.round, bee: t.bee, flower: t.flower, challenge: t.c, response: t.r, fed: t.fed,
-    percent: t.fed || own ? t.percent : null, energy: t.fed || own ? t.energy : null,
-    nectar: t.fed ? t.nectar : null, pollen: t.fed ? t.pollen : 0, ms: own ? t.ms : null,
-  };
+/** JSON with sorted keys and no spaces: how a bee's MEMORY is stored and measured. */
+export function canonicalJson(v) {
+  if (Array.isArray(v)) return `[${v.map(canonicalJson).join(",")}]`;
+  if (v !== null && typeof v === "object") return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonicalJson(v[k])}`).join(",")}}`;
+  return JSON.stringify(v ?? null);
 }
+const EMPTY_MEMORY = "{}";
+
+/**
+ * One finished turn as team `ti`'s programs (and operators) see it: the `turns` record of the query schema
+ * (server/query/schema.js), masked by its visibility rules. Public: the arrival, challenge, response and
+ * whether the bee fed; on a feed also the percent, energy, nectar and pollen. The flower's team also sees
+ * the percent and energy of turns without a feed and the flower's CPU time, version and errors; the bee's
+ * team its bee's decision time, version and errors. Hidden: null.
+ */
+export const entryFor = (t, ti) => mask("turns", t, ti);
 
 // Responses can be big trees and graphs; this caps the JSON text of any single value.
 const MAX_CHARS = 262144;
@@ -80,7 +83,7 @@ const flowerSetup = (config, team, teams, code, size, ledger) => ({
 });
 const beeSetup = (config, team, teams, code, ledger) => ({
   code, ms: config.budgets.bee.ms, limitMs: Math.max(BEE_LIMIT_MS, 2 * config.budgets.bee.ms), maxChars: MAX_CHARS, ledger,
-  game: { ...gameInfo(config, team, teams), ms: config.budgets.bee.ms },
+  game: { ...gameInfo(config, team, teams), ms: config.budgets.bee.ms, memory: config.budgets.bee.memory },
 });
 
 // Time limits must be fair, so never run more programs at once than there are CPU cores, across every
@@ -203,13 +206,14 @@ export class Garden {
    * teams: number of teams (team indices are participants order). round: rounds already played; clockMs:
    * the game time they took. endMs: game time at which run() stops (default config.minutes). maxRounds:
    * stop after this many rounds instead (for trying a bee). lastSeq: the last action number already used.
-   * ledgers: { feeds, nectar, pollen } so far. history: the finished turns so far ({ round, bee, flower,
-   * c, r, fed, nectar, percent, energy, ms, pollen }, team indices), which the programs' ledgers start
-   * from. turns: each bee's turns so far. paced: rounds last at least roundMs of wall time (false: back to
-   * back, for tests and the "try" tool).
+   * ledgers: { feeds, nectar, pollen } so far. history: the finished turns so far (`turns` records of the
+   * query schema, unmasked, in natural order: round, bee), which the programs' HISTORY starts from. turns:
+   * each bee's turns so far. memories: per team, its bee's saved MEMORY, { version, memory (canonical JSON),
+   * error }, or null. game: the game's short id (turn records' `game`). paced: rounds last at least roundMs
+   * of wall time (false: back to back, for tests and the "try" tool).
    */
   constructor({ config, teams, clockMs = 0, round = 0, endMs = config.minutes * 60000, maxRounds = Infinity, lastSeq = 0,
-    ledgers = null, history = [], turns = null, paced = true }) {
+    ledgers = null, history = [], turns = null, memories = null, game = "", paced = true }) {
     this.config = config;
     this.n = teams;
     this.cType = parseType(config.challengeType);
@@ -219,6 +223,8 @@ export class Garden {
     this.windowMs = config.budgets.flower.ms; // the flower window: responses are delivered at its end
     this.beeMs = config.budgets.bee.ms;       // the bees' decision window
     this.paced = paced;
+    this.game = game;
+    this.memoryCap = config.budgets.bee.memory;
     this.endMs = endMs;
     this.maxRounds = maxRounds;
     this.rounds = 0;                  // rounds run by this garden
@@ -238,12 +244,15 @@ export class Garden {
       asking: null,      // a request outside the round flow (loading, first()): { inTime }
       askedRound: -1,    // the round of its latest first() request (one new one a round)
       log: "",           // printed output not yet attached to an action
+      // MEMORY: the canonical JSON saved after its last call, the bee version it belongs to, the last error
+      memory: memories?.[ti]?.memory ?? EMPTY_MEMORY, memoryVersion: memories?.[ti]?.version ?? null,
+      memoryError: memories?.[ti]?.error ?? null, memoryChanged: false,
     }));
     // A bee that fed shortly before the garden was adopted still sits out the rest of its rounds.
     for (const t of this.history) if (t.fed) this.bees[t.bee].sitOut = Math.max(0, t.round + config.feedCost - round);
     this.feeds = ledgers?.feeds ?? zeroLedger(teams);
     this.nectar = ledgers?.nectar ?? zeroLedger(teams);
-    this.pollen = ledgers?.pollen ?? zeroLedger(teams); // pollen[b][f]: what f's flower kept from b's feeds
+    this.pollen = ledgers?.pollen ?? zeroLedger(teams); // pollen[b][f]: the pollen f's species gave b's bee
     this.out = [];                    // actions not yet drained
     this.problems = [];               // { team, kind, version, error }: the first error of each program version
     this.seenProblem = new Set();
@@ -315,10 +324,22 @@ export class Garden {
 
   /** Everything new since the last drain: actions, program problems, the clock and the ledgers. */
   drain() {
+    const memories = [];
+    for (const b of this.bees) {
+      if (!b.memoryChanged) continue;
+      b.memoryChanged = false;
+      memories.push({ team: b.ti, ...this.memoryOf(b.ti) });
+    }
     return {
       actions: this.out.splice(0), problems: this.problems.splice(0), clockMs: Math.round(this.clockMs()), round: this.round,
-      lastSeq: this.seq, feeds: this.feeds, nectar: this.nectar, pollen: this.pollen,
+      lastSeq: this.seq, feeds: this.feeds, nectar: this.nectar, pollen: this.pollen, memories,
     };
+  }
+
+  /** Team ti's bee's MEMORY: { version, memory (canonical JSON), bytes, error }. */
+  memoryOf(ti) {
+    const b = this.bees[ti];
+    return { version: b.memoryVersion, memory: b.memory, bytes: Buffer.byteLength(b.memory), error: b.memoryError };
   }
 
   async #loop() {
@@ -366,8 +387,10 @@ export class Garden {
     // The flower window: every flower is called at once.
     await Promise.all(turns.map((t) => this.#answer(t)));
     if (this.paced) await Promise.race([until(t0 + this.windowMs), this.halt]);
-    // The decision window: every response is delivered and every bee that took a turn decides.
+    // The decision window: every response is delivered and every bee that took a turn decides. The
+    // round's turns join the history in natural order (by bee), for delivery as the next round starts.
     await Promise.all(turns.map((t) => this.#decide(t)));
+    for (const t of turns) this.history.push(t.record);
     if (this.paced) await Promise.race([until(t0 + this.roundMs), this.halt]);
   }
 
@@ -456,6 +479,7 @@ export class Garden {
   }
 
   #startBee(b, code, version) {
+    if (b.memoryVersion !== version) this.#setMemory(b, EMPTY_MEMORY, version, null); // a new version starts with {}
     b.queued = null;
     b.log = "";
     b.proc?.kill(); // its call in flight, if any, ends at once (and frees its core); the reply is ignored
@@ -498,7 +522,7 @@ export class Garden {
       return withCpu(async () => {
         const t0 = performance.now();
         began(t0);
-        const res = await proc.call(req);
+        const res = await proc.call({ ...req, memory: b.memory }); // MEMORY as saved after its last call
         return { res, ms: performance.now() - t0 };
       });
     })();
@@ -506,7 +530,7 @@ export class Garden {
     return { gen: b.gen, started, done };
   }
 
-  /** Ask the bee for a challenge: first(ledger). Outside the round flow; at most one in flight, one new one a round. */
+  /** Ask the bee for a challenge: first(). Outside the round flow; at most one in flight, one new one a round. */
   #askFirst(b, force = false) {
     if (this.closed || this.stopped || b.broken || b.pending || !b.proc || b.proc.dead || b.busy || b.queued || b.turn) return;
     if (!force && b.askedRound === this.round) return; // asked this round already: again at the next boundary
@@ -538,6 +562,7 @@ export class Garden {
   /** first()'s reply: a valid challenge is queued; anything else gets the bee asked again (next round). */
   #onFirst(b, res) {
     this.#keepLog(b, res.out);
+    this.#saveMemory(b, res);
     if (!res.e) {
       const bad = checkValue(this.cType, res.a, this.limits, "challenge");
       if (!bad) { b.queued = { c: res.a }; return; }
@@ -584,6 +609,8 @@ export class Garden {
     const b = t.b;
     t.beeMs = round3(ms);
     t.log = this.#takeLog(b, res.out);
+    const memoryError = this.#saveMemory(b, res); // the decision counts either way
+    if (memoryError) t.beeError = memoryError;
     if (res.e) {
       t.beeError = String(res.e).slice(0, 300);
       this.#problem(b.ti, "bee", b.version, res.e);
@@ -602,9 +629,38 @@ export class Garden {
     const bad = checkValue(this.cType, a[1], this.limits, "next challenge");
     if (!bad) b.queued = { c: a[1] };
     else {
-      t.beeError = String(bad).slice(0, 300);
+      t.beeError = [t.beeError, String(bad).slice(0, 300)].filter(Boolean).join("; ");
       this.#problem(b.ti, "bee", b.version, bad);
     }
+  }
+
+  /**
+   * Save the MEMORY a bee's call returned with (unless the call crashed): if its canonical JSON fits the cap,
+   * it replaces the old one; otherwise the old one is kept. Returns the error, if any.
+   */
+  #saveMemory(b, res) {
+    if (res.e || res.dead) return null; // a call that crashed saves nothing
+    let error = res.memoryError ?? null, json = null;
+    if (!error && typeof res.memory === "string") {
+      try { json = canonicalJson(JSON.parse(res.memory)); } catch { error = "MEMORY is not plain JSON"; }
+    }
+    if (!error && json !== null) {
+      const bytes = Buffer.byteLength(json);
+      if (bytes > this.memoryCap) error = `MEMORY is ${bytes} bytes, over its cap of ${this.memoryCap}: the old memory was kept`;
+      else if (json !== b.memory || b.memoryError) this.#setMemory(b, json, b.version, null);
+    }
+    if (error) {
+      this.#setMemory(b, b.memory, b.memoryVersion, error);
+      this.#problem(b.ti, "bee", b.version, error);
+    }
+    return error;
+  }
+
+  #setMemory(b, json, version, error) {
+    b.memory = json;
+    b.memoryVersion = version;
+    b.memoryError = error;
+    b.memoryChanged = true;
   }
 
   /**
@@ -613,6 +669,7 @@ export class Garden {
    */
   #onLate(b, res) {
     this.#keepLog(b, res.out);
+    this.#saveMemory(b, res);
     const a = res.a;
     if (!res.e && Array.isArray(a) && a.length === 2 && a[0] === "leave" && !checkValue(this.cType, a[1], this.limits, "challenge")) {
       b.queued = { c: a[1] };
@@ -636,10 +693,13 @@ export class Garden {
       c: t.c, r: t.r, percent: t.percent, energy: t.energy, ms: t.ms, pollen: t.pollen, nectar: t.fed ? t.nectar : null,
       flowerError: t.flowerError, beeMs: t.beeMs, beeError: t.beeError, log: t.log,
     }, t.start + this.windowMs);
-    this.history.push({
-      round: t.round, bee: b.ti, flower: f, c: t.c, r: t.r, fed: t.fed, nectar: t.fed ? t.nectar : null,
-      percent: t.percent, energy: t.energy, ms: t.ms, pollen: t.pollen,
-    });
+    // The turn as a `turns` record (server/query/schema.js), unmasked; it joins the history at the round's end.
+    t.record = {
+      game: this.game, round: t.round, atMs: Math.round(t.start), turn: t.no, bee: b.ti, flower: f,
+      challenge: t.c, response: t.r, fed: t.fed, percent: t.percent, energy: t.energy,
+      nectar: t.fed ? t.nectar : null, pollen: t.pollen, ms: t.ms,
+      flowerVersion: t.flowerVersion, flowerError: t.flowerError, beeMs: t.beeMs, beeVersion: t.beeVersion, beeError: t.beeError,
+    };
     // The turn is over: its flower version may go, and new code for the bee takes over now.
     b.turn = null;
     t.pool.users--;

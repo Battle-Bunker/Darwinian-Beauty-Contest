@@ -3,6 +3,7 @@
 // five turns a second costs a few attribute writes per bee per frame and no React work at all.
 import type { BeeDraw, Frame, Layout } from "./gardenModel";
 import { headOf } from "./gardenModel";
+import { PATCH } from "../lib/turns";
 
 const NS = "http://www.w3.org/2000/svg";
 type Attrs = Record<string, string | number>;
@@ -37,7 +38,7 @@ interface BeeNodes {
   g: SVGGElement; halo: SVGCircleElement; visitor: SVGCircleElement; pose: SVGGElement; wings: SVGGElement;
   name: SVGTextElement; bubble: SVGGElement; bubbleRect: SVGRectElement; bubbleText: SVGTextElement;
 }
-interface FxNodes { g: SVGGElement; glow: SVGCircleElement; sparkles: SVGPathElement[]; text: SVGTextElement }
+interface FxNodes { g: SVGGElement; glow: SVGCircleElement; sparkles: SVGPathElement[]; text: SVGTextElement; pollen: SVGTextElement }
 
 export interface PainterTeam { name: string; color: string }
 
@@ -50,7 +51,6 @@ export class GardenPainter {
   private glows: SVGCircleElement[] = [];
   private pings: SVGCircleElement[] = [];
   private fxPool: FxNodes[] = [];
-  private labelPool: SVGTextElement[] = [];
   private trail: SVGPathElement;
   private readout: { g: SVGGElement; rect: SVGRectElement; t1: SVGTextElement; t2: SVGTextElement };
   private layout: Layout;
@@ -64,9 +64,12 @@ export class GardenPainter {
 
     const glowLayer = el("g", {}, root);
     teams.forEach((_, f) => {
-      const h = headOf(layout, f);
-      this.glows.push(el("circle", { cx: f1(h.x), cy: f1(h.y), r: 34, class: "visit-glow", opacity: 0 }, glowLayer));
-      this.pings.push(el("circle", { cx: f1(h.x), cy: f1(h.y), r: 40, class: "focus-ping", opacity: 0 }, glowLayer));
+      for (let i = 0; i < PATCH; i++) {
+        const h = headOf(layout, f, i);
+        this.glows.push(el("circle", { cx: f1(h.x), cy: f1(h.y), r: 26, class: "visit-glow", opacity: 0 }, glowLayer));
+      }
+      const m = headOf(layout, f);
+      this.pings.push(el("circle", { cx: f1(m.x), cy: f1(m.y), r: 60, class: "focus-ping", opacity: 0 }, glowLayer));
     });
     this.trail = el("path", { class: "focus-trail", d: "", opacity: 0 }, root);
 
@@ -104,10 +107,9 @@ export class GardenPainter {
       const sparkles = [0, 1, 2, 3, 4].map(() => el("path", { d: SPARKLE, class: "fx-sparkle" }, g));
       el("path", { d: "M0 -12 C -4 -6 -7 -2 -7 2 a7 7 0 0 0 14 0 c0 -4 -3 -8 -7 -14z", class: "fx-drop", transform: "translate(0 -16) scale(.7)" }, g);
       const text = el("text", { x: 9, y: -18, class: "fx-text" }, g);
-      this.fxPool.push({ g, glow, sparkles, text });
+      const pollen = el("text", { x: 9, y: -5, class: "fx-text fx-pollen" }, g);
+      this.fxPool.push({ g, glow, sparkles, text, pollen });
     }
-    const labelLayer = el("g", {}, root);
-    for (let i = 0; i < 24; i++) this.labelPool.push(el("text", { class: "float-label", display: "none" }, labelLayer));
 
     const rg = el("g", { class: "readout", display: "none" }, root);
     this.readout = {
@@ -124,13 +126,13 @@ export class GardenPainter {
       const g = this.glows[f];
       if (!g) return;
       c.set(g, "opacity", (0.5 * v).toFixed(2));
-      if (v > 0) c.set(g, "r", f1(32 + 6 * (1 - v)));
+      if (v > 0) c.set(g, "r", f1(24 + 6 * (1 - v)));
     });
     frame.ping.forEach((v, f) => {
       const g = this.pings[f];
       if (!g) return;
       c.set(g, "opacity", v.toFixed(2));
-      if (v > 0) c.set(g, "r", f1(40 + 16 * (1 - v)));
+      if (v > 0) c.set(g, "r", f1(60 + 16 * (1 - v)));
     });
     if (frame.trail) {
       const { from: a, to: b, o } = frame.trail;
@@ -152,23 +154,13 @@ export class GardenPainter {
       c.set(nodes.g, "opacity", fade.toFixed(2));
       c.set(nodes.glow, "r", f1(14 + u * 10));
       c.text(nodes.text, f.text ?? "");
+      c.text(nodes.pollen, f.pollen ?? "");
       nodes.sparkles.forEach((s, k) => {
         const a = (k / 5) * Math.PI * 2 + u * 3, r = 10 + u * 13;
         c.set(s, "transform", `translate(${f1(Math.cos(a) * r)} ${f1(Math.sin(a) * r)})`);
       });
     });
 
-    this.labelPool.forEach((t, i) => {
-      const l = frame.labels[i];
-      if (!l) { c.set(t, "display", "none"); return; }
-      const fade = l.u < 0.1 ? l.u / 0.1 : 1 - Math.max(0, (l.u - 0.6) / 0.4);
-      c.set(t, "display", "inline");
-      c.set(t, "x", f1(l.x));
-      c.set(t, "y", f1(l.y - l.u * 22));
-      c.set(t, "opacity", fade.toFixed(2));
-      c.set(t, "class", `float-label float-${l.kind}`);
-      c.text(t, l.text);
-    });
 
     const r = frame.readout, ro = this.readout;
     if (!r || !this.layout.pos[r.flower]) c.set(ro.g, "display", "none");

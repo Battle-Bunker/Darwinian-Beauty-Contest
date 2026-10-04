@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// Summarise arenas of one-flower games as Markdown: spend; each game (energy, percent, nectar and surplus over time and
-// their distributions; the scores and their three shares; every flower and bee; self-feeding and handshakes; whether bees
+// Summarise arenas of one-flower games as Markdown: spend; each game (energy, percent, nectar and pollen over time and
+// their distributions; the scores and their two shares; every species and bee; each bee's MEMORY and how often teams
+// changed their bee; self-feeding and handshakes; whether bees
 // discriminate generous flowers; flower size and compute against energy; how fast flowers copy each other's answers;
 // the change timeline, scaffolds, sessions, storage); the interview panel; games side by side; ideas, breeders and the
 // fair-play audit. Metrics come from arena.games.metrics (lib/metrics.js), recomputed from the game's API if missing.
@@ -92,6 +93,7 @@ for (const a of arenas) {
         lowHigh: [m.discrimination.byOffer.low.feedRate, m.discrimination.byOffer.high.feedRate], copies: m.copies.copies, copyLatency: m.copies.medianLatencyMs,
         changes: inGame.length / Math.max(1, teams.length), scaffoldTeams: (m.scaffolds || []).filter((x) => x.starts > x.refused).length, teams: teams.length,
         tooSlow: teams.reduce((s, t) => s + (t.bee.tooSlow || 0), 0), sessions: ss.game / Math.max(1, teams.length), cost: cost.usd,
+        memShare: mean((m.memory?.teams || []).map((x) => x.finalShare)), beeChanges: mean((m.memory?.teams || []).map((x) => x.beeChanges)),
         fitSpread: fit.length ? Math.max(...fit) - Math.min(...fit) : null });
     }
   }
@@ -109,27 +111,27 @@ for (const a of arenas) {
     p();
     const T = m.totals;
     p(`Totals: ${T.feeds} feeds (${pc(T.feedRate)} of turns), ${T.selfFeeds} of them a bee at its own flower; excess energy ${big(T.energy)}, of which ${big(T.energyLost)} ` +
-      `(${pc(T.energy ? T.energyLost / T.energy : null)}) lost to turns without a feed; nectar ${big(T.nectar)}, surplus ${big(T.surplus)}; ${T.failures} turns with no response.`);
+      `(${pc(T.energy ? T.energyLost / T.energy : null)}) lost to turns without a feed; nectar ${big(T.nectar)}, pollen ${big(T.pollen)}; ${T.failures} turns with no response.`);
     p();
-    p("Distributions (p10 / p50 / p90; percent over answered turns, energy over every turn, nectar and surplus over feeds):");
-    table(["", "n", "min", "p10 / p50 / p90", "max", "mean"], ["percent", "energy", "nectar", "surplus"].map((k) => { const d = m.distributions[k] || {}; return [k, d.n ?? 0, big(d.min), q3(d), big(d.max), big(d.mean)]; }));
+    p("Distributions (p10 / p50 / p90; percent over answered turns, energy over every turn, nectar and pollen over feeds):");
+    table(["", "n", "min", "p10 / p50 / p90", "max", "mean"], ["percent", "energy", "nectar", "pollen"].map((k) => { const d = m.distributions[k] || {}; return [k, d.n ?? 0, big(d.min), q3(d), big(d.max), big(d.mean)]; }));
     p(`Over time (windows of ${secs(m.windowMs)}; energy lost = energy of turns without a feed; self = a bee at its own flower):`);
-    table(["window", "turns", "feeds", "feed rate", "energy", "energy lost", "nectar", "surplus", "mean percent", "no response", "self feeds / turns"],
-      m.windows.map((x) => [`${mmss(x.from)}-${mmss(x.from + m.windowMs)}`, x.turns, x.feeds, pc(x.feedRate), big(x.energy), `${big(x.energyLost)} (${pc(x.energyLostShare)})`, big(x.nectar), big(x.surplus),
+    table(["window", "turns", "feeds", "feed rate", "energy", "energy lost", "nectar", "pollen", "mean percent", "no response", "self feeds / turns"],
+      m.windows.map((x) => [`${mmss(x.from)}-${mmss(x.from + m.windowMs)}`, x.turns, x.feeds, pc(x.feedRate), big(x.energy), `${big(x.energyLost)} (${pc(x.energyLostShare)})`, big(x.nectar), big(x.pollen),
         f2(x.meanPercent), x.failures, `${x.selfFeeds} / ${x.selfTurns}`]));
 
     // Scores.
     const ent = await all("SELECT e.*, p.name, p.model FROM arena.entries e JOIN arena.personas p ON p.id = e.persona_id WHERE e.game_id = $1", [g.id]);
     const model = (id) => ent.find((x) => x.team_id === id)?.model;
-    p("Scores (share = the team's value ÷ the sum over teams; fitness = N³ × the three shares):");
-    table(["team", "model", "fitness", "allure (share)", "forage (share)", "surplus (share)", "feeds received / given", "pollinators", "nectar collected / given", "nectar sources"],
-      [...(m.final || [])].sort((x, y) => (y.fitness ?? 0) - (x.fitness ?? 0)).map((f) => [f.team, model(f.teamId), f2(f.fitness), `${f2(f.allure)} (${pc(f.allureShare)})`, `${big(f.forage)} (${pc(f.forageShare)})`,
-        `${big(f.surplus)} (${pc(f.surplusShare)})`, `${f.feedsReceived} / ${f.feedsGiven}`, f.pollinators, `${big(f.nectarCollected)} / ${big(f.nectarGiven)}`, f.nectarSources]));
+    p("Scores (pollination = Σ over bee teams of √pollen the species gave them; forage = Σ over species of √nectar the bee got; share = the team's value ÷ the sum over teams; fitness = N² × the two shares):");
+    table(["team", "model", "fitness", "pollination (share)", "forage (share)", "pollen given", "feeds received / given", "pollinators", "nectar collected / given", "nectar sources"],
+      [...(m.final || [])].sort((x, y) => (y.fitness ?? 0) - (x.fitness ?? 0)).map((f) => [f.team, model(f.teamId), f2(f.fitness), `${big(f.pollination)} (${pc(f.pollinationShare)})`, `${big(f.forage)} (${pc(f.forageShare)})`,
+        big(f.pollen), `${f.feedsReceived} / ${f.feedsGiven}`, f.pollinators, `${big(f.nectarCollected)} / ${big(f.nectarGiven)}`, f.nectarSources]));
 
     // Flowers.
     p("Flowers (percent p10 / p50 / p90 over answered turns; compute = CPU ms per call, and its mean as a share of the flower window):");
-    table(["flower of", "visits", "feeds", "feed rate", "pollinators", "percent", "mean energy", "energy lost", "nectar paid", "surplus", "compute mean / p90 ms", "compute share", "no response"],
-      Object.values(m.teams).map((t) => { const f = t.flower; return [t.name, f.turns, f.feeds, pc(f.feedRate), f.pollinators, q3(f.percent, f2), big(f.energy?.mean), big(f.energyLost), big(f.nectarPaid), big(f.surplus),
+    table(["species of", "visits", "feeds", "feed rate", "pollinators", "percent", "mean energy", "energy lost", "nectar given", "pollen given", "compute mean / p90 ms", "compute share", "no response"],
+      Object.values(m.teams).map((t) => { const f = t.flower; return [t.name, f.turns, f.feeds, pc(f.feedRate), f.pollinators, q3(f.percent, f2), big(f.energy?.mean), big(f.energyLost), big(f.nectarPaid), big(f.pollen),
         `${f2(f.ms?.mean)} / ${f2(f.ms?.p90)}`, pc(f.computeShare), f.failures]; }));
     // Bees, with the team's sessions and requests.
     const brows = [];
@@ -143,6 +145,14 @@ for (const a of arenas) {
     }
     p("Bees (decision ms p50 / p90; too slow = no decision within the bee window, which never feeds):");
     table(["bee of", "model", "turns", "feeds", "feed rate", "nectar", "nectar/feed", "flowers fed at", "decision ms", "too slow", "errors", "game sessions", "USD (all sessions)", "requests", "submits ok/refused", "violations"], brows);
+
+    // Bee MEMORY and bee changes.
+    if (m.memory) {
+      p(`Bee MEMORY (cap ${m.memory.cap ?? "-"} bytes; only the bee writes it; every new bee version starts empty). Sizes during play are the runner's samples:`);
+      table(["bee of", "MEMORY at the end", "share of cap", "largest / mean sampled", "saves refused (over the cap)", "bee versions", "in-game bee changes", "per minute", "mean time between changes", "value at the end"],
+        m.memory.teams.map((x) => [x.team, x.finalBytes ?? "-", pc(x.finalShare), `${x.sampledMaxBytes ?? "-"} / ${f2(x.sampledMeanBytes)}`, x.overCap, x.beeVersions, x.beeChanges, f2(x.beeChangesPerMinute),
+          secs(x.meanMsBetweenChanges), x.value != null ? JSON.stringify(x.value).slice(0, 80) : "-"]));
+    }
 
     // Self-feeding and handshakes.
     p("Self-feeding (a bee at its own flower; flowers are drawn at random, so about 1/N of a bee's turns) and handshakes " +
@@ -169,9 +179,9 @@ for (const a of arenas) {
 
     // Versions.
     p("Flower versions: size and compute against energy (max energy = (size cap − size) × the flower window; mean energy is per turn, 0 when it failed):");
-    table(["flower of", "version", "live from", "size", "max energy", "turns", "mean ms / p90", "mean energy", "mean percent", "feed rate", "nectar/feed", "surplus", "no response"],
+    table(["species of", "version", "live from", "size", "max energy", "turns", "mean ms / p90", "mean energy", "mean percent", "feed rate", "nectar/feed", "pollen given", "no response"],
       m.versions.map((v) => [v.team, v.version != null ? `v${v.version}` : "-", v.atMs != null ? (v.atMs ? mmss(v.atMs) : "lobby") : "-", v.size ?? "-", big(v.maxEnergy), v.turns, `${f2(v.meanMs)} / ${f2(v.p90Ms)}`,
-        big(v.meanEnergy), f2(v.meanPercent), pc(v.feedRate), big(v.nectarPerFeed), big(v.surplus), v.failures]));
+        big(v.meanEnergy), f2(v.meanPercent), pc(v.feedRate), big(v.nectarPerFeed), big(v.pollen), v.failures]));
 
     // Copies.
     const cp = m.copies || {};
@@ -201,7 +211,7 @@ for (const a of arenas) {
       sess.map((s) => [s.name, s.attempt ? `${s.no}.${s.attempt}` : s.no, s.phase, s.model, s.phase === "lobby" ? "lobby" : mmss(Number(s.clock_start)), s.clock_end != null ? mmss(Number(s.clock_end)) : "-",
         s.ended_at ? Math.round((new Date(s.ended_at) - new Date(s.started_at)) / 1000) : "-", s.ended_by || "-", s.turns ?? "-", `${f2(s.cost_usd)}${s.cost_estimated ? " (est.)" : ""}`, s.requests, s.submits || "-", s.refused || 0]));
     const st = m.storage || {};
-    p(`Storage: ${m.actions} actions; the shared stream file ${mb(st.sharedStreamBytes)}; the arena's workspaces ${mb(st.arenaDiskBytes)} on disk (hard links counted once); ` +
+    p(`Storage: ${m.turns} turns; the shared stream file ${mb(st.sharedStreamBytes)}; the arena's workspaces ${mb(st.arenaDiskBytes)} on disk (hard links counted once); ` +
       `${st.freeBytes ? (st.freeBytes / 1e9).toFixed(1) : "-"} GB free after the game.`);
     p();
   }
@@ -235,9 +245,9 @@ if (across.length) {
   p("Per game, averaged over teams where it's per team. Change budgets accrue per minute of game time, so short games allow little change. " +
     "Bees discriminate if the feed rate at high offers exceeds the rate at low offers.");
   table(["minutes", "arena game", "turns/s", "feed rate", "mean percent", "energy lost", "mean flower size", "flower compute share", "self-feeds of all feeds", "own-bee handshakes / mutual pairs",
-    "feed rate at low / high offers", "copies (median latency)", "in-game changes per team", "teams with a scaffold", "too-slow bee decisions", "game sessions per team", "fitness spread", "USD"],
+    "feed rate at low / high offers", "copies (median latency)", "in-game changes per team", "bee MEMORY used at the end (mean share)", "bee changes per team", "teams with a scaffold", "too-slow bee decisions", "game sessions per team", "fitness spread", "USD"],
     across.sort((x, y) => x.arena.localeCompare(y.arena) || x.gen - y.gen).map((d) => [d.minutes, `${d.arena} ${d.gen}`, f2(d.turnsPerSec), pc(d.feedRate), f2(d.meanPercent), pc(d.lost), f2(d.size),
-      pc(d.compute), pc(d.selfShare), `${d.handshakes} / ${d.mutual}`, `${pc(d.lowHigh[0])} / ${pc(d.lowHigh[1])}`, `${d.copies} (${secs(d.copyLatency)})`, f2(d.changes),
+      pc(d.compute), pc(d.selfShare), `${d.handshakes} / ${d.mutual}`, `${pc(d.lowHigh[0])} / ${pc(d.lowHigh[1])}`, `${d.copies} (${secs(d.copyLatency)})`, f2(d.changes), pc(d.memShare), f2(d.beeChanges),
       `${d.scaffoldTeams}/${d.teams}`, d.tooSlow, f2(d.sessions), f2(d.fitSpread), f2(d.cost)]));
 }
 

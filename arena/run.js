@@ -21,7 +21,7 @@ import { ARENA_DIR, all, migrate, one, pool, q } from "./lib/db.js";
 import { BudgetError, GLOBAL_CAP, PAUSE_FILE, isPaused, llmStats, pause, setArenaCap, spend, waitIfPaused } from "./lib/llm.js";
 import { WS_ROOT, diskBytes, killLeftovers, wsDir } from "./lib/workspace.js";
 import { publicGameUrl } from "./lib/api.js";
-import { GameStream } from "./lib/stream.js";
+import { GameStream, readMemorySamples } from "./lib/stream.js";
 import { syncPause } from "./lib/gamecontrol.js";
 import { computeGameMetrics, scaffoldsOf, submitsOf } from "./lib/metrics.js";
 import { FOUNDERS } from "./lib/personas.js";
@@ -288,7 +288,7 @@ async function playGame(arena, ctx, log) {
           desk, arena, gameRow, persona: p, entry: e, gPath, stream, phase: "game", sessionNo: no, control, log, timeoutMs: S.maxMinutes * 60_000,
           buildPrompt: ({ view: v, drafts, status, maxTurns, scripts }) => gameBrief({ config: v.game.config, teamName: e.team_name, teamId: e.team_id, generation: gen,
             sessionNo: no, status: v.game.status, clockMs: v.game.clockMs, budgets: status.budgets, scores: v.game.clockMs > 0 ? v.scores : null,
-            names: Object.fromEntries(v.teams.map((t) => [t.id, t.name])), head: v.game.clockMs > 0 ? head : null, drafts, maxTurns, scripts,
+            names: Object.fromEntries(v.teams.map((t) => [t.id, t.name])), head: v.game.clockMs > 0 ? head : null, memory: status.memory, drafts, maxTurns, scripts,
             scaffold: desk.scaffold.status(), automatic: autoCount(p.id) }),
         });
         log(`  ${p.name}: session ${no} ${s.killed ? `stopped (${s.killed})` : "ended"} at ${mmss(stream.clockMs)}: $${s.cost.toFixed(2)}${s.cost && s.killed ? " (estimated)" : ""}, ${s.requests} requests, ` +
@@ -360,7 +360,7 @@ async function playGame(arena, ctx, log) {
 
 async function analyseGame(arena, ctx, log) {
   const { gameRow } = ctx;
-  const m = await computeGameMetrics(ctx.gPath, { submits: await submitsOf(all, gameRow.id) });
+  const m = await computeGameMetrics(ctx.gPath, { submits: await submitsOf(all, gameRow.id), memorySamples: readMemorySamples(path.join(WS_ROOT, arena.id), gameRow.generation) });
   m.scaffolds = await scaffoldsOf(all, gameRow.id);
   // Storage: the stream files and the arena's workspaces (hard links counted once).
   const seen = new Set();
@@ -373,8 +373,8 @@ async function analyseGame(arena, ctx, log) {
   for (const e of ctx.entries) {
     const f = final.find((x) => x.teamId === e.team_id);
     if (!f) continue;
-    await q("UPDATE arena.entries SET fitness = $3, fitness_rank = $4, allure = $5, forage = $6, surplus = $7, shares = $8 WHERE game_id = $1 AND persona_id = $2",
-      [gameRow.id, e.persona_id, f.fitness, final.indexOf(f) + 1, f.allure, f.forage, f.surplus, { allure: f.allureShare, forage: f.forageShare, surplus: f.surplusShare }]);
+    await q("UPDATE arena.entries SET fitness = $3, fitness_rank = $4, pollination = $5, forage = $6, pollen = $7, shares = $8 WHERE game_id = $1 AND persona_id = $2",
+      [gameRow.id, e.persona_id, f.fitness, final.indexOf(f) + 1, f.pollination, f.forage, f.pollen, { pollination: f.pollinationShare, forage: f.forageShare }]);
   }
   log(`game ${gameRow.generation} final: ${final.map((x) => `${x.team} ${x.fitness?.toFixed(2) ?? "-"}`).join(", ")}; ${m.turns} turns, ${m.rounds} rounds, ` +
     `${m.totals.feeds} feeds, ${m.changes.filter((c) => c.atMs > 0).length} in-game changes; stream ${(sharedBytes / 1e6).toFixed(1)} MB`);

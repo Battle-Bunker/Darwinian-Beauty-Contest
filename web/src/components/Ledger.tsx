@@ -7,7 +7,7 @@ import { useMemo, useState } from "react";
 import type { GameView, LedgerEntry, Team } from "../types";
 import type { LedgerStore } from "../lib/history";
 import { useLiveTick } from "../lib/live";
-import { binTurns, binWidth, recFromEntry, totalsOf, type MetricKey } from "../lib/stats";
+import { binTurns, binWidth, recFromEntry, sizeLookup, totalsOf, type MetricKey } from "../lib/stats";
 import { fmtClock, fmtE, fmtEExact, fmtMs, plural } from "../lib/format";
 import { EnergySplit, MetricPicker, TeamSeriesChart } from "./Charts";
 import { Value } from "./Value";
@@ -50,10 +50,15 @@ export function LedgerPanel({ view, ledger }: { view: GameView; ledger: LedgerSt
   }, [ledger, rev, bee, flower, fedOnly, mineOnly, me, limit]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const endMs = Math.max(roundMs, g.status === "finished" ? g.clockMs : g.endMs);
-  const data = useMemo(() => binTurns(ledger.entries.map((e) => recFromEntry(e, roundMs)), order.length, endMs, binWidth(endMs, roundMs)),
-    [ledger, rev, order.length, endMs, roundMs]); // eslint-disable-line react-hooks/exhaustive-deps
+  const model = useMemo(() => ({ cap: cfg.budgets.flower.size, window: cfg.budgets.flower.ms, sizeOf: sizeLookup(teams) }), [cfg.budgets.flower.size, cfg.budgets.flower.ms, teams]);
+  const data = useMemo(() => binTurns(ledger.entries.map((e) => recFromEntry(e, roundMs)), order.length, endMs, binWidth(endMs, roundMs), model),
+    [ledger, rev, order.length, endMs, roundMs, model]); // eslint-disable-line react-hooks/exhaustive-deps
   const upto = Math.min(data.bins, Math.ceil(((ledger.entries.at(-1)?.round ?? 0) * roundMs) / data.binMs));
-  const [metric, setMetric] = useState<MetricKey>("surplus");
+  const [metric, setMetric] = useState<MetricKey>("fitness");
+  // Feeds are public, so the score components, pollen and nectar can be charted for every team; a flower's
+  // unfed visits and compute only for your own until the game is over.
+  const privateMetric = !over && ["lost", "percent", "energy", "ms"].includes(metric);
+  const chartRows = privateMetric ? (me !== null ? [me] : []) : teams.map((_, i) => i);
 
   const download = () => {
     const body = JSON.stringify(ledger.entries.map(({ seq: _seq, ...rest }) => rest), null, 1);
@@ -77,8 +82,8 @@ export function LedgerPanel({ view, ledger }: { view: GameView; ledger: LedgerSt
       <p className="small muted">
         {me !== null
           ? <>Exactly what your programs get: one entry per finished turn, oldest first, teams as numbers. Your team is <b>{me}</b> (<code>GAME["team"]</code>).
-            {!over && " Feeds show their nectar, percent, energy and surplus to everyone; your own flower's unfed visits and compute times, only to you."}</>
-          : over ? "Every turn of the game, every field filled in (the game is over)." : "Every finished turn, with what spectators may see: who visited whom, the challenge, the response, and on feeds the nectar, percent, energy and surplus."}
+            {!over && " Feeds show their nectar, pollen, percent and energy to everyone; your own flower's unfed visits and compute times, and your own bee's timings, only to you."}</>
+          : over ? "Every turn of the game, every field filled in (the game is over)." : "Every finished turn, with what spectators may see: who visited whom, the challenge, the response, and on feeds the nectar, pollen, percent and energy."}
       </p>
       <ul className="index-legend" aria-label="Team numbers">
         {teams.map((t, i) => <li key={t.id}><span className="mono">{i}</span><span className="swatch" style={{ background: t.color }} />{t.name}{i === me && <span className="you-tag">you</span>}</li>)}
@@ -88,10 +93,14 @@ export function LedgerPanel({ view, ledger }: { view: GameView; ledger: LedgerSt
         <div className="stack">
           <h3>Where your flower's energy went{over ? "" : " (so far)"}</h3>
           <EnergySplit rows={[{ team: teams[me], t: totalsOf(data.teams[me]), you: true }]} />
-          <p className="small muted">Your bee has collected <b title={fmtEExact(data.teams[me].nectar.reduce((s, x) => s + x, 0))}>{fmtE(data.teams[me].nectar.reduce((s, x) => s + x, 0))}</b> nectar in {plural(data.teams[me].beeFeeds.reduce((s, x) => s + x, 0), "feed")}.</p>
-          <h3>Your team over time</h3>
-          <MetricPicker value={metric} onChange={setMetric} />
-          <TeamSeriesChart teams={teams} rows={[me]} data={data} metric={metric} focus={null} upto={upto} endMs={endMs} />
+          <p className="small muted">Your bee has got <b title={fmtEExact(data.teams[me].nectar.reduce((s, x) => s + x, 0))}>{fmtE(data.teams[me].nectar.reduce((s, x) => s + x, 0))}</b> nectar in {plural(data.teams[me].beeFeeds.reduce((s, x) => s + x, 0), "feed")}.</p>
+        </div>
+      )}
+      {teams.length > 0 && (
+        <div className="stack">
+          <h3>Over time</h3>
+          <div className="row"><MetricPicker value={metric} onChange={setMetric} />{privateMetric && <span className="small muted">{me !== null ? "Only your own flower: other flowers' unfed visits and compute are private until the end." : "Private until the game is over."}</span>}</div>
+          {chartRows.length > 0 && <TeamSeriesChart teams={teams} rows={chartRows} data={data} metric={metric} focus={me} upto={upto} endMs={endMs} />}
         </div>
       )}
 
@@ -113,7 +122,7 @@ export function LedgerPanel({ view, ledger }: { view: GameView; ledger: LedgerSt
             <thead>
               <tr>
                 <th>round</th><th className="left">bee</th><th className="left">flower</th><th className="left">challenge</th><th className="left">response</th><th className="left">fed</th>
-                <th>nectar</th><th>percent</th><th>energy</th><th>ms</th><th>surplus</th>
+                <th>percent</th><th>energy</th><th>nectar</th><th>pollen</th><th title="the flower's CPU time">ms</th><th title="the bee's decision time">beeMs</th>
               </tr>
             </thead>
             <tbody>
@@ -125,11 +134,12 @@ export function LedgerPanel({ view, ledger }: { view: GameView; ledger: LedgerSt
                   <td className="left"><Value v={e.challenge} role="challenge" max={18} /></td>
                   <td className="left">{e.response === null ? <span className="mono bad-text">None</span> : <Value v={e.response} role="response" max={18} />}</td>
                   <td className="left">{e.fed ? <span className="ok-text">True</span> : <span className="muted">False</span>}</td>
-                  <Num v={e.nectar} />
                   <td className={e.percent === null ? "null" : ""}>{e.percent ?? "None"}</td>
                   <Num v={e.energy} />
-                  <td className={e.ms === null ? "null" : ""}>{e.ms === null ? "None" : fmtMs(e.ms)}</td>
-                  <Num v={e.surplus} />
+                  <Num v={e.nectar} />
+                  <Num v={e.pollen} />
+                  <td className={e.ms === null ? "null" : ""} title={e.flowerError ?? undefined}>{e.ms === null ? "None" : fmtMs(e.ms)}{e.flowerError ? " !" : ""}</td>
+                  <td className={e.beeMs == null ? "null" : ""} title={e.beeError ?? undefined}>{e.beeMs == null ? "None" : fmtMs(e.beeMs)}{e.beeError ? " !" : ""}</td>
                 </tr>
               ))}
             </tbody>

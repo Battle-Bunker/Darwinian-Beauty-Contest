@@ -8,17 +8,19 @@
 // flower, where it sits out its feed_cost rounds until its next arrival; a leave keeps it hovering until
 // its next turn takes it somewhere else.
 import { showValue, fmtE } from "../lib/format";
-import { fed, type Turn, type TurnIndex } from "../lib/turns";
+import { fed, PATCH, type Turn, type TurnIndex } from "../lib/turns";
 
 export const CELL_W = 170;
 export const CELL_H = 214;
 export const TOP_PAD = 58;
 export const SIDE_PAD = 36;
-/** Ground point → flower head. */
-export const HEAD_Y = -62;
-const HOVER_R = 54;
-const LAND_R = 19;
-const LABEL_MS = 1300;
+/** The flowers of a species' patch, around the cell's ground point: [dx, head height]. The middle one is tallest. */
+export const PATCH_AT: [number, number][] = [[-40, -48], [0, -70], [40, -52]];
+export const PATCH_SCALE = 1.02;
+/** Ground point → the patch's middle (for rings and pings around the whole species). */
+export const HEAD_Y = -60;
+const HOVER_R = 40;
+const LAND_R = 12;
 export const FX_MS = 900;
 
 export interface Pt { x: number; y: number }
@@ -61,9 +63,12 @@ export function layoutGarden(n: number, containerWidth: number): Layout {
   return { width: cols * CELL_W + 2 * SIDE_PAD, height: TOP_PAD + rows * CELL_H + 8, cols, pos };
 }
 
-export const headOf = (layout: Layout, f: number): Pt => {
+/** The head of flower `inst` of species f's patch (or the patch's middle, without inst). */
+export const headOf = (layout: Layout, f: number, inst?: number): Pt => {
   const p = layout.pos[f] ?? { x: 0, y: 0 };
-  return { x: p.x, y: p.y + HEAD_Y };
+  if (inst === undefined) return { x: p.x, y: p.y + HEAD_Y };
+  const [dx, dy] = PATCH_AT[inst] ?? PATCH_AT[1];
+  return { x: p.x + dx, y: p.y + dy };
 };
 
 /** The angle (radians) a visitor hovers at: the round's visitors to one flower fan out over its top. */
@@ -73,21 +78,21 @@ function slotAngle(slot: number, of: number): number {
 }
 
 export const hoverPt = (layout: Layout, t: Turn): Pt => {
-  const h = headOf(layout, t.flower), a = slotAngle(t.slot, t.of);
+  const h = headOf(layout, t.flower, t.inst), a = slotAngle(t.slot, t.of);
   return { x: h.x + HOVER_R * Math.cos(a), y: h.y + HOVER_R * Math.sin(a) * 0.92 };
 };
 
 /** Where a feeding bee sits: on the flower head, at its own angle (the golden angle apart, bee by bee), so
  *  bees feeding at one flower from different rounds don't sit on top of each other. */
 export const landPt = (layout: Layout, t: Turn): Pt => {
-  const h = headOf(layout, t.flower), a = -Math.PI / 2 + t.bee * 2.39996;
+  const h = headOf(layout, t.flower, t.inst), a = -Math.PI / 2 + t.bee * 2.39996;
   return { x: h.x + LAND_R * Math.cos(a), y: h.y + LAND_R * 0.8 * Math.sin(a) - 2 };
 };
 
-/** A bee's home: beside its own flower, low on the left. */
+/** A bee's home: by its own species' patch, low on the left. */
 export const homePt = (layout: Layout, b: number): Pt => {
-  const h = headOf(layout, b);
-  return { x: h.x - 50, y: h.y + 30 };
+  const p = layout.pos[b] ?? { x: 0, y: 0 };
+  return { x: p.x - 64, y: p.y - 10 };
 };
 
 export type BeeMode = "home" | "fly" | "visit" | "feed" | "idle";
@@ -106,18 +111,16 @@ export interface BeeDraw {
   named: boolean;     // show its name even when names are off (the followed team's bee)
 }
 
-/** A feed: a drop and sparkles, with the nectar it paid when known (public on every feed). */
-export interface FxDraw { x: number; y: number; u: number; text: string | null }
-export interface LabelDraw { x: number; y: number; text: string; kind: "kept"; u: number }
+/** A feed: a drop and sparkles, with the nectar the flower gave (public on every feed). */
+export interface FxDraw { x: number; y: number; u: number; text: string | null; pollen: string | null }
 /** The latest visit at the focus team's flower, with the details only that team sees (everyone, once revealed). */
 export interface Readout { flower: number; line1: string; line2: string; kind: "fed" | "left" | "fail"; age: number }
 
 export interface Frame {
   bees: BeeDraw[];
-  glow: number[];     // per flower: a visit's challenge is being answered (0..1)
-  ping: number[];     // per flower: the focus team's bee just arrived (0..1)
+  glow: number[];     // per flower of each patch (species × PATCH + flower): a visit's challenge is being answered (0..1)
+  ping: number[];     // per species: the focus team's bee just arrived (0..1)
   fx: FxDraw[];
-  labels: LabelDraw[];
   trail: { from: Pt; to: Pt; o: number } | null;
   readout: Readout | null;
 }
@@ -157,10 +160,9 @@ export function computeFrame(idx: TurnIndex, layout: Layout, p: FrameParams, now
   const FLY = Math.min(100, R * 0.5);
   const DEC = F + Math.min(25, p.beeMs / 2);
   const LAND = Math.min(110, R * 0.5);
-  const glow = new Array<number>(n).fill(0);
+  const glow = new Array<number>(n * PATCH).fill(0);   // per flower of every patch: species f, flower i at f × PATCH + i
   const ping = new Array<number>(n).fill(0);
   const fx: FxDraw[] = [];
-  const labels: LabelDraw[] = [];
   let trail: Frame["trail"] = null;
   let readT: Turn | null = null as Turn | null;
   const bees: BeeDraw[] = [];
@@ -179,7 +181,7 @@ export function computeFrame(idx: TurnIndex, layout: Layout, p: FrameParams, now
     const u = p.D - T.t0;
     const H = hoverPt(layout, T);
     const S = P ? restPt(layout, P) : home;
-    const head = headOf(layout, T.flower);
+    const head = headOf(layout, T.flower, T.inst);
     const isFed = fed(T);
     const end = T.end;
     let pos: Pt, mode: BeeMode, tilt = 0, flip: boolean;
@@ -226,19 +228,22 @@ export function computeFrame(idx: TurnIndex, layout: Layout, p: FrameParams, now
 
     // A flower glows while it answers.
     const g = u < F ? 1 - (u / F) * 0.4 : u < F + 160 ? 0.6 * (1 - (u - F) / 160) : 0;
-    if (g > glow[T.flower]) glow[T.flower] = g;
+    const gi = T.flower * PATCH + T.inst;
+    if (g > glow[gi]) glow[gi] = g;
 
     if (isFed && u >= DEC && u < DEC + FX_MS) {
-      fx.push({ ...landPt(layout, T), u: (u - DEC) / FX_MS, text: end && typeof end.nectar === "number" ? `+${fmtE(end.nectar)}` : null });
+      // The nectar the bee got (gold), and at the followed team's flower the pollen it gave (green): both public on a feed.
+      fx.push({
+        ...landPt(layout, T), u: (u - DEC) / FX_MS,
+        text: end && typeof end.nectar === "number" ? `+${fmtE(end.nectar)}` : null,
+        pollen: T.flower === p.focus && end && typeof end.pollen === "number" ? `${fmtE(end.pollen)} pollen` : null,
+      });
     }
 
     if (p.focus !== null) {
       if (b === p.focus) {
         if (T.flower !== p.focus && u < 500) ping[T.flower] = Math.max(ping[T.flower], 1 - u / 500);
         if (u < 450 && P) trail = { from: S, to: H, o: 1 - u / 450 };
-      }
-      if (T.flower === p.focus && isFed && end && typeof end.surplus === "number" && u >= DEC && u < DEC + LABEL_MS) {
-        labels.push({ x: head.x + 38, y: head.y + 22 + T.slot * 13, text: `+${fmtE(end.surplus)} kept`, kind: "kept", u: (u - DEC) / LABEL_MS });
       }
     }
 
@@ -257,12 +262,13 @@ export function computeFrame(idx: TurnIndex, layout: Layout, p: FrameParams, now
       readout = { flower: readT.flower, line1: "no answer in time: E = 0", line2: fed(readT) ? "fed, but nothing to share" : "left", kind: "fail", age };
     } else {
       const E = e.energy ?? 0;
-      const line1 = `${e.percent ?? "?"}% of ${fmtE(E)}${typeof e.ms === "number" ? ` · ${e.ms < 10 ? e.ms.toFixed(1) : Math.round(e.ms)} ms` : ""}`;
+      // Compute first (it shrinks what's left), then E, then how E went: nectar and pollen, or lost.
+      const line1 = `${typeof e.ms === "number" ? `${e.ms < 10 ? e.ms.toFixed(1) : Math.round(e.ms)} ms CPU → ` : ""}E ${fmtE(E)}, offers ${e.percent ?? "?"}%`;
       readout = fed(readT)
-        ? { flower: readT.flower, line1, line2: `fed · kept ${fmtE(e.surplus ?? 0)}`, kind: "fed", age }
-        : { flower: readT.flower, line1, line2: `left · ${fmtE(E)} lost`, kind: "left", age };
+        ? { flower: readT.flower, line1, line2: `fed: nectar ${fmtE(e.nectar ?? 0)} · pollen ${fmtE(e.pollen ?? 0)}`, kind: "fed", age }
+        : { flower: readT.flower, line1, line2: `left: ${fmtE(E)} lost`, kind: "left", age };
     }
   }
-  return { bees, glow, ping, fx, labels, trail, readout };
+  return { bees, glow, ping, fx, trail, readout };
 }
 

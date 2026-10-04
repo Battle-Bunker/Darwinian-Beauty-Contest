@@ -16,14 +16,15 @@ import { useLiveTick, type LiveStore } from "../lib/live";
 import { Value } from "./Value";
 import { FeedRow } from "./Feed";
 import { beeTiming, flowerTiming, TimingPanel } from "./Timing";
+import { MemoryView } from "./Memory";
 
 /** When a submitted change takes effect (versions are pinned per turn). */
 export const takesEffect = (kind: Kind) =>
   kind === "bee" ? "once your bee's current turn is over (it's asked first() straight away)" : "for turns that start from now (a turn under way finishes with the old one)";
 
 const BLURB: Record<Kind, string> = {
-  flower: "Your flower answers every bee that visits it: flower(challenge, ledger) returns [response, percent], the share of this turn's excess energy it gives the bee if the bee feeds. It runs fresh for every turn and remembers nothing. A smaller, faster flower makes more energy: E = (size cap − size) × max(0, 150 − CPU ms). Only feeds pay: an unfed visit's energy is lost.",
-  bee: "Your bee takes one turn a round at a random flower: first(ledger) gives a challenge when it has none queued, and decide(challenge, response, ledger) returns [\"feed\" or \"leave\", next challenge]. Feeding earns percent/100 × E as nectar and sits it out for the feed cost in rounds. Its variables last for as long as this version plays; what it prints shows up for your team below and in the feed.",
+  flower: "Your flower is a species: every visit is a bee meeting one of its flowers. flower(challenge) returns [response, percent]. It allocates its energy between compute, nectar and pollen: its size and its CPU time use up part of each visit's budget, leaving E = (size cap − size) × max(0, 150 − CPU ms); a bee that feeds gets percent% of E as nectar and the rest as pollen, which it carries to other flowers. An unfed visit's E is lost. It runs fresh for every turn, remembers nothing, and can query HISTORY.",
+  bee: "Your bee takes one turn a round at one flower of a random species, never told whose: first() gives a challenge when it has none queued, and decide(challenge, response) returns [\"feed\" or \"leave\", next challenge]. Feeding gets it nectar (and pollen to carry) and sits it out for the feed cost in rounds. It runs fresh for every call: only MEMORY, a small JSON value only it can write, carries over, and a new version starts it empty. It can query HISTORY; what it prints shows up for your team below and in the feed.",
 };
 
 const SCALARS = ["int", "float", "bool", "str"];
@@ -239,6 +240,12 @@ export function ProgramEditors({ view, base, store }: { view: GameView; base: st
             )}
 
             {live && participant && <LiveTiming store={store} teamId={team.id} kind={kind} limit={budget.ms} />}
+            {kind === "bee" && live && mine?.memory && (
+              <details className="prints" open>
+                <summary><b>Your bee's MEMORY</b> <span className="muted small">(read only; only your team sees it until the game ends)</span></summary>
+                <MemoryView memory={mine.memory} team={mine} view={view} own />
+              </details>
+            )}
             {kind === "bee" && live && <BeePrints store={store} teamId={team.id} />}
             <TryPanel key={`try:${kind}`} kind={kind} code={current} base={base} challengeType={cfg.challengeType}
               flowerCode={code.flower} view={view} />
@@ -371,6 +378,8 @@ function InterfaceBox({ iface, kind, language }: { iface: ProgramInterface; kind
       {t.rules.length > 0 && <ul className="iface-rules">{t.rules.map((r, i) => <li key={i}>{r}</li>)}</ul>}
       <p className="small muted">
         Programs can also read <code>GAME</code>: {language === "python" ? 'GAME["team"]' : "GAME.team"} (your team's number), teams, feed_cost, challenge_type, response_type, max_len, max_nodes, round_ms, ms (this program's limit per call), flower_ms and flower_size_cap; a flower also gets size, its own.
+        {" "}And <code>HISTORY</code>: every finished turn your team may see, as a query ({language === "python" ? 'HISTORY.turns.my_bee().eq("fed", True).group_by("flower").sum("nectar").rows()' : 'HISTORY.turns.myBee().eq("fed", true).groupBy("flower").sum("nectar").rows()'}). Querying it is part of the program's compute.
+        {kind === "bee" && <>{" "}A bee also has <code>MEMORY</code>: a JSON value it changes in place or reassigns ({language === "python" ? "after global MEMORY" : "MEMORY = …"}), saved after every call if it fits in {language === "python" ? 'GAME["memory"]' : "GAME.memory"} bytes. It's the only thing a bee keeps between calls.</>}
         {" "}A late answer, a crash or a malformed return reaches the bee as <code>{none}</code> and makes no energy.
       </p>
     </details>
@@ -383,6 +392,7 @@ function TryPanel({ kind, code, base, challengeType, flowerCode, view }: {
   const [text, setText] = useState(() => storage.get(`dbc:try:${challengeType}`) ?? "");
   const [ledgerText, setLedgerText] = useState("");
   const [rounds, setRounds] = useState(300);
+  const [memoryText, setMemoryText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [flower, setFlower] = useState<TryFlowerResult | null>(null);
@@ -399,7 +409,11 @@ function TryPanel({ kind, code, base, challengeType, flowerCode, view }: {
       if (kind === "bee") {
         if (!code.trim()) throw new Error("Write your bee first.");
         const n = Math.max(1, Math.min(5000, Math.round(rounds) || 300));
-        setBee(await api<TryBeeResult>("POST", `${base}/try`, { kind, code, rounds: n, ...(hasFlower ? { flower: flowerCode } : {}) }));
+        let memory: unknown;
+        if (memoryText.trim()) {
+          try { memory = json(memoryText.trim()); } catch { throw new Error("Couldn't read the starting MEMORY: write it as JSON, like {\"seen\": 3}."); }
+        }
+        setBee(await api<TryBeeResult>("POST", `${base}/try`, { kind, code, rounds: n, ...(hasFlower ? { flower: flowerCode } : {}), ...(memory !== undefined ? { memory } : {}) }));
       } else {
         if (!code.trim()) throw new Error("Write your flower first.");
         let challenges: unknown[];
@@ -408,7 +422,7 @@ function TryPanel({ kind, code, base, challengeType, flowerCode, view }: {
         }
         let ledger: unknown[] | undefined;
         if (ledgerText.trim()) {
-          try { const v = json(ledgerText.trim()); ledger = Array.isArray(v) ? v : [v]; } catch { throw new Error("Couldn't read the ledger: write it as a JSON list of entries."); }
+          try { const v = json(ledgerText.trim()); ledger = Array.isArray(v) ? v : [v]; } catch { throw new Error("Couldn't read the history: write it as a JSON list of turn records."); }
         }
         storage.set(`dbc:try:${challengeType}`, text || null);
         setFlower(await api<TryFlowerResult>("POST", `${base}/try`, { kind, code, challenges, ...(ledger ? { ledger } : {}) }));
@@ -429,6 +443,12 @@ function TryPanel({ kind, code, base, challengeType, flowerCode, view }: {
           <p className="small muted">
             Your bee plays a garden of just your own flower ({hasFlower ? "as it is in your flower editor right now" : "your team's latest saved flower: your flower editor is empty"}), round after round, back to back rather than in real time, with the real time limits.
           </p>
+          <details className="try-ledger">
+            <summary className="small">Start the test bee with a MEMORY (optional; {"{}"} by default)</summary>
+            <textarea value={memoryText} onChange={(e) => setMemoryText(e.target.value)} className="mono try-input" spellCheck={false} rows={2} placeholder='{"seen": 3}'
+              aria-label="Starting MEMORY for the test bee" />
+            <span className="small muted">For this test run only: your game bee's MEMORY is never changed by anyone but the bee.</span>
+          </details>
           <label className="field try-rounds"><span className="small">Rounds</span>
             <input type="number" min={1} max={5000} value={rounds} onChange={(e) => setRounds(Number(e.target.value))} />
           </label>
@@ -441,9 +461,9 @@ function TryPanel({ kind, code, base, challengeType, flowerCode, view }: {
               rows={SCALARS.includes(normType(challengeType)) ? 1 : 3} placeholder={fmt.placeholder} />
           </label>
           <details className="try-ledger">
-            <summary className="small">With a ledger (optional; empty by default)</summary>
+            <summary className="small">With a history (optional: turn records for HISTORY.turns; empty by default)</summary>
             <textarea value={ledgerText} onChange={(e) => setLedgerText(e.target.value)} className="mono try-input" spellCheck={false} rows={3}
-              placeholder='[{"round": 1, "bee": 1, "flower": 0, "challenge": 3, "response": 4, "fed": true, "nectar": 1000, "percent": 20, "energy": 5000, "ms": 1.2, "surplus": 4000}]' />
+              placeholder='[{"round": 1, "bee": 1, "flower": 0, "challenge": 3, "response": 4, "fed": true, "percent": 20, "energy": 5000, "nectar": 1000, "pollen": 4000}]' />
           </details>
         </>
       )}
@@ -456,7 +476,7 @@ function TryPanel({ kind, code, base, challengeType, flowerCode, view }: {
             {energies.length > 0 && (
               <p className="small">
                 {typeof flower.size === "number" && <>At {flower.size.toLocaleString()} nodes, E = ({cfg.budgets.flower.size.toLocaleString()} − {flower.size.toLocaleString()}) × (150 − CPU ms). </>}
-                Energy per visit: typically <b>{fmtE(median(energies))}</b>, at most <b>{fmtE(Math.max(...energies))}</b> node·ms. A bee that feeds gets percent/100 of it; your flower keeps the rest. A bee that leaves: nobody gets it.
+                Excess energy per visit: typically <b>{fmtE(median(energies))}</b>, at most <b>{fmtE(Math.max(...energies))}</b> node·ms. A bee that feeds gets the percent you offer as nectar and the rest as pollen; a bee that leaves: nobody gets it.
               </p>
             )}
             <TimingPanel data={{ values: fr.filter((x) => !x.error && typeof x.ms === "number").map((x) => x.ms!), misses: fr.filter((x) => x.error).length }}
@@ -484,9 +504,15 @@ function TryPanel({ kind, code, base, challengeType, flowerCode, view }: {
       {kind === "bee" && bee && (
         <div className="try-bee">
           <p>
-            <b>{plural(turns.length, "turn")}</b> in <b>{bee.rounds.toLocaleString()}</b> rounds · fed <b>{bee.feeds}</b> {bee.feeds === 1 ? "time" : "times"} · <DropIcon size={14} /> nectar <b title={fmtEExact(bee.nectar)}>{fmtE(bee.nectar)}</b> · your flower kept <b title={fmtEExact(bee.surplus)}>{fmtE(bee.surplus)}</b>
+            <b>{plural(turns.length, "turn")}</b> in <b>{bee.rounds.toLocaleString()}</b> rounds · fed <b>{bee.feeds}</b> {bee.feeds === 1 ? "time" : "times"} · <DropIcon size={14} /> nectar <b title={fmtEExact(bee.nectar)}>{fmtE(bee.nectar)}</b> · pollen <b title={fmtEExact(bee.pollen)}>{fmtE(bee.pollen)}</b>
           </p>
           {bee.problems.map((p, i) => <Alert key={i} kind="error"><b>{p.kind ?? "program"}{p.version ? ` v${p.version}` : ""}:</b> {p.error}</Alert>)}
+          {bee.memory !== undefined && (
+            <details className="try-ledger">
+              <summary className="small">The test bee's MEMORY at the end ({new TextEncoder().encode(JSON.stringify(sortKeys(bee.memory))).length.toLocaleString()} bytes)</summary>
+              <pre className="memory-value">{JSON.stringify(bee.memory, null, 2)}</pre>
+            </details>
+          )}
           <TimingPanel data={beeTiming(turns, null)} limit={cfg.budgets.bee.ms} title="Your bee's decision times" unit="turns" missLabel="too slow" />
           <ol className="feed-list try-list">
             {turns.slice(0, 300).map((a) => <FeedRow key={a.seq} a={a} teams={teams} myTeamId={null} own budgets={cfg.budgets} />)}
@@ -496,6 +522,13 @@ function TryPanel({ kind, code, base, challengeType, flowerCode, view }: {
       )}
     </div>
   );
+}
+
+/** JSON with sorted keys, as the game measures MEMORY. */
+function sortKeys(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(sortKeys);
+  if (v && typeof v === "object") return Object.fromEntries(Object.keys(v as object).sort().map((k) => [k, sortKeys((v as Record<string, unknown>)[k])]));
+  return v;
 }
 
 function median(xs: number[]) {
@@ -509,9 +542,9 @@ function EnergyMeter({ size, cap, ms }: { size: number | null; cap: number; ms: 
   const best = room === null ? null : room * ms;
   return (
     <div className="meter energy-meter" title="E = (size cap − size) × max(0, window − CPU ms): a smaller, faster flower makes more">
-      <div className="meter-label"><span>Max energy a visit</span><b>{best === null ? "–" : fmtE(best)}</b><span className="muted">node·ms</span></div>
+      <div className="meter-label"><span>Max E a visit</span><b>{best === null ? "–" : fmtE(best)}</b><span className="muted">node·ms</span></div>
       <div className="meter-track"><div className="meter-fill" style={{ width: `${room === null ? 0 : (room / Math.max(1, cap)) * 100}%` }} /></div>
-      <div className="small muted">({cap.toLocaleString()} − {size ?? "size"}) × ({ms} − CPU ms): every node and every millisecond you save is energy.</div>
+      <div className="small muted">({cap.toLocaleString()} − {size ?? "size"}) × ({ms} − CPU ms): every node and every millisecond you save is more to give as nectar and pollen.</div>
     </div>
   );
 }

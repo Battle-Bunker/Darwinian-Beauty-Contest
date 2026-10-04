@@ -1,11 +1,12 @@
-// Metrics of a finished one-flower game, from the game's API once it is over (every field is revealed then: percent,
-// energy, compute time, nectar, surplus, versions). Pure computation over the actions (computeMetrics); the fetching is
-// computeGameMetrics. Stored in arena.games.metrics by run.js and printed by analyze.js.
+// Metrics of a finished one-flower game, from the game's history once it is over (every field is revealed then: percent,
+// energy, compute time, nectar, pollen, versions). computeGameMetrics reads it with history queries (docs/QUERY.md: the
+// turns, versions, teams and scores entities); computeMetrics is pure computation over those rows. Stored in
+// arena.games.metrics by run.js and printed by analyze.js.
 //
 //   windows        per stretch of game time: turns, feeds and feed rate, excess energy produced, energy lost to unfed
-//                  turns, nectar, surplus, mean percent offered, flower failures, self-feeds
-//   distributions  percent (every answered turn), energy (every turn), nectar and surplus (every fed turn): quantiles
-//   teams          per team: its flower (turns, feeds, pollinators, percent, energy, energy lost, nectar paid, surplus,
+//                  turns, nectar, pollen, mean percent offered, flower failures, self-feeds
+//   distributions  percent (every answered turn), energy (every turn), nectar and pollen (every fed turn): quantiles
+//   teams          per team: its flower (turns, feeds, pollinators, percent, energy, energy lost, nectar paid, pollen,
 //                  compute) and its bee (turns, feeds, nectar, decision time, too-slow decisions, self-feeding)
 //   versions       per flower version: size and compute against the energy it made, the percent it offered, and what it
 //                  earned
@@ -18,7 +19,9 @@
 //   copies         how fast flowers copy each other's answers: a flower's first answer r to challenge c after another
 //                  team's flower answered r to c, and whether the copier's version went live after that answer appeared
 //   changes        every program version (who, which, when, size, node edits, cost, and who submitted it)
-//   final          the scores: fitness, allure, forage, surplus and the three shares
+//   final          the scores: fitness, pollination and forage with their two shares, and pollen
+//   memory         per bee: its MEMORY at the end (bytes of the cap, and the value), saves refused for the cap, its size
+//                  over the game (the runner's samples), and how often the team changed its bee (each change empties it)
 import { Api } from "./api.js";
 
 const r3 = (x) => (x == null || !Number.isFinite(x) ? null : Math.round(x * 1000) / 1000);
@@ -36,50 +39,53 @@ export function windowFor(durationMs) {
   return nice.find((w) => durationMs / w <= 8) || 600000;
 }
 
-/** The turns of a game: its feed and leave actions (each carries the whole turn). */
-const turnsOf = (actions) => actions.filter((a) => a.action === "feed" || a.action === "leave");
 const potential = (t) => (t.percent != null && t.energy != null ? (t.percent / 100) * t.energy : null); // nectar on offer
 
 /**
- * Metrics from a finished game. view: the game view after finish (teams with programs, participants, scores, config);
- * actions: every action, revealed; submits: [{ team_id, kind, version, source, session_no, refused }] from arena.requests
- * (who submitted each version), optional.
+ * Metrics from a finished game, from its history (docs/QUERY.md, canonical field names). game: { config, clockMs, round };
+ * teams, turns, versions, scores: the rows of those entities (teams by index); submits: [{ team_id, kind, version, source,
+ * session_no }] from arena.requests (who submitted each version), optional. Teams in the result are keyed by team id.
  */
-export function computeMetrics({ view, actions, submits = [], windowMs }) {
-  const config = view.game.config;
-  const ids = view.participants || view.teams.filter((t) => t.participant).map((t) => t.id);
-  const name = Object.fromEntries(view.teams.map((t) => [t.id, t.name]));
-  const turns = turnsOf(actions);
-  const durationMs = Math.max(Number(view.game.clockMs) || 0, ...actions.map((a) => a.atMs || 0));
+export function computeMetrics({ game, teams: teamRows, turns: turnRows, versions: versionRows = [], scores: scoreRows = [], submits = [], memorySamples = [], windowMs }) {
+  const config = game.config;
+  const byIndex = [...teamRows].sort((a, b) => a.index - b.index);
+  const ids = byIndex.map((t) => t.id);
+  const idOf = (i) => ids[i] ?? `#${i}`;
+  const name = Object.fromEntries(byIndex.map((t) => [t.id, t.name]));
+  // One object per turn, teams as ids.
+  const turns = turnRows.map((r) => ({ atMs: Number(r.atMs) || 0, round: r.round, bee: idOf(r.bee), flower: idOf(r.flower), action: r.fed ? "feed" : "leave",
+    c: r.challenge, r: r.response, percent: r.percent, energy: r.energy, nectar: r.nectar, pollen: r.pollen, ms: r.ms, flowerVersion: r.flowerVersion,
+    flowerError: r.flowerError, beeMs: r.beeMs, beeVersion: r.beeVersion, beeError: r.beeError }));
+  const durationMs = Math.max(Number(game.clockMs) || 0, ...turns.map((t) => t.atMs));
   const W = windowMs || windowFor(durationMs || config.minutes * 60000);
   const flowerMs = config.budgets?.flower?.ms ?? 150, cap = config.budgets?.flower?.size ?? 1100;
   const sizeOf = new Map(); // `${team}:${version}` -> size
   const liveAt = new Map(); // `${team}:${kind}:${version}` -> atMs
-  for (const t of view.teams) for (const k of ["flower", "bee"]) for (const v of t.programs?.[k] || []) {
-    if (k === "flower") sizeOf.set(`${t.id}:${v.version}`, v.size);
-    liveAt.set(`${t.id}:${k}:${v.version}`, Number(v.atMs) || 0);
+  for (const v of versionRows) {
+    if (v.kind === "flower") sizeOf.set(`${idOf(v.team)}:${v.version}`, v.size);
+    liveAt.set(`${idOf(v.team)}:${v.kind}:${v.version}`, Number(v.atMs) || 0);
   }
 
   // Windows.
   const windows = [];
   for (const t of turns) {
     const i = Math.floor((t.atMs || 0) / W);
-    const w = (windows[i] ||= { from: i * W, turns: 0, feeds: 0, energy: 0, energyLost: 0, nectar: 0, surplus: 0, percents: [], failures: 0, selfTurns: 0, selfFeeds: 0 });
+    const w = (windows[i] ||= { from: i * W, turns: 0, feeds: 0, energy: 0, energyLost: 0, nectar: 0, pollen: 0, percents: [], failures: 0, selfTurns: 0, selfFeeds: 0 });
     w.turns++;
     if (t.action === "feed") w.feeds++;
     w.energy += t.energy || 0;
     if (t.action !== "feed") w.energyLost += t.energy || 0;
     w.nectar += t.nectar || 0;
-    w.surplus += t.surplus || 0;
+    w.pollen += t.pollen || 0;
     if (t.r === null || t.r === undefined) w.failures++;
     else if (t.percent != null) w.percents.push(t.percent);
     if (t.bee === t.flower) { w.selfTurns++; if (t.action === "feed") w.selfFeeds++; }
   }
   const win = [];
   for (let i = 0; i < windows.length; i++) {
-    const w = windows[i] || { from: i * W, turns: 0, feeds: 0, energy: 0, energyLost: 0, nectar: 0, surplus: 0, percents: [], failures: 0, selfTurns: 0, selfFeeds: 0 };
+    const w = windows[i] || { from: i * W, turns: 0, feeds: 0, energy: 0, energyLost: 0, nectar: 0, pollen: 0, percents: [], failures: 0, selfTurns: 0, selfFeeds: 0 };
     win.push({ from: w.from, turns: w.turns, feeds: w.feeds, feedRate: r3(w.turns ? w.feeds / w.turns : null), energy: r3(w.energy), energyLost: r3(w.energyLost),
-      energyLostShare: r3(w.energy ? w.energyLost / w.energy : null), nectar: r3(w.nectar), surplus: r3(w.surplus), meanPercent: r3(mean(w.percents)),
+      energyLostShare: r3(w.energy ? w.energyLost / w.energy : null), nectar: r3(w.nectar), pollen: r3(w.pollen), meanPercent: r3(mean(w.percents)),
       failures: w.failures, selfFeeds: w.selfFeeds, selfTurns: w.selfTurns });
   }
 
@@ -100,7 +106,7 @@ export function computeMetrics({ view, actions, submits = [], windowMs }) {
         failures: atFlower.length - answered.length, meanPercent: r3(mean(answered.map((t) => t.percent).filter((x) => x != null))),
         percent: q5(answered.map((t) => t.percent).filter((x) => x != null)), energy: q5(atFlower.map((t) => t.energy || 0)),
         energyTotal: r3(sum(atFlower.map((t) => t.energy))), energyLost: r3(sum(atFlower.filter((t) => t.action !== "feed").map((t) => t.energy))),
-        nectarPaid: r3(sum(fed.map((t) => t.nectar))), surplus: r3(sum(fed.map((t) => t.surplus))), ms: q5(ms),
+        nectarPaid: r3(sum(fed.map((t) => t.nectar))), pollen: r3(sum(fed.map((t) => t.pollen))), ms: q5(ms),
         computeShare: r3(ms.length ? mean(ms) / flowerMs : null) },
       bee: { turns: byBee.length, feeds: beeFed.length, feedRate: r3(byBee.length ? beeFed.length / byBee.length : null), nectar: r3(sum(beeFed.map((t) => t.nectar))),
         nectarPerFeed: r3(beeFed.length ? sum(beeFed.map((t) => t.nectar)) / beeFed.length : null), flowersFedAt: new Set(beeFed.map((t) => t.flower)).size,
@@ -148,7 +154,7 @@ export function computeMetrics({ view, actions, submits = [], windowMs }) {
     versions.push({ team: name[team], teamId: team, version: version === "?" ? null : Number(version), atMs: liveAt.get(`${team}:flower:${version}`) ?? null, size,
       maxEnergy: size != null ? (cap - size) * flowerMs : null, turns: ts.length, feeds: fed.length, feedRate: r3(ts.length ? fed.length / ts.length : null),
       meanMs: r3(mean(ms)), p90Ms: r3(quantile(ms, 0.9)), meanEnergy: r3(mean(ts.map((t) => t.energy || 0))), meanPercent: r3(mean(ts.map((t) => t.percent).filter((x) => x != null))),
-      nectarPerFeed: r3(fed.length ? sum(fed.map((t) => t.nectar)) / fed.length : null), surplus: r3(sum(fed.map((t) => t.surplus))), failures: ts.filter((t) => t.r == null).length });
+      nectarPerFeed: r3(fed.length ? sum(fed.map((t) => t.nectar)) / fed.length : null), pollen: r3(sum(fed.map((t) => t.pollen))), failures: ts.filter((t) => t.r == null).length });
   }
   versions.sort((a, b) => String(a.team).localeCompare(String(b.team)) || (a.version ?? 0) - (b.version ?? 0));
 
@@ -193,53 +199,67 @@ export function computeMetrics({ view, actions, submits = [], windowMs }) {
 
   // Changes: every version, with who submitted it.
   const changes = [];
-  for (const t of view.teams) for (const k of ["flower", "bee"]) for (const v of t.programs?.[k] || []) {
-    const s = submits.find((r) => r.team_id === t.id && r.kind === k && r.version === v.version);
-    changes.push({ team: t.name, teamId: t.id, kind: k, version: v.version, atMs: Number(v.atMs) || 0, size: v.size, distance: v.distance, cost: v.cost,
+  for (const v of versionRows) {
+    const id = idOf(v.team);
+    const s = submits.find((r) => r.team_id === id && r.kind === v.kind && r.version === v.version);
+    changes.push({ team: name[id] ?? id, teamId: id, kind: v.kind, version: v.version, atMs: Number(v.atMs) || 0, size: v.size, distance: v.distance, cost: v.cost,
       problem: v.problem ? String(v.problem).slice(0, 160) : null, session: s ? s.session_no : null, source: s?.source || (Number(v.atMs) > 0 ? "unknown" : "lobby") });
   }
   changes.sort((a, b) => a.atMs - b.atMs || a.team.localeCompare(b.team));
 
-  const final = (view.scores || []).filter((x) => ids.includes(x.teamId)).map((x) => ({ team: name[x.teamId], teamId: x.teamId, fitness: r3(x.fitness), allure: r3(x.allure), forage: r3(x.forage),
-    surplus: r3(x.surplus), allureShare: r3(x.allureShare), forageShare: r3(x.forageShare), surplusShare: r3(x.surplusShare), feedsReceived: x.feedsReceived, feedsGiven: x.feedsGiven,
+  const final = scoreRows.map((x) => ({ team: name[idOf(x.team)], teamId: idOf(x.team), fitness: r3(x.fitness), pollination: r3(x.pollination), forage: r3(x.forage),
+    pollinationShare: r3(x.pollinationShare), forageShare: r3(x.forageShare), pollen: r3(x.pollen), feedsReceived: x.feedsReceived, feedsGiven: x.feedsGiven,
     pollinators: x.pollinators, nectarCollected: r3(x.nectarCollected), nectarGiven: r3(x.nectarGiven), nectarSources: x.nectarSources }));
+
+  // Bee MEMORY: its size at the end, saves refused for the cap, its size over time, and bee changes (each empties it).
+  const memCap = config.budgets?.bee?.memory ?? null;
+  const memory = { cap: memCap, teams: byIndex.map((t) => {
+    const beeVs = versionRows.filter((v) => idOf(v.team) === t.id && v.kind === "bee");
+    const inGame = beeVs.filter((v) => Number(v.atMs) > 0).map((v) => Number(v.atMs)).sort((a, b) => a - b);
+    const samples = memorySamples.filter((x) => x.team === t.id).map((x) => ({ clockMs: x.clockMs, bytes: x.bytes, version: x.version }));
+    const bytes = samples.map((x) => x.bytes).filter((x) => x != null);
+    const turnsOfBee = turns.filter((x) => x.bee === t.id);
+    return { team: t.name, teamId: t.id, finalBytes: t.memoryBytes ?? null, finalShare: r3(memCap && t.memoryBytes != null ? t.memoryBytes / memCap : null),
+      value: t.memory ?? null, overCap: turnsOfBee.filter((x) => /memory/i.test(x.beeError || "")).length, beeVersions: beeVs.length, beeChanges: inGame.length,
+      beeChangesPerMinute: r3(durationMs ? inGame.length / (durationMs / 60000) : null),
+      meanMsBetweenChanges: inGame.length > 1 ? r3(mean(inGame.slice(1).map((x, i) => x - inGame[i]))) : null,
+      sampledMaxBytes: bytes.length ? Math.max(...bytes) : null, sampledMeanBytes: r3(mean(bytes)), samples };
+  }) };
 
   const fedTurns = turns.filter((t) => t.action === "feed");
   return {
-    windowMs: W, durationMs, actions: actions.length, turns: turns.length, rounds: Number(view.game.round) || Math.max(0, ...actions.map((a) => a.round || 0)),
-    turnsPerSec: r3(durationMs ? turns.length / (durationMs / 1000) : null), roundsPerSec: r3(durationMs ? (Number(view.game.round) || 0) / (durationMs / 1000) : null),
+    windowMs: W, durationMs, turns: turns.length, rounds: Number(game.round) || Math.max(0, ...turns.map((t) => t.round || 0)),
+    turnsPerSec: r3(durationMs ? turns.length / (durationMs / 1000) : null), roundsPerSec: r3(durationMs ? (Number(game.round) || 0) / (durationMs / 1000) : null),
     totals: { feeds: fedTurns.length, feedRate: r3(turns.length ? fedTurns.length / turns.length : null), energy: r3(sum(turns.map((t) => t.energy))),
-      energyLost: r3(sum(turns.filter((t) => t.action !== "feed").map((t) => t.energy))), nectar: r3(sum(fedTurns.map((t) => t.nectar))), surplus: r3(sum(fedTurns.map((t) => t.surplus))),
+      energyLost: r3(sum(turns.filter((t) => t.action !== "feed").map((t) => t.energy))), nectar: r3(sum(fedTurns.map((t) => t.nectar))), pollen: r3(sum(fedTurns.map((t) => t.pollen))),
       failures: turns.filter((t) => t.r == null).length, selfFeeds: fedTurns.filter((t) => t.bee === t.flower).length },
     windows: win,
-    distributions: { percent: q5(answered.map((t) => t.percent)), energy: q5(turns.map((t) => t.energy || 0)), nectar: q5(fedTurns.map((t) => t.nectar || 0)), surplus: q5(fedTurns.map((t) => t.surplus || 0)) },
+    distributions: { percent: q5(answered.map((t) => t.percent)), energy: q5(turns.map((t) => t.energy || 0)), nectar: q5(fedTurns.map((t) => t.nectar || 0)), pollen: q5(fedTurns.map((t) => t.pollen || 0)) },
     teams, handshakes: { pairs, mutual }, versions, discrimination,
     copies: { matches: copies.length, copies: att.length, medianLatencyMs: median(att.map((x) => x.latencyMs)), byCopier },
-    changes, final,
+    changes, final, memory,
     config: { minutes: config.minutes, feedCost: config.feedCost, challengeType: config.challengeType, responseType: config.responseType, budgets: config.budgets },
-    clockMs: Number(view.game.clockMs) || 0, round: Number(view.game.round) || 0,
+    clockMs: Number(game.clockMs) || 0, round: Number(game.round) || 0,
   };
 }
 
-/** Every action of a game, page by page (revealed once the game is over). */
-export async function fetchActions(api, gPath, tok = null) {
+/** Every row of a history query, page by page (5,000 a page, the most the server returns). */
+export async function queryAll(api, gPath, ast, tok = null) {
   const out = [];
-  let after = 0;
-  for (;;) {
-    const page = await api.actions(tok, gPath, after, 5000);
-    const rows = (page.actions || []).filter((a) => a.seq > after);
-    out.push(...rows);
-    if (rows.length < 5000) break;
-    after = rows[rows.length - 1].seq;
+  for (let offset = 0; ; offset += 5000) {
+    const r = await api.query(tok, gPath, { ...ast, limit: 5000, offset });
+    out.push(...(r.rows || []));
+    if (!r.truncated || !(r.rows || []).length) break;
   }
   return out;
 }
 
-/** A finished game's metrics from its API. submits: who submitted each version (arena.requests), optional. */
-export async function computeGameMetrics(gPath, { api = Api, submits = [], windowMs } = {}) {
+/** A finished game's metrics, from its history (everything is revealed once it is over). submits: who submitted each
+ * version (arena.requests), optional. */
+export async function computeGameMetrics(gPath, { api = Api, submits = [], memorySamples = [], windowMs } = {}) {
   const view = await api.view(null, gPath);
-  const actions = await fetchActions(api, gPath);
-  return computeMetrics({ view, actions, submits, windowMs });
+  const [teams, turns, versions, scores] = await Promise.all(["teams", "turns", "versions", "scores"].map((from) => queryAll(api, gPath, { from })));
+  return computeMetrics({ game: view.game, teams, turns, versions, scores, submits, memorySamples, windowMs });
 }
 
 /** Who submitted each version of a game (a session, the scaffold, or the runner's lobby fallback): arena.requests. */

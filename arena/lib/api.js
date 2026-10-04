@@ -55,10 +55,11 @@ export const Api = {
   check: (tok, g, kind, code) => api(tok, "POST", `${g}/check`, { kind, code }),
   // A 422 (too big, can't afford it yet, game over) comes back as a body with ok: false and errors.
   submit: (tok, g, kind, code) => api(tok, "POST", `${g}/programs`, { kind, code }, { retries: 1 }),
-  /** A flower on challenges (with a ledger, default []); a bee for `rounds` rounds in a garden of just its own flower
-   * (`flower`: that code, else the team's latest flower). */
-  tryFlower: (tok, g, code, challenges, ledger) => api(tok, "POST", `${g}/try`, { kind: "flower", code, challenges, ledger }),
-  tryBee: (tok, g, code, { flower, rounds } = {}) => api(tok, "POST", `${g}/try`, { kind: "bee", code, flower, rounds }),
+  /** A flower on challenges (`history`: turn records for its HISTORY.turns, default none); a bee for `rounds` rounds in a
+   * garden of just its own flower (`flower`: that code, else the team's latest flower). */
+  tryFlower: (tok, g, code, challenges, history) => api(tok, "POST", `${g}/try`, { kind: "flower", code, challenges, ledger: history }),
+  /** memory: what the test bee starts with (default {}); a try never touches the game bee's MEMORY. */
+  tryBee: (tok, g, code, { flower, rounds, memory } = {}) => api(tok, "POST", `${g}/try`, { kind: "bee", code, flower, rounds, memory }),
   view: (tok, g) => api(tok, "GET", g),
   /** mine: only the turns of the team's bee and at its flower, as the team sees them (its token). Without a token: the
    * public fields only. */
@@ -66,6 +67,10 @@ export const Api = {
   /** The team ledger: exactly what the team's programs get (its token); a spectator gets the public fields. */
   ledger: (tok, g, after = 0, limit = 5000) => api(tok, "GET", `${g}/ledger?after=${after}&limit=${limit}`),
   scores: (tok, g) => api(tok, "GET", `${g}/scores`),
+  /** A history query (docs/QUERY.md): one game as the viewer may see it (its token; none: the public fields). */
+  query: (tok, g, ast) => api(tok, "POST", `${g}/query`, ast, { okStatuses: [] }),
+  /** A history query across a room's finished games (fully revealed). */
+  roomQuery: (tok, room, ast) => api(tok, "POST", `/rooms/${room}/query`, ast, { okStatuses: [] }),
   start: (tok, g) => api(tok, "POST", `${g}/start`),
   /** action: pause | resume | finish (the room owner). */
   status: (tok, g, action) => api(tok, "POST", `${g}/status`, { action }, { okStatuses: [409] }),

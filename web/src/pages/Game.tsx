@@ -24,6 +24,7 @@ import { GameClock, roundLine } from "../components/Clock";
 import { TimingTable } from "../components/Timing";
 import { ChangeTimeline, historyTeams, VersionBrowser } from "../components/History";
 import { ValueTypes } from "../components/Value";
+import { QueryConsole } from "../components/QueryConsole";
 
 const SCORES_MS = 1500; // how often to poll the live numbers while the game runs
 
@@ -150,10 +151,19 @@ function GameBody({ view, base, store }: { view: GameView; base: string; store: 
   const replay = over && history ? { id: "replay", label: "Replay", node: <Section id="replay" title="Replay" className="garden-card"><Replay view={view} history={history} /></Section> } : null;
   const versions = over && history && historyTeams(view).length ? { id: "versions", label: "Changes", node: <Section id="versions" title="Who changed what, when"><Versions view={view} history={history} /></Section> } : null;
 
+  const orderTeams = (view.participants ?? []).map((pid) => view.teams.find((t) => t.id === pid)!).filter(Boolean);
+  const query = !lobby ? {
+    id: "query", label: "Query",
+    node: (
+      <Section id="query" title="Query the history">
+        <QueryConsole target={{ kind: "game", room: view.room.shortId, game: g.shortId, teams: orderTeams, myIndex: myIndex >= 0 ? myIndex : null }} />
+      </Section>
+    ),
+  } : null;
   const present = <T,>(x: T | null): x is T => !!x;
   if (lobby) sections.push(teams, ...(programs ? [programs] : []), garden);
-  else if (live) sections.push(garden, ...[programs, scores, feed, ledgerSec, changes, teams].filter(present));
-  else sections.push(...[replay, scores, versions, feed, ledgerSec, teams].filter(present));
+  else if (live) sections.push(garden, ...[programs, scores, feed, ledgerSec, changes, query, teams].filter(present));
+  else sections.push(...[replay, scores, versions, feed, ledgerSec, query, teams].filter(present));
   return (
     <ValueTypes.Provider value={{ challenge: cfg.challengeType, response: cfg.responseType }}>
       <div className="stack game-page">

@@ -41,46 +41,66 @@ export function readme({ ext, apiBase, examples, common = null }) {
 | RULES.md | the game's rules (exactly what every player sees) |
 | interface.txt | the function signatures and this game's types |
 | config.json | this game's settings: types, minutes, budgets, feed cost, the teams in index order, the public API address |
-| flower.${ext}, bee.${ext} | YOUR PROGRAMS. While the game runs they hold the versions that were playing when this session started. Editing a file changes nothing in the game: only \`tools/submit.py\` does |
+| flower.${ext}, bee.${ext} | YOUR PROGRAMS: your flower species and your bee. While the game runs they hold the versions that were playing when this session started. Editing a file changes nothing in the game: only \`tools/submit.py\` does |
 | drafts/ | edits from an earlier session that were never submitted |
 | history/ | every version your team submitted in this game (\`<kind>/v1.${ext}\`, ...) and versions.md: when each went live, its size, its change cost |
 | status.txt | what \`tools/status.py\` said when this session started |
 | notebook.md | your private notes: they carry over to your next sessions and games |
-| stream/ledger.jsonl | YOUR TEAM LEDGER: one entry per finished turn, oldest first, exactly what your programs get (what everyone sees of every turn, plus your own private fields). The runner appends new entries about once a second while the game runs. Read it with code; never write to it |
+| stream/history.jsonl | YOUR PROGRAMS' HISTORY: one turn record per finished turn, oldest first, exactly what your programs see as \`HISTORY.turns\`. The runner appends new turns about once a second while the game runs. Query it (tools/query.py --local, garden.HISTORY); never write to it |
 | stream/actions.jsonl | the public action stream: every arrival and every turn's end as anyone sees it |
 | stream/mine.jsonl | your own bee's and flower's actions as your team sees them, with your bee's printouts (\`log\`), decision times and errors |
-| stream/teams.json, stream/SCHEMA.md | team ids, names and ledger indices; what each line holds |
-| tools/ | the tools below |
+| stream/teams.json, stream/SCHEMA.md | team ids, names and indices; what each file holds |
+| tools/ | the tools below, and history.py: the query builder your programs use, as a Python module |
 | previous-games/ | earlier games in this arena, revealed: every team's final code, the standings, everyone's change timeline, and what the interview panel said about you |
 ${examples ? `| examples/ | example programs; every team in this garden has the same files (${examples.join(", ")}) |\n` : ""}${common ? `| common/ | common knowledge: every team in this garden has exactly these files and knows that every other team has them (${common.join(", ")}). Read only: the runner restores them at every game |\n` : ""}
 ## Tools (run them with python3 from this folder)
 
 | command | what |
 |---|---|
-| \`python3 tools/status.py [--afford N]\` | the clock and time left, your change budgets right now (available, rate, cap; when you could afford N nodes), the live scores, your versions playing now |
+| \`python3 tools/status.py [--afford N] [--memory]\` | the clock and time left, your change budgets right now (available, rate, cap; when you could afford N nodes), the live scores, your versions playing now, your bee's MEMORY (size; its value with --memory) |
 | \`python3 tools/check.py <kind> [file]\` | free: size against the budget, what submitting would cost now and whether you can afford it, a quick runtime test |
-| \`python3 tools/try.py flower [file] [challenge ...]\` | free: run a flower on challenges on the game's real runner: response, percent, energy and compute time for each |
-| \`python3 tools/try.py bee [file] [--flower FILE] [--rounds N]\` | free: run your bee for N rounds in a garden of just your own flower (FILE, else your latest submitted flower) |
-| \`python3 tools/submit.py <kind> [file]\` | submit: in the lobby it's free; during the game it goes live at once and pays its change cost |
-| \`python3 tools/ledger.py summary\\|tail\\|mine\\|live ...\` | your team ledger: per flower team and per bee team counts, your flower's percent, energy and surplus, your bee's nectar |
-| \`python3 tools/stream.py tail\\|answers\\|sql ...\` | the public stream: the latest actions, what each flower answered to a challenge, SQL over your ledger and the public stream |
+| \`python3 tools/try.py flower [file] [challenge ...] [--history FILE]\` | free: run a flower on challenges on the game's real runner: response, percent, energy and compute time for each |
+| \`python3 tools/try.py bee [file] [--flower FILE] [--rounds N] [--memory JSON]\` | free: run a test bee for N rounds in a garden of just your own flower (FILE, else your latest submitted flower), starting with that MEMORY; it never touches your game bee's MEMORY |
+| \`python3 tools/submit.py <kind> [file]\` | submit: in the lobby it's free; during the game it goes live at once and pays its change cost. A new bee version starts with an empty MEMORY |
+| \`python3 tools/query.py '<query>' [--local\\|--room]\` | ask the game's history with the query builder your programs use (below) |
+| \`python3 tools/query.py summary\` | per species and per bee: turns, feeds, nectar, pollen; your own flower's percent, energy and compute |
+| \`python3 tools/stream.py tail [-n 20]\` | the latest public actions |
 
-\`<kind>\` is flower or bee; \`[file]\` defaults to \`<kind>.${ext}\`. Your own scripts can use the same tools:
-
-\`\`\`python
-import sys; sys.path.insert(0, "tools")
-from _runner import call            # call("submit", kind="flower", code=src) -> {"ok", "text", "cost", "available", ...}
-from stream import Stream           # Stream().turns() (your ledger), .actions() (public), .follow(), .mine()
-\`\`\`
+\`<kind>\` is flower or bee; \`[file]\` defaults to \`<kind>.${ext}\`. Your own scripts can use the same tools through
+tools/garden.py (\`import sys; sys.path.insert(0, "tools"); import garden\`), and the scaffold API it documents.
 
 A script you start may run in the background while your session lasts: start it with the Bash tool's
 \`run_in_background\` option and send its output to a file here, e.g. \`python3 follow.py > follow.log 2>&1\` (a trailing
 \`&\` is refused). Everything your session started is stopped when the session ends; only your scaffold outlives sessions.
 
+## Querying history
+
+Your programs read \`HISTORY.turns\`; you query the same records, with the same builder, from tools/query.py or a script:
+
+| where | what it runs on |
+|---|---|
+| \`garden.HISTORY\`, \`query.py --local\` | stream/history.jsonl, in memory: exactly your programs' HISTORY (turns), about a second behind |
+| \`garden.game\`, \`query.py\` | this game, run by the game server as your team may see it: turns, versions (your own), teams (your bee's MEMORY in \`memory\`, \`memory_bytes\`), pairs, scores |
+| \`garden.room\`, \`query.py --room\` | every finished game in this arena, fully revealed (\`game\` tells them apart) |
+
+\`\`\`python
+q = garden.game.turns.my_bee().eq("fed", True).group_by("flower").sum("nectar").count()
+q.rows()      # (Row(flower=0, sum_nectar=..., count=...), ...)
+q.ast()       # the query as JSON
+garden.HISTORY.turns.rounds(10, 20).eq("flower", 2).order_by("round", desc=True).limit(5).rows()   # (Turn, ...)
+garden.HISTORY.turns.count().value()
+\`\`\`
+
+Every step returns a new query; results are read-only. Conditions: \`eq ne lt le gt ge\` (field, value), \`in_\` (field,
+values), \`between\` (field, lo, hi), \`is_null\` / \`not_null\` (field), \`rounds(lo, hi)\`. Scopes: \`my_bee() my_flower()
+mine()\`. Shape: \`select(*fields) group_by(*fields) count(field=None) sum avg min max (field) order_by(field, desc=False)
+limit(n) offset(n)\`. Run: \`rows() first() value() ast()\`. Aggregates are named \`count\` and \`<fn>_<field>\`. A field your
+team may not see reads as None, in filters and aggregates too. Fields: \`python3 tools/query.py schema\`.
+
 ## The game's public API
 
-The public API needs no login, and you may read it (GET only) at ${apiBase}. It shows public fields only (your private
-ones are in stream/ledger.jsonl and stream/mine.jsonl, or ask the runner for a fresh page: \`call("ledger", after=seq)\`):
+The public API needs no login, and you may read it (GET) at ${apiBase}, and post history queries to its query endpoint.
+It shows public fields only (your private ones are in stream/history.jsonl and stream/mine.jsonl, and in garden.game):
 - \`GET ${apiBase}/events?after=<seq>\`: Server-Sent Events, lines \`data: {...}\` with \`{actions, lastSeq, clockMs, round, status}\`
   as they happen
 - \`${apiBase.replace(/^http/, "ws")}/ws?after=<seq>\`: the same messages over a WebSocket, one JSON text frame each. Python's
@@ -88,6 +108,7 @@ ones are in stream/ledger.jsonl and stream/mine.jsonl, or ask the runner for a f
   (\`garden.follow_live()\` does)
 - \`GET ${apiBase}/actions?after=<seq>&limit=<n ≤ 5000>\`: a page of actions
 - \`GET ${apiBase}/scores\`: the live scoreboard, cheap to poll
+- \`POST ${apiBase}/query\`: a history query (the JSON of \`q.ast()\`), public fields only
 - \`GET ${apiBase}\`: the game view (status, clock, scores)
 
 Read at most a few times a second.
@@ -96,22 +117,24 @@ Read at most a few times a second.
 
 export const SCHEMA = `# The streams
 
-## stream/ledger.jsonl: your team ledger
+## stream/history.jsonl: your programs' HISTORY
 
-One entry per finished turn, oldest first: exactly what your bee and flower get as \`ledger\`, plus \`seq\` (the turn's
-number in the public stream). Teams are indices \`0\` to \`N - 1\` (stream/teams.json maps them to names; yours is
-\`GAME["team"]\` in your programs, \`"myIndex"\` in teams.json). A field your team may not see is null; the server decides
-(RULES.md, "What everyone can see").
+One turn record per finished turn, oldest first: exactly what your bee and flower see as \`HISTORY.turns\`, plus \`seq\`
+(the turn's number in the public stream). Field names are as the API gives them (\`atMs\`, \`flowerVersion\`, ...); the
+query builder and garden use the Python names (\`at_ms\`, \`flower_version\`, ...). Teams are indices \`0\` to \`N - 1\`
+(stream/teams.json maps them to names; yours is \`GAME["team"]\` in your programs, \`"myIndex"\` in teams.json). A field
+your team may not see is null; the server decides (RULES.md, "What everyone can see").
 
 | field | what |
 |---|---|
-| seq, round | the turn's place in the public stream, and its round (a round is 200 ms of game time) |
-| bee, flower | whose bee visited whose flower (team indices) |
+| seq, round, atMs, turn | the turn's place in the public stream, its round (200 ms of game time), its game time, the bee's turn number |
+| bee, flower | whose bee met a flower of whose species (team indices) |
 | challenge, response | what the bee asked and what the flower answered (null if the flower failed) |
 | fed | whether the bee fed |
-| nectar, surplus | on a feed: what the bee got, and what the flower's team kept (on a turn without a feed: null and 0) |
-| percent, energy | the share offered and the turn's excess energy E: on every feed, and on every turn at your own flower (else null) |
-| ms | your own flower's compute time (null elsewhere) |
+| nectar, pollen | on a feed: the nectar and the pollen the flower gave the bee (on a turn without a feed: null and 0) |
+| percent, energy | the share offered as nectar and the turn's excess energy E: on every feed, and on every turn at your own species (else null) |
+| ms, flowerVersion, flowerError | your own flower's compute time, version and error (null elsewhere) |
+| beeMs, beeVersion, beeError | your own bee's decision time, version and error, e.g. a MEMORY over its cap (null elsewhere) |
 
 ## stream/actions.jsonl: the public stream
 
@@ -122,39 +145,38 @@ actions: its \`arrive\` (written at once) and its end, \`feed\` or \`leave\`.
 |---|---|
 | seq, atMs, round | order, game time in ms, round |
 | turn | the bee's turn number: (bee, turn) identifies a turn |
-| bee, flower | team ids: whose bee, whose flower |
+| bee, flower | team ids: whose bee, whose species |
 | action | arrive, feed or leave |
 | c, r | on feed and leave: the challenge and the response (null if the flower failed) |
-| percent, energy, nectar, surplus | on a feed: the share offered, the excess energy, what the bee got and what the flower kept (on a leave only surplus, 0) |
+| percent, energy, nectar, pollen | on a feed: the share offered, the excess energy, the nectar and the pollen the flower gave (on a leave only pollen, 0) |
 
 ## stream/mine.jsonl: your own team's actions
 
-The actions of your bee and at your flower as your team sees them (same \`seq\`), with your private fields: at your
+The actions of your bee and at your species as your team sees them (same \`seq\`), with your private fields: at your
 flower \`percent\` and \`energy\` (also on turns without a feed), \`ms\`, \`flowerError\`, \`flowerVersion\`; for your bee
 \`beeMs\` (decision time), \`beeError\`, \`beeVersion\` and \`log\` (what it printed). A field you may not see is simply
 missing. Once the game is over everything is public.
 
 \`stream/teams.json\`: \`{"teams": {id: name}, "me": your team id, "participants": [ids in index order], "names": [names in
-index order], "myIndex": your index}\`.
+index order], "myIndex": your index}\` (indices are fixed when the game starts).
 
-Reading them:
-
-\`\`\`python
-import sys; sys.path.insert(0, "tools")
-from stream import Stream
-s = Stream()
-for e in s.turns(): ...          # your team ledger
-for e in s.follow(): ...         # new ledger entries as they arrive
-\`\`\`
-
-or \`python3 tools/ledger.py summary\`, \`python3 tools/stream.py tail -n 20\`, \`python3 tools/stream.py answers 42\`.
+Querying them: \`python3 tools/query.py summary\`, \`python3 tools/query.py --local 'turns.my_flower().count()'\`,
+\`python3 tools/stream.py tail -n 20\`; from a script, \`garden.HISTORY.turns...\` and \`garden.follow()\`.
 `;
 
-/** Install the workspace tools (always the runner's own copy: a team's edits to them don't persist). */
+/** The generated Python history client (docs/QUERY.md), installed as tools/history.py. */
+export const HISTORY_CLIENT = path.join(ARENA_DIR, "..", "vendor", "query", "history.py");
+
+/** The runner's own copy of a workspace tool, by file name (tools/*.py, and history.py from vendor/query/). */
+export const toolSource = (name) => (name === "history.py" ? HISTORY_CLIENT : path.join(TOOLS_SRC, name));
+
+/** Install the workspace tools (always the runner's own copy: a team's edits to them don't persist), with the history
+ * client that garden.py and query.py use. */
 export function installTools(dir) {
   const dest = path.join(dir, "tools");
   fs.mkdirSync(dest, { recursive: true }); // the team's own files in tools/ stay; ours are put back as they were
   for (const f of fs.readdirSync(TOOLS_SRC)) if (f.endsWith(".py")) fs.copyFileSync(path.join(TOOLS_SRC, f), path.join(dest, f));
+  if (fs.existsSync(HISTORY_CLIENT)) fs.copyFileSync(HISTORY_CLIENT, path.join(dest, "history.py"));
 }
 
 /** The version of each program playing now (the latest), from the team's own view. */
@@ -227,7 +249,7 @@ export async function prepareWorkspace({ arena, gameRow, persona, view, stream, 
   writeHistory(dir, ext, view, me);
   if (statusText) write(path.join(dir, "status.txt"), statusText);
 
-  // The streams: the shared public copy (hard link); the team's own ledger and actions (its token, kept by the runner).
+  // The streams: the shared public copy (hard link); the team's own history and actions (its token, kept by the runner).
   const sdir = path.join(dir, "stream");
   if (stream) {
     stream.linkInto(path.join(sdir, "actions.jsonl"));
@@ -296,15 +318,18 @@ export async function writeGameRecord(gdir, g, arena, api = Api) {
         if (i === vs.length - 1 && v.code != null) write(path.join(gdir, "final-code", safeName(t.name), `${k}.${ext}`), v.code);
       });
     }
+    // Every bee's MEMORY is revealed once the game is over.
+    if (t.memory) write(path.join(gdir, "final-code", safeName(t.name), "bee-memory.json"), JSON.stringify(t.memory, null, 1));
   }
   progs.sort((a, b) => (a.atMs || 0) - (b.atMs || 0) || String(name[a.team_id]).localeCompare(String(name[b.team_id])) || a.kind.localeCompare(b.kind) || a.version - b.version);
   const scores = Object.fromEntries((view.scores || []).map((x) => [x.teamId, x]));
   const ents = await all("SELECT team_id, team_name, fitness, fitness_rank, sat_out FROM arena.entries WHERE game_id = $1 ORDER BY fitness_rank NULLS LAST", [g.id]);
   const f2 = (x) => (x == null ? "-" : Number(x).toFixed(2));
   write(path.join(gdir, "standings.md"), `# Game ${g.generation}: ${config.minutes} minutes, ${Number(view.game.round || 0)} rounds, ${Number(view.game.lastSeq || 0)} actions\n\n` +
-    `| rank | team | fitness | allure share | forage share | surplus share |\n|---|---|---|---|---|---|\n` +
-    ents.map((e) => { const x = scores[e.team_id] || {}; return `| ${e.fitness_rank ?? "-"} | ${e.team_name} | ${e.sat_out ? "sat out" : f2(e.fitness ?? x.fitness)} | ${f2(x.allureShare)} | ${f2(x.forageShare)} | ${f2(x.surplusShare)} |`; }).join("\n") +
-    `\n\n${config.revealOnFinish ? "Every team's final code is in final-code/." : "Code stays secret in this game."} changes.md lists every team's program versions.\n`);
+    `| rank | team | fitness | pollination (share) | forage (share) | pollen given | feeds received / given |\n|---|---|---|---|---|---|---|\n` +
+    ents.map((e) => { const x = scores[e.team_id] || {}; return `| ${e.fitness_rank ?? "-"} | ${e.team_name} | ${e.sat_out ? "sat out" : f2(e.fitness ?? x.fitness)} | ` +
+      `${f2(x.pollination)} (${f2(x.pollinationShare)}) | ${f2(x.forage)} (${f2(x.forageShare)}) | ${f2(x.pollen)} | ${x.feedsReceived ?? "-"} / ${x.feedsGiven ?? "-"} |`; }).join("\n") +
+    `\n\n${config.revealOnFinish ? "Every team's final code is in final-code/, with each bee's final MEMORY." : "Code stays secret in this game; each bee's final MEMORY is in final-code/."} changes.md lists every team's program versions.\n`);
   write(path.join(gdir, "changes.md"), `# Every program version in game ${g.generation}\n\n| game time | team | program | version | size | change cost | first problem |\n|---|---|---|---|---|---|---|\n` +
     progs.map((p) => `| ${Number(p.atMs) ? mmss(Number(p.atMs)) : "lobby"} | ${name[p.team_id]} | ${p.kind} | v${p.version} | ${p.size} | ${p.cost} | ${p.problem ? String(p.problem).replace(/\|/g, "/").slice(0, 100) : "-"} |`).join("\n") + "\n");
 }
@@ -410,29 +435,41 @@ const ENVDUMP = /(^|[;&|\s])(env|printenv|set)(\s*$|\s*[|;&>])|os\.environ|proce
 const AUTH = /\/api\/auth|dev\/login|login.*secret|\/api\/me\b|\/api\/my\//i;
 const URLS = /(?:https?|wss?):\/\/[^\s'"`<>()\]\\,]+/g;
 
-/** Is this URL the game's public API on localhost (any path under /api/rooms/, or the bare base)? */
+const LOCAL_URL = /^(?:https?|wss?):\/\/(localhost|127\.0\.0\.1)(?::(\d+))?(\/.*)?$/i;
+
+/** Is this URL the game's public API on localhost (any path under /api/rooms/, the query schema, or the bare base)? */
 export function allowedUrl(u, port = "4100") {
-  const m = String(u).match(/^(?:https?|wss?):\/\/(localhost|127\.0\.0\.1)(?::(\d+))?(\/.*)?$/i);
+  const m = String(u).match(LOCAL_URL);
   if (!m || (m[2] || "80") !== String(port)) return false;
   const p = m[3] || "/";
-  return p === "/" || /^\/api\/?$/.test(p) || /^\/api\/rooms(\/|\?|$)/.test(p);
+  return p === "/" || /^\/api\/?$/.test(p) || /^\/api\/rooms(\/|\?|$)/.test(p) || /^\/api\/query\/schema\/?$/.test(p);
 }
 
-/** A network use in a command or in written code: fine if it only reads the game's public API on localhost. */
+/** Is this URL a history query endpoint of the game server (docs/QUERY.md: POST …/games/:g/query or /rooms/:room/query)? */
+export function queryUrl(u, port = "4100") {
+  const m = String(u).match(LOCAL_URL);
+  return !!m && (m[2] || "80") === String(port) && /^\/api\/rooms\/[^/?#]+(?:\/games\/[^/?#]+)?\/query\/?$/.test(m[3] || "");
+}
+
+/** A network use in a command or in written code: fine if it only reads the game's public API on localhost (GET), or
+ * posts history queries to its query endpoints (without credentials: the public fields). */
 export function networkFinding(text, port) {
-  if (RAW_NET.test(text)) return { severity: "violation", detail: "raw network access (only GETs to the game's public API are allowed)" };
-  const urls = text.match(URLS) || [];
-  const bad = urls.filter((u) => !allowedUrl(u.replace(/[.;:]+$/, ""), port));
+  if (RAW_NET.test(text)) return { severity: "violation", detail: "raw network access (only GETs to the game's public API and its history queries are allowed)" };
+  const urls = (text.match(URLS) || []).map((u) => u.replace(/[.;:]+$/, ""));
+  const bad = urls.filter((u) => !allowedUrl(u, port));
   if (bad.length) return { severity: "violation", detail: `network access outside the game's public API: ${bad[0]}` };
   if (CREDENTIALS.test(text)) return { severity: "violation", detail: `credentials in a network request: ${text.match(CREDENTIALS)[0]}` };
-  if (WRITE_HTTP.test(text)) return { severity: "violation", detail: `a write request (only GETs to the public API are allowed; submit with tools/submit.py): ${text.match(WRITE_HTTP)[0].trim()}` };
+  // A write request is allowed only to the query endpoints: every URL in it must be one (and there must be one).
+  if (WRITE_HTTP.test(text) && (!urls.length || urls.some((u) => !queryUrl(u, port)))) {
+    return { severity: "violation", detail: `a write request (only GETs to the public API and POSTs to its query endpoint are allowed; submit with tools/submit.py): ${text.match(WRITE_HTTP)[0].trim()}` };
+  }
   if (!urls.length) return { severity: "warning", detail: "network code without a URL the audit can check" };
   return null;
 }
 
 // Writing to the shared stream: it is hard-linked into every workspace (the runner repairs it, but it's not allowed).
-const STREAM_WRITE_SH = /(?:>>?|\btee\b(?:\s+-a)?)\s*['"]?(?:\.\/)?stream\/|\b(?:rm|truncate|shred)\b[^;&|\n]*\bstream\/(?:actions|mine|ledger)|\bsed\s+-i[^;&|\n]*\bstream\/|\b(?:cp|mv|ln)\b[^;&|\n]*\s['"]?(?:\.\/)?stream\/[^\s;&|]*\s*(?:$|[;&|\n])/;
-const STREAM_WRITE_PY = /open\(\s*[^)\n]*stream\/(?:actions|mine|ledger)\.jsonl[^)\n]*,\s*['"][^'"]*[wax+]|(?:os\.remove|os\.unlink|shutil\.\w+)\([^)\n]*stream\//;
+const STREAM_WRITE_SH = /(?:>>?|\btee\b(?:\s+-a)?)\s*['"]?(?:\.\/)?stream\/|\b(?:rm|truncate|shred)\b[^;&|\n]*\bstream\/(?:actions|mine|history)|\bsed\s+-i[^;&|\n]*\bstream\/|\b(?:cp|mv|ln)\b[^;&|\n]*\s['"]?(?:\.\/)?stream\/[^\s;&|]*\s*(?:$|[;&|\n])/;
+const STREAM_WRITE_PY = /open\(\s*[^)\n]*stream\/(?:actions|mine|history)\.jsonl[^)\n]*,\s*['"][^'"]*[wax+]|(?:os\.remove|os\.unlink|shutil\.\w+)\([^)\n]*stream\//;
 
 /** Drop the bodies of heredocs that only write data to a file (`cat > f <<'E' … E`, `tee`): notebook prose like
  * "1.1e11 .. 8.9e11" isn't a path. Heredocs fed to an interpreter (`python3 - <<'E'`) keep their bodies. The written

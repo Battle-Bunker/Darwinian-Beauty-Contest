@@ -1,6 +1,6 @@
-// Scores: Darwinian fitness = N³ × allure share × forage share × surplus share, live for everyone, with the
-// three numbers behind it, the breakdown team by team, and the whole-game ledgers (who fed where, the
-// nectar each bee got at each flower, and what each flower kept). A value the server holds back shows "–".
+// Scores: Darwinian fitness = N² × pollination share × forage share, live for everyone, with the numbers
+// behind it, the breakdown team by team, and the whole-game ledgers (who fed where, the nectar each bee got
+// at each flower, and the pollen each flower gave each bee). A value the server holds back shows "–".
 import { useMemo } from "react";
 import type { GameView, Team, TeamScore } from "../types";
 import { fmt2, fmt3, fmtClock, fmtE, fmtEExact, pct, poss } from "../lib/format";
@@ -8,17 +8,17 @@ import { InfoTip, TeamChip } from "./ui";
 import { TrophyIcon } from "./Icons";
 
 const TERMS = {
-  fitness: "N³ × allure share × forage share × surplus share. Par is 1.0 however many teams play: above 1, you're out-evolving the average team.",
-  allure: "Rootsum of the feeds at your flower, counted per bee team: Σ √(times that team's bee fed at your flower). How widely you're pollinated.",
-  forage: "Rootsum of the nectar your bee got, counted per flower team: Σ √(nectar from that team's flower). How widely your bee eats.",
-  surplus: "The energy your flower kept: (1 − percent/100) × E on every turn where a bee fed at it. A visit without a feed keeps nothing.",
+  fitness: "N² × pollination share × forage share. Par is 1.0 however many teams play: above 1, you're out-evolving the average team.",
+  pollination: "Σ over bee teams of √(the pollen your flower gave that team's bee). Bees carry pollen to other flowers: how widely, and how much, your flower is pollinated.",
+  forage: "Σ over flower teams of √(the nectar your bee got there). How widely your bee eats.",
+  pollen: "Everything your flower gave as pollen: (1 − percent/100) × E on every feed at it. A visit without a feed gives nothing.",
   share: "Your value ÷ everyone's added up. Par is 1/N.",
   pollinators: "How many different teams' bees fed at your flower.",
-  nectarSources: "How many different teams' flowers paid your bee.",
-  rootsum: "Add up the square root of each entry: rootsum(4, 0, 0, 0) = 2 but rootsum(1, 1, 1, 1) = 4. Earning from many teams beats earning the same from one.",
+  nectarSources: "How many different teams' flowers gave your bee nectar.",
+  rootsum: "Add up the square root of each entry: rootsum(400, 0, 0, 0) = 20 but rootsum(100, 100, 100, 100) = 40. Giving to (or getting from) many teams beats the same amount from one.",
 };
 
-/** A rootsum: two decimals while small, whole numbers once it's big (forage sums roots of node·ms). */
+/** A rootsum: two decimals while small, whole numbers once it's big (they sum roots of node·ms). */
 const fmtRoot = (x: number) => (x < 100 ? fmt2(x) : Math.round(x).toLocaleString());
 const num = (x: number | null | undefined): x is number => typeof x === "number" && Number.isFinite(x);
 const shareText = (x: number | null) => (num(x) ? pct(x) : "–");
@@ -29,11 +29,11 @@ export function Scores({ view }: { view: GameView }) {
   const myTeamId = view.me?.teamId ?? null;
   const n = view.participants?.length ?? 0;
   const scores = view.scores ?? [];
-  const sorted = [...scores].sort((a, b) => (b.fitness ?? -1) - (a.fitness ?? -1) || b.allure - a.allure);
+  const sorted = [...scores].sort((a, b) => (b.fitness ?? -1) - (a.fitness ?? -1) || (b.pollination ?? 0) - (a.pollination ?? 0));
   const maxFit = Math.max(1.5, ...scores.map((s) => s.fitness ?? 0));
   const over = g.status === "finished";
   if (!scores.length) return <p className="muted">Scores appear once the game starts.</p>;
-  const n3 = n * n * n;
+  const n2 = n * n;
 
   return (
     <div className="scores">
@@ -49,15 +49,15 @@ export function Scores({ view }: { view: GameView }) {
               <th>#</th>
               <th className="left">Team</th>
               <th className="left"><span className="th-tip">Fitness <InfoTip>{TERMS.fitness}</InfoTip></span></th>
-              <th><span className="th-tip">Allure <InfoTip>{TERMS.allure}</InfoTip></span></th>
+              <th><span className="th-tip">Pollination <InfoTip>{TERMS.pollination}</InfoTip></span></th>
               <th><span className="th-tip">Forage <InfoTip>{TERMS.forage}</InfoTip></span></th>
-              <th><span className="th-tip">Surplus <InfoTip>{TERMS.surplus}</InfoTip></span></th>
+              <th><span className="th-tip">Pollen given <InfoTip>{TERMS.pollen}</InfoTip></span></th>
               <th title="Feeds at this team's flower">Fed here</th>
               <th><span className="th-tip">Pollinators <InfoTip>{TERMS.pollinators}</InfoTip></span></th>
               <th title="Feeds this team's bee made">Bee fed</th>
               <th><span className="th-tip">Sources <InfoTip>{TERMS.nectarSources}</InfoTip></span></th>
-              <th title="Nectar this team's bee collected">Nectar got</th>
-              <th title="Nectar this team's flower paid to bees">Nectar paid</th>
+              <th title="Nectar this team's bee got">Nectar got</th>
+              <th title="Nectar this team's flower gave to bees">Nectar given</th>
             </tr>
           </thead>
           <tbody>
@@ -66,9 +66,9 @@ export function Scores({ view }: { view: GameView }) {
                 <td>{i + 1}</td>
                 <th scope="row" className="left"><TeamChip team={teams[s.teamId]} you={s.teamId === myTeamId} short /></th>
                 <td className="left">{num(s.fitness) ? <FitnessBar value={s.fitness} max={maxFit} /> : <span className="muted" title="Revealed when the game ends">–</span>}</td>
-                <td><ShareCell value={fmtRoot(s.allure)} share={s.allureShare} n={n} /></td>
+                <td><ShareCell value={num(s.pollination) ? fmtRoot(s.pollination) : "–"} share={s.pollinationShare} n={n} /></td>
                 <td><ShareCell value={num(s.forage) ? fmtRoot(s.forage) : "–"} share={s.forageShare} n={n} /></td>
-                <td><ShareCell value={num(s.surplus) ? fmtE(s.surplus) : "–"} title={num(s.surplus) ? fmtEExact(s.surplus) : "private"} share={s.surplusShare} n={n} /></td>
+                <td title={num(s.pollen) ? fmtEExact(s.pollen) : ""}>{num(s.pollen) ? fmtE(s.pollen) : "–"}</td>
                 <td>{s.feedsReceived.toLocaleString()}</td>
                 <td>{s.pollinators} / {n}</td>
                 <td>{s.feedsGiven.toLocaleString()}</td>
@@ -89,25 +89,25 @@ export function Scores({ view }: { view: GameView }) {
               <li key={s.teamId} className={s.teamId === myTeamId ? "mine" : ""}>
                 <TeamChip team={teams[s.teamId]} you={s.teamId === myTeamId} short />
                 <span className="mono breakdown-formula">
-                  {n}³ × {shareText(s.allureShare)} × {shareText(s.forageShare)} × {shareText(s.surplusShare)} = <b>{num(s.fitness) ? fmt3(s.fitness) : "–"}</b>
+                  {n}² × {shareText(s.pollinationShare)} × {shareText(s.forageShare)} = <b>{num(s.fitness) ? fmt3(s.fitness) : "–"}</b>
                 </span>
-                <span className="small muted">{num(s.fitness) && n3 ? weakest(s) : ""}</span>
+                <span className="small muted">{num(s.fitness) && n2 ? weaker(s) : ""}</span>
               </li>
             ))}
           </ol>
-          <p className="small muted">allure share × forage share × surplus share, times {n}³ = {n3.toLocaleString()} so that a team at par on all three scores exactly 1.</p>
+          <p className="small muted">pollination share × forage share, times {n}² = {n2.toLocaleString()} so that a team at par on both scores exactly 1.</p>
         </details>
       )}
 
       {view.ledgers && view.participants && (
         <div className="ledgers" style={{ ["--heat-min" as string]: `${Math.min(1100, 190 + n * 54)}px` }}>
-          <Heat title="Who fed where" hint="Feeds each bee (row) made at each flower (column). A column's rootsum is that flower's allure."
+          <Heat title="Who fed where" hint="Feeds each bee (row) made at each flower (column)."
             matrix={view.ledgers.feeds} order={view.participants} teams={teams} myTeamId={myTeamId} tone="feed" fmt={(v) => compact(v)} verb={(v) => `fed ${v.toLocaleString()} time${v === 1 ? "" : "s"}`} />
           <Heat title="Nectar each bee got where" hint="Nectar each bee (row) got at each flower (column). A row's rootsum is that bee's forage."
             matrix={view.ledgers.nectar} order={view.participants} teams={teams} myTeamId={myTeamId} tone="nectar" fmt={fmtE} verb={(v) => `got ${fmtEExact(v)} of nectar`} />
-          {Array.isArray(view.ledgers.surplus?.[0]) && (
-            <Heat title="What each flower kept, from each bee" hint="Surplus each flower (column) kept from feeds by each bee (row). A column's sum is that flower's surplus."
-              matrix={view.ledgers.surplus} order={view.participants} teams={teams} myTeamId={myTeamId} tone="kept" fmt={fmtE} verb={(v) => `left ${fmtEExact(v)} of surplus`} />
+          {Array.isArray(view.ledgers.pollen?.[0]) && (
+            <Heat title="Pollen each flower gave each bee" hint="Pollen each flower (column) gave each bee (row) on its feeds. A column's rootsum is that flower's pollination."
+              matrix={view.ledgers.pollen} order={view.participants} teams={teams} myTeamId={myTeamId} tone="kept" fmt={fmtE} verb={(v) => `was given ${fmtEExact(v)} of pollen`} />
           )}
         </div>
       )}
@@ -116,25 +116,22 @@ export function Scores({ view }: { view: GameView }) {
         <summary>How scoring works</summary>
         <dl>
           <dt>Rootsum</dt><dd>{TERMS.rootsum}</dd>
-          <dt>Allure</dt><dd>{TERMS.allure}</dd>
+          <dt>Pollination</dt><dd>{TERMS.pollination}</dd>
           <dt>Forage</dt><dd>{TERMS.forage}</dd>
-          <dt>Surplus</dt><dd>{TERMS.surplus}</dd>
+          <dt>Pollen</dt><dd>{TERMS.pollen}</dd>
           <dt>Shares</dt><dd>{TERMS.share}</dd>
           <dt>Fitness</dt><dd>{TERMS.fitness}</dd>
         </dl>
-        <p className="small muted">So you want many different bees to feed at your flower, your bee to eat at many different flowers, and your flower to keep a good part of the energy it makes. Energy only counts when a bee feeds: an unfed visit's energy is lost to everyone. Your own bee and flower count like any other team's.</p>
+        <p className="small muted">Each team's flower is a species, and every visit is a bee meeting one of its flowers. On a feed the flower gives the bee nectar (the percent it offered of its excess energy) and pollen (the rest), which the bee carries to other flowers. Flowers want to give pollen to many different bees; bees want nectar from many different flowers. An unfed visit's energy is lost to everyone. Your own bee and flower count like any other team's.</p>
       </details>
     </div>
   );
 }
 
-/** Which of a team's three shares holds it back most, in words. */
-function weakest(s: TeamScore): string {
-  const parts: [string, number | null][] = [["allure", s.allureShare], ["forage", s.forageShare], ["surplus", s.surplusShare]];
-  const known = parts.filter((p): p is [string, number] => num(p[1]));
-  if (known.length < 3) return "";
-  known.sort((a, b) => a[1] - b[1]);
-  return `weakest: ${known[0][0]}`;
+/** Which of a team's two shares holds it back, in words. */
+function weaker(s: TeamScore): string {
+  if (!num(s.pollinationShare) || !num(s.forageShare)) return "";
+  return s.pollinationShare < s.forageShare ? "weaker: pollination" : s.forageShare < s.pollinationShare ? "weaker: forage" : "";
 }
 
 function ShareCell({ value, share, n, title }: { value: string; share: number | null; n: number; title?: string }) {

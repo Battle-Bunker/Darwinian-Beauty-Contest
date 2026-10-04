@@ -1,0 +1,847 @@
+# ----------------------------------------------------------------------------------------------- runtime
+# Everything below is the same for every schema: the query AST, the immutable builder, the in-memory
+# executor (Table) and the remote executor (connect). docs/QUERY.md describes the algorithm; the
+# TypeScript client (history.ts) implements the same one.
+
+class QueryError(Exception):
+    """A query the schema doesn't allow (or a server that refused one)."""
+
+
+_AST_KEYS = ("from", "scope", "where", "groupBy", "aggregates", "select", "orderBy", "limit", "offset")
+_AGGREGATES = ("count", "sum", "avg", "min", "max")
+_MAX_IN = 1000
+_MAX_INT = 2 ** 53 - 1
+_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+
+
+def _fail(message: str) -> NoReturn:
+    raise QueryError(message)
+
+
+def _is_json(v: Any, depth: int = 0) -> bool:
+    if depth > 64:
+        return False
+    if v is None or isinstance(v, (bool, str)):
+        return True
+    if isinstance(v, (int, float)):
+        return isinstance(v, int) or math.isfinite(v)
+    if isinstance(v, (list, tuple)):
+        return all(_is_json(x, depth + 1) for x in v)
+    if isinstance(v, dict):
+        return all(isinstance(k, str) and _is_json(x, depth + 1) for k, x in v.items())
+    return False
+
+
+def json_equal(a: Any, b: Any) -> bool:
+    """JSON equality: numbers by value, objects regardless of key order, true is not 1."""
+    if isinstance(a, bool) or isinstance(b, bool):
+        return type(a) is type(b) and a == b
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        return a == b
+    if isinstance(a, (list, tuple)):
+        return isinstance(b, (list, tuple)) and len(a) == len(b) and all(json_equal(x, y) for x, y in zip(a, b))
+    if isinstance(a, dict):
+        return isinstance(b, dict) and len(a) == len(b) and all(k in b and json_equal(v, b[k]) for k, v in a.items())
+    return type(a) is type(b) and a == b
+
+
+def _entity(name: Any) -> dict:
+    if not isinstance(name, str) or name not in SCHEMA["entities"]:
+        _fail(f'unknown entity "{name}" (use {", ".join(SCHEMA["entities"])})')
+    return SCHEMA["entities"][name]
+
+
+def _field(e: dict, name: Any, what: str) -> dict:
+    for f in e["fields"]:
+        if f["name"] == name:
+            return f
+    _fail(f'{what}: unknown field "{name}"')
+
+
+def _check_value(f: dict, v: Any, what: str) -> None:
+    if v is None:
+        _fail(f"{what}: the value can't be null (use is_null)")
+    t = f["type"]
+    ok = (type(v) is int and abs(v) <= _MAX_INT) if t == "int" else \
+        (isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)) if t == "float" else \
+        isinstance(v, bool) if t == "bool" else \
+        isinstance(v, str) if t == "str" else _is_json(v)
+    if not ok:
+        _fail(f"{what}: {json.dumps(v, default=str)[:40]} isn't {'an int' if t == 'int' else 'JSON' if t == 'json' else 'a ' + t}")
+
+
+def validate(ast: dict) -> dict:
+    """Check a query (a JSON AST, canonical field names) against the schema, and fill in the defaults."""
+    if not isinstance(ast, dict):
+        _fail("a query must be an object")
+    for k in ast:
+        if k not in _AST_KEYS:
+            _fail(f'unknown query key "{k}"')
+    e = _entity(ast.get("from"))
+    types = SCHEMA["types"]
+    out: dict = {"from": ast["from"]}
+    scope = ast.get("scope")
+    if scope is not None:
+        if scope not in e["scopes"]:
+            _fail(f'{ast["from"]} has no scope "{scope}" ({", ".join(e["scopes"]) or "none"})')
+        out["scope"] = scope
+    if ast.get("where") is not None:
+        if not isinstance(ast["where"], (list, tuple)):
+            _fail("where must be a list")
+        where = []
+        for i, c in enumerate(ast["where"]):
+            what = f"where[{i}]"
+            if not isinstance(c, dict):
+                _fail(f"{what} must be {{field, op, value}}")
+            f = _field(e, c.get("field"), what)
+            op, v = c.get("op"), c.get("value")
+            if op not in types[f["type"]]["ops"]:
+                _fail(f'{what}: {f["name"]} ({f["type"]}) takes {", ".join(types[f["type"]]["ops"])}, not "{op}"')
+            if op == "isNull":
+                if not isinstance(v, bool):
+                    _fail(f"{what}: isNull takes true or false")
+            elif op == "in":
+                if not isinstance(v, (list, tuple)) or not 0 < len(v) <= _MAX_IN:
+                    _fail(f"{what}: in takes a list of 1 to {_MAX_IN} values")
+                for x in v:
+                    _check_value(f, x, what)
+                v = list(v)
+            elif op == "between":
+                if not isinstance(v, (list, tuple)) or len(v) != 2:
+                    _fail(f"{what}: between takes [low, high]")
+                for x in v:
+                    _check_value(f, x, what)
+                v = list(v)
+            else:
+                _check_value(f, v, what)
+            where.append({"field": f["name"], "op": op, "value": v})
+        out["where"] = where
+    names: set = set()
+    if ast.get("groupBy") is not None:
+        if not isinstance(ast["groupBy"], (list, tuple)):
+            _fail("groupBy must be a list")
+        group = []
+        for g in ast["groupBy"]:
+            f = _field(e, g, "groupBy")
+            if not types[f["type"]]["group"]:
+                _fail(f'groupBy: {f["name"]} ({f["type"]}) can\'t be grouped by')
+            if f["name"] in names:
+                _fail(f'groupBy: {f["name"]} twice')
+            names.add(f["name"])
+            group.append(f["name"])
+        out["groupBy"] = group
+    if ast.get("aggregates") is not None:
+        if not isinstance(ast["aggregates"], (list, tuple)):
+            _fail("aggregates must be a list")
+        aggs = []
+        for i, a in enumerate(ast["aggregates"]):
+            what = f"aggregates[{i}]"
+            if not isinstance(a, dict) or a.get("fn") not in _AGGREGATES:
+                _fail(f"{what}: fn must be count, sum, avg, min or max")
+            fn, field = a["fn"], None
+            if a.get("field") is not None:
+                f = _field(e, a["field"], what)
+                if fn not in types[f["type"]]["aggregates"]:
+                    _fail(f'{what}: {fn} doesn\'t apply to {f["name"]} ({f["type"]})')
+                field = f["name"]
+            elif fn != "count":
+                _fail(f"{what}: {fn} needs a field")
+            name = a.get("as") or (f"{fn}_{field}" if field else fn)
+            if not isinstance(name, str) or not _NAME.match(name) or len(name) > 63:
+                _fail(f'{what}: "{name}" isn\'t a valid name')
+            if name in names:
+                _fail(f'{what}: the name "{name}" is taken')
+            names.add(name)
+            aggs.append({"fn": fn, "as": name} if field is None else {"fn": fn, "field": field, "as": name})
+        out["aggregates"] = aggs
+    grouped = "groupBy" in out or "aggregates" in out
+    if ast.get("select") is not None:
+        if grouped:
+            _fail("select can't be combined with groupBy or aggregates")
+        if not isinstance(ast["select"], (list, tuple)) or not ast["select"]:
+            _fail("select takes a list of fields")
+        sel = []
+        for s in ast["select"]:
+            f = _field(e, s, "select")
+            if f["name"] in sel:
+                _fail(f'select: {f["name"]} twice')
+            sel.append(f["name"])
+        out["select"] = sel
+    if ast.get("orderBy") is not None:
+        if not isinstance(ast["orderBy"], (list, tuple)):
+            _fail("orderBy must be a list")
+        order = []
+        for i, o in enumerate(ast["orderBy"]):
+            what = f"orderBy[{i}]"
+            if not isinstance(o, dict):
+                _fail(f"{what} must be {{field, dir}}")
+            d = o.get("dir") or "asc"
+            if d not in ("asc", "desc"):
+                _fail(f"{what}: dir must be asc or desc")
+            if grouped:
+                if o.get("field") not in names:
+                    _fail(f'{what}: order a grouped query by its group fields or aggregates, not "{o.get("field")}"')
+            else:
+                f = _field(e, o.get("field"), what)
+                if not types[f["type"]]["order"]:
+                    _fail(f'{what}: {f["name"]} ({f["type"]}) can\'t be sorted')
+            order.append({"field": o["field"], "dir": d})
+        out["orderBy"] = order
+    for k in ("limit", "offset"):
+        v = ast.get(k)
+        if v is None:
+            continue
+        if type(v) is not int or v < 0:
+            _fail(f"{k} must be a whole number >= 0")
+        out[k] = v
+    return out
+
+
+def _sort(rows: list, order: list, get: Callable[[Any, str], Any]) -> list:
+    """Sort by `order` (nulls last either way), stably: ties keep the rows' order."""
+    for o in reversed(order):
+        f = o["field"]
+        if o["dir"] == "desc":
+            rows.sort(key=lambda r: (get(r, f) is not None, get(r, f)), reverse=True)
+        else:
+            rows.sort(key=lambda r: (get(r, f) is None, get(r, f)))
+    return rows
+
+
+class Row:
+    """A read-only result row (aggregates, or selected fields): row["name"] or row.name."""
+    __slots__ = ("_d",)
+
+    def __init__(self, d: dict):
+        object.__setattr__(self, "_d", d)
+
+    def __getitem__(self, k: str) -> Any:
+        return self._d[k]
+
+    def __getattr__(self, k: str) -> Any:
+        try:
+            return self._d[k]
+        except KeyError:
+            raise AttributeError(k) from None
+
+    def __setattr__(self, k: str, v: Any) -> None:
+        raise AttributeError("rows are read-only")
+
+    def get(self, k: str, default: Any = None) -> Any:
+        return self._d.get(k, default)
+
+    def keys(self):
+        return self._d.keys()
+
+    def values(self):
+        return self._d.values()
+
+    def items(self):
+        return self._d.items()
+
+    def __iter__(self):
+        return iter(self._d)
+
+    def __len__(self) -> int:
+        return len(self._d)
+
+    def __contains__(self, k: object) -> bool:
+        return k in self._d
+
+    def __eq__(self, other: object) -> bool:
+        return self._d == (other._d if isinstance(other, Row) else other)
+
+    def __hash__(self) -> int:
+        return hash(tuple(self._d.items()))
+
+    def __repr__(self) -> str:
+        return "Row(" + ", ".join(f"{k}={v!r}" for k, v in self._d.items()) + ")"
+
+    def to_dict(self) -> dict:
+        return dict(self._d)
+
+
+R = TypeVar("R")
+F = TypeVar("F", bound=str)
+
+
+class Query(Generic[R, F]):
+    """An immutable query: every method returns a new one. Run it with rows(), first() or value()."""
+    __slots__ = ("_e", "_parts", "_runner")
+
+    def __init__(self, entity: str, parts: tuple, runner: Callable[[dict], tuple]):
+        object.__setattr__(self, "_e", entity)
+        object.__setattr__(self, "_parts", parts)  # ((key, value), ...): the AST, frozen
+        object.__setattr__(self, "_runner", runner)
+
+    def __setattr__(self, k: str, v: Any) -> None:
+        raise AttributeError("queries are immutable: every method returns a new one")
+
+    def __repr__(self) -> str:
+        return f"Query({json.dumps(self.ast())})"
+
+    def _get(self, key: str, default: Any = None) -> Any:
+        for k, v in self._parts:
+            if k == key:
+                return v
+        return default
+
+    def _next(self, key: str, value: Any) -> "Query[R, F]":
+        parts = tuple((k, v) for k, v in self._parts if k != key) + ((key, value),)
+        return Query(self._e, parts, self._runner)
+
+    def _name(self, field: str) -> str:
+        """A field's canonical name, from its Python name (or its canonical one)."""
+        names = _NAMES[self._e]
+        if field in names:
+            return names[field]
+        if field in _PY_NAMES[self._e]:
+            return field
+        _fail(f'{self._e} has no field "{field}"')
+
+    def _where(self, field: str, op: str, value: Any) -> "Query[R, F]":
+        return self._next("where", self._get("where", ()) + ((self._name(field), op, value),))
+
+    def _agg(self, fn: str, field: Optional[str], as_: Optional[str]) -> "Query[R, F]":
+        name = as_ or (f"{fn}_{field}" if field else fn)
+        return self._next("aggregates", self._get("aggregates", ()) + ((fn, self._name(field) if field else None, name),))
+
+    def eq(self, field: F, value: Any) -> "Query[R, F]":
+        return self._where(field, "eq", value)
+
+    def ne(self, field: F, value: Any) -> "Query[R, F]":
+        return self._where(field, "ne", value)
+
+    def lt(self, field: F, value: float) -> "Query[R, F]":
+        return self._where(field, "lt", value)
+
+    def le(self, field: F, value: float) -> "Query[R, F]":
+        return self._where(field, "le", value)
+
+    def gt(self, field: F, value: float) -> "Query[R, F]":
+        return self._where(field, "gt", value)
+
+    def ge(self, field: F, value: float) -> "Query[R, F]":
+        return self._where(field, "ge", value)
+
+    def in_(self, field: F, values: Sequence[Any]) -> "Query[R, F]":
+        return self._where(field, "in", tuple(values))
+
+    def between(self, field: F, low: float, high: float) -> "Query[R, F]":
+        return self._where(field, "between", (low, high))
+
+    def is_null(self, field: F) -> "Query[R, F]":
+        return self._where(field, "isNull", True)
+
+    def not_null(self, field: F) -> "Query[R, F]":
+        return self._where(field, "isNull", False)
+
+    def rounds(self, low: int, high: int) -> "Query[R, F]":
+        """Rounds low to high, inclusive (entities sorted by round)."""
+        if _entity(self._e)["sortedBy"] != "round":
+            _fail(f"{self._e} has no rounds")
+        return self._where("round", "between", (low, high))
+
+    def my_bee(self) -> "Query[R, F]":
+        """Only your team's bee's turns."""
+        return self._next("scope", "myBee")
+
+    def my_flower(self) -> "Query[R, F]":
+        """Only the turns at your team's flower."""
+        return self._next("scope", "myFlower")
+
+    def mine(self) -> "Query[R, F]":
+        """Only your team's records (turns: your bee's or at your flower)."""
+        return self._next("scope", "mine")
+
+    def select(self, *fields: F) -> "Query[R, F]":
+        """Only these fields in each row."""
+        return self._next("select", tuple(self._name(f) for f in fields))
+
+    def group_by(self, *fields: F) -> "Query[R, F]":
+        """One row per group, holding the group fields and the aggregates."""
+        return self._next("groupBy", tuple(self._name(f) for f in fields))
+
+    def count(self, field: Optional[F] = None, as_: Optional[str] = None) -> "Query[R, F]":
+        """Rows (or a field's non-null values), named count (count_<field>) unless as_ says otherwise."""
+        return self._agg("count", field, as_)
+
+    def sum(self, field: F, as_: Optional[str] = None) -> "Query[R, F]":
+        return self._agg("sum", field, as_)
+
+    def avg(self, field: F, as_: Optional[str] = None) -> "Query[R, F]":
+        return self._agg("avg", field, as_)
+
+    def min(self, field: F, as_: Optional[str] = None) -> "Query[R, F]":
+        return self._agg("min", field, as_)
+
+    def max(self, field: F, as_: Optional[str] = None) -> "Query[R, F]":
+        return self._agg("max", field, as_)
+
+    def order_by(self, field: str, desc: bool = False) -> "Query[R, F]":
+        """Sort by a field (or, grouped, an aggregate's name). Nulls last; ties keep the natural order."""
+        names = _NAMES[self._e]
+        return self._next("orderBy", self._get("orderBy", ()) + ((names.get(field, field), "desc" if desc else "asc"),))
+
+    def limit(self, n: int) -> "Query[R, F]":
+        return self._next("limit", n)
+
+    def offset(self, n: int) -> "Query[R, F]":
+        return self._next("offset", n)
+
+    def ast(self) -> dict:
+        """The query as its JSON AST (a new dict every time)."""
+        out: dict = {"from": self._e}
+        for k, v in self._parts:
+            if k == "where":
+                v = [{"field": f, "op": op, "value": list(x) if isinstance(x, tuple) else x} for f, op, x in v]
+            elif k == "aggregates":
+                v = [{"fn": fn, "as": a} if f is None else {"fn": fn, "field": f, "as": a} for fn, f, a in v]
+            elif k == "orderBy":
+                v = [{"field": f, "dir": d} for f, d in v]
+            elif k in ("groupBy", "select"):
+                v = list(v)
+            out[k] = v
+        return out
+
+    def rows(self) -> Tuple[Any, ...]:
+        """The result rows: records (named tuples) for a plain query, else Rows."""
+        return self._runner(self.ast())
+
+    def first(self) -> Any:
+        """The first result row, or None."""
+        rows = self._next("limit", 0 if self._get("limit") == 0 else 1).rows()
+        return rows[0] if rows else None
+
+    def value(self) -> Any:
+        """The value of a query's only aggregate (without group_by)."""
+        aggs = self._get("aggregates", ())
+        if len(aggs) != 1 or self._get("groupBy") is not None:
+            _fail("value() needs exactly one aggregate and no group_by")
+        return self.rows()[0][aggs[0][2]]
+
+
+def _test(c: dict, i: int, t: str) -> Callable[[Any], bool]:
+    op, v = c["op"], c["value"]
+    if op == "isNull":
+        return (lambda r: r[i] is None) if v else (lambda r: r[i] is not None)
+    if t == "json":
+        if op == "eq":
+            return lambda r: r[i] is not None and json_equal(r[i], v)
+        if op == "ne":
+            return lambda r: r[i] is not None and not json_equal(r[i], v)
+        return lambda r: r[i] is not None and any(json_equal(r[i], w) for w in v)
+    if op == "eq":
+        return lambda r: r[i] is not None and r[i] == v
+    if op == "ne":
+        return lambda r: r[i] is not None and r[i] != v
+    if op == "lt":
+        return lambda r: r[i] is not None and r[i] < v
+    if op == "le":
+        return lambda r: r[i] is not None and r[i] <= v
+    if op == "gt":
+        return lambda r: r[i] is not None and r[i] > v
+    if op == "ge":
+        return lambda r: r[i] is not None and r[i] >= v
+    if op == "between":
+        lo, hi = v
+        return lambda r: r[i] is not None and lo <= r[i] <= hi
+    vs = set(v)
+    return lambda r: r[i] is not None and r[i] in vs
+
+
+class _Cell:
+    __slots__ = ("key", "n", "nn", "sum", "min", "max")
+
+    def __init__(self, key: list, nfields: int):
+        self.key = key  # a pseudo-record: the cell's values at their fields' positions, None elsewhere
+        self.n = 0
+        self.nn = [0] * nfields
+        self.sum = [0] * nfields
+        self.min = [math.inf] * nfields
+        self.max = [-math.inf] * nfields
+
+
+class Table(Generic[R]):
+    """
+    The in-memory executor over records of one entity, kept in natural order with per-value indexes and
+    running per-cell statistics, all updated incrementally by append().
+    """
+    __slots__ = ("entity", "_info", "_cls", "_pos", "_numeric", "_records", "_indexes", "_cells", "_games", "_all")
+
+    def __init__(self, entity: str, records: Iterable[Any] = ()):
+        self.entity = entity
+        self._info = _entity(entity)
+        self._cls = RECORDS[entity]
+        self._pos = {f["name"]: i for i, f in enumerate(self._info["fields"])}
+        self._numeric = [i for i, f in enumerate(self._info["fields"]) if f["type"] in ("int", "float")]
+        self._reset()
+        self.append(records)
+
+    def __len__(self) -> int:
+        return len(self._records)
+
+    @property
+    def size(self) -> int:
+        return len(self._records)
+
+    def _reset(self) -> None:
+        self._records: list = []
+        self._indexes = {tuple(spec): {} for spec in self._info["index"]}
+        self._cells: dict = {}
+        self._games: set = set()
+        self._all = None
+
+    def _key(self, r: Any) -> tuple:
+        return tuple((r[self._pos[k]] is None, r[self._pos[k]]) for k in self._info["key"])
+
+    def append(self, records: Iterable[Any]) -> None:
+        """Add records: named tuples, or dicts with canonical field names (others are ignored). Natural order is kept."""
+        ordered = True
+        for r in records:
+            if not isinstance(r, self._cls):
+                if not isinstance(r, dict):
+                    _fail("a record must be a dict or a " + self._cls.__name__)
+                r = self._cls.from_json(r)
+            if self._records and ordered and self._key(self._records[-1]) > self._key(r):
+                ordered = False
+            self._records.append(r)
+            if ordered:
+                self._add(r)
+        if not ordered:
+            rows = sorted(self._records, key=self._key)
+            self._reset()
+            for r in rows:
+                self._records.append(r)
+                self._add(r)
+        self._all = None
+
+    def _add(self, r: Any) -> None:
+        pos = self._pos
+        if "game" in pos:
+            self._games.add(r[pos["game"]])
+        for spec, index in self._indexes.items():
+            k = tuple(r[pos[f]] for f in spec)
+            bucket = index.get(k)
+            if bucket is None:
+                index[k] = [r]
+            else:
+                bucket.append(r)
+        cells = self._info["cells"]
+        if not cells:
+            return
+        ck = tuple(r[pos[f]] for f in cells)
+        cell = self._cells.get(ck)
+        if cell is None:
+            key = [None] * len(pos)
+            for f in cells:
+                key[pos[f]] = r[pos[f]]
+            cell = self._cells[ck] = _Cell(key, len(pos))
+        cell.n += 1
+        nn = cell.nn
+        for i, v in enumerate(r):
+            if v is not None:
+                nn[i] += 1
+        for i in self._numeric:
+            v = r[i]
+            if v is None:
+                continue
+            cell.sum[i] += v
+            if v < cell.min[i]:
+                cell.min[i] = v
+            if v > cell.max[i]:
+                cell.max[i] = v
+
+    def query(self, team: Optional[int] = None) -> "Query[R, str]":
+        """A query over this table; scopes (my_bee, mine, ...) mean `team`."""
+        return Query(self.entity, (), lambda ast: self.run(ast, team))
+
+    def run(self, ast: dict, team: Optional[int] = None) -> Tuple[Any, ...]:
+        """Run a query (a JSON AST; validated first). `team` is what scopes refer to."""
+        ast = validate(ast)
+        if ast["from"] != self.entity:
+            _fail(f'this table holds {self.entity}, not {ast["from"]}')
+        pos, info = self._pos, self._info
+        fields = info["fields"]
+        tests = [_test(c, pos[c["field"]], fields[pos[c["field"]]]["type"]) for c in ast.get("where", ())]
+        scope = info["scopes"][ast["scope"]] if "scope" in ast else None
+        sp = [pos[f] for f in scope] if scope is not None else None
+
+        def match(r: Any) -> bool:
+            for t in tests:
+                if not t(r):
+                    return False
+            if sp is None:
+                return True
+            if team is None:
+                return False
+            for i in sp:
+                if r[i] == team:
+                    return True
+            return False
+
+        if "groupBy" in ast or "aggregates" in ast:
+            return self._aggregate(ast, match, scope, team)
+        return self._select(ast, match, scope, team)
+
+    def _candidates(self, ast: dict, scope: Optional[list], team: Optional[int]) -> Tuple[list, int, int]:
+        where = ast.get("where", ())
+        if scope is not None and team is None:
+            return [], 0, 0
+
+        def eq_of(field: str) -> Any:
+            if scope is not None and len(scope) == 1 and scope[0] == field:
+                return team
+            for c in where:
+                if c["field"] == field and c["op"] == "eq":
+                    return c["value"]
+            return _MISSING
+
+        lst = self._records
+        for spec, index in self._indexes.items():
+            vals = tuple(eq_of(f) for f in spec)
+            if any(v is _MISSING for v in vals):
+                continue
+            bucket = index.get(vals, [])
+            if len(bucket) < len(lst):
+                lst = bucket
+        lo, hi = 0, len(lst)
+        by = info_by = self._info["sortedBy"]
+        if by and len(self._games) <= 1:
+            low, high = -math.inf, math.inf
+            low_strict = high_strict = False
+            for c in where:
+                if c["field"] != info_by:
+                    continue
+                op, v = c["op"], c["value"]
+                for bound in (("lo", v, False) if op in ("eq", "ge") else ("lo", v, True) if op == "gt" else None,
+                              ("hi", v, False) if op in ("eq", "le") else ("hi", v, True) if op == "lt" else None,
+                              ("lo", v[0], False) if op == "between" else None,
+                              ("hi", v[1], False) if op == "between" else None):
+                    if bound is None:
+                        continue
+                    side, x, strict = bound
+                    if side == "lo" and (x > low or (x == low and strict)):
+                        low, low_strict = x, strict
+                    elif side == "hi" and (x < high or (x == high and strict)):
+                        high, high_strict = x, strict
+            i = self._pos[by]
+            if low != -math.inf:
+                lo = (bisect.bisect_right if low_strict else bisect.bisect_left)(lst, low, key=lambda r: r[i])
+            if high != math.inf:
+                hi = (bisect.bisect_left if high_strict else bisect.bisect_right)(lst, high, key=lambda r: r[i])
+        return lst, lo, max(lo, hi)
+
+    def _select(self, ast: dict, match: Callable[[Any], bool], scope: Optional[list], team: Optional[int]) -> Tuple[Any, ...]:
+        lst, lo, hi = self._candidates(ast, scope, team)
+        offset = ast.get("offset", 0)
+        limit = ast.get("limit")
+        order = ast.get("orderBy", ())
+        by = self._info["sortedBy"]
+        plain = not ast.get("where") and scope is None
+        if not order and plain:
+            if lst is self._records and lo == 0 and hi == len(lst) and offset == 0 and limit is None and "select" not in ast:
+                if self._all is None:
+                    self._all = tuple(self._records)
+                return self._all
+            end = hi if limit is None else min(hi, lo + offset + limit)
+            out = lst[lo + offset:end]
+        elif not order:
+            out = []
+            skip = offset
+            for k in range(lo, hi):
+                if limit is not None and len(out) >= limit:
+                    break
+                r = lst[k]
+                if not match(r):
+                    continue
+                if skip:
+                    skip -= 1
+                    continue
+                out.append(r)
+        elif len(order) == 1 and order[0]["field"] == by and order[0]["dir"] == "desc" and len(self._games) <= 1:
+            # Newest first: walk back run by run of equal values, each run in natural order.
+            out = []
+            skip = offset
+            i = hi
+            p = self._pos[by]
+            while i > lo and (limit is None or len(out) < limit):
+                v = lst[i - 1][p]
+                j = i - 1
+                while j > lo and lst[j - 1][p] == v:
+                    j -= 1
+                for k in range(j, i):
+                    if limit is not None and len(out) >= limit:
+                        break
+                    r = lst[k]
+                    if not match(r):
+                        continue
+                    if skip:
+                        skip -= 1
+                        continue
+                    out.append(r)
+                i = j
+        else:
+            pos = self._pos
+            rows = [lst[k] for k in range(lo, hi) if match(lst[k])]
+            out = _sort(rows, list(order), lambda r, f: r[pos[f]])
+            out = out[offset:] if limit is None else out[offset:offset + limit]
+        if "select" in ast:
+            names, pos = _PY_NAMES[self.entity], self._pos
+            return tuple(Row({names[f]: r[pos[f]] for f in ast["select"]}) for r in out)
+        return tuple(out)
+
+    def _aggregate(self, ast: dict, match: Callable[[Any], bool], scope: Optional[list], team: Optional[int]) -> Tuple[Any, ...]:
+        pos = self._pos
+        group = ast.get("groupBy", [])
+        gp = [pos[f] for f in group]
+        aggs = [(a["fn"], pos[a["field"]] if "field" in a else None, a["as"]) for a in ast.get("aggregates", ())]
+        groups: dict = {}
+
+        def group_of(r: Any) -> list:
+            k = tuple(r[i] for i in gp)
+            g = groups.get(k)
+            if g is None:
+                g = groups[k] = [k, [[0, 0, 0, math.inf, -math.inf] for _ in aggs]]  # n, nn, sum, min, max
+            return g
+
+        cells = self._info["cells"]
+        via_cells = bool(cells) and all(c["field"] in cells for c in ast.get("where", ())) \
+            and all(f in cells for f in (scope or ())) and all(f in cells for f in group)
+        if via_cells:
+            for cell in self._cells.values():
+                if not match(cell.key):
+                    continue
+                acc = group_of(cell.key)[1]
+                for j, (fn, i, _) in enumerate(aggs):
+                    a = acc[j]
+                    a[0] += cell.n
+                    if i is None:
+                        continue
+                    a[1] += cell.nn[i]
+                    if fn == "count" or not cell.nn[i]:
+                        continue
+                    a[2] += cell.sum[i]
+                    if cell.min[i] < a[3]:
+                        a[3] = cell.min[i]
+                    if cell.max[i] > a[4]:
+                        a[4] = cell.max[i]
+        else:
+            lst, lo, hi = self._candidates(ast, scope, team)
+            for k in range(lo, hi):
+                r = lst[k]
+                if not match(r):
+                    continue
+                acc = group_of(r)[1]
+                for j, (fn, i, _) in enumerate(aggs):
+                    a = acc[j]
+                    a[0] += 1
+                    if i is None:
+                        continue
+                    v = r[i]
+                    if v is None:
+                        continue
+                    a[1] += 1
+                    if fn == "count":
+                        continue
+                    a[2] += v
+                    if v < a[3]:
+                        a[3] = v
+                    if v > a[4]:
+                        a[4] = v
+        if not group and not groups:
+            group_of(())
+        names = _PY_NAMES[self.entity]
+        rows = []
+        for k, acc in groups.values():
+            d = {names[f]: k[n] for n, f in enumerate(group)}
+            for (fn, i, name), (n, nn, s, lo_, hi_) in zip(aggs, acc):
+                d[name] = (nn if i is not None else n) if fn == "count" else None if nn == 0 else \
+                    s if fn == "sum" else s / nn if fn == "avg" else lo_ if fn == "min" else hi_
+            rows.append(d)
+        key = {f: names[f] for f in group}
+        rows = _sort(rows, [{"field": f, "dir": "asc"} for f in group], lambda r, f: r[key[f]])
+        if "orderBy" in ast:
+            rows = _sort(rows, ast["orderBy"], lambda r, f: r[key.get(f, f)])
+        offset, limit = ast.get("offset", 0), ast.get("limit")
+        rows = rows[offset:] if limit is None else rows[offset:offset + limit]
+        return tuple(Row(d) for d in rows)
+
+
+_MISSING = object()
+
+
+class Local:
+    """
+    An in-memory history over turn records you hold (canonical camelCase dicts, as `GET .../ledger` and
+    `.../query` return them), for team `team`. `history` is exactly what programs get as HISTORY
+    (read-only); `turns` is the same query; append() adds new turns, keeping the indexes up to date.
+    """
+    __slots__ = ("_table", "history", "team")
+
+    def __init__(self, records: Iterable[Any] = (), team: Optional[int] = None):
+        table = Table(PROGRAM_ENTITY, records)
+        object.__setattr__(self, "_table", table)
+        object.__setattr__(self, "team", team)
+        object.__setattr__(self, "history", ProgramHistory(table.query(team)))
+
+    def __setattr__(self, k: str, v: Any) -> None:
+        raise AttributeError("read-only")
+
+    @property
+    def turns(self) -> Any:
+        return getattr(self.history, PROGRAM_ENTITY)
+
+    @property
+    def size(self) -> int:
+        return self._table.size
+
+    def append(self, records: Iterable[Any]) -> None:
+        self._table.append(records)
+
+
+def local(records: Iterable[Any] = (), team: Optional[int] = None) -> Local:
+    """An in-memory history over turn records you hold, as team `team`: see Local."""
+    return Local(records, team)
+
+
+def connect(base: str = "", room: str = "", game: Optional[str] = None, token: Optional[str] = None,
+            post: Optional[Callable[[str, dict], dict]] = None, timeout: float = 30.0) -> "RemoteHistory":
+    """
+    Every entity of a game (or, without `game`, of a room's finished games), queried over HTTP with the
+    same builder. `post(path, ast) -> {"rows": [...], "truncated": bool}` replaces the built-in POST
+    (urllib, sending `token` as `Authorization: Bearer`).
+    """
+    path = f"/api/rooms/{room}" + (f"/games/{game}" if game else "") + "/query"
+
+    def http_post(p: str, ast: dict) -> dict:
+        import urllib.error
+        import urllib.request
+        headers = {"content-type": "application/json"}
+        if token:
+            headers["authorization"] = "Bearer " + token
+        req = urllib.request.Request(base + p, data=json.dumps(ast).encode(), headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as res:
+                return json.loads(res.read())
+        except urllib.error.HTTPError as e:
+            try:
+                message = json.loads(e.read()).get("error")
+            except ValueError:
+                message = None
+            raise QueryError(message or f"HTTP {e.code}") from None
+
+    send = post or http_post
+
+    def runner_for(entity: str) -> Callable[[dict], tuple]:
+        cls, names = RECORDS[entity], _PY_NAMES[entity]
+
+        def run(ast: dict) -> tuple:
+            ast = validate(ast)
+            rows = send(path, ast)["rows"]
+            if "aggregates" in ast or "groupBy" in ast or "select" in ast:
+                return tuple(Row({names.get(k, k): v for k, v in r.items()}) for r in rows)
+            return tuple(cls.from_json(r) for r in rows)
+        return run
+
+    return RemoteHistory(*(Query(e, (), runner_for(e)) for e in SCHEMA["entities"]))

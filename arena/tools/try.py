@@ -2,13 +2,16 @@
 
     python3 tools/try.py flower                     # flower.py on a few sample challenges
     python3 tools/try.py flower flower.py 1 42 99   # your challenges (JSON values: 7, "abc", [1,2])
-    python3 tools/try.py flower --ledger FILE       # ...with a ledger (a JSON list of entries, or a .jsonl file)
+    python3 tools/try.py flower --history FILE      # ...with these turn records as its HISTORY.turns (a JSON list, or a
+                                                    # .jsonl file such as stream/history.jsonl)
     python3 tools/try.py bee                        # bee.py for 300 rounds in a garden of just your own flower
     python3 tools/try.py bee my_bee.py --rounds 100 --flower flower.py
-    python3 tools/try.py bee --json                 # raw result: every turn of the try
+    python3 tools/try.py bee --memory '{"seen": 3}' # the test bee starts with this MEMORY (JSON, or a .json file)
+    python3 tools/try.py bee --json                 # raw result: every turn of the try, and the test bee's final MEMORY
 
 A flower shows each response with its percent, the turn's excess energy E and its CPU time. A bee plays your
-latest submitted flower unless you name a flower file. The runner runs the program minified, exactly as the
+latest submitted flower unless you name a flower file. A try runs a separate test bee: it never reads or changes
+your game bee's MEMORY (only your deployed bee writes that). The runner runs the program minified, exactly as the
 game would.
 """
 import json
@@ -25,7 +28,7 @@ def opt(name, default=None):
 
 
 skip = set()
-for name in ("--ledger", "--flower", "--rounds"):
+for name in ("--history", "--flower", "--rounds", "--memory"):
     if name in sys.argv:
         i = sys.argv.index(name)
         skip.update((i, i + 1))
@@ -41,20 +44,27 @@ if kind == "flower":
             challenges.append(json.loads(a))
         except ValueError:
             challenges.append(a)
-    ledger = None
-    if opt("--ledger"):
-        with open(opt("--ledger")) as f:
+    history = None
+    if opt("--history"):
+        with open(opt("--history")) as f:
             text = f.read()
         try:
-            ledger = json.loads(text)
+            history = json.loads(text)
         except ValueError:
-            ledger = [json.loads(line) for line in text.splitlines() if line.strip()]
-        if isinstance(ledger, dict):
-            ledger = [ledger]  # a .jsonl file of one entry
-    r = call("try", kind=kind, code=code, challenges=challenges or None, ledger=ledger)
+            history = [json.loads(line) for line in text.splitlines() if line.strip()]
+        if isinstance(history, dict):
+            history = [history]  # a .jsonl file of one record
+    r = call("try", kind=kind, code=code, challenges=challenges or None, history=history)
 else:
     flower = read_code("flower", opt("--flower")) if opt("--flower") else None
     rounds = int(opt("--rounds")) if opt("--rounds") else None
-    r = call("try", kind=kind, code=code, flower=flower, rounds=rounds)
+    memory = None
+    if opt("--memory") is not None:
+        m = opt("--memory")
+        if m.endswith(".json"):
+            with open(m) as f:
+                m = f.read()
+        memory = json.loads(m)
+    r = call("try", kind=kind, code=code, flower=flower, rounds=rounds, memory=memory)
 show(r, "--json" in sys.argv)
 sys.exit(0 if r.get("ok") else 1)

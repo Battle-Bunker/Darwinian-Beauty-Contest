@@ -16,6 +16,7 @@ export function formatValue(m: Metric, v: number | null): string {
     case "energy": return fmtE(v);
     case "percent": return `${v.toFixed(v < 10 ? 1 : 0)}%`;
     case "ms": return `${fmtMs(v)} ms`;
+    case "score": return v < 10 ? v.toFixed(2) : v < 1000 ? v.toFixed(1) : Math.round(v).toLocaleString();
     default: return Math.round(v).toLocaleString();
   }
 }
@@ -66,7 +67,7 @@ export function TeamSeriesChart({ teams, rows, data, metric, focus, onFocus, cur
   const W = Math.max(260, width);
   const pw = W - M.left - M.right, ph = H - M.top - M.bottom;
   const series = useMemo(() => rows.map((i) => ({ i, v: seriesOf(m, data.teams[i], data.bins, upto ?? data.bins) })), [rows, m, data, upto]);
-  const max = Math.max(m.format === "percent" ? 10 : 0, ...series.flatMap((s) => s.v.filter((x): x is number => x !== null)));
+  const max = Math.max(m.format === "percent" ? 10 : 0, m.par !== undefined ? m.par * 1.2 : 0, ...series.flatMap((s) => s.v.filter((x): x is number => x !== null)));
   const ticks = niceTicks(max);
   const top = ticks[ticks.length - 1] || 1;
   const span = Math.max(data.binMs, endMs);
@@ -118,6 +119,7 @@ export function TeamSeriesChart({ teams, rows, data, metric, focus, onFocus, cur
             <path key={i} d={d} fill="none" stroke={teams[i]?.color} strokeWidth={focus === i ? 3 : 2} strokeLinejoin="round" strokeLinecap="round"
               opacity={focus === null || focus === i ? 1 : 0.28} />
           ))}
+          {m.par !== undefined && m.par <= top && <line x1={M.left} x2={W - M.right} y1={y(m.par)} y2={y(m.par)} className="chart-par" />}
           {typeof cursor === "number" && cursor >= 0 && <line x1={M.left + (cursor / span) * pw} x2={M.left + (cursor / span) * pw} y1={M.top} y2={M.top + ph} className="chart-cursor" />}
           {hover !== null && <line x1={tipLeft} x2={tipLeft} y1={M.top} y2={M.top + ph} className="chart-crosshair" />}
           {hover !== null && series.map(({ i, v }) => v[hover] !== null && (
@@ -153,11 +155,11 @@ export function TeamSeriesChart({ teams, rows, data, metric, focus, onFocus, cur
         <summary className="small">As a table</summary>
         <div className="table-scroll">
           <table className="data-table">
-            <thead><tr><th className="left">Team</th><th>{m.cumulative ? "Whole game" : "Average of bins"}</th><th>Highest bin</th></tr></thead>
+            <thead><tr><th className="left">Team</th><th>{m.mode === "average" ? "Average of bins" : "At the end"}</th><th>Highest</th></tr></thead>
             <tbody>
               {series.map(({ i, v }) => {
                 const vals = v.filter((z): z is number => z !== null);
-                const whole = m.cumulative ? vals.at(-1) ?? null : vals.length ? vals.reduce((s, z) => s + z, 0) / vals.length : null;
+                const whole = m.mode !== "average" ? vals.at(-1) ?? null : vals.length ? vals.reduce((s, z) => s + z, 0) / vals.length : null;
                 return (
                   <tr key={i}>
                     <th scope="row" className="left"><span className="team-chip"><span className="swatch" style={{ background: teams[i]?.color }} />{teams[i]?.name}</span></th>
@@ -174,31 +176,44 @@ export function TeamSeriesChart({ teams, rows, data, metric, focus, onFocus, cur
   );
 }
 
-/** Where each flower's energy went: kept (surplus), paid (nectar) and lost (unfed visits). */
+const PARTS = [
+  { key: "size", cls: "e-size", label: "size", long: "size: a bigger flower shrinks the whole budget" },
+  { key: "compute", cls: "e-compute", label: "compute", long: "compute: CPU time spent answering (and failed answers)" },
+  { key: "pollen", cls: "e-pollen", label: "pollen given", long: "pollen given to bees that fed, to carry to other flowers" },
+  { key: "nectar", cls: "e-nectar", label: "nectar given", long: "nectar given to bees that fed" },
+  { key: "lost", cls: "e-lost", label: "lost", long: "lost: the bee didn't feed" },
+] as const;
+
+/**
+ * Where each flower's energy went. Every visit has the same budget, size cap × flower window; the flower's
+ * size takes a slice, its compute another, and the rest (E) goes to the bee as pollen and nectar on a feed,
+ * or is lost when the bee doesn't feed. Rows with `t.known` false (another team's flower during play) show
+ * only what's public: the pollen and nectar of its feeds.
+ */
 export function EnergySplit({ rows }: { rows: { team: Team; t: EnergyTotals; you?: boolean }[] }) {
-  const max = Math.max(1, ...rows.map((r) => r.t.kept + r.t.paid + (r.t.lostKnown ? r.t.lost : 0)));
-  const seg = (v: number, cls: string, label: string, team: Team) => v > 0 && (
-    <span className={`split-seg ${cls}`} style={{ flexGrow: v }} title={`${team.name}: ${label} ${fmtEExact(v)}`} tabIndex={0} aria-label={`${label} ${fmtE(v)}`} />
+  const seg = (v: number, cls: string, label: string, team: Team, total: number) => v > 0 && (
+    <span className={`split-seg ${cls}`} style={{ flexGrow: v }} title={`${team.name}: ${label} ${fmtEExact(v)} (${Math.round((v / total) * 100)}%)`} tabIndex={0} aria-label={`${label} ${fmtE(v)}`} />
   );
   return (
     <div className="split">
       <ul className="split-legend" aria-label="Legend">
-        <li><span className="rect-key split-kept" /> kept (surplus)</li>
-        <li><span className="rect-key split-paid" /> paid to bees (nectar)</li>
-        <li><span className="rect-key split-lost" /> lost (the bee didn't feed)</li>
+        {PARTS.map((p) => <li key={p.key}><span className={`rect-key ${p.cls}`} /> {p.long}</li>)}
       </ul>
       {rows.map(({ team, t, you }) => {
-        const total = t.kept + t.paid + (t.lostKnown ? t.lost : 0);
+        const total = t.known ? t.budget : t.pollen + t.nectar;
+        const given = t.pollen + t.nectar;
         return (
           <div key={team.id} className="split-row">
             <span className="team-chip split-name" title={team.name}><span className="swatch" style={{ background: team.color }} /><span className="team-name">{team.name}</span>{you && <span className="you-tag">you</span>}</span>
             <span className="split-track">
-              <span className="split-bar" style={{ width: `${(total / max) * 100}%` }}>
-                {seg(t.kept, "split-kept", "kept", team)}
-                {seg(t.paid, "split-paid", "paid", team)}
-                {t.lostKnown && seg(t.lost, "split-lost", "lost", team)}
+              <span className="split-bar" style={{ width: "100%" }}>
+                {total > 0 && PARTS.map((p) => (t.known || p.key === "pollen" || p.key === "nectar") && seg(t[p.key], p.cls, p.label, team, total))}
               </span>
-              <span className="split-total small">{fmtE(total)}{total > 0 ? <span className="muted"> · {Math.round((t.kept / total) * 100)}% kept{t.lostKnown ? `, ${Math.round((t.lost / total) * 100)}% lost` : ""}</span> : null}</span>
+              <span className="split-total small">
+                {t.known && total > 0
+                  ? <>{Math.round((t.pollen / total) * 100)}% pollen · {Math.round((t.nectar / total) * 100)}% nectar · {Math.round((t.lost / total) * 100)}% lost</>
+                  : given > 0 ? <>gave {fmtE(given)}: {Math.round((t.pollen / given) * 100)}% pollen <span className="muted">(the rest is private)</span></> : <span className="muted">nothing given yet</span>}
+              </span>
             </span>
           </div>
         );
@@ -207,17 +222,17 @@ export function EnergySplit({ rows }: { rows: { team: Team; t: EnergyTotals; you
         <summary className="small">As a table</summary>
         <div className="table-scroll">
           <table className="data-table">
-            <thead><tr><th className="left">Flower</th><th>Visits</th><th>Fed</th><th>Energy made</th><th>Kept</th><th>Paid</th><th>Lost</th></tr></thead>
+            <thead><tr><th className="left">Flower</th><th>Visits</th><th>Fed</th><th>Budget</th><th>Size</th><th>Compute</th><th>Pollen given</th><th>Nectar given</th><th>Lost</th></tr></thead>
             <tbody>
               {rows.map(({ team, t }) => (
                 <tr key={team.id}>
                   <th scope="row" className="left">{team.name}</th>
                   <td>{t.visits.toLocaleString()}</td>
                   <td>{t.feeds.toLocaleString()}</td>
-                  <td title={fmtEExact(t.energy)}>{t.lostKnown ? fmtE(t.energy) : "–"}</td>
-                  <td title={fmtEExact(t.kept)}>{fmtE(t.kept)}</td>
-                  <td title={fmtEExact(t.paid)}>{fmtE(t.paid)}</td>
-                  <td title={t.lostKnown ? fmtEExact(t.lost) : "private"}>{t.lostKnown ? fmtE(t.lost) : "–"}</td>
+                  {(["budget", "size", "compute"] as const).map((k) => <td key={k} title={t.known ? fmtEExact(t[k]) : "private"}>{t.known ? fmtE(t[k]) : "–"}</td>)}
+                  <td title={fmtEExact(t.pollen)}>{fmtE(t.pollen)}</td>
+                  <td title={fmtEExact(t.nectar)}>{fmtE(t.nectar)}</td>
+                  <td title={t.known ? fmtEExact(t.lost) : "private"}>{t.known ? fmtE(t.lost) : "–"}</td>
                 </tr>
               ))}
             </tbody>
