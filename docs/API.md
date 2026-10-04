@@ -68,7 +68,7 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
   "revealOnFinish": true,
   "grains": "feeder", "pollenGrain": { "exponent": 0.3333333333333333, "scale": 1 },
   "budgets": {
-    "flower": { "size": 1100,  "perMinute": 220,  "cap": 220,  "ms": 150 },
+    "flower": { "size": 1100,  "perMinute": 220,  "cap": 220,  "ms": 150, "minMs": 50 },
     "bee":    { "size": 11000, "perMinute": 2200, "cap": 2200, "ms": 50, "memory": 50 }
   }
 }
@@ -84,13 +84,17 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
   its end. A new bee takes over when its turn in progress is over, dropping the old bee's queued
   challenge (it is asked `first` at once); a bee between turns switches at once.
 - `feedCost`: a bee that feeds has no turn for the next `feedCost` rounds.
-- `budgets.flower.size` is also the size cap in the energy formula, and `budgets.flower.ms` its 150.
+- `budgets.flower.size` is also the size cap in the energy formula. Each flower call gets a hidden time
+  budget **R**, drawn uniformly at random from `budgets.flower.minMs` (default 50) to `budgets.flower.ms`
+  (default 150): R is the call's hard time limit, the flower is told it as `GAME.ms`, and E counts down from
+  R, so E = (size cap − size) × max(0, R − CPU ms). The response is still delivered at `flower.ms` (150)
+  whatever R was, so timing hides R. R is the flower team's secret during play (`budgetMs` below).
 - `budgets.<kind>.size`: size limit in weighted nodes of the minified program (vendor/measure.js).
 - `budgets.<kind>.perMinute`, `cap`: change budget earned per minute of game time, and the most that can be
   banked. A team's budget for a program at game time `t` is `min(cap, bank + perMinute × (t − atMs) / 60000)`,
   with `bank` and `atMs` from `teams[i].banks[kind]`. Writing programs in the lobby is free.
-- `ms`: time per call (wall clock; the engine runs at most one program per CPU core). A flower that isn't
-  done in `flower.ms` answers null (E = 0). `bee.ms` is a deadline, not a cut-off: a late bee's call runs on
+- `ms`: the maximum time per call (wall clock; the engine runs at most one program per CPU core). A flower
+  that isn't done in its call's R (`minMs`..`ms`) answers null (E = 0). `bee.ms` is a deadline, not a cut-off: a late bee's call runs on
   (up to 2 s), its turn is settled as not fed, and only a late `["leave", c]` queues `c`. A bee's `fed` is
   stopped at `bee.ms`.
 - `budgets.bee.memory` (default 50, 0 to 1,000,000): the most bytes a bee's `MEMORY` may hold. `MEMORY` is a
@@ -123,7 +127,7 @@ Types: `int`, `float`, `bool`, `str`, `any`, `list[T]`, `tree[T]`, `graph`, `dig
 | on a `feed`: `grain`, `grainVersion`, `grainCodeLength` (the pollen grain) | the bee's team (everyone if `grains` is `"public"`) | everyone |
 | on a `leave`: `pollen` (always 0) | everyone | everyone |
 | on a `leave`: `percent`, `energy` | the flower's team | everyone |
-| `ms` (the flower's CPU time), `flowerError`, `flowerVersion` | the flower's team | everyone |
+| `ms` (the flower's CPU time), `budgetMs` (the call's time budget R), `flowerError`, `flowerVersion` | the flower's team | everyone |
 | `beeMs`, `beeError`, `beeVersion` | the bee's team | everyone |
 | `log` (what the bee printed) | the bee's team | everyone if `revealOnFinish` |
 | code | own team | everyone if `revealOnFinish` |
@@ -197,7 +201,8 @@ A turn makes two actions: its **arrival**, written to the stream at once, and it
   "energy",                      // E, node·ms (0 if the flower failed)
   // the flower's team (everyone after finish):
   "ms",                          // the flower's CPU time for the call
-  "flowerError",                 // why the response is null (a timeout, an error, a malformed return)
+  "budgetMs",                    // R, the call's hidden time budget (50–150 ms): its hard limit, and E's ceiling
+  "flowerError",                 // why the response is null (too slow for R, an error, a malformed return)
   "flowerVersion",               // also on arrive
   // the bee's team (everyone after finish):
   "beeMs",                       // how long the bee took to decide
@@ -245,7 +250,7 @@ them, oldest first by `seq` (the turn's `feed`/`leave` action). Team numbers are
   "percent": 25, "energy": 123486.0, // public on a feed; on a leave null except at your own flower
   "nectar": 30871.5,                 // on a feed; null on a leave
   "pollen": 92614.5,                 // on a feed; 0 on a leave
-  "ms": 2.1, "flowerVersion": 3, "flowerError": null,   // null except at your own flower
+  "ms": 2.1, "budgetMs": 92.4, "flowerVersion": 3, "flowerError": null,   // null except at your own flower
   "beeMs": 0.4, "beeVersion": 2, "beeError": null,      // null except for your own bee
   "grain": "def flower(a):\n return(a*3+1)%1000,40",   // ⌊92614.5^(1/3)⌋ = 45 ≥ 37 characters: the whole code
   "grainVersion": 3, "grainCodeLength": 37 }            // your own bee's feeds only (unless grains are public)
@@ -282,7 +287,8 @@ function fed(nectar: number): void          // optional
 
 Programs see only their arguments and `GAME` (`team`, `teams`, `feed_cost`, `challenge_type`,
 `response_type`, `max_len`, `max_nodes`, `max_response_bytes`, `round_ms`, `ms` (its own limit),
-`flower_ms`, `flower_size_cap`; a flower also `size`, its own; a bee also `memory`, its memory cap): no
+`flower_ms` (150), `flower_size_cap`; a flower's `ms` is this call's hidden budget R (50–150) and `size`
+its own; a bee's `ms` is 50 and it also gets `memory`, its memory cap): no
 history, no round or game time. Every flower call and every bee turn runs a fresh program, and its clock
 starts at 0 (Python's `time`, TypeScript's `Date`, `Intl` and `performance` read the time since the call
 started, as if it were 1970-01-01; RULES.md "The clock"). A bee also has **`MEMORY`**, a

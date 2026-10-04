@@ -159,15 +159,25 @@ The bee wants nectar. The flower wants to give as much pollen as it can: pollen 
 
 Each turn, the energy left after compute is the flower's **excess energy**, in node·ms:
 
-> **E = (flower size cap − your flower's size) × max(0, 150 − compute ms)**
+> **E = (flower size cap − your flower's size) × max(0, R − compute ms)**
 
 - **size** is the size in nodes of the flower version that answered (see "What counts toward size"); the
   cap is 1,100. A smaller flower has more to give.
+- **R** is **this call's hidden time budget**: a number of milliseconds drawn fresh and uniformly at random
+  from 50 to 150 for every flower call, independently. It is this call's time limit (the flower is stopped
+  at R, as it was at 150 before), and it is the ceiling the energy counts down from. **Your flower is told
+  its R as `GAME["ms"]`** for that call (`GAME["flower_ms"]` stays 150, the most R can be). The bee is never
+  told R, and the response still reaches it at the fixed 150 ms, so timing hides R.
 - **compute ms** is the **CPU time** your flower's process used for this call: running the program,
   calling `flower`, and writing its response as JSON. It is CPU time, not wall time: a busy server doesn't
   cost you, and time your flower spends not computing isn't counted.
-- A late answer, an error, a malformed return or a response over the size cap (see "What the challenge and
-  response look like"): E = 0.
+- A late answer (slower than R), an error, a malformed return or a response over the cap (see "What the
+  challenge and response look like"): E = 0.
+
+So a given stretch of real work costs the same energy whatever R is, but you can only *do* t ms of
+checkable work, and still have energy left, when R happens to be at least t this turn. Each flower instance
+has its own hidden reserve for the turn — its R — and the bee has to judge from the answer alone whether
+this one is rich and generous.
 
 Then:
 - **If the bee feeds:** the flower gives the bee **nectar = percent/100 × E** and **pollen =
@@ -252,10 +262,11 @@ In TypeScript, `tree[T]` is `{ value: T; children: Tree<T>[] }` and a graph is
 
 Every program can read a `GAME` dictionary/object: `team` (your team's index), `teams` (N), `feed_cost`,
 `challenge_type`, `response_type`, `max_len`, `max_nodes` (limits on challenges), `max_response_bytes`
-(the response size cap), `round_ms` (200), `ms` (your program's own time limit per call: 150 or 50),
-`flower_ms` (150) and `flower_size_cap` (1,100). A bee also gets `memory`, its `MEMORY` cap in bytes. A
-flower also gets `size`, its own size, so E = (`flower_size_cap` − `size`) × max(0, `flower_ms` − compute
-ms). In Python, `time.process_time()` measures the CPU time the engine counts (see "The clock").
+(the response size cap), `round_ms` (200), `ms` (your program's own time limit for **this call**: a bee's is
+always 50; a flower's is this call's hidden budget R, 50–150), `flower_ms` (150, the most a flower's R can
+be) and `flower_size_cap` (1,100). A bee also gets `memory`, its `MEMORY` cap in bytes. A flower also gets
+`size`, its own size, so E = (`flower_size_cap` − `size`) × max(0, `ms` − compute ms) with `ms` this call's
+R. In Python, `time.process_time()` measures the CPU time the engine counts (see "The clock").
 
 ## What programs can use
 
@@ -365,7 +376,7 @@ programs do together happens in plain view. (A response over 4 KB is streamed to
 | What | Who sees it during play |
 |---|---|
 | the **percent** and **energy** of a turn without a feed | the flower's team |
-| the flower's **compute time**, on every turn, and why a flower failed | the flower's team |
+| the flower's **compute time** and its turn's **time budget R**, on every turn, and why a flower failed | the flower's team |
 | **code**, what your bee **prints**, program **versions** and **sizes**, change **budgets**, the bee's **decision times** and errors | that team |
 | your bee's **`MEMORY`** (its value, size and last error) | that team (read only: nobody can write it but the bee) |
 | a feed's **pollen grain** (and the flower's version and code length that come with it) | the feeding bee's team |
