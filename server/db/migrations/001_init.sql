@@ -41,7 +41,7 @@ CREATE TABLE games (
   participants  uuid[],                   -- team ids fixed when the game starts (team index = position)
   feeds         jsonb,                    -- N×N: feeds[bee team][flower team], whole game so far
   nectar        jsonb,                    -- N×N: nectar[bee team][flower team] (node·ms)
-  surplus       jsonb,                    -- N×N: surplus[bee team][flower team]: what the flower kept from that bee's feeds
+  pollen       jsonb,                    -- N×N: pollen[bee team][flower team]: what the flower kept from that bee's feeds
   last_seq      bigint NOT NULL DEFAULT 0, -- the latest action's seq
   version       bigint NOT NULL DEFAULT 0, -- bumped on every public change but actions; clients refetch when it moves
   last_error    text,
@@ -118,7 +118,7 @@ CREATE TABLE actions (
   percent        double precision,        -- flower's team: the share of E offered
   energy         double precision,        -- flower's team: E, node·ms
   cpu_ms         double precision,        -- flower's team: the flower's CPU time for the call
-  surplus        double precision,        -- flower's team: what the turn added to its surplus
+  pollen        double precision,        -- what the flower kept: (1 - percent/100) × E on a feed, else 0
   flower_error   text,                    -- flower's team: why the response is null
   nectar         double precision,        -- bee's and flower's teams: nectar paid (feed only)
   bee_ms         double precision,        -- bee's team: how long the bee took to decide

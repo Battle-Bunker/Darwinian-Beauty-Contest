@@ -88,7 +88,7 @@ async function adopt(g) {
   }
   const garden = new Garden({
     config: g.config, teams: g.participants.length, clockMs: Number(g.clock_ms), round: Number(g.round), lastSeq: Number(g.last_seq),
-    ledgers: { feeds: g.feeds, nectar: g.nectar, surplus: g.surplus ?? zeroLedger(g.participants.length) },
+    ledgers: { feeds: g.feeds, nectar: g.nectar, pollen: g.pollen ?? zeroLedger(g.participants.length) },
     history: ends.map((a) => turnOf(a, index)), turns, paced: true,
   });
   if (g.status === "paused") garden.pause();
@@ -132,7 +132,7 @@ async function flush(run) {
     try {
       await tx(async (c) => {
         const cols = ["game_id", "seq", "at_ms", "round", "turn", "bee_team", "flower_team", "action", "c", "r", "percent", "energy",
-          "cpu_ms", "surplus", "flower_error", "nectar", "bee_ms", "bee_error", "log", "bee_version", "flower_version"];
+          "cpu_ms", "pollen", "flower_error", "nectar", "bee_ms", "bee_error", "log", "bee_version", "flower_version"];
         const json = (v) => (v === null || v === undefined ? null : JSON.stringify(v));
         for (let i = 0; i < d.actions.length; i += 300) {
           const chunk = d.actions.slice(i, i + 300), params = [], rows = [];
@@ -140,12 +140,12 @@ async function flush(run) {
             rows.push(`(${cols.map((_, k) => `$${j * cols.length + k + 1}`).join(",")})`);
             const end = a.action !== "arrive";
             params.push(run.id, a.seq, a.atMs, a.round, a.turn, ids[a.bee], ids[a.flower], a.action, end ? json(a.c) : null, end ? json(a.r) : null,
-              a.percent, a.energy, a.ms, a.surplus, a.flowerError, a.nectar, a.beeMs, a.beeError, a.log, a.beeVersion, a.flowerVersion);
+              a.percent, a.energy, a.ms, a.pollen, a.flowerError, a.nectar, a.beeMs, a.beeError, a.log, a.beeVersion, a.flowerVersion);
           });
           await c.query(`INSERT INTO actions (${cols.join(",")}) VALUES ${rows.join(",")}`, params);
         }
-        await c.query("UPDATE games SET clock_ms = $2, round = $3, last_seq = $4, feeds = $5, nectar = $6, surplus = $7 WHERE id = $1",
-          [run.id, d.clockMs, d.round, d.lastSeq, JSON.stringify(d.feeds), JSON.stringify(d.nectar), JSON.stringify(d.surplus)]);
+        await c.query("UPDATE games SET clock_ms = $2, round = $3, last_seq = $4, feeds = $5, nectar = $6, pollen = $7 WHERE id = $1",
+          [run.id, d.clockMs, d.round, d.lastSeq, JSON.stringify(d.feeds), JSON.stringify(d.nectar), JSON.stringify(d.pollen)]);
         for (const p of d.problems) {
           await c.query("UPDATE programs SET problem = COALESCE(problem, $5) WHERE game_id = $1 AND team_id = $2 AND kind = $3 AND version = $4",
             [run.id, ids[p.team], p.kind, p.version, p.error]);

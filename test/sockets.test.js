@@ -20,7 +20,7 @@ let rows = [], shown = 0, status = "running", server, port, wss;
 const toRow = (a) => ({
   seq: a.seq, at_ms: a.atMs, round: a.round, turn: a.turn, bee_team: TEAMS[a.bee], flower_team: TEAMS[a.flower], action: a.action,
   c: a.action === "arrive" ? null : a.c, r: a.action === "arrive" ? null : a.r, percent: a.percent, energy: a.energy, cpu_ms: a.ms,
-  surplus: a.surplus, flower_error: a.flowerError, nectar: a.nectar, bee_ms: a.beeMs, bee_error: a.beeError, log: a.log,
+  pollen: a.pollen, flower_error: a.flowerError, nectar: a.nectar, bee_ms: a.beeMs, bee_error: a.beeError, log: a.log,
   bee_version: a.beeVersion, flower_version: a.flowerVersion,
 });
 
@@ -164,10 +164,10 @@ test("during play each viewer's feed is filtered, over WebSocket and SSE alike: 
     for (const a of got) {
       const mineF = a.flower === team, mineB = a.bee === team;
       if (a.action === "arrive") continue;
-      assert.ok("c" in a && "r" in a && "surplus" in a, "challenge, response and surplus are public");
+      assert.ok("c" in a && "r" in a && "pollen" in a, "challenge, response and pollen are public");
       if (a.action === "feed") assert.ok(["percent", "energy", "nectar"].every((k) => k in a), "a feed is public in full");
       else {
-        assert.equal(a.surplus, 0);
+        assert.equal(a.pollen, 0);
         assert.ok(!("nectar" in a));
         assert.equal("percent" in a, mineF, "an unfed turn's percent: the flower's team only");
         assert.equal("energy" in a, mineF);
@@ -199,7 +199,7 @@ test("after the game, every feed reveals everything to everyone", async () => {
       for (const a of socket.actions()) {
         assert.ok("beeVersion" in a && "flowerVersion" in a);
         if (a.action === "arrive") continue;
-        assert.ok(["percent", "energy", "ms", "beeMs", "surplus", "flowerError", "beeError"].every((k) => k in a), JSON.stringify(a));
+        assert.ok(["percent", "energy", "ms", "beeMs", "pollen", "flowerError", "beeError"].every((k) => k in a), JSON.stringify(a));
       }
       await close(socket);
       await stream.close();

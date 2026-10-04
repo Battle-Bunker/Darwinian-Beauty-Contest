@@ -64,7 +64,7 @@ function flowerNotes(ts, config) {
     `${c} seeded on every call and the clock is available. ${G("ms")} = ${flower.ms}: your time limit per call in milliseconds; a\n` +
     `${c} response that isn't done in time (or an error, or a malformed return) reaches the bee as ${nul}, with no energy.\n` +
     `${c} percent (0-100) is the share of this turn's excess energy E the bee gets as nectar if it feeds; the rest is your\n` +
-    `${c} surplus. No feed: nobody gets anything. E = (${G("flower_size_cap")} - ${G("size")}) * max(0, ${G("flower_ms")} - CPU ms of this call).\n` +
+    `${c} pollen. No feed: nobody gets anything. E = (${G("flower_size_cap")} - ${G("size")}) * max(0, ${G("flower_ms")} - CPU ms of this call).\n` +
     `${c} The ledger holds every finished turn, oldest first (not the one in progress: you aren't told whose bee asked).\n` +
     `${c} Receiving it is free; reading it is part of your compute.`;
 }
@@ -91,9 +91,9 @@ export function programInterface(config) {
     rules: typeRules(cT, rT, limitsOf(config)),
   };
   const entry = (C, R) => `{ round: number; bee: number; flower: number; challenge: ${C}; response: ${R} | null; fed: boolean;\n` +
-    `  percent: number | null; energy: number | null; nectar: number | null; surplus: number; ms: number | null }`;
+    `  percent: number | null; energy: number | null; nectar: number | null; pollen: number; ms: number | null }`;
   const entryNote = (cm) => `${cm} Ledger entry: bee and flower are team indices (GAME.team is yours). On a feed, percent, energy, nectar and\n` +
-    `${cm} surplus are public; without a feed, surplus is 0, nectar null, and percent and energy are your own flower's only.\n` +
+    `${cm} pollen are public; without a feed, pollen is 0, nectar null, and percent and energy are your own flower's only.\n` +
     `${cm} ms (the flower's CPU time): your own flower only. Hidden fields are null.`;
   if (config.language === "typescript") {
     const C = tsType(cT), R = tsType(rT);
@@ -110,7 +110,7 @@ export function programInterface(config) {
         `function decide(challenge: ${C}, response: ${R} | null, ledger: readonly Entry[]): ["feed" | "leave", ${C}]   // [decision, next challenge]\n${beeNotes(true, config)}`,
     };
   }
-  const pyEntry = `# ledger: a list of dicts {"round", "bee", "flower", "challenge", "response", "fed", "percent", "energy", "nectar", "surplus", "ms"}\n` +
+  const pyEntry = `# ledger: a list of dicts {"round", "bee", "flower", "challenge", "response", "fed", "percent", "energy", "nectar", "pollen", "ms"}\n` +
     entryNote("#").replaceAll("GAME.team", 'GAME["team"]').replace("# Ledger entry: ", "# ").replace("are null", "are None");
   return {
     types,

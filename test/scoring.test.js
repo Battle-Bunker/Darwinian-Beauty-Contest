@@ -21,37 +21,37 @@ test("a perfectly even game scores par 1 for everyone, at any N", () => {
   }
 });
 
-test("pollination from the surplus columns, forage from the nectar rows; own cells count", () => {
+test("pollination from the pollen columns, forage from the nectar rows; own cells count", () => {
   // rows: bee team; columns: flower team
   const feeds = [[2, 1, 0], [0, 0, 4], [1, 1, 1]];
   const nectar = [[100, 25, 0], [0, 0, 400], [9, 0, 0]];
-  const surplus = [[64, 81, 0], [0, 0, 100], [1, 0, 25]];
-  const s = score(["a", "b", "c"], feeds, nectar, surplus);
+  const pollen = [[64, 81, 0], [0, 0, 100], [1, 0, 25]];
+  const s = score(["a", "b", "c"], feeds, nectar, pollen);
   close(s[0].pollination, 8 + 0 + 1);
   close(s[1].pollination, 9);
   close(s[2].pollination, 0 + 10 + 5);
   close(s[0].forage, 10 + 5);
   close(s[1].forage, 20);
   close(s[2].forage, 3);
-  assert.deepEqual(s.map((t) => t.surplus), [65, 81, 125]);
+  assert.deepEqual(s.map((t) => t.pollen), [65, 81, 125]);
   const tot = (k) => s.reduce((x, t) => x + t[k], 0);
   for (const t of s) {
     close(t.pollinationShare, t.pollination / tot("pollination"));
     close(t.forageShare, t.forage / tot("forage"));
     close(t.fitness, 9 * t.pollinationShare * t.forageShare);
-    for (const gone of ["allure", "allureShare", "surplusShare"]) assert.ok(!(gone in t), `${gone} is no longer a score term`);
+    for (const gone of ["allure", "allureShare", "surplusShare", "surplus"]) assert.ok(!(gone in t), `${gone} is no longer a score term`);
   }
   assert.deepEqual(s.map((t) => [t.feedsReceived, t.feedsGiven, t.pollinators]), [[3, 3, 2], [2, 4, 2], [5, 3, 2]]);
   assert.deepEqual(s.map((t) => [t.nectarCollected, t.nectarGiven, t.nectarSources]), [[125, 109, 2], [400, 25, 1], [9, 400, 1]]);
 });
 
-test("rootsum over the surplus column rewards being pollinated by many teams", () => {
+test("rootsum over the pollen column rewards being pollinated by many teams", () => {
   // Both flowers kept 400 in all; one from a single bee team, one spread over four.
-  const surplus = [[400, 100, 0, 0], [0, 100, 0, 0], [0, 100, 0, 0], [0, 100, 0, 0]];
-  const s = score([0, 1, 2, 3], surplus.map((r) => r.map((x) => (x ? 1 : 0))), surplus, surplus);
+  const pollen = [[400, 100, 0, 0], [0, 100, 0, 0], [0, 100, 0, 0], [0, 100, 0, 0]];
+  const s = score([0, 1, 2, 3], pollen.map((r) => r.map((x) => (x ? 1 : 0))), pollen, pollen);
   close(s[0].pollination, 20);
   close(s[1].pollination, 40);
-  assert.equal(s[0].surplus, s[1].surplus);
+  assert.equal(s[0].pollen, s[1].pollen);
 });
 
 test("a term whose total is 0 gives every team a share of 1/N", () => {
@@ -61,7 +61,7 @@ test("a term whose total is 0 gives every team a share of 1/N", () => {
     close(t.pollinationShare, 0.5);
     close(t.forageShare, 0.5);
   }
-  // Feeds happened but every flower gave all its energy away: no surplus anywhere.
+  // Feeds happened but every flower gave all its energy away: no pollen anywhere.
   const s = score(["a", "b"], [[2, 0], [2, 0]], [[50, 0], [10, 0]], zero);
   assert.deepEqual(s.map((t) => t.pollinationShare), [0.5, 0.5]);
   close(s[0].fitness, 4 * 0.5 * (Math.sqrt(50) / (Math.sqrt(50) + Math.sqrt(10))));

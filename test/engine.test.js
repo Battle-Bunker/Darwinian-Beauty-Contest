@@ -1,7 +1,7 @@
 // The garden (server/engine.js), one flower per team: lockstep rounds of one turn per bee, queued
 // challenges, flowers drawn at random, [response, percent] within 150 ms and excess energy from CPU time,
 // responses delivered at 150 ms, the bees' 50 ms decision deadline with late replies and re-requests, the
-// nectar/surplus split and feedCost, the team ledger delivered between turns, stateless flowers, bees that
+// nectar/pollen split and feedCost, the team ledger delivered between turns, stateless flowers, bees that
 // keep their state until replaced, versions pinned per turn, pacing and the game clock.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -83,7 +83,7 @@ for (const language of ["python", "typescript"]) {
     const feeds = out.actions.filter((a) => a.action === "feed");
     assert.equal(out.feeds.flat().reduce((x, y) => x + y, 0), feeds.length);
     close(out.nectar.flat().reduce((x, y) => x + y, 0), feeds.reduce((s, a) => s + a.nectar, 0));
-    close(out.surplus.flat().reduce((x, y) => x + y, 0), feeds.reduce((s, a) => s + a.surplus, 0));
+    close(out.pollen.flat().reduce((x, y) => x + y, 0), feeds.reduce((s, a) => s + a.pollen, 0));
   });
 }
 
@@ -148,7 +148,7 @@ test("energy is counted in CPU time: a busy flower spends it, a sleeping one doe
       assert.match(t.flowerError, pattern, name);
       assert.equal(t.action, "feed", "the bee may still feed");
       assert.equal(t.nectar, 0);
-      assert.equal(t.surplus, 0);
+      assert.equal(t.pollen, 0);
     }
     assert.match(problems.find((p) => p.kind === "flower").error, pattern);
   }
@@ -177,7 +177,7 @@ test("typescript: energy from CPU time, and a late flower gives none", async () 
   }
 });
 
-test("nectar and surplus: a feed splits E by percent; a turn without a feed pays nobody", async () => {
+test("nectar and pollen: a feed splits E by percent; a turn without a feed pays nobody", async () => {
   const bee = `n = 0\ndef first(ledger):\n    return 1\ndef decide(c, r, ledger):\n    global n\n    n += 1\n    return ("feed" if n % 2 else "leave"), n\n`;
   const out = await play(normalizeConfig({ feedCost: 1 }), [{ flower: flower("c", 30), bee }], 40);
   const turns = ends(out.actions);
@@ -186,17 +186,17 @@ test("nectar and surplus: a feed splits E by percent; a turn without a feed pays
   for (const a of fed) {
     assert.ok(a.energy > 0);
     close(a.nectar, 0.3 * a.energy);
-    close(a.surplus, 0.7 * a.energy);
-    close(a.nectar + a.surplus, a.energy);
+    close(a.pollen, 0.7 * a.energy);
+    close(a.nectar + a.pollen, a.energy);
   }
   for (const a of left) {
     assert.ok(a.energy > 0, "the energy was there");
     assert.equal(a.nectar, null, "but no nectar");
-    assert.equal(a.surplus, 0, "and no surplus");
+    assert.equal(a.pollen, 0, "and no pollen");
   }
   assert.equal(out.feeds[0][0], fed.length);
   close(out.nectar[0][0], fed.reduce((s, a) => s + a.nectar, 0));
-  close(out.surplus[0][0], fed.reduce((s, a) => s + a.surplus, 0));
+  close(out.pollen[0][0], fed.reduce((s, a) => s + a.pollen, 0));
 });
 
 test("feedCost: a bee that feeds sits out exactly feedCost rounds, then plays the challenge it queued", async () => {
@@ -245,14 +245,14 @@ def decide(c, r, ledger, *rest):
 });
 
 test("the team ledger: every turn's public fields, plus the team's own private details", () => {
-  const fed = { round: 5, bee: 0, flower: 1, c: 3, r: 4, fed: true, percent: 25, energy: 1000, nectar: 250, surplus: 750, ms: 12 };
-  const left = { round: 5, bee: 2, flower: 1, c: 7, r: null, fed: false, percent: 60, energy: 800, nectar: null, surplus: 0, ms: 3 };
+  const fed = { round: 5, bee: 0, flower: 1, c: 3, r: 4, fed: true, percent: 25, energy: 1000, nectar: 250, pollen: 750, ms: 12 };
+  const left = { round: 5, bee: 2, flower: 1, c: 7, r: null, fed: false, percent: 60, energy: 800, nectar: null, pollen: 0, ms: 3 };
   // A feed: public, but the flower's CPU time is its own team's.
-  for (const ti of [0, 2]) assert.deepEqual(entryFor(fed, ti), { round: 5, bee: 0, flower: 1, challenge: 3, response: 4, fed: true, percent: 25, energy: 1000, nectar: 250, surplus: 750, ms: null });
+  for (const ti of [0, 2]) assert.deepEqual(entryFor(fed, ti), { round: 5, bee: 0, flower: 1, challenge: 3, response: 4, fed: true, percent: 25, energy: 1000, nectar: 250, pollen: 750, ms: null });
   assert.equal(entryFor(fed, 1).ms, 12);
-  // No feed: surplus 0, no nectar; the percent and energy are the flower's team's.
-  for (const ti of [0, 2]) assert.deepEqual(entryFor(left, ti), { round: 5, bee: 2, flower: 1, challenge: 7, response: null, fed: false, percent: null, energy: null, nectar: null, surplus: 0, ms: null });
-  assert.deepEqual(entryFor(left, 1), { round: 5, bee: 2, flower: 1, challenge: 7, response: null, fed: false, percent: 60, energy: 800, nectar: null, surplus: 0, ms: 3 });
+  // No feed: pollen 0, no nectar; the percent and energy are the flower's team's.
+  for (const ti of [0, 2]) assert.deepEqual(entryFor(left, ti), { round: 5, bee: 2, flower: 1, challenge: 7, response: null, fed: false, percent: null, energy: null, nectar: null, pollen: 0, ms: null });
+  assert.deepEqual(entryFor(left, 1), { round: 5, bee: 2, flower: 1, challenge: 7, response: null, fed: false, percent: 60, energy: 800, nectar: null, pollen: 0, ms: 3 });
 });
 
 test("python: every team's programs get exactly its own view of the ledger, delivered incrementally", async () => {
@@ -647,7 +647,7 @@ test("a flower process that stops responding is replaced: later calls are answer
 test("a flower whose processes keep dying is respawned at most once a second per process, with the ledger so far", async () => {
   const { garden, pool, ask } = await flowerPool(`def flower(c, ledger):\n    return len(ledger), 50\n`);
   try {
-    garden.history.push({ round: 1, bee: 0, flower: 0, c: 1, r: 1, fed: false, nectar: null, percent: 50, energy: 1, ms: 1, surplus: 0 });
+    garden.history.push({ round: 1, bee: 0, flower: 0, c: 1, r: 1, fed: false, nectar: null, percent: 50, energy: 1, ms: 1, pollen: 0 });
     garden.delivered = 1; // as if delivered at the last round boundary: a respawned process starts with it
     const n = pool.procs.length;
     const seen = new Set(pool.procs);
@@ -705,13 +705,13 @@ test("the clock: game time is rounds × 200 ms; it stands still while paused, an
 test("adoption: a garden carries on from the stored round, clock, turn counts, ledgers and team ledger", async () => {
   const config = normalizeConfig({ feedCost: 4 });
   const history = [
-    { round: 37, bee: 0, flower: 0, c: 5, r: 5, fed: false, nectar: null, percent: 50, energy: 10, ms: 1, surplus: 0 },
-    { round: 38, bee: 0, flower: 0, c: 5, r: 5, fed: true, nectar: 5, percent: 50, energy: 10, ms: 1, surplus: 5 },
+    { round: 37, bee: 0, flower: 0, c: 5, r: 5, fed: false, nectar: null, percent: 50, energy: 10, ms: 1, pollen: 0 },
+    { round: 38, bee: 0, flower: 0, c: 5, r: 5, fed: true, nectar: 5, percent: 50, energy: 10, ms: 1, pollen: 5 },
   ];
   const bee = `def first(ledger):\n    print(len(ledger), ledger[-1]["fed"])\n    return 1\ndef decide(c, r, ledger):\n    return "leave", 1\n`;
   const garden = new Garden({
     config, teams: 1, round: 40, clockMs: 8000, lastSeq: 77, endMs: 9200, paced: false, history, turns: [12],
-    ledgers: { feeds: [[1]], nectar: [[5]], surplus: [[5]] },
+    ledgers: { feeds: [[1]], nectar: [[5]], pollen: [[5]] },
   });
   await garden.setProgram(0, "flower", flower("c"), 3);
   await garden.setProgram(0, "bee", bee, 2);
@@ -725,7 +725,7 @@ test("adoption: a garden carries on from the stored round, clock, turn counts, l
   assert.equal(ends(d.actions)[0].log.trim(), "2 True", "the new bee's ledger starts with the stored turns");
   assert.ok(d.actions.every((a) => a.atMs === 8000 + (a.round - 41) * 200 + (a.action === "arrive" ? 0 : 150)));
   assert.deepEqual(d.feeds, [[1]]);
-  assert.equal(d.surplus[0][0], 5);
+  assert.equal(d.pollen[0][0], 5);
 });
 
 test("change budgets accrue per minute of game time up to a cap", () => {
@@ -753,5 +753,5 @@ test("try a bee: unpaced, in a garden of its own flower", async () => {
   const r = await tryBee({ config, programs: starters(config), rounds: 100 });
   assert.equal(r.rounds, 100);
   assert.ok(performance.now() - t0 < (100 * 200) / 2, "much faster than real time");
-  assert.ok(r.actions.length > 20 && r.feeds > 0 && r.nectar > 0 && r.surplus > 0);
+  assert.ok(r.actions.length > 20 && r.feeds > 0 && r.nectar > 0 && r.pollen > 0);
 });

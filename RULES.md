@@ -50,7 +50,7 @@ Every bee that isn't busy feeding gets **one turn per round**: one challenge, on
    and the response alone (and whatever it remembers). The team numbers in `HISTORY` belong to earlier
    turns, so a flower's reputation can only be carried by what its responses look like, never by who it
    is.
-5. **The turn is settled** (see "Energy, nectar and surplus"). If the bee fed, it sits out the next
+5. **The turn is settled** (see "Energy: compute, nectar and pollen"). If the bee fed, it sits out the next
    **10 rounds** (`feed_cost`; the owner can change it), then plays again with the challenge it queued.
 
 **Late replies.** A bee that takes more than 50 ms isn't cut off: its call keeps running (up to 2 s, when
@@ -69,9 +69,14 @@ for as long as that version plays. A new version (or a crash) starts afresh. A f
 every call: nothing it does survives to the next call. It can use randomness (freshly seeded every
 call) and the clock, and it can read `HISTORY`.
 
-## Energy, nectar and surplus
+## Energy: compute, nectar and pollen
 
-A flower's **excess energy** for a turn, in node·ms, is
+A flower allocates its energy between three things:
+- **compute**: the CPU time it spends answering (and its size, which shrinks the whole budget);
+- **nectar**: the percent it gives a bee that feeds;
+- **pollen**: what it keeps when the bee feeds.
+
+Each turn, the energy left after compute is the flower's **excess energy**, in node·ms:
 
 > **E = (flower size cap − your flower's size) × max(0, 150 − compute ms)**
 
@@ -84,12 +89,12 @@ A flower's **excess energy** for a turn, in node·ms, is
 - A late answer, an error or a malformed return: E = 0.
 
 Then:
-- **If the bee feeds:** it gets **nectar = percent/100 × E**, and the flower's team **surplus** gets the
-  rest, (1 − percent/100) × E.
+- **If the bee feeds:** the bee gets **nectar = percent/100 × E**, and the flower keeps the rest as
+  **pollen = (1 − percent/100) × E**.
 - **If it doesn't** (it leaves, it's late, it crashes): nobody gets anything. That turn's energy is lost,
-  and the flower's surplus doesn't change.
+  and the flower gets no pollen.
 
-So a flower's surplus grows only when bees feed at it.
+So a flower collects pollen only when bees feed at it.
 
 ## History
 
@@ -103,8 +108,8 @@ Turn(game="7", round=41, at_ms=8000, turn=12,
      challenge=17, response=52,           # response is None if the flower failed
      fed=True,
      percent=25.0, energy=123486.0,       # on a feed: public. Otherwise: your own flower only
-     nectar=30871.5, surplus=92614.5,     # on a feed: what the bee got and the flower kept.
-                                          #   Otherwise nectar is None and surplus is 0
+     nectar=30871.5, pollen=92614.5,      # on a feed: what the bee got and the flower kept.
+                                          #   Otherwise nectar is None and pollen is 0
      ms=2.1, flower_version=3, flower_error=None,   # your own flower only (ms: its compute time)
      bee_ms=0.4, bee_version=2, bee_error=None)     # your own bee only
 ```
@@ -262,7 +267,7 @@ never can be: make it in steps.
 **Public to everyone, as it happens** (including spectators without a team): for every turn of every bee,
 the **arrival** (whose bee, whose flower), the **challenge**, the **response** and **whether the bee fed**
 (a bee that was late or broke simply didn't). On a **feed**, also the **percent**, the **energy**, the **nectar** the bee got and
-the **surplus** the flower kept. The game's settings and the scoreboard are public too. So whatever two
+the **pollen** the flower kept. The game's settings and the scoreboard are public too. So whatever two
 programs do together happens in plain view.
 
 **Private during play:**
@@ -284,7 +289,7 @@ Two numbers per team, each from the whole game:
 
 | Name | What it is |
 |---|---|
-| **pollination** | the sum over bee teams of √(the surplus your flower kept from that team's bee's feeds). How widely, and how profitably, your flower is pollinated |
+| **pollination** | the sum over bee teams of √(the pollen your flower kept from that team's bee's feeds). How widely, and how profitably, your flower is pollinated |
 | **forage** | the sum over flower teams of √(the nectar your bee got there). How widely your bee eats |
 
 Each becomes a **share**: your value ÷ the sum over all teams (when that sum is 0, every share is 1/N).
@@ -297,7 +302,7 @@ that got 900 nectar from one flower has forage 30; 300 from each of three flower
 team's bee and flower count like any other team's.
 
 **The scoreboard is live and public**: during play everyone, spectators included, sees every team's
-pollination, forage, shares and fitness as they change, along with its feed counts, nectar and surplus.
+pollination, forage, shares and fitness as they change, along with its feed counts, nectar and pollen.
 
 ## After the game
 

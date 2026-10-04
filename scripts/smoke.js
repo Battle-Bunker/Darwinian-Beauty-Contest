@@ -96,7 +96,7 @@ assert.deepEqual(tf.results.map((x) => [x.r, x.percent]), [[4, 30], [7, 30], [50
 assert.ok(tf.results.every((x) => x.energy > 0 && typeof x.ms === "number"));
 const tb = await api(players[0].token, "POST", `${g}/try`, { kind: "bee", code: variants[0].bee, rounds: 60 });
 assert.ok(tb.actions.length > 10 && tb.actions.every((a) => a.bee === players[0].team.id && a.flower === players[0].team.id));
-assert.ok(tb.feeds > 0 && tb.nectar > 0 && tb.surplus > 0);
+assert.ok(tb.feeds > 0 && tb.nectar > 0 && tb.pollen > 0);
 
 // Only the owner starts it; the clock and the change budgets start with it.
 assert.equal((await api(players[0].token, "POST", `${g}/start`, null, { allow: [403] })).status, 403);
@@ -108,7 +108,7 @@ const lateTeam = await api(await login("Late " + stamp), "POST", `${g}/teams`, {
 assert.equal(lateTeam.status, 409, "teams can't join a running game");
 
 // Every turn is public as it happens: the arrival, the challenge, the response and whether the bee fed;
-// a feed's percent, energy, nectar and surplus too.
+// a feed's percent, energy, nectar and pollen too.
 const seen = await until("turns", async () => {
   const a = await api(players[1].token, "GET", `${g}/actions?limit=5000`);
   const ends = a.actions.filter(isEnd);
@@ -120,13 +120,13 @@ const adaTurn = ends.find((a) => a.bee === ada);
 assert.equal(adaTurn.c, 42, "Bo sees Ada's bee's challenge");
 assert.equal(typeof adaTurn.r, "number");
 for (const a of ends) {
-  assert.ok("c" in a && "r" in a && a.surplus !== undefined);
+  assert.ok("c" in a && "r" in a && a.pollen !== undefined);
   if (a.action === "feed") {
-    assert.ok(a.energy > 0 && a.nectar > 0 && a.surplus > 0, "a feed is public in full");
-    assert.ok(Math.abs(a.nectar + a.surplus - a.energy) < 1e-6 * a.energy);
+    assert.ok(a.energy > 0 && a.nectar > 0 && a.pollen > 0, "a feed is public in full");
+    assert.ok(Math.abs(a.nectar + a.pollen - a.energy) < 1e-6 * a.energy);
     assert.ok(Math.abs(a.nectar - (a.percent / 100) * a.energy) < 1e-6 * a.energy);
   } else {
-    assert.equal(a.surplus, 0, "a turn without a feed pays nobody");
+    assert.equal(a.pollen, 0, "a turn without a feed pays nobody");
     assert.ok(!("nectar" in a));
     assert.equal("percent" in a, a.flower === bo, "an unfed turn's percent: the flower's team only");
     assert.equal("energy" in a, a.flower === bo);
@@ -155,7 +155,7 @@ for (const acts of turns.values()) {
 const spectator = (await api(null, "GET", `${g}/actions?limit=5000`)).actions;
 assert.ok(spectator.length >= seen.actions.length, "spectators see every turn too");
 assert.ok(spectator.every((a) => !("ms" in a) && !("beeMs" in a) && !("log" in a) && !("beeVersion" in a) && !("flowerVersion" in a)));
-assert.ok(spectator.filter((a) => a.action === "leave").every((a) => !("percent" in a) && a.surplus === 0));
+assert.ok(spectator.filter((a) => a.action === "leave").every((a) => !("percent" in a) && a.pollen === 0));
 assert.ok(spectator.filter((a) => a.action === "feed").every((a) => typeof a.nectar === "number" && typeof a.percent === "number"));
 const latest = await api(null, "GET", `${g}/actions?before=${seen.lastSeq + 1}&limit=5`);
 assert.deepEqual(latest.actions.map((a) => a.seq), [4, 3, 2, 1, 0].map((i) => seen.lastSeq - i));
@@ -180,7 +180,7 @@ for (const e of boLedger.entries) {
   assert.equal(e.percent === null, !e.fed && e.flower !== 1, "percent: public on a feed, else Bo's own flower");
   assert.equal(e.ms === null, e.flower !== 1, "ms: Bo's own flower only");
   assert.equal(e.nectar === null, !e.fed);
-  assert.equal(e.surplus, e.fed ? a.surplus : 0);
+  assert.equal(e.pollen, e.fed ? a.pollen : 0);
 }
 const publicLedger = await api(null, "GET", `${g}/ledger?limit=5000`);
 assert.equal(publicLedger.team, null);
@@ -190,11 +190,11 @@ assert.ok(publicLedger.entries.every((e) => e.ms === null && (e.fed || e.percent
 const board = await api(null, "GET", `${g}/scores`);
 assert.equal(board.scores.length, 3);
 for (const s of board.scores) {
-  for (const k of ["pollination", "forage", "pollinationShare", "forageShare", "fitness", "surplus"]) assert.equal(typeof s[k], "number", `${k} is public`);
-  for (const k of ["allure", "allureShare", "surplusShare"]) assert.ok(!(k in s), `${k} is no longer a score term`);
+  for (const k of ["pollination", "forage", "pollinationShare", "forageShare", "fitness", "pollen"]) assert.equal(typeof s[k], "number", `${k} is public`);
+  for (const k of ["allure", "allureShare", "surplusShare", "surplus"]) assert.ok(!(k in s), `${k} is no longer a score term`);
 }
-assert.ok(board.scores.reduce((x, s) => x + s.surplus, 0) > 0);
-assert.ok(board.ledgers.nectar.flat().every((x) => typeof x === "number") && board.ledgers.surplus.flat().every((x) => typeof x === "number"));
+assert.ok(board.scores.reduce((x, s) => x + s.pollen, 0) > 0);
+assert.ok(board.ledgers.nectar.flat().every((x) => typeof x === "number") && board.ledgers.pollen.flat().every((x) => typeof x === "number"));
 const sum = (m) => m.flat().reduce((x, y) => x + y, 0);
 assert.ok(sum(board.ledgers.feeds) > 0 && sum(board.ledgers.nectar) > 0);
 

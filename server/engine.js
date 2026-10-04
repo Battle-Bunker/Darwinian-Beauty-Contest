@@ -15,7 +15,7 @@
 //   150 ms Every response is delivered at once, however fast its flower was. Each bee that took a turn
 //          is called: decide(challenge, response, ledger), with bee.ms to return ["feed" | "leave", next].
 //   200 ms The turn is settled. A feed: nectar = percent/100 × E to the bee, (1 − percent/100) × E to the
-//          flower team's surplus, and the bee sits out feedCost rounds. No feed: nobody gets anything.
+//          flower team's pollen, and the bee sits out feedCost rounds. No feed: nobody gets anything.
 //          `next` is queued for the bee's next turn.
 // A late reply doesn't stop the round: at the deadline the turn is settled without it (never a feed), but
 // the engine keeps listening (the call runs on, up to a hard limit of 2 s). If the late reply is
@@ -56,8 +56,8 @@ export function gameInfo(config, team, teams) {
 
 /**
  * One finished turn as team `ti`'s programs (and operators) see it. Public: the arrival, challenge,
- * response and whether the bee fed; on a feed also the percent, energy, nectar and surplus (on a turn
- * without a feed, surplus is 0 and nectar null). The flower's own team also sees the percent and energy of
+ * response and whether the bee fed; on a feed also the percent, energy, nectar and pollen (on a turn
+ * without a feed, pollen is 0 and nectar null). The flower's own team also sees the percent and energy of
  * turns without a feed, and the flower's CPU time (ms) of every turn. Hidden: null.
  */
 export function entryFor(t, ti) {
@@ -65,7 +65,7 @@ export function entryFor(t, ti) {
   return {
     round: t.round, bee: t.bee, flower: t.flower, challenge: t.c, response: t.r, fed: t.fed,
     percent: t.fed || own ? t.percent : null, energy: t.fed || own ? t.energy : null,
-    nectar: t.fed ? t.nectar : null, surplus: t.fed ? t.surplus : 0, ms: own ? t.ms : null,
+    nectar: t.fed ? t.nectar : null, pollen: t.fed ? t.pollen : 0, ms: own ? t.ms : null,
   };
 }
 
@@ -203,8 +203,8 @@ export class Garden {
    * teams: number of teams (team indices are participants order). round: rounds already played; clockMs:
    * the game time they took. endMs: game time at which run() stops (default config.minutes). maxRounds:
    * stop after this many rounds instead (for trying a bee). lastSeq: the last action number already used.
-   * ledgers: { feeds, nectar, surplus } so far. history: the finished turns so far ({ round, bee, flower,
-   * c, r, fed, nectar, percent, energy, ms, surplus }, team indices), which the programs' ledgers start
+   * ledgers: { feeds, nectar, pollen } so far. history: the finished turns so far ({ round, bee, flower,
+   * c, r, fed, nectar, percent, energy, ms, pollen }, team indices), which the programs' ledgers start
    * from. turns: each bee's turns so far. paced: rounds last at least roundMs of wall time (false: back to
    * back, for tests and the "try" tool).
    */
@@ -243,7 +243,7 @@ export class Garden {
     for (const t of this.history) if (t.fed) this.bees[t.bee].sitOut = Math.max(0, t.round + config.feedCost - round);
     this.feeds = ledgers?.feeds ?? zeroLedger(teams);
     this.nectar = ledgers?.nectar ?? zeroLedger(teams);
-    this.surplus = ledgers?.surplus ?? zeroLedger(teams); // surplus[b][f]: what f's flower kept from b's feeds
+    this.pollen = ledgers?.pollen ?? zeroLedger(teams); // pollen[b][f]: what f's flower kept from b's feeds
     this.out = [];                    // actions not yet drained
     this.problems = [];               // { team, kind, version, error }: the first error of each program version
     this.seenProblem = new Set();
@@ -317,7 +317,7 @@ export class Garden {
   drain() {
     return {
       actions: this.out.splice(0), problems: this.problems.splice(0), clockMs: Math.round(this.clockMs()), round: this.round,
-      lastSeq: this.seq, feeds: this.feeds, nectar: this.nectar, surplus: this.surplus,
+      lastSeq: this.seq, feeds: this.feeds, nectar: this.nectar, pollen: this.pollen,
     };
   }
 
@@ -353,7 +353,7 @@ export class Garden {
       if (!slot) continue;
       const t = {
         b, gen: b.gen, no: ++b.turns, round: r, start, c: b.queued.c, flower: slot.team, pool: slot.pool, size: slot.size,
-        flowerVersion: slot.version, beeVersion: b.version, fed: false, nectar: null, surplus: 0, beeMs: null, beeError: null, log: null,
+        flowerVersion: slot.version, beeVersion: b.version, fed: false, nectar: null, pollen: 0, beeMs: null, beeError: null, log: null,
       };
       b.queued = null;
       b.busy = true;
@@ -430,7 +430,7 @@ export class Garden {
     this.out.push({
       seq: ++this.seq, atMs: Math.round(atMs), round: t.round, turn: t.no, bee: t.b.ti, flower: t.flower, action,
       beeVersion: t.beeVersion, flowerVersion: t.flowerVersion,
-      c: null, r: null, percent: null, energy: null, ms: null, surplus: null, nectar: null, flowerError: null,
+      c: null, r: null, percent: null, energy: null, ms: null, pollen: null, nectar: null, flowerError: null,
       beeMs: null, beeError: null, log: null, ...fields,
     });
   }
@@ -622,23 +622,23 @@ export class Garden {
     if (!res.dead) this.#askFirst(b);
   }
 
-  /** Settle a turn: nectar and surplus, the ledgers, the end of the turn's record; then the bee moves on. */
+  /** Settle a turn: nectar and pollen, the ledgers, the end of the turn's record; then the bee moves on. */
   #settle(t) {
     const b = t.b, f = t.flower;
     if (t.fed) {
       t.nectar = ((t.percent ?? 0) / 100) * t.energy;
-      t.surplus = t.energy - t.nectar;
+      t.pollen = t.energy - t.nectar;
       this.feeds[b.ti][f]++;
       this.nectar[b.ti][f] += t.nectar;
-      this.surplus[b.ti][f] += t.surplus;
+      this.pollen[b.ti][f] += t.pollen;
     }
     this.#record(t, t.fed ? "feed" : "leave", {
-      c: t.c, r: t.r, percent: t.percent, energy: t.energy, ms: t.ms, surplus: t.surplus, nectar: t.fed ? t.nectar : null,
+      c: t.c, r: t.r, percent: t.percent, energy: t.energy, ms: t.ms, pollen: t.pollen, nectar: t.fed ? t.nectar : null,
       flowerError: t.flowerError, beeMs: t.beeMs, beeError: t.beeError, log: t.log,
     }, t.start + this.windowMs);
     this.history.push({
       round: t.round, bee: b.ti, flower: f, c: t.c, r: t.r, fed: t.fed, nectar: t.fed ? t.nectar : null,
-      percent: t.percent, energy: t.energy, ms: t.ms, surplus: t.surplus,
+      percent: t.percent, energy: t.energy, ms: t.ms, pollen: t.pollen,
     });
     // The turn is over: its flower version may go, and new code for the bee takes over now.
     b.turn = null;
@@ -679,6 +679,6 @@ export async function tryBee({ config, programs, rounds = 300 }) {
   const garden = new Garden({ config, teams: 1, endMs: Infinity, maxRounds: rounds, paced: false });
   await Promise.all(KINDS.map((k) => garden.setProgram(0, k, programs[k], 1)));
   await garden.run();
-  const { actions, problems, feeds, nectar, surplus } = garden.drain();
-  return { actions, problems, feeds: feeds[0][0], nectar: nectar[0][0], surplus: surplus[0][0], rounds: garden.rounds };
+  const { actions, problems, feeds, nectar, pollen } = garden.drain();
+  return { actions, problems, feeds: feeds[0][0], nectar: nectar[0][0], pollen: pollen[0][0], rounds: garden.rounds };
 }

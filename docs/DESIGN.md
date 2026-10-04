@@ -14,11 +14,11 @@ A flower now *chooses* how much to pay, out of energy it can only have by being 
 | (flower size cap − size) × max(0, 150 − CPU ms) | **excess energy** E (node·ms) | what a flower saved this turn by being small and quick |
 | the share of E a flower offers | **percent** | 0–100, clamped |
 | percent/100 × E, to the bee if it feeds | **nectar** | |
-| (1 − percent/100) × E, to the flower's team if the bee feeds | **surplus** | a turn without a feed pays nobody |
-| `feeds[b][f]`, `nectar[b][f]`, `surplus[b][f]` | **feed / nectar / surplus ledgers** | row = bee team, column = flower team |
+| (1 − percent/100) × E, kept by the flower if the bee feeds | **pollen** | a turn without a feed pays nobody. A flower allocates its energy between compute, nectar and pollen |
+| `feeds[b][f]`, `nectar[b][f]`, `pollen[b][f]` | **feed / nectar / pollen ledgers** | row = bee team, column = flower team |
 | every finished turn, as one team may see it | **team ledger** | what the team's programs and operators get |
 | Σ√xᵢ | **rootsum** | the diversity-weighted size of an earnings vector |
-| rootsum of a flower's surplus column | **pollination** | how widely, and how profitably, the flower is pollinated |
+| rootsum of a flower's pollen column | **pollination** | how widely, and how profitably, the flower is pollinated |
 | rootsum of a bee's nectar row | **forage** | how widely the bee eats |
 | value ÷ Σ value over teams (1/N when Σ = 0) | **share** | par 1/N |
 | N² × pollination share × forage share | **fitness** | par 1.0 for any N |
@@ -29,7 +29,7 @@ Every 200 ms round, each bee that isn't feeding takes one turn. Its challenge mu
 engine draws a flower uniformly at random among all N (its own included), calls it, and the flower has
 150 ms to return `[response, percent]`. The runner measures the call's CPU time, which gives E. At 150 ms
 the response reaches the bee, which has 50 ms to return `["feed" | "leave", next_challenge]`. A feed pays
-nectar and surplus and sits the bee out `feedCost` rounds; a leave pays nobody. The bee's next challenge
+nectar and pollen and sits the bee out `feedCost` rounds; a leave pays nobody. The bee's next challenge
 is queued for its next turn.
 
 ## Why energy, and why CPU time
@@ -96,7 +96,7 @@ few teams a flower can sometimes narrow down who is asking.
 
 ## What is public
 
-Arrivals, challenges, responses and every feed (with its percent, E, nectar and surplus) are public to
+Arrivals, challenges, responses and every feed (with its percent, E, nectar and pollen) are public to
 everyone as they happen, spectators included, and so is the scoreboard. That was a deliberate change from
 "third-party turns are secret": any self-dealing scheme, such as a handshake between a team's own bee and
 flower, has to work in plain view, where every other team can study and copy it.
@@ -121,7 +121,7 @@ can't steer that turn.
 |---|---|
 | 0 ms | The last round's turns go out to every program's ledger. A crashed bee starts afresh; new code for a bee between turns takes over; a bee with nothing queued is asked `first` (at most once a round). Each bee with a challenge queued, no call in flight and no rounds left to sit out takes its turn: a flower is drawn at random, the arrival is recorded and flushed at once, both versions are pinned, and the flower is called. A bee with nothing queued loses the round. |
 | 150 ms | Every response is delivered; each bee with a turn is called: `decide(challenge, response, ledger)`. |
-| 200 ms | Each reply is in, or its deadline has passed. Each turn is settled: nectar, surplus and the ledgers; the turn's end (`feed` or `leave`, carrying the whole turn) is recorded; a feed sits the bee out `feedCost` rounds; new code for the bee takes over. |
+| 200 ms | Each reply is in, or its deadline has passed. Each turn is settled: nectar, pollen and the ledgers; the turn's end (`feed` or `leave`, carrying the whole turn) is recorded; a feed sits the bee out `feedCost` rounds; new code for the bee takes over. |
 
 At most one turn per bee per round: with 6 teams, at most 30 turns (60 actions) a second.
 
@@ -157,9 +157,9 @@ Diminishing returns per source (`d√k/dk = 1/(2√k)`) mean the k-th feed from 
 less and less, so a bee can't farm one friendly flower and a flower can't rely on one loyal bee. Own-team
 entries count like any other source: a team can always earn from itself, but only as one of N columns.
 
-Pollination is the rootsum of the surplus a flower kept per bee team: one term that rewards both being fed
-at (no feed, no surplus) and keeping something when fed, spread over many teams' bees. (An earlier version
-had separate allure, from feed counts, and surplus terms; they merged into this one.) Fitness is
+Pollination is the rootsum of the pollen a flower kept per bee team: one term that rewards both being fed
+at (no feed, no pollen) and keeping something when fed, spread over many teams' bees. (An earlier version
+had separate allure (from feed counts) and surplus terms; they merged into this one, and surplus was renamed pollen.) Fitness is
 N² × pollination share × forage share, so a perfectly even game scores 1 for everyone.
 
 ## Budgets

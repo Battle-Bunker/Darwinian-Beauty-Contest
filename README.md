@@ -9,13 +9,15 @@ the `claude/one-flower` branch):
 - **bee**: asks flowers challenges and, after each answer, decides whether to feed
 
 A game is one continuous garden of 200 ms rounds. Every round, each bee that isn't feeding takes a turn at a
-flower drawn at random (its own included): the flower has 150 ms, the bee 50 ms. A flower's **excess
-energy** is (size cap − its size) × (150 ms − the CPU time it used); a feed splits it into nectar for the
-bee and surplus for the flower's team, and a turn without a feed pays nobody. Every turn is public as it
+flower drawn at random (its own included): the flower has 150 ms, the bee 50 ms. A flower allocates its
+energy between **compute**, **nectar** and **pollen**: its **excess energy** is (size cap − its size) ×
+(150 ms − the CPU time it used), and a feed splits it into nectar for the bee and pollen the flower keeps;
+a turn without a feed pays nobody. Every turn is public as it
 happens (who visited whom, the challenge, the response, whether the bee fed, and a feed's percent, energy,
-nectar and surplus), and so is the scoreboard; code, timings and the details of unfed turns stay with
-their teams until the end. Both programs read a **team ledger** of every finished turn, delivered between
-their timed calls. Each program earns a change budget as the game goes on, and a team can spend it at any
+nectar and pollen), and so is the scoreboard; code, timings and the details of unfed turns stay with
+their teams until the end. Both programs query the team's history of every finished turn through a typed,
+immutable `HISTORY` global, kept up to date between their timed calls; operators and agents run the same
+queries over HTTP (docs/QUERY.md). Each program earns a change budget as the game goes on, and a team can spend it at any
 moment on a new version. Fitness rewards *diverse* success: energy your flower kept from many teams' bees
 (**pollination**) and nectar your bee got from many teams' flowers (**forage**).
 

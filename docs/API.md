@@ -9,9 +9,9 @@ RULES.md has the game itself. In short: each team has one **flower** and one **b
 each bee that isn't feeding takes one **turn**: the engine draws a flower at random (own included), the
 flower answers `[response, percent]` within 150 ms, and the bee decides `["feed" | "leave", next]` within
 50 ms. Excess energy E = (flower size cap − flower size) × max(0, 150 − flower CPU ms); a feed pays
-nectar = percent/100 × E to the bee and the rest to the flower team's surplus; a turn without a feed pays
+nectar = percent/100 × E to the bee and the rest to the flower as pollen; a turn without a feed pays
 nobody (its energy is lost). fitness = N² × pollination share × forage share, where pollination is the
-rootsum of the surplus a flower kept per bee team and forage the rootsum of the nectar a bee got per flower team.
+rootsum of the pollen a flower kept per bee team and forage the rootsum of the nectar a bee got per flower team.
 
 ## Auth
 
@@ -54,7 +54,7 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 | POST | `base/teams/join` | user | `{ joinCode }` | `{ id, name }` |
 | POST | `base/check` | team member | `{ kind, code }` | `{ ok, kind, size, minified, budget, distance, cost, available, errors[] }`. Validates without saving: syntax, the entry points (`flower`; for a bee `first` and `decide`, at the top level), size, and once the game runs the change budget: `distance` is the node edits from the version playing now, `cost` what the change would spend, `available` the budget now (floored) |
 | POST | `base/programs` | team member | `{ kind, code }` | same as check plus `submitted: true, version, atMs` (the game time it went live; 0 in the lobby) and `available` after paying. **422** with `errors` if it's too big or can't be afforded yet |
-| POST | `base/try` | team member | flower: `{ kind: "flower", code, challenges?, ledger? }`; bee: `{ kind: "bee", code, flower?, rounds? }` | flower: `{ size, results: [{ c, r, percent, energy, ms, error? }] }` (`ledger`: turn records for its `HISTORY.turns`, default none; `size` is the flower's size, used for `energy`). bee: `{ actions, problems, feeds, nectar, surplus, rounds }`: `rounds` (default 300, at most 1000) unpaced rounds in a garden of just your own flower (`flower`, else your latest). In both, the programs run as team 0 of 1 (`GAME.team` 0, `GAME.teams` 1) |
+| POST | `base/try` | team member | flower: `{ kind: "flower", code, challenges?, ledger? }`; bee: `{ kind: "bee", code, flower?, rounds? }` | flower: `{ size, results: [{ c, r, percent, energy, ms, error? }] }` (`ledger`: turn records for its `HISTORY.turns`, default none; `size` is the flower's size, used for `energy`). bee: `{ actions, problems, feeds, nectar, pollen, rounds }`: `rounds` (default 300, at most 1000) unpaced rounds in a garden of just your own flower (`flower`, else your latest). In both, the programs run as team 0 of 1 (`GAME.team` 0, `GAME.teams` 1) |
 
 ### Config
 
@@ -101,15 +101,15 @@ Types: `int`, `float`, `bool`, `str`, `any`, `list[T]`, `tree[T]`, `graph`, `dig
 | Field | During play | After finish |
 |---|---|---|
 | arrivals (`bee` → `flower`), `c`, `r`, fed or not (`action`), `turn`, `round`, `atMs` | everyone, spectators included, as it happens | everyone |
-| on a `feed`: `percent`, `energy`, `nectar`, `surplus` | everyone | everyone |
-| on a `leave`: `surplus` (always 0) | everyone | everyone |
+| on a `feed`: `percent`, `energy`, `nectar`, `pollen` | everyone | everyone |
+| on a `leave`: `pollen` (always 0) | everyone | everyone |
 | on a `leave`: `percent`, `energy` | the flower's team | everyone |
 | `ms` (the flower's CPU time), `flowerError`, `flowerVersion` | the flower's team | everyone |
 | `beeMs`, `beeError`, `beeVersion` | the bee's team | everyone |
 | `log` (what the bee printed) | the bee's team | everyone if `revealOnFinish` |
 | code | own team | everyone if `revealOnFinish` |
 | program versions, sizes, costs, change budgets, problems | own team | everyone |
-| the scoreboard (every team's totals, shares and fitness) and `ledgers` (feeds, nectar, surplus) | everyone, live | everyone |
+| the scoreboard (every team's totals, shares and fitness) and `ledgers` (feeds, nectar, pollen) | everyone, live | everyone |
 
 A field you may not see is **absent** from actions, and **null** in ledger entries and query rows.
 Every way of reading actions (pages, `before=`, `mine=1`, the SSE and WebSocket streams) and the team
@@ -137,7 +137,7 @@ don't bump the public `game.version`, so other teams can't tell when a team chan
   "myTeam": { "id", "name", "joinCode", "index" } | null,
   "interface": { "flower", "bee", "types": { "challenge", "response", "challengeMeans", "responseMeans", "rules": [..] } },
   "scores": [teamScore] | null,
-  "ledgers": { "feeds": [[int]], "nectar": [[number]], "surplus": [[number]] } | null
+  "ledgers": { "feeds": [[int]], "nectar": [[number]], "pollen": [[number]] } | null
 }
 ```
 
@@ -147,7 +147,7 @@ oldest first; `atMs` = game time it went live, 0 for the lobby; `problem` = the 
 only where you may see it.
 
 `ledgers` (row = bee team, column = flower team, participants order; whole game so far; public): `feeds[b][f]`
-(times b's bee fed at f's flower), `nectar[b][f]` (nectar b's bee got there) and `surplus[b][f]` (what f's
+(times b's bee fed at f's flower), `nectar[b][f]` (nectar b's bee got there) and `pollen[b][f]` (what f's
 flower kept from b's bee's feeds).
 
 ## Actions
@@ -163,8 +163,7 @@ A turn makes two actions: its **arrival**, written to the stream at once, and it
   "action": "arrive|feed|leave", // feed = the bee fed; leave = it didn't (left, was late, or broke)
   // on feed and leave, public:
   "c", "r",                      // the challenge and the response (null if the flower failed)
-  "surplus",                     // what the turn added to the flower team's surplus: (1 − percent/100) × E on
-                                 // a feed, 0 on a leave
+  "pollen",                      // what the flower kept: (1 − percent/100) × E on a feed, 0 on a leave
   "nectar",                      // feed only: what the bee got, percent/100 × E
   // on a feed public; on a leave the flower's team only (everyone after finish):
   "percent",                     // 0–100 (null if the flower failed)
@@ -209,7 +208,7 @@ Team numbers are indices into `participants`.
   "challenge": 17, "response": 52, "fed": true,
   "percent": 25, "energy": 123486.0, // public on a feed; on a leave null except at your own flower
   "nectar": 30871.5,                 // on a feed; null on a leave
-  "surplus": 92614.5,                // on a feed; 0 on a leave
+  "pollen": 92614.5,                 // on a feed; 0 on a leave
   "ms": 2.1, "flowerVersion": 3, "flowerError": null,   // null except at your own flower
   "beeMs": 0.4, "beeVersion": 2, "beeError": null }     // null except for your own bee
 ```
@@ -253,17 +252,17 @@ Every program reads two globals: `GAME` (`team`, `teams`, `feed_cost`, `challeng
 { "teamId",
   "pollination", "forage",
   "pollinationShare", "forageShare", "fitness",
-  "surplus", "feedsReceived", "feedsGiven", "pollinators", "nectarCollected", "nectarGiven", "nectarSources" }
+  "pollen", "feedsReceived", "feedsGiven", "pollinators", "nectarCollected", "nectarGiven", "nectarSources" }
 ```
 
 The scoreboard is live and public: every team's numbers, for everyone (spectators included), during play
 and after.
 
-- `pollination` = Σ over bee teams b of √surplus[b][me]: the surplus your flower kept from each bee team's feeds.
+- `pollination` = Σ over bee teams b of √pollen[b][me]: the pollen your flower kept from each bee team's feeds.
 - `forage` = Σ over flower teams f of √nectar[me][f]: the nectar your bee got at each flower.
 - each share = your value ÷ the sum over all teams (1/N when that sum is 0).
 - `fitness` = N² × pollinationShare × forageShare. Par is 1.0.
-- Information only: `surplus` (all your flower kept), `feedsReceived` / `feedsGiven`, `pollinators` (bee
+- Information only: `pollen` (all your flower kept), `feedsReceived` / `feedsGiven`, `pollinators` (bee
   teams that fed at your flower), `nectarCollected`, `nectarGiven` (all your flower paid) and
   `nectarSources` (flower teams that paid your bee).
 
