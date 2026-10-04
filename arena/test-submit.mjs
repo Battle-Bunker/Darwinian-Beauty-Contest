@@ -51,7 +51,8 @@ const fakeApi = {
     return { results: (challenges || [1]).map((c) => ({ c, r: c * 3 + 1, percent: 40, energy: 158000, ms: 1.5 })) }; },
   tryBee: async (tok, g, code, { flower, rounds, memory } = {}) => { calls.push(["try", tok, "bee", code, flower, rounds, memory]);
     if (noFlowerYet && !flower) throw Object.assign(new Error("Your bee needs a flower to visit"), { status: 409 });
-    return { rounds: rounds ?? 300, feeds: 1, nectar: 10, pollen: 20, memory: { ...(memory || {}), tries: 1 }, problems: [], actions: [{ action: "arrive" }, { action: "feed", c: 1, r: 4, percent: 33, energy: 30, nectar: 10, beeMs: 2 },
+    const end = { ...(memory || {}), tries: 1 };
+    return { rounds: rounds ?? 300, feeds: 1, nectar: 10, pollen: 20, memory: { value: end, bytes: JSON.stringify(end).length, cap: 1024, error: null }, problems: [], actions: [{ action: "arrive" }, { action: "feed", c: 1, r: 4, percent: 33, energy: 30, nectar: 10, beeMs: 2 },
       { action: "arrive" }, { action: "leave", c: 2, r: 7, percent: 50, energy: 40, beeMs: 3 }] }; },
   query: async (tok, g, ast) => { calls.push(["query", tok, g, ast]);
     if (ast.from === "nope") throw Object.assign(new Error(`POST ${g}/query -> 400 unknown entity "nope"`), { status: 400 });
@@ -103,7 +104,7 @@ check("try (bee): a summary of the garden of your own flower", r.status === 0 &&
   && /feed c=1 r=4 percent=33 energy=30 nectar=10/.test(r.stdout) && calls.filter((c) => c[0] === "try" && c[2] === "bee").pop()[6] === undefined, r.stdout + r.stderr);
 r = await tool("tools/try.py", "bee", "--memory", '{"seen": [1]}', "--rounds", "50");
 check("try (bee) --memory: the TEST bee starts with it, and its final MEMORY is shown", r.status === 0 && JSON.stringify(calls.filter((c) => c[0] === "try" && c[2] === "bee").pop()[6]) === '{"seen":[1]}'
-  && /The test bee's MEMORY at the end \(22 bytes\): \{"seen":\[1\],"tries":1\}/.test(r.stdout), r.stdout + r.stderr);
+  && /The test bee's MEMORY at the end \(22 bytes of 1,024\): \{"seen":\[1\],"tries":1\}/.test(r.stdout), r.stdout + r.stderr);
 r = await tool("tools/try.py", "bee", "--flower", "flower.py");
 check("try (bee) --flower: plays the named flower file", calls.filter((c) => c[0] === "try" && c[2] === "bee").pop()?.[4]?.includes("c * 3 + 1"), r.stdout + r.stderr);
 r = await tool("tools/status.py", "--afford", "1000");

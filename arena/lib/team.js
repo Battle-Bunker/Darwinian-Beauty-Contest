@@ -224,15 +224,18 @@ export function requestHandler(ctx) {
           try { t = await api.tryBee(tok, gPath, req.code, opts); }
           catch (e) { if (e.status !== 409 || opts.flower || !fileFlower()) throw e; t = await api.tryBee(tok, gPath, req.code, { ...opts, flower: fileFlower() }); }
           const acts = (t.actions || []).filter((a) => a.action !== "arrive");
+          // The test bee's final MEMORY: the server sends { value, bytes, cap, error } (a bare value is taken as the value).
+          const tm = t.memory === undefined ? null : t.memory && typeof t.memory === "object" && "value" in t.memory && "bytes" in t.memory
+            ? t.memory : { value: t.memory, bytes: Buffer.byteLength(canonical(t.memory)), cap: null, error: null };
           const by = (a) => acts.filter((x) => x.action === a).length;
           const probs = (t.problems || []).map((p) => `${p.kind ?? "?"}: ${p.error}`);
           const slowN = acts.filter((a) => /too slow/i.test(a.beeError || "")).length;
           const ms = acts.map((a) => a.beeMs).filter((x) => x != null).sort((a, b) => a - b);
-          out = { ok: !probs.some((p) => p.startsWith("bee") && !/too slow/i.test(p)), rounds: t.rounds, feeds: t.feeds, nectar: t.nectar, pollen: t.pollen, memory: t.memory, problems: probs, tooSlow: slowN,
+          out = { ok: !probs.some((p) => p.startsWith("bee") && !/too slow/i.test(p)), rounds: t.rounds, feeds: t.feeds, nectar: t.nectar, pollen: t.pollen, memory: tm, problems: probs, tooSlow: slowN,
             actions: acts.slice(0, 200),
             text: `${t.rounds ?? "?"} rounds in a garden of just your own flower: ${acts.length} turns, ${by("feed")} feeds, ${by("leave")} leaves; ` +
               `your bee got ${n0(t.nectar ?? 0)} nectar and ${n0(t.pollen ?? 0)} pollen.` +
-              (t.memory !== undefined ? ` The test bee's MEMORY at the end (${n0(Buffer.byteLength(canonical(t.memory)))} bytes): ${canonical(t.memory).slice(0, 300)}.` : "") +
+              (tm ? ` The test bee's MEMORY at the end (${n0(tm.bytes)} bytes of ${n0(tm.cap ?? config.budgets?.bee?.memory ?? 0)}): ${canonical(tm.value).slice(0, 300)}${tm.error ? ` (a save was refused: ${String(tm.error).slice(0, 120)})` : ""}.` : "") +
               `${slowN ? ` ${slowN} decisions were too slow (each costs a turn).` : ""}` +
               (ms.length ? ` Decision time: median ${ms[Math.floor(ms.length / 2)].toFixed(1)} ms, slowest ${ms[ms.length - 1].toFixed(1)} ms (limit ${config.budgets?.bee?.ms ?? "?"} ms).` : "") +
               (probs.length ? `\nProblems:\n- ${probs.join("\n- ")}` : "") +
