@@ -18,7 +18,7 @@ a turn without a feed pays nobody. Every turn is public as it
 happens (who visited whom, the challenge, the response, whether the bee fed, and a feed's percent, energy,
 nectar and pollen), and so is the scoreboard; code, timings and the details of unfed turns stay with
 their teams until the end. Programs see no history; teams, operators and agents query every finished turn
-over HTTP with typed clients (docs/QUERY.md). A response can be up to 1 MB of JSON. Every call's clock
+over HTTP with typed clients (docs/QUERY.md). A response can be up to 64 KiB of JSON (configurable). Every call's clock
 starts at 0, so programs can time their own work but not tell what time or round it is. Pollen carries
 genes: each feed gives the bee's team a grain of the flower's minified code, ⌊pollen^(1/3)⌋ characters
 long. Each program earns a change budget as the game goes on, and a team can spend it at any
@@ -50,7 +50,7 @@ To work on the web app with hot reload, run the server and then `API=http://loca
 |---|---|
 | `server/index.js` | Express app: JSON API under `/api`, the web app from `web/dist`, `vendor/` for the browser |
 | `server/games.js` | rooms, games, teams, programs and change budgets, start/pause/finish, and the **viewer-filtered views** (actions, history, game view, scoreboard) and queries |
-| `server/engine.js` | the garden: lockstep 200 ms rounds, one turn per bee; queued challenges, flowers drawn at random, excess energy from CPU time, responses (up to 1 MB) staged at the bee and delivered at 150 ms, 50 ms bee decisions with late replies, `fed(nectar)` after a feed; each bee's MEMORY kept and capped; versions pinned per turn; actions, ledgers and memories out |
+| `server/engine.js` | the garden: lockstep 200 ms rounds, one turn per bee; queued challenges, flowers drawn at random, excess energy from CPU time, responses (up to maxResponseBytes, 64 KiB by default) staged at the bee and delivered at 150 ms, 50 ms bee decisions with late replies, `fed(nectar)` after a feed; each bee's MEMORY kept and capped; versions pinned per turn; actions, ledgers and memories out |
 | `server/live.js` | runs each running game's garden in one server process (advisory lock), writing actions (big responses apart), clock, ledgers and bee memories 4× a second (arrivals at once); adoption restores sit-outs and memories |
 | `server/query/` | the history query schema (entities, types, indexes, who sees each field; the single source of truth), the in-memory mask, and the compiler from query ASTs to parameterised, viewer-masked SQL |
 | `scripts/gen-query/` | generates the typed query clients in `vendor/query/` (Python, TypeScript/JavaScript) from the schema: `npm run gen:query`. See [docs/QUERY.md](docs/QUERY.md), which also says how to add a language |

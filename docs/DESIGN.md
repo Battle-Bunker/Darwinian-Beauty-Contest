@@ -157,9 +157,9 @@ getter, a Proxy, or (in Python) a `dict`, `str` or `int` subclass whose hooks ru
 - Each runner is its own process group and is killed as one, and a forked Python call dies with its runner
   (`PR_SET_PDEATHSIG`), so a call that outlives its deadline can't keep computing.
 
-## Responses up to 1 MB
+## Big responses
 
-A response may be up to `maxResponseBytes` (1,048,576 by default) of JSON; `maxLen` and `maxNodes` now
+A response may be up to `maxResponseBytes` (65,536 by default) of JSON; `maxLen` and `maxNodes` now
 limit only challenges, and responses only nest 256 levels deep. The runner checks the size inside the
 flower's timed window, so a big response costs the flower the CPU time to build and write it, and one over
 the cap is a failure (null, E = 0).

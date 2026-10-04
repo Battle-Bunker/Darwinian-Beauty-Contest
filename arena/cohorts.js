@@ -352,7 +352,8 @@ async function main() {
       ["autarkic species by game", ...per((x) => x.autarkic ?? "-")],
       ["grain characters leaked per minute by game", ...per((x) => big(x.grains.perMinute))],
       ["flower versions fully held by another team (median time) by game", ...per((x) => `${x.grains.versionsFullyHeld ?? 0}/${x.grains.versionsWithGrains ?? 0} (${x.grains.medianMsToFullyHeld != null ? mmss(x.grains.medianMsToFullyHeld) : "-"})`)],
-      ["acting on leaked code (secrets / copies) by game", ...per((x) => `${x.grains.secretUses ?? 0}/${x.grains.copies ?? 0}`)],
+      ["acting on leaked code (secrets / copies; median lag from leak to use) by game", ...per((x) => `${x.grains.secretUses ?? 0}/${x.grains.copies ?? 0}` +
+        ` (${(x.grains.uses || []).length ? mmss(median(x.grains.uses.map((u) => u.lagMs))) : "-"})`)],
       ["collapse by game", ...per((x) => x.collapse)],
       ["bee MEMORY used at the end (median share) by game", ...per((x) => pct(median(x.bees.map((b) => b.memShare))))],
       ["bee changes per team by game", ...per((x) => f2(sum(x.bees.map((b) => b.beeChanges)) / Math.max(1, x.bees.length)))],
