@@ -1,14 +1,14 @@
 # Darwinian Beauty Contest: one flower
 
-Real flowers and bees are locked in an arms race. A flower pays for pollination with nectar, and every
-drop it gives away is energy it doesn't keep. A bee wants the most nectar for the fewest visits. Each
-side would like to know who it is dealing with, and neither is told until it's too late to matter.
+Real flowers and bees are locked in an arms race. A flower wants a bee to carry its pollen to other
+flowers of its species, and pays for the visit with nectar. A bee wants the nectar. Each side would like
+to know who it is dealing with, and neither is told until it's too late to matter.
 
 Your team writes **two programs**:
 
 | Program | What it does |
 |---|---|
-| **flower** | answers a bee's challenge, and says what share of this turn's spare energy it gives the bee as nectar if the bee feeds |
+| **flower** | your team's **flower species**. Every turn, a bee meets one flower of some team's species: it answers the bee's challenge, and says how this turn's spare energy is split, if the bee feeds, between nectar for the bee and pollen for it to carry |
 | **bee** | asks flowers challenges, and after each answer decides whether to feed |
 
 ## The game
@@ -64,17 +64,41 @@ a challenge of the wrong type or size) still counts as a feed or a leave; then, 
 called at once. A crash or a reply of any other shape counts as a leave. While replies keep giving no
 challenge, `first` is called again at most once a round. A quick answer makes the next round.
 
-**Bees remember; flowers don't.** Your bee is one running program: its variables last from call to call
-for as long as that version plays. A new version (or a crash) starts afresh. A flower runs fresh for
-every call: nothing it does survives to the next call. It can use randomness (freshly seeded every
-call) and the clock, and it can read `HISTORY`.
+**Every call runs fresh.** Each turn your bee meets a different flower of a species, and every flower of
+a species is independent of the others: so your flower program runs fresh for every call, and nothing it
+does survives to the next call. Your bee runs fresh for every call too, with one exception: **`MEMORY`**,
+a small store that carries over from call to call (see "Bee memory"). Both can use randomness (freshly
+seeded every call) and the clock, and both can read `HISTORY`.
+
+### Bee memory
+
+`MEMORY` is a global in your bee's program: a JSON value, `{}` (an empty dict / object) to begin with.
+Change it in place (`MEMORY["seen"] = 3`, `MEMORY.seen = 3`), or assign a new value to it (in Python
+inside a function, after `global MEMORY`). After every call of `first` or `decide` that returns, the game
+saves it, and your bee's next call starts with what was saved. Nothing else carries over.
+
+- **Its size is capped**: at most `GAME["memory"]` bytes (1,024 by default) of JSON as the game writes it,
+  with sorted keys and no spaces (`{"a":[1,2]}` is 11 bytes). It must be plain JSON: dicts or objects with
+  string keys, lists, numbers, strings, `true`/`false` and `null` (in Python, a tuple is saved as a list
+  and a non-string key as a string).
+- **A memory over the cap isn't saved**: the old one is kept and the error is shown to your team. The
+  decision still counts. A call that crashes (or is stopped at 2 s) saves nothing.
+- **A late reply's memory is saved** when it arrives, like its `["leave", c]`.
+- **A new version of your bee starts with an empty memory** (`{}`), from its first turn. A crash or a
+  restart of the server doesn't clear it.
+- **Only your bee writes it.** Nobody else, your own team included, can change it. Your team can read it
+  during play (its value, size and cap); everyone can once the game is over.
+
+`HISTORY` is not limited by the cap: it holds every finished turn, for every call.
 
 ## Energy: compute, nectar and pollen
 
 A flower allocates its energy between three things:
 - **compute**: the CPU time it spends answering (and its size, which shrinks the whole budget);
-- **nectar**: the percent it gives a bee that feeds;
-- **pollen**: what it keeps when the bee feeds.
+- **nectar**: what it gives a bee that feeds, for the bee to eat;
+- **pollen**: what else it gives a bee that feeds, for the bee to carry to other flowers of its species.
+
+The bee wants nectar. The flower wants to give as much pollen as it can: pollen is what it scores on.
 
 Each turn, the energy left after compute is the flower's **excess energy**, in node·ms:
 
@@ -89,12 +113,12 @@ Each turn, the energy left after compute is the flower's **excess energy**, in n
 - A late answer, an error or a malformed return: E = 0.
 
 Then:
-- **If the bee feeds:** the bee gets **nectar = percent/100 × E**, and the flower keeps the rest as
-  **pollen = (1 − percent/100) × E**.
-- **If it doesn't** (it leaves, it's late, it crashes): nobody gets anything. That turn's energy is lost,
-  and the flower gets no pollen.
+- **If the bee feeds:** the flower gives the bee **nectar = percent/100 × E** and **pollen =
+  (1 − percent/100) × E**.
+- **If it doesn't** (it leaves, it's late, it crashes): the flower gives nothing. That turn's energy is
+  lost.
 
-So a flower collects pollen only when bees feed at it.
+So a flower gives away pollen only when bees feed at it.
 
 ## History
 
@@ -108,7 +132,7 @@ Turn(game="7", round=41, at_ms=8000, turn=12,
      challenge=17, response=52,           # response is None if the flower failed
      fed=True,
      percent=25.0, energy=123486.0,       # on a feed: public. Otherwise: your own flower only
-     nectar=30871.5, pollen=92614.5,      # on a feed: what the bee got and the flower kept.
+     nectar=30871.5, pollen=92614.5,      # on a feed: the nectar and pollen the flower gave the bee.
                                           #   Otherwise nectar is None and pollen is 0
      ms=2.1, flower_version=3, flower_error=None,   # your own flower only (ms: its compute time)
      bee_ms=0.4, bee_version=2, bee_error=None)     # your own bee only
@@ -141,8 +165,8 @@ response and the history is fair game.)
 
 **History is free to receive, not to query.** It is brought up to date between your programs' timed
 calls, so its size costs you nothing until you query it. Running a query is part of your compute (for a
-flower, part of the CPU time that costs energy). Your bee keeps its variables between calls; a flower
-can't remember anything between calls.
+flower, part of the CPU time that costs energy). Neither program can keep anything between calls but the
+bee's `MEMORY`.
 
 ## The programs
 
@@ -157,7 +181,7 @@ def flower(challenge):
 ```
 
 ```python
-# bee: one long-running program.
+# bee: runs fresh for every call; only MEMORY carries over (see "Bee memory").
 import random
 
 def first():
@@ -166,6 +190,7 @@ def first():
 
 def decide(challenge, response):
     # challenge: what your bee asked this turn; response: the flower's answer (None if it failed)
+    # MEMORY: what your bee saved last time ({} at first); HISTORY, GAME: as for a flower
     return "leave", random.randint(0, 9)    # ("feed" or "leave", the challenge for its next turn)
 ```
 
@@ -186,11 +211,13 @@ function decide(challenge: number, response: number | null): ["feed" | "leave", 
 ```
 
 In TypeScript, `tree[T]` is `{ value: T; children: Tree<T>[] }` and a graph is
-`{ nodes: number; edges: [number, number][] }`; `HISTORY` is typed (`Turn` records).
+`{ nodes: number; edges: [number, number][] }`; `HISTORY` is typed (`Turn` records), and `MEMORY` is a
+JSON value.
 
 Every program can read a `GAME` dictionary/object: `team` (your team's index), `teams` (N), `feed_cost`,
 `challenge_type`, `response_type`, `max_len`, `max_nodes`, `round_ms` (200), `ms` (your program's own time
-limit per call: 150 or 50), `flower_ms` (150) and `flower_size_cap` (1,100). A flower also gets `size`, its
+limit per call: 150 or 50), `flower_ms` (150) and `flower_size_cap` (1,100). A bee also gets `memory`, its
+`MEMORY` cap in bytes. A flower also gets `size`, its
 own size, so E = (`flower_size_cap` − `size`) × max(0, `flower_ms` − compute ms). In Python,
 `time.process_time()` measures the CPU time the engine counts.
 
@@ -226,6 +253,7 @@ edges, no self-loops or repeated edges). The owner can change both limits.
 | **size** (nodes, see below) | 1,100 | 11,000 |
 | **change** (nodes earned per minute of play; you can bank up to a minute's worth) | 220 | 2,200 |
 | **time** per call | 150 ms | 50 ms |
+| **memory** (bytes of `MEMORY`, see "Bee memory") | | 1,024 |
 
 The owner can change all of them. The flower's size cap is also the "size cap" in the energy formula.
 
@@ -252,8 +280,8 @@ Once the garden runs you can change either program **at any moment**; the new ve
 but **a turn keeps the versions it started with**. A turn that has begun (its arrival is drawn) finishes
 with the bee and the flower as they were. A new flower answers the turns that start after it went live. A
 new bee takes over when its current turn is over: the old bee makes that decision (a feed still counts),
-whatever it queued is dropped, and the new bee is asked `first` straight away. A bee between turns
-switches at once.
+whatever it queued is dropped, and the new bee is asked `first` straight away, with an empty `MEMORY`. A
+bee between turns switches at once.
 
 A change costs the **node edits** that turn the version playing now into the new one: inserting or
 deleting a node costs its size, changing an operator or a name costs 1, and a changed literal costs the
@@ -266,8 +294,8 @@ never can be: make it in steps.
 
 **Public to everyone, as it happens** (including spectators without a team): for every turn of every bee,
 the **arrival** (whose bee, whose flower), the **challenge**, the **response** and **whether the bee fed**
-(a bee that was late or broke simply didn't). On a **feed**, also the **percent**, the **energy**, the **nectar** the bee got and
-the **pollen** the flower kept. The game's settings and the scoreboard are public too. So whatever two
+(a bee that was late or broke simply didn't). On a **feed**, also the **percent**, the **energy**, and the
+**nectar** and **pollen** the flower gave the bee. The game's settings and the scoreboard are public too. So whatever two
 programs do together happens in plain view.
 
 **Private during play:**
@@ -277,11 +305,13 @@ programs do together happens in plain view.
 | the **percent** and **energy** of a turn without a feed | the flower's team |
 | the flower's **compute time**, on every turn, and why a flower failed | the flower's team |
 | **code**, what your bee **prints**, program **versions** and **sizes**, change **budgets**, the bee's **decision times** and errors | that team |
+| your bee's **`MEMORY`** (its value and size) | that team (read only: nobody can write it but the bee) |
 
 Your programs' `HISTORY` holds exactly what your team can see, from turns that are over.
 
 **When the game ends, everything is revealed** for a full replay: every percent, energy and timing, every
-version and change, every budget, and (unless the owner turns it off) all code and printouts.
+version and change, every budget, every bee's `MEMORY`, and (unless the owner turns it off) all code and
+printouts.
 
 ## Scoring: Darwinian fitness
 
@@ -289,15 +319,15 @@ Two numbers per team, each from the whole game:
 
 | Name | What it is |
 |---|---|
-| **pollination** | the sum over bee teams of √(the pollen your flower kept from that team's bee's feeds). How widely, and how profitably, your flower is pollinated |
+| **pollination** | the sum over bee teams of √(the pollen your species gave that team's bee). How widely your pollen travels |
 | **forage** | the sum over flower teams of √(the nectar your bee got there). How widely your bee eats |
 
 Each becomes a **share**: your value ÷ the sum over all teams (when that sum is 0, every share is 1/N).
 
 > **fitness = N² × pollination share × forage share.** Par is 1.0 however many teams play.
 
-The square roots reward variety. A flower that kept 400 from one team's bee has pollination √400 = 20;
-one that kept 100 from each of four teams' bees has 4 × √100 = 40, though both kept 400 in all. A bee
+The square roots reward variety. A species that gave 400 pollen to one team's bee has pollination
+√400 = 20; one that gave 100 to each of four teams' bees has 4 × √100 = 40, though both gave 400 in all. A bee
 that got 900 nectar from one flower has forage 30; 300 from each of three flowers gives about 52. Your own
 team's bee and flower count like any other team's.
 

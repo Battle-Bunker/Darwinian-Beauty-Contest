@@ -9,9 +9,10 @@ RULES.md has the game itself. In short: each team has one **flower** and one **b
 each bee that isn't feeding takes one **turn**: the engine draws a flower at random (own included), the
 flower answers `[response, percent]` within 150 ms, and the bee decides `["feed" | "leave", next]` within
 50 ms. Excess energy E = (flower size cap − flower size) × max(0, 150 − flower CPU ms); a feed pays
-nectar = percent/100 × E to the bee and the rest to the flower as pollen; a turn without a feed pays
+nectar = percent/100 × E and pollen = the rest to the bee (pollen is what the flower wants carried); a
+turn without a feed pays
 nobody (its energy is lost). fitness = N² × pollination share × forage share, where pollination is the
-rootsum of the pollen a flower kept per bee team and forage the rootsum of the nectar a bee got per flower team.
+rootsum of the pollen a team's flower species gave per bee team and forage the rootsum of the nectar a bee got per flower team.
 
 ## Auth
 
@@ -54,7 +55,7 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 | POST | `base/teams/join` | user | `{ joinCode }` | `{ id, name }` |
 | POST | `base/check` | team member | `{ kind, code }` | `{ ok, kind, size, minified, budget, distance, cost, available, errors[] }`. Validates without saving: syntax, the entry points (`flower`; for a bee `first` and `decide`, at the top level), size, and once the game runs the change budget: `distance` is the node edits from the version playing now, `cost` what the change would spend, `available` the budget now (floored) |
 | POST | `base/programs` | team member | `{ kind, code }` | same as check plus `submitted: true, version, atMs` (the game time it went live; 0 in the lobby) and `available` after paying. **422** with `errors` if it's too big or can't be afforded yet |
-| POST | `base/try` | team member | flower: `{ kind: "flower", code, challenges?, ledger? }`; bee: `{ kind: "bee", code, flower?, rounds? }` | flower: `{ size, results: [{ c, r, percent, energy, ms, error? }] }` (`ledger`: turn records for its `HISTORY.turns`, default none; `size` is the flower's size, used for `energy`). bee: `{ actions, problems, feeds, nectar, pollen, rounds }`: `rounds` (default 300, at most 1000) unpaced rounds in a garden of just your own flower (`flower`, else your latest). In both, the programs run as team 0 of 1 (`GAME.team` 0, `GAME.teams` 1) |
+| POST | `base/try` | team member | flower: `{ kind: "flower", code, challenges?, ledger? }`; bee: see the reply column | flower: `{ size, results: [{ c, r, percent, energy, ms, error? }] }` (`ledger`: turn records for its `HISTORY.turns`, default none; `size` is the flower's size, used for `energy`). bee: `{ kind: "bee", code, flower?, rounds?, memory? }` → `{ actions, problems, feeds, nectar, pollen, rounds, memory }`: `rounds` (default 300, at most 1000) unpaced rounds in a garden of just your own flower (`flower`, else your latest), the test bee starting with `memory` (default `{}`); `memory` in the reply is what it ended with. This never touches a game bee's memory. In both, the programs run as team 0 of 1 (`GAME.team` 0, `GAME.teams` 1) |
 
 ### Config
 
@@ -66,7 +67,7 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
   "revealOnFinish": true,
   "budgets": {
     "flower": { "size": 1100,  "perMinute": 220,  "cap": 220,  "ms": 150 },
-    "bee":    { "size": 11000, "perMinute": 2200, "cap": 2200, "ms": 50 }
+    "bee":    { "size": 11000, "perMinute": 2200, "cap": 2200, "ms": 50, "memory": 1024 }
   }
 }
 ```
@@ -89,6 +90,7 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 - `ms`: time per call (wall clock; the engine runs at most one program per CPU core). A flower that isn't
   done in `flower.ms` answers null (E = 0). `bee.ms` is a deadline, not a cut-off: a late bee's call runs on
   (up to 2 s), its turn is settled as not fed, and only a late `["leave", c]` queues `c`.
+- `budgets.bee.memory`: the most bytes a bee's `MEMORY` may hold (canonical JSON: sorted keys, no spaces, UTF-8).
 - `maxLen` bounds strings and lists. `maxNodes` bounds trees and graphs (graphs: ≤ 4 × maxNodes edges).
 - `revealOnFinish`: when the game ends, everyone can see all code and every bee's print output (everything
   else is revealed at the end regardless).
@@ -109,6 +111,7 @@ Types: `int`, `float`, `bool`, `str`, `any`, `list[T]`, `tree[T]`, `graph`, `dig
 | `log` (what the bee printed) | the bee's team | everyone if `revealOnFinish` |
 | code | own team | everyone if `revealOnFinish` |
 | program versions, sizes, costs, change budgets, problems | own team | everyone |
+| the bee's `MEMORY` (`teams[i].memory`; query `teams.memory`, `teams.memoryBytes`) | own team, read only | everyone |
 | the scoreboard (every team's totals, shares and fitness) and `ledgers` (feeds, nectar, pollen) | everyone, live | everyone |
 
 A field you may not see is **absent** from actions, and **null** in ledger entries and query rows.
@@ -133,7 +136,9 @@ don't bump the public `game.version`, so other teams can't tell when a team chan
               "index",                    // its index in participants (null if not playing)
               "ready": { "flower": bool, "bee": bool },   // in the lobby
               "programs": { "flower": [version], "bee": [version] } | null,
-              "banks": { "flower": { bank, atMs }, "bee": { bank, atMs } } | null }],
+              "banks": { "flower": { bank, atMs }, "bee": { bank, atMs } } | null,
+              "memory": { "value", "bytes", "cap", "version" } | null }],   // the bee's MEMORY: your own team's
+                                          // during play, everyone's after finish (version: the bee version it belongs to)
   "myTeam": { "id", "name", "joinCode", "index" } | null,
   "interface": { "flower", "bee", "types": { "challenge", "response", "challengeMeans", "responseMeans", "rules": [..] } },
   "scores": [teamScore] | null,
@@ -174,7 +179,8 @@ A turn makes two actions: its **arrival**, written to the stream at once, and it
   "flowerVersion",               // also on arrive
   // the bee's team (everyone after finish):
   "beeMs",                       // how long the bee took to decide
-  "beeError",                    // e.g. "too slow: no reply within 50 ms", a crash, a bad next challenge
+  "beeError",                    // e.g. "too slow: no reply within 50 ms", a crash, a bad next challenge,
+                                 // a MEMORY over its cap (the decision still counts; the old memory is kept)
   "beeVersion",                  // also on arrive
   "log" }                        // what the bee printed (in decide, and in first since its last turn):
                                  // its own team, or everyone once a finished game is revealed
@@ -239,10 +245,15 @@ function first(): Challenge
 function decide(challenge: Challenge, response: Response | null): ["feed" | "leave", Challenge]
 ```
 
-Every program reads two globals: `GAME` (`team`, `teams`, `feed_cost`, `challenge_type`, `response_type`,
-`max_len`, `max_nodes`, `round_ms`, `ms` (its own limit), `flower_ms`, `flower_size_cap`; a flower also
-`size`, its own) and `HISTORY` (`HISTORY.turns`: the team's history, a query builder; docs/QUERY.md).
-`interface` in the game view has the signatures for the game's language and types.
+Every program runs fresh for every call and reads two globals: `GAME` (`team`, `teams`, `feed_cost`,
+`challenge_type`, `response_type`, `max_len`, `max_nodes`, `round_ms`, `ms` (its own limit), `flower_ms`,
+`flower_size_cap`; a flower also `size`, its own; a bee also `memory`, its memory cap) and `HISTORY`
+(`HISTORY.turns`: the team's history, a query builder; docs/QUERY.md). A bee also has **`MEMORY`**: a
+JSON value (`{}` for a new version) that the bee changes in place or reassigns; after each call that
+returns, the game saves it if its canonical JSON is at most `memory` bytes (else it keeps the old one and
+records the error on the turn's `beeError`; the decision still counts). It is the only thing that carries
+over between a bee's calls. No endpoint writes it. `interface` in the game view has the signatures for the
+game's language and types.
 
 ## Scores
 
