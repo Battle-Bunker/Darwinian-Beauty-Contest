@@ -66,6 +66,7 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
   "minutes": 2, "feedCost": 10,
   "challengeType": "int", "responseType": "int", "maxLen": 64, "maxNodes": 512, "maxResponseBytes": 1048576,
   "revealOnFinish": true,
+  "grains": "feeder", "pollenGrain": { "exponent": 0.3333333333333333, "scale": 1 },
   "budgets": {
     "flower": { "size": 1100,  "perMinute": 220,  "cap": 220,  "ms": 150 },
     "bee":    { "size": 11000, "perMinute": 2200, "cap": 2200, "ms": 50, "memory": 50 }
@@ -102,6 +103,13 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
   `maxLen` and `maxNodes` don't apply to responses; responses nest at most 256 levels.
 - `revealOnFinish`: when the game ends, everyone can see all code and every bee's print output (everything
   else is revealed at the end regardless).
+- `grains`: who sees a feed's **pollen grain** during play: `"feeder"` (default: the feeding bee's team),
+  `"public"` (everyone, as it happens) or `"off"` (no grains). Everyone sees every grain once the game is
+  over.
+- `pollenGrain`: a grain's length is ⌊`scale` × pollen^`exponent`⌋ characters (defaults 1 and 1/3: 27,000
+  pollen gives 30; `exponent` 0.01 to 1, `scale` 0 to 1,000). It is that many characters of the minified
+  code of the flower version that answered, from a uniformly random start, wrapping past the end (the whole
+  code if it is no longer than that). No pollen, no grain.
 
 Types: `int`, `float`, `bool`, `str`, `any`, `list[T]`, `tree[T]`, `graph`, `digraph`, `graph[T]`,
 `digraph[T]` (RULES.md). Languages: `python`, `typescript`.
@@ -112,6 +120,7 @@ Types: `int`, `float`, `bool`, `str`, `any`, `list[T]`, `tree[T]`, `graph`, `dig
 |---|---|---|
 | arrivals (`bee` → `flower`), `c`, `r` (and `rBytes`, `rHash`, `rPreview`), fed or not (`action`), `turn`, `round`, `atMs` | everyone, spectators included, as it happens | everyone |
 | on a `feed`: `percent`, `energy`, `nectar`, `pollen` | everyone | everyone |
+| on a `feed`: `grain`, `grainVersion`, `grainCodeLength` (the pollen grain) | the bee's team (everyone if `grains` is `"public"`) | everyone |
 | on a `leave`: `pollen` (always 0) | everyone | everyone |
 | on a `leave`: `percent`, `energy` | the flower's team | everyone |
 | `ms` (the flower's CPU time), `flowerError`, `flowerVersion` | the flower's team | everyone |
@@ -196,8 +205,13 @@ A turn makes two actions: its **arrival**, written to the stream at once, and it
                                  // a MEMORY over its cap or of the wrong shape (the decision still counts;
                                  // the old memory is kept)
   "beeVersion",                  // also on arrive
-  "log" }                        // what the bee printed (in decide, and in first and fed since its last turn):
+  "log",                         // what the bee printed (in decide, and in first and fed since its last turn):
                                  // its own team, or everyone once a finished game is revealed
+  // feed only, the bee's team (everyone if config.grains is "public", and after finish):
+  "grain",                       // the pollen grain: ⌊pollen^(1/3)⌋ characters of the flower's minified code
+                                 // (null when the pollen was 0, or grains are off)
+  "grainVersion",                // the flower version it came from (the one that answered)
+  "grainCodeLength" }            // that version's minified code's length in characters
 ```
 
 A queued challenge appears only when its turn ends: nothing shows a bee's next challenge before then.
@@ -232,7 +246,9 @@ them, oldest first by `seq` (the turn's `feed`/`leave` action). Team numbers are
   "nectar": 30871.5,                 // on a feed; null on a leave
   "pollen": 92614.5,                 // on a feed; 0 on a leave
   "ms": 2.1, "flowerVersion": 3, "flowerError": null,   // null except at your own flower
-  "beeMs": 0.4, "beeVersion": 2, "beeError": null }     // null except for your own bee
+  "beeMs": 0.4, "beeVersion": 2, "beeError": null,      // null except for your own bee
+  "grain": "def flower(a):\n return(a*3+1)%1000,40",   // ⌊92614.5^(1/3)⌋ = 45 ≥ 37 characters: the whole code
+  "grainVersion": 3, "grainCodeLength": 37 }            // your own bee's feeds only (unless grains are public)
 ```
 
 Once the game is over, every field is filled in for everyone.
@@ -267,7 +283,9 @@ function fed(nectar: number): void          // optional
 Programs see only their arguments and `GAME` (`team`, `teams`, `feed_cost`, `challenge_type`,
 `response_type`, `max_len`, `max_nodes`, `max_response_bytes`, `round_ms`, `ms` (its own limit),
 `flower_ms`, `flower_size_cap`; a flower also `size`, its own; a bee also `memory`, its memory cap): no
-history. Every flower call and every bee turn runs a fresh program. A bee also has **`MEMORY`**, a
+history, no round or game time. Every flower call and every bee turn runs a fresh program, and its clock
+starts at 0 (Python's `time`, TypeScript's `Date`, `Intl` and `performance` read the time since the call
+started, as if it were 1970-01-01; RULES.md "The clock"). A bee also has **`MEMORY`**, a
 key–value store (`{}` for a new version) that it changes in place or reassigns; after each `first`,
 `decide` or `fed` that returns, the game saves it if it has the right shape and fits `memory` bytes (else
 it keeps the old one and records the error: on the turn's `beeError` for `decide`, and in the team's

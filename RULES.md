@@ -70,7 +70,27 @@ does survives to the next call. Your bee runs fresh for every turn too, with two
 a tiny store that carries over from call to call (see "Bee memory"), and **`fed`**, which runs in the
 same program instance as the feed decision before it (see "After a feed"). Programs see only their
 arguments, `GAME` and (the bee) `MEMORY`: no history, no other team's anything. Both can use randomness
-(freshly seeded every call) and the clock.
+(freshly seeded every call) and the clock, which only tells how long the call has been running (see "The
+clock").
+
+### The clock
+
+Programs can time their own work, but nothing tells them what time it is, what round it is, or how far
+the game has got. **Every call starts at time zero**: for each call (`flower`, `first`, `decide`, `fed`),
+the clock reads 0 when the call's time starts, as if it were 1970-01-01 00:00:00 UTC, and then runs at real
+speed, in fine steps.
+
+- **Python**: `time.time()`, `time.time_ns()`, `time.monotonic()`, `time.perf_counter()` (and their `_ns`
+  forms) and `time.clock_gettime(...)` give the time since the call started (`time.time()` → `0.0123`).
+  `time.process_time()` and `time.thread_time()` give this call's CPU time. `time.localtime()`,
+  `time.gmtime()`, `time.ctime()`, `time.asctime()` and `time.strftime(fmt)` without a time use that clock
+  (`1970-01-01 00:00:00` and a fraction). `time.sleep()` works.
+- **TypeScript**: `Date.now()`, `new Date()` and `Date()` without arguments, and `Intl` formatting
+  without a date, use the same clock (`Date.now()` → `12`). `performance.now()` gives the time since the
+  call started in fractions of a millisecond; `performance.timeOrigin` is 0.
+
+`GAME` holds the game's settings only: no round, turn or game time. A bee can count its own turns in
+`MEMORY`: that is its own experience, not the world's clock.
 
 ### After a feed: `fed(nectar)`
 
@@ -157,6 +177,21 @@ Then:
 
 So a flower gives away pollen only when bees feed at it.
 
+### Pollen carries genes
+
+On every feed, after the turn is settled, the bee's team gets a **pollen grain**: a piece of the flower's
+code. It is a run of **L = ⌊pollen^(1/3)⌋** characters (pollen in node·ms: 27,000 pollen gives 30
+characters; no pollen, no grain) taken from the **minified code of the flower version that answered**,
+starting at a position drawn uniformly at random, and wrapping from the end back to the start, so every
+character is equally likely to leak. If L is at least the code's length, the grain is the whole code.
+
+- With the grain come the flower's **version** and its code's **length** in characters (the minified code
+  your size is measured on), but not where the grain starts.
+- **During play, only the feeding bee's team** sees its grains (on its feed actions, in its ledger and in
+  its queries). When the game ends, everyone sees every grain. (The owner can make grains public as they
+  happen, or switch them off: `grains` in the settings.)
+- **Programs never get grains**: `fed` gets the nectar only.
+
 ## History is for teams, not programs
 
 No program sees any history: a flower gets its challenge and `GAME`; a bee gets its arguments, `GAME`
@@ -220,12 +255,13 @@ Every program can read a `GAME` dictionary/object: `team` (your team's index), `
 (the response size cap), `round_ms` (200), `ms` (your program's own time limit per call: 150 or 50),
 `flower_ms` (150) and `flower_size_cap` (1,100). A bee also gets `memory`, its `MEMORY` cap in bytes. A
 flower also gets `size`, its own size, so E = (`flower_size_cap` − `size`) × max(0, `flower_ms` − compute
-ms). In Python, `time.process_time()` measures the CPU time the engine counts.
+ms). In Python, `time.process_time()` measures the CPU time the engine counts (see "The clock").
 
 Python programs may import `math`, `random`, `hashlib`, `string`, `itertools`, `functools`,
 `collections`, `re`, `json`, `bisect`, `heapq`, `statistics`, `fractions`, `decimal`, `operator`,
 `typing`, `dataclasses`, `enum`, `zlib`, `struct`, `binascii`, `base64`, `copy`, `numbers`, `array`,
-and `time`. TypeScript programs get the standard JavaScript built-ins, including `Date`.
+and `time` (the game's own: see "The clock"). Modules show only their public names. TypeScript programs get
+the standard JavaScript built-ins, with the game's `Date` and `performance`.
 
 ## What the challenge and response look like
 
@@ -315,10 +351,11 @@ programs do together happens in plain view. (A response over 4 KB is streamed to
 | the flower's **compute time**, on every turn, and why a flower failed | the flower's team |
 | **code**, what your bee **prints**, program **versions** and **sizes**, change **budgets**, the bee's **decision times** and errors | that team |
 | your bee's **`MEMORY`** (its value, size and last error) | that team (read only: nobody can write it but the bee) |
+| a feed's **pollen grain** (and the flower's version and code length that come with it) | the feeding bee's team |
 
 **When the game ends, everything is revealed** for a full replay: every percent, energy and timing, every
-version and change, every budget, every bee's `MEMORY`, and (unless the owner turns it off) all code and
-printouts.
+version and change, every budget, every bee's `MEMORY`, every pollen grain, and (unless the owner turns it
+off) all code and printouts.
 
 ## Scoring: Darwinian fitness
 
