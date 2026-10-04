@@ -125,6 +125,25 @@ async function loadPrograms(run) {
   }
 }
 
+const ACTION_COLUMNS = ["game_id", "seq", "at_ms", "round", "turn", "bee_team", "flower_team", "action", "c", "r", "percent", "energy",
+  "cpu_ms", "pollen", "flower_error", "nectar", "bee_ms", "bee_error", "log", "bee_version", "flower_version"];
+const json = (v) => (v === null || v === undefined ? null : JSON.stringify(v));
+
+/** Write a garden's actions (team indices → ids). */
+export async function insertActions(c, gameId, actions, ids) {
+  const cols = ACTION_COLUMNS;
+  for (let i = 0; i < actions.length; i += 300) {
+    const chunk = actions.slice(i, i + 300), params = [], rows = [];
+    chunk.forEach((a, j) => {
+      rows.push(`(${cols.map((_, k) => `$${j * cols.length + k + 1}`).join(",")})`);
+      const end = a.action !== "arrive";
+      params.push(gameId, a.seq, a.atMs, a.round, a.turn, ids[a.bee], ids[a.flower], a.action, end ? json(a.c) : null, end ? json(a.r) : null,
+        a.percent, a.energy, a.ms, a.pollen, a.flowerError, a.nectar, a.beeMs, a.beeError, a.log, a.beeVersion, a.flowerVersion);
+    });
+    await c.query(`INSERT INTO actions (${cols.join(",")}) VALUES ${rows.join(",")}`, params);
+  }
+}
+
 /** Flush now, or as soon as the flush in progress is done. */
 function flushSoon(run) {
   if (run.abandoned) return;
@@ -140,19 +159,7 @@ async function flush(run) {
     const ids = run.participants;
     try {
       await tx(async (c) => {
-        const cols = ["game_id", "seq", "at_ms", "round", "turn", "bee_team", "flower_team", "action", "c", "r", "percent", "energy",
-          "cpu_ms", "pollen", "flower_error", "nectar", "bee_ms", "bee_error", "log", "bee_version", "flower_version"];
-        const json = (v) => (v === null || v === undefined ? null : JSON.stringify(v));
-        for (let i = 0; i < d.actions.length; i += 300) {
-          const chunk = d.actions.slice(i, i + 300), params = [], rows = [];
-          chunk.forEach((a, j) => {
-            rows.push(`(${cols.map((_, k) => `$${j * cols.length + k + 1}`).join(",")})`);
-            const end = a.action !== "arrive";
-            params.push(run.id, a.seq, a.atMs, a.round, a.turn, ids[a.bee], ids[a.flower], a.action, end ? json(a.c) : null, end ? json(a.r) : null,
-              a.percent, a.energy, a.ms, a.pollen, a.flowerError, a.nectar, a.beeMs, a.beeError, a.log, a.beeVersion, a.flowerVersion);
-          });
-          await c.query(`INSERT INTO actions (${cols.join(",")}) VALUES ${rows.join(",")}`, params);
-        }
+        await insertActions(c, run.id, d.actions, ids);
         await c.query("UPDATE games SET clock_ms = $2, round = $3, last_seq = $4, feeds = $5, nectar = $6, pollen = $7 WHERE id = $1",
           [run.id, d.clockMs, d.round, d.lastSeq, JSON.stringify(d.feeds), JSON.stringify(d.nectar), JSON.stringify(d.pollen)]);
         for (const m of d.memories) {

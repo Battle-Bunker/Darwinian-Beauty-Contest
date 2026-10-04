@@ -28,27 +28,21 @@ const PROGRAMS = {
   Ada: {
     team: "Honey Hunters",
     // An honest flower: a fixed, checkable rule, and 40% of the energy for a bee that feeds.
-    flower: `def flower(challenge, ledger):
+    flower: `def flower(challenge):
     return (challenge * 3 + 1) % 1000, 40
 `,
-    // Feeds when the answer fits its own flower's rule, and sometimes to explore; reads the ledger as it grows.
+    // Feeds when the answer fits its own flower's rule, and sometimes to explore. Counts its turns in
+    // MEMORY and now and then prints the nectar it has had, from HISTORY.
     bee: `import random
-done = 0
-paid = 0.0
-turns = 0
 
-def first(ledger):
+def first():
     return random.randint(0, 99)
 
-def decide(challenge, response, ledger):
-    global done, paid, turns
-    for e in ledger[done:]:
-        if e["bee"] == GAME["team"] and e["fed"]:
-            paid += e["nectar"]
-    done = len(ledger)
-    turns += 1
-    if turns % 40 == 0:
-        print("turn", turns, "nectar so far", round(paid))
+def decide(challenge, response):
+    MEMORY["turns"] = MEMORY.get("turns", 0) + 1
+    if MEMORY["turns"] % 40 == 0:
+        paid = HISTORY.turns.my_bee().eq("fed", True).sum("nectar").value() or 0
+        print("turn", MEMORY["turns"], "nectar so far", round(paid))
     nxt = random.randint(0, 99)
     if response == (challenge * 3 + 1) % 1000 or random.random() < 0.2:
         return "feed", nxt
@@ -57,40 +51,40 @@ def decide(challenge, response, ledger):
   },
   Bo: {
     team: "Generous Glade",
-    flower: `def flower(challenge, ledger):
+    flower: `def flower(challenge):
     return (challenge * 7 + 3) % 1000, 80
 `,
     // Feeds everywhere: lots of nectar, lots of rounds sat out.
-    bee: `def first(ledger):
+    bee: `def first():
     return 500
 
-def decide(challenge, response, ledger):
+def decide(challenge, response):
     return "feed", 500
 `,
   },
   Cy: {
     team: "Secret Handshake",
-    flower: `def flower(challenge, ledger):
+    flower: `def flower(challenge):
     if challenge == 7:
         return 777, 10          # the handshake: a stingy offer to its own bee
     return (challenge * 5) % 1000, 50
 `,
-    bee: `def first(ledger):
+    bee: `def first():
     return 7
 
-def decide(challenge, response, ledger):
+def decide(challenge, response):
     return ("feed" if response == 777 else "leave"), 7
 `,
   },
   Dee: {
     team: "Greedy Buzz",
-    flower: `def flower(challenge, ledger):
+    flower: `def flower(challenge):
     return 1000 // (challenge % 5), 20   # oops: crashes when challenge % 5 == 0
 `,
-    bee: `def first(ledger):
+    bee: `def first():
     return 10
 
-def decide(challenge, response, ledger):
+def decide(challenge, response):
     return ("feed" if response is not None else "leave"), challenge + 1
 `,
   },
@@ -98,31 +92,27 @@ def decide(challenge, response, ledger):
     team: "Picky Pollinators",
     // Works hard for its answer (and so has less energy to share).
     flower: `import time
-def flower(challenge, ledger):
+def flower(challenge):
     t = time.process_time()
     best = 0
     while time.process_time() - t < 0.04:
         best = (best * 31 + challenge) % 1000
     return best, 60
 `,
-    // Learns from the ledger which flowers paid well, by their answer to its question.
+    // Learns from HISTORY which answers to its question came with good nectar.
     bee: `import random
-done = 0
-worth = {}
 
-def first(ledger):
+def first():
     return 3
 
-def decide(challenge, response, ledger):
-    global done
-    for e in ledger[done:]:
-        if e["fed"] and e["challenge"] == 3 and e["response"] is not None:
-            worth[e["response"]] = max(worth.get(e["response"], 0), e["nectar"])
-    done = len(ledger)
+def decide(challenge, response):
     if response is None:
         return "leave", 3
-    if worth.get(response, 0) > 20000 or random.random() < 0.3:
-        if response not in worth:
+    worth = 0
+    for t in HISTORY.turns.eq("fed", True).eq("challenge", 3).eq("response", response).rows():
+        worth = max(worth, t.nectar or 0)
+    if worth > 20000 or random.random() < 0.3:
+        if not worth:
             print("trying", response)
         return "feed", 3
     return "leave", 3
@@ -130,17 +120,14 @@ def decide(challenge, response, ledger):
   },
   Fin: {
     team: "Buggy Bumble",
-    flower: `def flower(challenge, ledger):
+    flower: `def flower(challenge):
     return (challenge * 3 + 2) % 1000, 30
 `,
-    bee: `count = 0
-
-def first(ledger):
+    bee: `def first():
     return 1
 
-def decide(challenge, response, ledger):
-    global count
-    count += 1
+def decide(challenge, response):
+    count = MEMORY["count"] = MEMORY.get("count", 0) + 1
     if count % 50 == 0:
         print("call", count)
     if count % 9 == 0:
@@ -226,7 +213,7 @@ await change(live.players, live.g, "Ada", "flower", (c) => c.replace("40", "35")
 await change(live.players, live.g, "Dee", "flower", (c) => c.replace("% 5)", "% 5 + 1)")); // fixes the crash
 await sleep(3000);
 await change(live.players, live.g, "Eve", "flower", (c) => c.replace("0.04", "0.03"));
-await change(live.players, live.g, "Ada", "bee", (c) => c.replace("turns % 40", "turns % 25"));
+await change(live.players, live.g, "Ada", "bee", (c) => c.replace('MEMORY["turns"] % 40', 'MEMORY["turns"] % 25'));
 
 console.log("room    ", `${BASE}/room/${room}`);
 console.log("running ", `${BASE}/room/${room}/game/${live.game.shortId}`);

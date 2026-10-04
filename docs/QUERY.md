@@ -17,12 +17,14 @@ of truth: entities, fields, types, indexes, scopes and each field's visibility r
 
 | File | What |
 |---|---|
-| `vendor/query/history.py` | Python: frozen dataclass records, the typed builder, the in-memory and remote executors (stdlib only) |
+| `vendor/query/history.py` | Python: named-tuple records (immutable), the typed builder, the in-memory and remote executors (stdlib only) |
 | `vendor/query/history.ts` | TypeScript: readonly record interfaces, the typed builder, the in-memory and remote executors |
 | `vendor/query/history.js` | the same TypeScript with its types stripped, as a plain script (`DbcHistory`): what the TypeScript runner and the server load |
 | `vendor/query/schema.json` | the schema as JSON, for anything else |
 
-`npm run gen:query` regenerates them; `npm test` fails if they are stale.
+`npm run gen:query` regenerates them; `npm test` fails if they are stale. The generator lives in
+`scripts/gen-query/`: `index.js` (the driver), `common.js`, one emitter per language (`typescript.js`,
+`python.js`) and its fixed runtime (`templates/runtime.ts`, `templates/runtime.py`).
 
 ## Entities
 
@@ -125,16 +127,32 @@ naming); pass `as_` / a second argument to choose one.
 
 ## In programs: `HISTORY`
 
-Programs get `HISTORY` as an immutable global next to `GAME`: `HISTORY.turns` is the team ledger, every
-finished turn of every bee, masked for the team. It is built between turns, outside the timed calls,
-with indexes kept up to date incrementally:
+Programs get `HISTORY` as an immutable global next to `GAME`: `HISTORY.turns` is every finished turn of
+every bee, masked for the team (the records `GET …/ledger` returns). It is built between turns, outside the
+timed calls, with indexes kept up to date incrementally:
 - records in natural order, so `rounds(lo, hi)`, `offset` and `limit` are binary searches and slices;
 - per-value indexes on `bee`, `flower`, `fed` and (`bee`, `flower`);
 - running statistics per (`bee`, `flower`, `fed`) cell: count, and sum, non-null count, min and max of
   every numeric field, so aggregates filtered and grouped by those fields cost O(cells), not O(turns).
 
 Running a query is the program's own compute (a flower pays for it in energy), so the executor picks the
-cheapest plan it can (below).
+cheapest plan it can (below). Python programs see records as named tuples with snake_case fields
+(`t.round`, `t.bee_ms`); TypeScript programs as frozen objects (`t.round`, `t.beeMs`). Records and results
+are read-only; nested JSON values (a list-shaped challenge, say) are shared, so don't change them.
+
+Measured on a 20,000-turn history (8 teams × 2,500 rounds; `npm test` prints the table):
+
+| Query | TypeScript | Python |
+|---|---|---|
+| `count()` | 75 µs | 167 µs |
+| my bee's nectar per flower: `my_bee().eq(fed).group_by(flower).sum(nectar).count()` (cells) | 46 µs | 109 µs |
+| average percent per flower on feeds (cells) | 56 µs | 146 µs |
+| one pair's feeds (cells) | 13 µs | 35 µs |
+| my flower, last 50 rounds (index + range) | 13 µs | 27 µs |
+| my bee's last 10 turns, newest first (index) | 6 µs | 14 µs |
+| the turns since the last call: `offset(n)` (slice) | 3 µs | 7 µs |
+| one flower's answers to one challenge, last 100 rounds (index + range + filter) | 18 µs | 71 µs |
+| every turn with a given challenge (a full scan: json fields have no index) | 506 µs | 6.6 ms |
 
 ## Over HTTP
 
@@ -164,7 +182,33 @@ const h = connect({ base: "http://localhost:3000", room: "ABC", game: "7", token
 await h.turns.myBee().eq("fed", true).groupBy("flower").sum("nectar").rows();   // remote results are Promises
 ```
 
-Leave out `game` to query across the room's finished games.
+Leave out `game` to query across the room's finished games. Both clients take a **`post`** transport
+instead of their built-in HTTP: `connect(room=..., game=..., post=post)` (Python: `post(path, ast) ->
+{"rows", "truncated"}`; TypeScript: `post(path, ast) => Promise<{ rows, truncated }>`), so a caller can route
+queries through its own runner (adding a token, say) and still use the builder; `rows()` and `value()` work
+unchanged.
+
+## A history you hold: `local()`
+
+`local(records, team)` (both languages) builds the same in-memory history programs get, over turn records
+you hold: canonical camelCase dicts or objects, exactly as `GET …/ledger` and `…/query` return them (extra
+fields such as `seq` are ignored).
+
+| | Python | TypeScript |
+|---|---|---|
+| the read-only root programs get as `HISTORY` | `h.history` | `h.history` |
+| its turns query (the same as `h.history.turns`) | `h.turns` | `h.turns` |
+| add new turns; the indexes are updated incrementally | `h.append(records)` | `h.append(records)` |
+| run a raw query AST | `h.run(ast)` | `h.run(ast)` |
+
+```python
+h = history.local(turn_records, team=2)
+h.turns.my_bee().eq("fed", True).group_by("flower").sum("nectar").rows()
+h.append(new_turn_records)
+```
+
+`HISTORY` itself has no `append`: a program can't add to it. (Underneath, `Table(entity, records)` is the
+in-memory executor for any entity: `Table("scores", rows).query(team)`.)
 
 ## How the in-memory executor runs a query
 

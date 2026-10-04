@@ -503,14 +503,25 @@ export const turnOf = (a, idx, { game, flowerMs }) => ({
 
 // ---------- querying history (docs/QUERY.md) ----------
 
+/** Run a query; a query the schema doesn't allow (or one that times out) is the client's error. */
+async function asViewer(ast, where) {
+  try {
+    return await runQuery(ast, where);
+  } catch (e) {
+    if (e.status === 400) fail(400, e.message);
+    if (e.code === "57014") fail(400, "the query took too long: narrow it (a round range, a team) or page it");
+    throw e;
+  }
+}
+
 /** A query over one game, as the viewer may see it. */
 export async function queryGame(game, user, ast) {
-  return runQuery(ast, { gameId: game.id, userId: user?.id ?? null });
+  return asViewer(ast, { gameId: game.id, userId: user?.id ?? null });
 }
 
 /** A query across a room's finished games (fully revealed; scopes mean the viewer's team in each). */
 export async function queryRoom(room, user, ast) {
-  return runQuery(ast, { roomId: room.id, userId: user?.id ?? null });
+  return asViewer(ast, { roomId: room.id, userId: user?.id ?? null });
 }
 
 export const querySchema = () => SCHEMA;

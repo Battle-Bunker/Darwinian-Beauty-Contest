@@ -700,7 +700,10 @@ export class Local {
   }
   get turns(): ProgramHistory[ProgramEntity] { return this.history[PROGRAM_ENTITY]; }
   get size(): number { return this.#table.size; }
+  /** Add new turn records (in order); the indexes are kept up to date. */
   append(records: readonly unknown[]): void { this.#table.append(records); }
+  /** Run a query AST (JSON) against these records, as this team. */
+  run(ast: Ast): readonly any[] { return this.#table.run(ast, this.team); }
 }
 
 export function local(records: readonly unknown[] = [], team: number | null = null): Local {

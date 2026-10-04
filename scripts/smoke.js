@@ -49,22 +49,23 @@ const mate = await login("Mate " + stamp);
 await api(mate, "POST", `${g}/teams/join`, { joinCode: players[0].team.joinCode });
 
 const view0 = await api(players[0].token, "GET", g);
-assert.match(view0.interface.flower, /def flower\(challenge, ledger\)/);
-assert.match(view0.interface.bee, /def first\(ledger\)/);
-assert.match(view0.interface.bee, /def decide\(challenge, response, ledger\)/);
+assert.match(view0.interface.flower, /def flower\(challenge\)/);
+assert.match(view0.interface.bee, /def first\(\)/);
+assert.match(view0.interface.bee, /def decide\(challenge, response\)/);
+assert.match(view0.interface.bee, /MEMORY/);
+assert.equal(view0.game.config.budgets.bee.memory, 1024);
 assert.deepEqual(["flower", "bee"].map((k) => view0.game.config.budgets[k].ms), [150, 50], "every time limit is public");
 assert.deepEqual(view0.teams.map((t) => t.ready), view0.teams.map(() => ({ flower: false, bee: false })));
 
-const flower = (a, b, pct) => `def flower(challenge, ledger):\n    return (challenge * ${a} + ${b}) % 1000, ${pct}\n`;
-// A bee that feeds every other turn and now and then prints how much of the ledger it has.
-const bee = (q) => `n = 0
-def first(ledger):
+const flower = (a, b, pct) => `def flower(challenge):\n    return (challenge * ${a} + ${b}) % 1000, ${pct}\n`;
+// A bee that feeds every other turn (it counts its turns in MEMORY) and now and then prints how many turns
+// its HISTORY holds.
+const bee = (q) => `def first():
     return ${q}
-def decide(challenge, response, ledger):
-    global n
-    n += 1
+def decide(challenge, response):
+    n = MEMORY["n"] = MEMORY.get("n", 0) + 1
     if n % 3 == 0:
-        print("ledger", len(ledger))
+        print("history", HISTORY.turns.count().value())
     return ("feed" if n % 2 else "leave"), ${q}
 `;
 const variants = [
@@ -81,14 +82,14 @@ for (const [i, p] of players.slice(0, 3).entries()) {
 }
 // Di writes only a flower, so Di's team sits the game out.
 await api(players[3].token, "POST", `${g}/programs`, { kind: "flower", code: flower(1, 1, 50) });
-for (const [kind, code, err] of [["flower", "x = 1\n", /must define flower/], ["bee", "def first(ledger):\n    return 1\n", /must define first\(ledger\) and decide/],
+for (const [kind, code, err] of [["flower", "x = 1\n", /must define flower/], ["bee", "def first():\n    return 1\n", /must define first\(\) and decide/],
   ["bee", flower(1, 1, 1), /must define first/], ["cosmos", "x", null]]) {
   const r = await api(players[0].token, "POST", `${g}/check`, { kind, code }, { allow: [400] });
   if (!err) { assert.equal(r.status, 400, "cosmos is not a program any more"); continue; }
   assert.equal(r.ok, false, `${kind} without its entry points`);
   assert.match(r.errors.join(), err);
 }
-const big = await api(players[0].token, "POST", `${g}/check`, { kind: "flower", code: "def flower(c, ledger):\n" + "    c = c + 1\n".repeat(400) + "    return c, 1\n" });
+const big = await api(players[0].token, "POST", `${g}/check`, { kind: "flower", code: "def flower(c):\n" + "    c = c + 1\n".repeat(400) + "    return c, 1\n" });
 assert.equal(big.ok, false);
 assert.match(big.errors[0], /Too big: \d+ nodes > budget 1100/);
 const tf = await api(players[0].token, "POST", `${g}/try`, { kind: "flower", code: variants[0].flower, challenges: [1, 2, 500] });
@@ -162,10 +163,10 @@ assert.deepEqual(latest.actions.map((a) => a.seq), [4, 3, 2, 1, 0].map((i) => se
 const mineOnly = await api(players[0].token, "GET", `${g}/actions?mine=1&limit=5000`);
 assert.ok(mineOnly.actions.length && mineOnly.actions.every((a) => a.bee === ada || a.flower === ada));
 assert.equal((await api(null, "GET", `${g}/actions?mine=1`, null, { allow: [403] })).status, 403);
-// The bee's prints show it reading the ledger as it grows.
-const adaLogs = async () => (await api(players[0].token, "GET", `${g}/actions?limit=5000`)).actions.filter((a) => a.bee === ada && /ledger \d+/.test(a.log || ""));
+// The bee's prints show its HISTORY growing.
+const adaLogs = async () => (await api(players[0].token, "GET", `${g}/actions?limit=5000`)).actions.filter((a) => a.bee === ada && /history \d+/.test(a.log || ""));
 const logs = await until("Ada's bee to print", async () => { const l = await adaLogs(); return l.length >= 2 && l; });
-assert.ok(Number(logs.at(-1).log.match(/ledger (\d+)/)[1]) > Number(logs[0].log.match(/ledger (\d+)/)[1]));
+assert.ok(Number(logs.at(-1).log.match(/history (\d+)/)[1]) > Number(logs[0].log.match(/history (\d+)/)[1]));
 
 // The team ledger is what the team's programs get: every finished turn, with the team's private details.
 const boLedger = await api(players[1].token, "GET", `${g}/ledger?limit=5000`);
@@ -182,9 +183,54 @@ for (const e of boLedger.entries) {
   assert.equal(e.nectar === null, !e.fed);
   assert.equal(e.pollen, e.fed ? a.pollen : 0);
 }
+assert.ok(boLedger.entries.every((e) => (e.beeMs === null) === (e.bee !== 1) || e.beeError), "beeMs: Bo's own bee only");
 const publicLedger = await api(null, "GET", `${g}/ledger?limit=5000`);
 assert.equal(publicLedger.team, null);
-assert.ok(publicLedger.entries.every((e) => e.ms === null && (e.fed || e.percent === null)));
+assert.ok(publicLedger.entries.every((e) => e.ms === null && e.beeMs === null && (e.fed || e.percent === null)));
+
+// Querying history: the same records, through the query endpoint, filtered for the viewer.
+const q = (token, body, roomLevel = false) => api(token, "POST", roomLevel ? `/rooms/${room.shortId}/query` : `${g}/query`, body, { allow: [400] });
+const schema = await api(null, "GET", "/query/schema");
+assert.deepEqual(Object.keys(schema.entities), ["turns", "versions", "teams", "pairs", "scores"]);
+const boTurns = await q(players[1].token, { from: "turns", limit: 5000 });
+assert.ok(boTurns.rows.length >= boLedger.entries.length - 3 && boTurns.rows.every((t) => (t.ms === null) === (t.flower !== 1)));
+const boByFlower = await q(players[1].token, { from: "turns", scope: "myBee", where: [{ field: "fed", op: "eq", value: true }], groupBy: ["flower"],
+  aggregates: [{ fn: "count", as: "feeds" }, { fn: "sum", field: "nectar", as: "nectar" }] });
+assert.ok(boByFlower.rows.length && boByFlower.rows.every((r) => r.feeds > 0 && r.nectar >= 0));
+const hidden = await q(null, { from: "turns", where: [{ field: "fed", op: "eq", value: false }], aggregates: [{ fn: "sum", field: "percent", as: "p" }, { fn: "count", field: "ms", as: "ms" }] });
+assert.deepEqual(hidden.rows, [{ p: null, ms: 0 }], "a spectator's aggregates see no private field");
+const upTo = Math.max(...boTurns.rows.map((t) => t.round)); // the game runs on: compare the same rounds
+const mineP = await q(players[1].token, { from: "turns", where: [{ field: "fed", op: "eq", value: false }, { field: "round", op: "le", value: upTo }],
+  aggregates: [{ fn: "count", field: "percent", as: "n" }] });
+const unfedP = boTurns.rows.filter((t) => !t.fed && t.percent !== null);
+assert.ok(unfedP.every((t) => t.flower === 1), "unfed percents: Bo's own flower's only");
+assert.equal(mineP.rows[0].n, unfedP.length, "and the aggregate counts exactly those");
+assert.deepEqual((await q(null, { from: "versions" })).rows, [], "nobody else's versions during play");
+assert.equal((await q(players[1].token, { from: "versions" })).rows.length, 2, "your own");
+assert.match((await q(null, { from: "turns", where: [{ field: "challenge", op: "lt", value: 3 }] })).error, /takes eq, ne, in, isNull/);
+assert.deepEqual((await q(null, { from: "scores" }, true)).rows, [], "the room's finished games: none yet");
+const client = await fetch(BASE + "/vendor/query/history.py");
+assert.equal(client.status, 200);
+assert.match(await client.text(), /def connect\(/, "the generated Python client is served");
+
+// MEMORY: your own bee's during play (read only), nobody else's.
+const ownView = await until("Bo's bee's memory", async () => { const v = await api(players[1].token, "GET", g); return v.teams.find((t) => t.id === bo).memory?.value.n > 2 && v; });
+const boMemory = ownView.teams.find((t) => t.id === bo).memory;
+assert.deepEqual([boMemory.cap, boMemory.version, typeof boMemory.bytes], [1024, 1, "number"]);
+assert.ok(ownView.teams.filter((t) => t.id !== bo).every((t) => t.memory === null), "other teams' memory is hidden");
+assert.ok((await api(null, "GET", g)).teams.every((t) => t.memory === null), "and a spectator sees none");
+const boTeamRows = (await q(players[1].token, { from: "teams" })).rows;
+assert.ok(boTeamRows.every((t) => (t.index === 1) === (t.memory !== null)));
+// Nobody can write it: the try tool's memory is the test bee's alone, and no other endpoint takes one.
+const tried = await api(players[1].token, "POST", `${g}/try`, { kind: "bee", code: variants[1].bee, rounds: 20, memory: { n: 1000, from: "try" } });
+assert.ok(tried.memory.value.n > 1000 && tried.memory.value.from === "try", "the test bee started from the memory it was given");
+await api(players[1].token, "POST", `${g}/programs`, { kind: "bee", code: variants[1].bee, memory: { from: "submit" } });
+await api(players[1].token, "POST", `${g}/check`, { kind: "bee", code: variants[1].bee, memory: { from: "check" } });
+await sleep(600);
+const after1 = (await api(players[1].token, "GET", g)).teams.find((t) => t.id === bo).memory;
+assert.ok(!("from" in after1.value) && after1.value.n < 1000, `Bo's game bee's memory is its own: ${JSON.stringify(after1.value)}`);
+assert.equal((await api(players[1].token, "POST", `${g}/try`, { kind: "bee", code: variants[1].bee, memory: { pad: "x".repeat(2000) } }, { allow: [400] })).status, 400,
+  "a test memory over the cap is refused");
 
 // The scoreboard and the ledgers are live and public.
 const board = await api(null, "GET", `${g}/scores`);
@@ -209,7 +255,7 @@ assert.deepEqual(view1.teams.map((t) => t.index), [0, 1, 2, null]);
 const own = (await api(players[0].token, "GET", g)).teams.find((t) => t.id === ada);
 assert.equal(own.programs.flower.length, 1);
 assert.ok("bank" in own.banks.flower && "bank" in own.banks.bee);
-const rewrite = await api(players[0].token, "POST", `${g}/programs`, { kind: "flower", code: `def flower(c, ledger):\n    return len("${"ab".repeat(80)}") + c, 30\n` });
+const rewrite = await api(players[0].token, "POST", `${g}/programs`, { kind: "flower", code: `def flower(c):\n    return len("${"ab".repeat(80)}") + c, 30\n` });
 assert.equal(rewrite.ok, false);
 assert.match(rewrite.errors.join(), /Not enough change budget: this change costs \d+ nodes/);
 const small = flower(3, 9, 30); // one byte changed: costs 1 node
@@ -297,7 +343,11 @@ assert.equal(await lastSeq(), settled, "nothing happens after the end");
 const after = (await api(null, "GET", `${g}/actions?limit=5000`)).actions;
 assert.ok(after.every((a) => "beeVersion" in a && "flowerVersion" in a), "a spectator sees every version");
 assert.ok(after.filter(isEnd).every((a) => "ms" in a && "beeMs" in a && "percent" in a && "energy" in a), "and every timing, percent and energy");
-assert.ok(after.some((a) => a.bee === ada && /ledger/.test(a.log || "")), "prints are revealed");
+assert.ok(after.some((a) => a.bee === ada && /history/.test(a.log || "")), "prints are revealed");
+assert.ok(done.teams.filter((t) => t.participant).every((t) => t.memory && typeof t.memory.value === "object"), "every bee's MEMORY is revealed");
+const roomQuery = await api(null, "POST", `/rooms/${room.shortId}/query`, { from: "turns", groupBy: ["game"], aggregates: [{ fn: "count", as: "n" }, { fn: "count", field: "ms", as: "timed" }] });
+assert.equal(roomQuery.rows.length, 1, "the finished game, across the room");
+assert.ok(roomQuery.rows[0].n > 0 && roomQuery.rows[0].timed > 0, "fully revealed");
 const finalLedger = await api(null, "GET", `${g}/ledger?limit=5000`);
 assert.ok(finalLedger.entries.length && finalLedger.entries.every((e) => e.ms !== null || e.response === null));
 assert.ok(done.scores.length === 3 && done.scores.every((s) => Number.isFinite(s.fitness)));

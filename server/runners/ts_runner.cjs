@@ -18,10 +18,12 @@
 //           {op: "decide", c, r, memory} -> {a, out, memory} | {e, out}
 // HISTORY lives in a context of its own (the history realm), parsed, frozen and indexed as it arrives;
 // every call gets the same read-only HISTORY object. Every built-in reachable from it is frozen and the
-// realm's function constructors throw, so nothing a program does to it survives the call. A flower's
-// `cpu` is this process's CPU time while the program runs and flower() is called (creating the context and
-// encoding the reply aren't counted). Time limits are wall-clock: a flower is stopped at `ms` (program and
-// call together); a bee's `ms` is a deadline the engine keeps, so the runner only stops a bee at `limitMs`.
+// realm's function constructors throw, so nothing a program does to it survives the call. The reply (and a
+// bee's MEMORY) is encoded to JSON text inside the context, on the clock and under the time limit, so hooks
+// (toJSON, getters, proxies) are the program's own compute; only a string leaves the context. A flower's
+// `cpu` is this process's CPU time for running the program, calling flower() and encoding its reply (not
+// for creating the context). Time limits are wall-clock: a flower is stopped at `ms`; a bee's `ms` is a
+// deadline the engine keeps, so the runner only stops a bee at `limitMs`.
 // Values cross context boundaries only as JSON strings, so no host objects leak in.
 // NOT a security sandbox: fresh contexts + timeouts + heap cap only.
 "use strict";
@@ -43,8 +45,9 @@ const SIGNATURE = role === "bee" ? "function first() and function decide(challen
 const PRELUDE = (game) => `
 (() => {
   const buf = [];
-  globalThis.__out = buf;
-  const log = (...a) => { if (buf.join("").length < 2000) buf.push(a.map((x) => typeof x === "string" ? x : JSON.stringify(x)).join(" ") + "\\n"); };
+  let size = 0;
+  Object.defineProperty(globalThis, "__takeOut", { value: () => { const o = buf.join("").slice(0, 2000); buf.length = 0; size = 0; return o; } });
+  const log = (...a) => { if (size < 2000) { const s = a.map((x) => typeof x === "string" ? x : JSON.stringify(x)).join(" ") + "\\n"; size += s.length; buf.push(s); } };
   globalThis.console = { log, error: log, warn: log, info: log };
   globalThis.GAME = Object.freeze(${JSON.stringify(game)});
 })();`;
@@ -97,7 +100,12 @@ function fresh(timeout) {
   return c;
 }
 
-const takeOut = (c) => { try { return vm.runInContext("(() => { const o = __out.join(''); __out.length = 0; return o; })()", c); } catch { return ""; } };
+const takeOut = (c) => {
+  try {
+    const o = vm.runInContext("__takeOut()", c, { timeout: 100 });
+    return typeof o === "string" ? o : "";
+  } catch { return ""; }
+};
 
 function load(req) {
   setup = req;
@@ -129,28 +137,32 @@ function callFlower(req) {
   const c = fresh();
   vm.runInContext(`globalThis.__c = ${jsonArg(req.c)};`, c);
   const t0 = performance.now(), cpu0 = process.cpuUsage();
-  let cpu = null;
+  const left = () => Math.max(1, Math.round(setup.ms - (performance.now() - t0)));
   try {
-    // The flower's compute: its program, then flower(challenge). Encoding the reply isn't counted.
+    // The flower's compute: its program, flower(challenge), and encoding the reply: all on the clock.
     script.runInContext(c, { timeout: setup.ms });
     if (vm.runInContext("typeof __fns.flower", c) !== "function") throw new Error(`program must define ${SIGNATURE}`);
-    const left = Math.max(1, Math.round(setup.ms - (performance.now() - t0)));
-    vm.runInContext("globalThis.__r = __fns.flower(__c);", c, { timeout: left });
-    cpu = cpuMs(cpu0);
-    const s = encode(c, "__r", "flower");
+    vm.runInContext("globalThis.__r = __fns.flower(__c);", c, { timeout: left() });
+    const s = encode(c, "__r", "flower", left());
+    const cpu = cpuMs(cpu0);
     if (s.length > maxChars()) return out({ e: `flower returned something too large (over ${maxChars()} characters)`, cpu });
     return out({ v: JSON.parse(s), cpu });
   } catch (e) {
-    return out({ e: timedOut(e) ? "Timeout: took too long" : short(e), cpu: cpu ?? cpuMs(cpu0) });
+    return out({ e: timedOut(e) ? "Timeout: took too long" : short(e), cpu: cpuMs(cpu0) });
   }
 }
 
-/** JSON text of a global of context c (inside the context, so no host objects are involved). */
-function encode(c, name, what) {
-  return vm.runInContext(`(() => { const r = globalThis.${name};
+/**
+ * JSON text of a global of context c, encoded inside the context under `timeout` (hooks such as toJSON run
+ * there, on the program's clock). Only a string comes out.
+ */
+function encode(c, name, what, timeout) {
+  const s = vm.runInContext(`(() => { const r = globalThis.${name};
     if (r !== undefined && r !== null && typeof r === "object" && typeof r.then === "function") throw new Error("${what} must not be async");
     let s; try { s = JSON.stringify(r === undefined ? null : r); } catch (e) { throw new Error("${what} returned something that is not plain data"); }
-    return s === undefined ? "null" : s; })()`, c, { timeout: 1000 });
+    return s === undefined ? "null" : s; })()`, c, { timeout });
+  if (typeof s !== "string") throw new Error(`${what} returned something that is not plain data`);
+  return s;
 }
 
 function callBee(req) {
@@ -165,16 +177,19 @@ function callBee(req) {
     const left = Math.max(1, Math.round(limit - (performance.now() - t0)));
     const call = req.op === "first" ? "__fns.first()" : `__fns.decide(${jsonArg(req.c)}, ${jsonArg(req.r)})`;
     vm.runInContext(`globalThis.__r = ${call};`, c, { timeout: left });
-    const s = encode(c, "__r", req.op);
+    const rest = () => Math.max(1, Math.round(limit - (performance.now() - t0)));
+    const s = encode(c, "__r", req.op, rest());
     if (s.length > maxChars()) throw new Error(`${req.op} returned something too large`);
-    const reply = { a: JSON.parse(s), out: takeOut(c) };
+    const reply = { a: JSON.parse(s) };
     try {
-      const m = encode(c, "MEMORY", "MEMORY");
+      const m = encode(c, "MEMORY", "MEMORY", rest());
       if (m.length > 1 << 20) reply.memoryError = "MEMORY is too large";
       else reply.memory = m;
     } catch (e) {
+      if (timedOut(e)) throw e;
       reply.memoryError = short(e).replace("MEMORY returned something", "MEMORY is something");
     }
+    reply.out = takeOut(c);
     return out(reply);
   } catch (e) {
     return out({ e: timedOut(e) ? "Timeout: took too long" : short(e), out: takeOut(c) });

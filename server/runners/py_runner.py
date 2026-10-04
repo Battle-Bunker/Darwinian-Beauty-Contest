@@ -25,7 +25,7 @@
 # the runner only stops a bee call at the hard limit `limitMs`. The engine runs at most one program per
 # CPU core, so wall time and CPU time stay close.
 # NOT a security sandbox: restricted builtins + import whitelist + timeouts + memory cap only.
-import builtins, gc, importlib.util, io, json, os, random, resource, select, signal, sys, time
+import builtins, gc, importlib.util, io, json, math, os, random, resource, select, signal, sys, time
 
 ALLOWED_MODULES = {
     "math", "cmath", "random", "hashlib", "string", "itertools", "functools", "collections",
@@ -74,13 +74,45 @@ def short(e):
     return (type(e).__name__ + ": " + str(e))[:300]
 
 
+class NotPlain(Exception):
+    pass
+
+
+def plain(v, depth=0):
+    """
+    A copy of v made only of the exact built-in types JSON has (dict with str keys, list, str, int, float,
+    bool, None; a tuple becomes a list, an int, float, bool or None key a string). Subclasses are refused:
+    their hooks (items, __iter__, __float__, __repr__, ...) could otherwise run user code after the clock
+    stops. Runs inside the timed window, so the copying is the program's own compute.
+    """
+    if depth > 1000:
+        raise NotPlain("nested too deeply")
+    t = type(v)
+    if v is None or t is bool or t is str or t is int:
+        return v
+    if t is float:
+        if v != v or v in (math.inf, -math.inf):
+            raise NotPlain("not a finite number")
+        return v
+    if t is list or t is tuple:
+        return [plain(x, depth + 1) for x in v]
+    if t is dict:
+        out = {}
+        for k, x in dict.items(v):
+            tk = type(k)
+            if tk is not str:
+                if k is None or tk is bool or tk is int or tk is float:
+                    k = json.dumps(plain(k))
+                else:
+                    raise NotPlain(f"a {tk.__name__} key")
+            out[k] = plain(x, depth + 1)
+        return out
+    raise NotPlain(f"a {t.__name__}")
+
+
 def encode(v, max_chars):
-    if isinstance(v, tuple):
-        v = list(v)
-    try:
-        s = json.dumps(v, allow_nan=False)
-    except (TypeError, ValueError) as e:
-        return None, "not plain data: " + short(e)
+    """JSON text of a plain() value: no user code can run here."""
+    s = json.dumps(v, allow_nan=False)
     if len(s) > max_chars:
         return None, f"too large (over {max_chars} characters)"
     return s, None
@@ -92,6 +124,24 @@ PROTO = os.fdopen(os.dup(1), "w")  # protocol channel; programs' print() never r
 def reply(obj):
     PROTO.write(json.dumps(obj) + "\n")
     PROTO.flush()
+
+
+try:
+    import ctypes
+    _LIBC = ctypes.CDLL(None)
+except Exception:
+    _LIBC = None
+
+
+def die_with_parent():
+    """A forked call is killed if this runner dies (proc.js also kills the runner's whole process group).
+    (Not RLIMIT_CPU: setting it makes CPU-time accounting coarse on some kernels.)"""
+    try:
+        _LIBC.prctl(1, signal.SIGKILL)  # PR_SET_PDEATHSIG
+        if os.getppid() == 1:
+            os._exit(1)
+    except Exception:
+        pass
 
 
 ENTRY = {"flower": ("flower",), "bee": ("first", "decide")}
@@ -118,6 +168,7 @@ def main(role, setup):
             os.dup2(devnull, 1)
             os.dup2(devnull, 2)
             random.seed()  # fresh entropy: the forked child would otherwise repeat the parent's sequence
+            die_with_parent()
             t0 = time.process_time()
             out = {}
             ns = {"__name__": "__program__", "__builtins__": SAFE_BUILTINS, "GAME": dict(game), "HISTORY": hist.history}
@@ -137,16 +188,31 @@ def main(role, setup):
                     v = ns["first"]()
                 else:
                     v = ns["decide"](req["c"], req["r"])
+                # Still on the clock: the reply (and a bee's MEMORY) as plain data.
+                what = "flower" if role == "flower" else req["op"]
+                try:
+                    v, err = plain(v), None
+                except NotPlain as e:
+                    v, err = None, f"{what} returned something that is not plain data ({e})"
+                memory = memory_error = None
+                if role == "bee" and err is None:
+                    try:
+                        memory = plain(ns.get("MEMORY"))
+                    except NotPlain as e:
+                        memory_error = f"MEMORY is not plain data ({e})"
                 timer(0)
                 cpu = (time.process_time() - t0) * 1000
-                s, err = encode(v, max_chars)
                 if err:
-                    out = {"e": f"{ENTRY[role][0] if role == 'flower' else req['op']} returned something " + err}
+                    out = {"e": err}
                 else:
-                    out = {"v": s}
-                    if role == "bee":
-                        m, merr = encode(ns.get("MEMORY"), 1 << 20)
-                        out.update({"memory": m} if m is not None else {"memoryError": "MEMORY is " + merr})
+                    s, err = encode(v, max_chars)
+                    out = {"e": f"{what} returned something " + err} if err else {"v": s}
+                    if role == "bee" and not err:
+                        if memory_error:
+                            out["memoryError"] = memory_error
+                        else:
+                            m, merr = encode(memory, 1 << 20)
+                            out.update({"memory": m} if m is not None else {"memoryError": "MEMORY is " + merr})
                 out["cpu"] = cpu
             except BaseException as e:
                 timer(0)
@@ -158,8 +224,8 @@ def main(role, setup):
                 data = data[n:]
             os._exit(0)
         os.close(w)
-        # Wall-clock backstop for a child that ignores its timer.
-        chunks, deadline_s, ok = [], 2 * budget / 1000 + 0.5, True
+        # Wall-clock backstop for a child that ignores its timer (well before proc.js gives up on this process).
+        chunks, deadline_s, ok = [], (2 * budget if role == "flower" else budget) / 1000 + 0.5, True
         while True:
             ready, _, _ = select.select([r], [], [], deadline_s)
             if not ready:

@@ -1391,7 +1391,10 @@ class Local {
   }
   get turns()                                { return this.history[PROGRAM_ENTITY]; }
   get size()         { return this.#table.size; }
+  /** Add new turn records (in order); the indexes are kept up to date. */
   append(records                    )       { this.#table.append(records); }
+  /** Run a query AST (JSON) against these records, as this team. */
+  run(ast     )                 { return this.#table.run(ast, this.team); }
 }
 
 function local(records                     = [], team                = null)        {

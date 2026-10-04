@@ -5,7 +5,8 @@
 // once the game is over (prints if revealOnFinish).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { actionView, ledgerEntry, turnOf } from "../server/games.js";
+import { actionView, turnOf } from "../server/games.js";
+import { mask } from "../server/query/mask.js";
 
 const row = (fields) => ({
   seq: 9, at_ms: 550, round: 3, turn: 2, bee_team: "B", flower_team: "F", action: "feed",
@@ -78,11 +79,17 @@ test("once the game is over, everyone sees everything; prints only if revealed",
 
 test("the team ledger over the API: the viewer's own view during play, every field after", () => {
   const idx = new Map([["B", 0], ["F", 1], ["X", 2]]);
-  const t = turnOf(leave, idx);
-  assert.deepEqual(ledgerEntry(t, 2), { round: 3, bee: 0, flower: 1, challenge: 5, response: 7, fed: false, percent: null, energy: null, nectar: null, pollen: 0, ms: null });
-  assert.deepEqual(ledgerEntry(t, -1), ledgerEntry(t, 2), "a spectator gets the public fields");
-  assert.deepEqual(ledgerEntry(t, 1), { round: 3, bee: 0, flower: 1, challenge: 5, response: 7, fed: false, percent: 60, energy: 800, nectar: null, pollen: 0, ms: 12.5 });
-  assert.deepEqual(ledgerEntry(t, null), ledgerEntry(t, 1), "after the game: everything");
-  const fed = turnOf(row({}), idx);
-  assert.deepEqual(ledgerEntry(fed, 0), { round: 3, bee: 0, flower: 1, challenge: 5, response: 7, fed: true, percent: 25, energy: 1000, nectar: 250, pollen: 750, ms: null });
+  const opts = { game: "g", flowerMs: 150 };
+  const t = turnOf(leave, idx, opts);
+  const priv = { ms: null, flowerVersion: null, flowerError: null, beeMs: null, beeVersion: null, beeError: null };
+  const pub = { game: "g", round: 3, atMs: 400, turn: 2, bee: 0, flower: 1, challenge: 5, response: 7, fed: false, percent: null, energy: null,
+    nectar: null, pollen: 0, ...priv };
+  assert.deepEqual(mask("turns", t, 2), pub);
+  assert.deepEqual(mask("turns", t, null), pub, "a spectator gets the public fields");
+  assert.deepEqual(mask("turns", t, 1), { ...pub, percent: 60, energy: 800, ms: 12.5, flowerVersion: 4 });
+  assert.deepEqual(mask("turns", t, 0), { ...pub, beeMs: 3.25, beeVersion: 2 });
+  assert.deepEqual(mask("turns", t, 2, { over: true }), { ...pub, percent: 60, energy: 800, ms: 12.5, flowerVersion: 4, beeMs: 3.25, beeVersion: 2 },
+    "after the game: everything");
+  const fed = turnOf(row({}), idx, opts);
+  assert.deepEqual(mask("turns", fed, 2), { ...pub, fed: true, percent: 25, energy: 1000, nectar: 250, pollen: 750 });
 });

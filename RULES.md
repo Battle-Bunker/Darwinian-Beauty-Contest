@@ -89,7 +89,9 @@ saves it, and your bee's next call starts with what was saved. Nothing else carr
 - **Only your bee writes it.** Nobody else, your own team included, can change it. Your team can read it
   during play (its value, size and cap); everyone can once the game is over.
 
-`HISTORY` is not limited by the cap: it holds every finished turn, for every call.
+Your program's top-level code runs at the start of every call, so don't assign `MEMORY` there (that would
+reset it every call): change it inside `first` and `decide`. `HISTORY` is not limited by the cap: it holds
+every finished turn, for every call.
 
 ## Energy: compute, nectar and pollen
 

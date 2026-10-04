@@ -25,7 +25,8 @@ export class ProgramProcess {
     this.queue = [];
     this.inflight = null;
     this.buf = "";
-    this.child = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"], env: CHILD_ENV, cwd: DIR });
+    // Its own process group, so killing it kills every process it forked too (a forked call can't outlive it).
+    this.child = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"], env: CHILD_ENV, cwd: DIR, detached: true });
     this.child.stdout.setEncoding("utf8");
     this.child.stdout.on("data", (d) => this.#onData(d));
     this.child.stderr.on("data", () => {});
@@ -92,6 +93,7 @@ export class ProgramProcess {
   }
 
   kill() {
+    try { process.kill(-this.child.pid, "SIGKILL"); } catch {}
     try { this.child.kill("SIGKILL"); } catch {}
   }
 }

@@ -797,7 +797,12 @@ class Local:
         return self._table.size
 
     def append(self, records: Iterable[Any]) -> None:
+        """Add new turn records (in order); the indexes are kept up to date."""
         self._table.append(records)
+
+    def run(self, ast: dict) -> Tuple[Any, ...]:
+        """Run a query AST (a dict, canonical names) against these records, as this team."""
+        return self._table.run(ast, self.team)
 
 
 def local(records: Iterable[Any] = (), team: Optional[int] = None) -> Local:

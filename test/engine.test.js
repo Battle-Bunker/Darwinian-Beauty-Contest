@@ -320,7 +320,8 @@ test("typescript: HISTORY is frozen and shared safely; nothing a program does to
   const rows: any = HISTORY.turns.rows();
   const out: any[] = [rows.length, Object.isFrozen(rows), rows.length ? Object.isFrozen(rows[0]) : true, Object.isFrozen(HISTORY), Object.isFrozen(HISTORY.turns)];
   try { rows.push(1); } catch { out.push("no push"); }
-  try { (HISTORY as any).turns = null; } catch { out.push("no reassign"); }
+  try { (HISTORY as any).turns = null; } catch {}
+  out.push(HISTORY.turns !== null ? "kept" : "lost");
   try { rows.constructor.constructor("return 1")(); out.push("compiled"); } catch { out.push("no compile"); }
   try { (HISTORY.turns as any).__proto__.stash = ((HISTORY.turns as any).__proto__.stash || 0) + 1; } catch {}
   out.push((HISTORY.turns as any).stash ?? null);
@@ -331,7 +332,7 @@ test("typescript: HISTORY is frozen and shared safely; nothing a program does to
   const out = await play(config, [{ flower: fl, bee }], 6);
   const rs = ends(out.actions).map((a) => a.r);
   assert.deepEqual(rs.map((r) => r[0]), [0, 1, 2, 3, 4, 5], "one more turn each round");
-  for (const r of rs) assert.deepEqual(r.slice(1), [true, true, true, true, "no push", "no reassign", "no compile", null, "undefined"]);
+  for (const r of rs) assert.deepEqual(r.slice(1), [true, true, true, true, "no push", "kept", "no compile", null, "undefined"]);
 });
 
 test("nothing persists between calls but MEMORY: globals start afresh every call, in both languages", async () => {
@@ -537,14 +538,12 @@ for (const language of ["python", "typescript"]) {
       bee: `function first() { MEMORY.n = (MEMORY.n ?? 0) + 1; return MEMORY.n; }\nfunction decide(c: number, r: any) { MEMORY.n = (MEMORY.n ?? 0) + 1; return ["leave", MEMORY.n]; }\n`,
     };
     const p = language === "python" ? py : ts;
-    let memoryBefore = null, memoryAfter = null;
+    let memoryBefore = null;
     const out = await play(config, [{ flower: p.flower(1), bee: p.bee }], 60, async (garden) => {
       while (garden.rounds < 20) await wait(5);
       memoryBefore = garden.memoryOf(0);
       await garden.setProgram(0, "flower", p.flower(3), 2);
       await garden.setProgram(0, "bee", p.bee, 2);
-      while (garden.rounds < 22) await wait(5);
-      memoryAfter = garden.memoryOf(0);
     });
     const turns = ends(out.actions);
     const v1 = turns.filter((a) => a.beeVersion === 1), v2 = turns.filter((a) => a.beeVersion === 2);
@@ -553,8 +552,9 @@ for (const language of ["python", "typescript"]) {
     assert.deepEqual(v2.map((a) => a.c), v2.map((_, i) => i + 1), "the new version starts from an empty MEMORY");
     assert.equal(memoryBefore.version, 1);
     assert.ok(JSON.parse(memoryBefore.memory).n > 5);
+    const memoryAfter = out.memories.at(-1);
     assert.equal(memoryAfter.version, 2);
-    assert.ok(JSON.parse(memoryAfter.memory).n < 5);
+    assert.equal(JSON.parse(memoryAfter.memory).n, v2.at(-1).c + 1, "the new version's memory counts its own calls only");
     assert.ok(v1.every((a) => a.round < v2[0].round));
     assert.ok(turns.some((a) => a.flowerVersion === 1 && a.r === 1) && turns.some((a) => a.flowerVersion === 2 && a.r === 3));
     assert.ok(turns.every((a) => a.r === (a.flowerVersion === 1 ? 1 : 3)), "each response comes from the version it's labelled with");
@@ -612,14 +612,16 @@ test("versions are pinned per turn: a bee swap takes over when the turn is settl
 });
 
 test("a broken bee: errors and bad replies are leaves, and first() is asked again; a bee that can't load sits out", async () => {
-  const bee = counting(`    if n == 2:\n        return "dance"\n    if n == 4:\n        raise ValueError("oops")\n    return "feed" if n == 6 else "leave", n\n`, "return 0");
+  // A crash saves no MEMORY, so the crash is triggered by the challenge, not by the count.
+  const bee = counting(`    if n == 2:\n        return "dance"\n    if c == 3:\n        raise ValueError("oops")\n    return "feed" if n == 6 else "leave", n\n`, "return 0");
   const out = await play(normalizeConfig({ feedCost: 0 }), [{ flower: flower("c"), bee }], 12);
   const turns = ends(out.actions);
   assert.match(turns[1].beeError, /decide must return/);
   assert.match(turns[3].beeError, /ValueError: oops/);
   assert.equal(turns[1].action, "leave");
-  // The crash at n = 4 saved nothing, so the next call is n = 4 again (and returns normally).
+  // The crash (at n = 4) saved nothing, so the next decision is n = 4 again.
   assert.deepEqual(turns.map((a) => a.c).slice(0, 7), [0, 1, 0, 3, 0, 4, 5], "after a bad reply, first() opens the next turn");
+  assert.equal(turns[6].action, "feed");
   assert.ok(out.problems.some((p) => p.kind === "bee"));
   const dud = await play(normalizeConfig({}), [{ flower: flower("c"), bee: `import os\n` + bee }], 5);
   assert.equal(dud.actions.length, 0);

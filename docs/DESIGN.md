@@ -16,7 +16,8 @@ A flower now *chooses* how much to pay, out of energy it can only have by being 
 | percent/100 × E, to the bee if it feeds | **nectar** | |
 | (1 − percent/100) × E, kept by the flower if the bee feeds | **pollen** | a turn without a feed pays nobody. A flower allocates its energy between compute, nectar and pollen |
 | `feeds[b][f]`, `nectar[b][f]`, `pollen[b][f]` | **feed / nectar / pollen ledgers** | row = bee team, column = flower team |
-| every finished turn, as one team may see it | **team ledger** | what the team's programs and operators get |
+| every finished turn, as one team may see it | **HISTORY** | a typed, read-only query object every program gets; operators query the same records over HTTP |
+| a bee's only state between calls | **MEMORY** | a JSON value the engine keeps, capped in bytes |
 | Σ√xᵢ | **rootsum** | the diversity-weighted size of an earnings vector |
 | rootsum of a flower's pollen column | **pollination** | how widely, and how profitably, the flower is pollinated |
 | rootsum of a bee's nectar row | **forage** | how widely the bee eats |
@@ -25,12 +26,14 @@ A flower now *chooses* how much to pay, out of energy it can only have by being 
 
 ## The game in one paragraph
 
-Every 200 ms round, each bee that isn't feeding takes one turn. Its challenge must already be queued. The
-engine draws a flower uniformly at random among all N (its own included), calls it, and the flower has
-150 ms to return `[response, percent]`. The runner measures the call's CPU time, which gives E. At 150 ms
-the response reaches the bee, which has 50 ms to return `["feed" | "leave", next_challenge]`. A feed pays
-nectar and pollen and sits the bee out `feedCost` rounds; a leave pays nobody. The bee's next challenge
-is queued for its next turn.
+Each team has one flower species and one bee. Every 200 ms round, each bee that isn't feeding takes one
+turn. Its challenge must already be queued. The engine draws a flower uniformly at random among all N
+species (its own included), calls `flower(challenge)`, and the flower has 150 ms to return
+`[response, percent]`. The runner measures the call's CPU time, which gives E. At 150 ms the response
+reaches the bee, `decide(challenge, response)`, which has 50 ms to return `["feed" | "leave", next]`. On a
+feed the flower gives the bee nectar and pollen and the bee sits out `feedCost` rounds; a leave pays
+nobody. The bee's next challenge is queued for its next turn. Every call runs fresh; the bee's MEMORY is
+the only thing that carries over.
 
 ## Why energy, and why CPU time
 
@@ -61,38 +64,77 @@ A bee's next challenge is decided a round ahead and queued; it is never shown be
 with nothing queued as a round starts loses its turn. A late bee loses its turn's say, never its next
 challenge: its call runs on (up to 2 s), the turn is settled without it (never as a feed), and a late
 `["leave", c]` still queues `c`. Any other late reply, and any reply with no usable next challenge, gets
-the bee asked `first(ledger)` at once, outside the round flow (at most one such request in flight per bee,
+the bee asked `first()` at once, outside the round flow (at most one such request in flight per bee,
 at most one new one a round).
 
-## The team ledger
+## HISTORY: what the programs know
 
-Programs used to see only their own visit. Now both programs, and the team's operators, see the same
-**team ledger**: every finished turn of every bee, with what the team may see of it (the public part of
-every turn; the private details of turns at its own flower). It is how a bee learns which flowers paid,
-and how a flower learns which bees feed.
+Programs used to see only their own visit. Now both of a team's programs get **HISTORY**, an immutable
+global holding every finished turn of every bee, with what the team may see of it (the public part of every
+turn; the private details of turns at its own flower or by its own bee). It is how a bee learns which
+flowers paid, and how a flower learns which bees feed. Operators query the same records over HTTP; see
+[QUERY.md](QUERY.md).
 
-**Delivered between timed calls, incrementally.** At each round boundary, the turns settled in the round
-before are sent to every live bee and flower process as one small delta (`{op: "ledger", entries}`),
-before that round's calls. A new or respawned process gets the whole ledger in its setup. So:
+HISTORY is a typed query object, not a list: `HISTORY.turns.my_bee().eq("fed", True).group_by("flower")
+.sum("nectar").rows()` (Python) or `HISTORY.turns.myBee().eq("fed", true).groupBy("flower").sum("nectar")
+.rows()` (TypeScript). Both clients are generated from one schema (`server/query/schema.js`) by
+`scripts/gen-query/`, along with the SQL the server compiles the same queries to, so the three give the
+same rows. The schema says, for every field, who may see it; the engine masks each record for the team
+with it (`entryFor`) and the SQL masks it for the viewer before filtering, sorting or aggregating.
+
+**Delivered between timed calls, incrementally, indexed.** At each round boundary, the turns settled in the
+round before are sent to every live program process as one small delta (`{op: "ledger", entries}`),
+before that round's calls; the runner appends them to its HISTORY, which keeps its indexes (by round, bee,
+flower, pair and fed) and per-pair running sums up to date as it goes. A new or respawned process gets the
+whole history in its setup. So:
 - A flower's CPU clock starts after the delta is applied (in its own forked child, or around its own vm
-  run), and a bee's 50 ms start only once its process has the delta (`proc.synced`). A growing ledger never
-  costs a program time or energy; *reading* it does.
-- Python flowers fork per call, so the parent holds the ledger and every child inherits it, already
-  parsed, at no cost. The parent `gc.freeze()`s after each delta so a child's garbage collector never
-  walks (and copy-on-write faults) the ledger.
-- TypeScript flowers run in a fresh vm context per call, so the ledger lives, parsed and deep-frozen, in a
-  separate **ledger realm**; each call gets a frozen snapshot array (rebuilt only when the ledger grew).
-  Objects from another realm can reach that realm's built-ins, so the ledger realm is locked down: every
-  reachable built-in is frozen and its function constructors throw, so nothing a flower does to the ledger
-  (or to anything it can reach from it) survives the call. Statelessness holds.
-- A bee keeps the ledger in its own process or context and gets the same list object each call, so it can
-  remember how far it has read (`ledger[done:]`).
+  run), and a bee's 50 ms start only once its process has the delta (`proc.synced`). A growing history
+  never costs a program time or energy; *querying* it does, and typical queries take microseconds.
+- Python programs fork per call, so the runner's parent holds HISTORY and every child inherits it, already
+  indexed, at no cost. The parent `gc.freeze()`s after each delta so a child's garbage collector never
+  walks (and copy-on-write faults) it.
+- TypeScript programs run in a fresh vm context per call, so HISTORY lives in a separate **history realm**
+  (the generated client, run there), and every call gets the same read-only object. Objects from another
+  realm can reach that realm's built-ins, so the history realm is locked down: every reachable built-in is
+  frozen and its function constructors throw, so nothing a program does to HISTORY (or to anything it can
+  reach from it) survives the call.
 
 **Nobody learns the counterpart of a turn until it is over.** A round's turns reach the programs together,
 after the round. While a flower answers it isn't told whose bee asked; while a bee decides it isn't told
 whose flower answered, nor the percent, E or the nectar. What either side can *infer* is fair game: a
-challenge or response can be a signature, and the ledger shows which bees are sitting out a feed, so with
+challenge or response can be a signature, and HISTORY shows which bees are sitting out a feed, so with
 few teams a flower can sometimes narrow down who is asking.
+
+## Every call runs fresh; a bee has MEMORY
+
+Flowers and bees alike are stateless: each call runs the program from the top in a fresh process (Python,
+forked from the runner) or a fresh vm context (TypeScript), so no global, cache or thread survives a call.
+The one exception is a bee's **MEMORY**, a JSON value the engine keeps for it:
+- Every bee call gets the saved MEMORY (`{}` to start); when `first()` or `decide()` returns normally, the
+  runner sends MEMORY back and the engine saves it, measured as canonical JSON (sorted keys, no spaces), if
+  it is at most `budgets.bee.memory` bytes (1024 by default). Over the cap, the old MEMORY is kept and the
+  error is recorded on the turn, but the decision still counts. A call that crashes saves nothing.
+- A new bee version starts with `{}`. A crash, a restarted runner, or the game moving to another server
+  process keeps it: MEMORY is written with the game's live state (`bee_memories`, four times a second)
+  and restored on adoption.
+- Only the bee writes its MEMORY: no route, view or operator tool can. The bee's team can read it during
+  play (the game view, and the `teams` query entity); everyone can after the game ends. The "try" tool can
+  start a local test bee from a MEMORY you give it, which never touches a game's.
+
+Statelessness is what makes the cap mean something: a bee can't keep a lookup table in a global, and it
+can't remember more than its MEMORY holds, except what it can query from HISTORY.
+
+## No user code runs after the clock stops
+
+A program could buy free compute by doing its work while the runner encodes its reply: a `toJSON` method, a
+getter, a Proxy, or (in Python) a `dict`, `str` or `int` subclass whose hooks run during `json.dumps`. So:
+- TypeScript: the reply (and a bee's MEMORY) is encoded with `JSON.stringify` inside the program's context,
+  under its timeout and inside the CPU measurement; only a string crosses back.
+- Python: before the timer stops, the reply (and MEMORY) is copied into plain `dict`, `list`, `str`,
+  `int`, `float`, `bool` and `None` by exact type; anything else, subclasses included, is refused as not
+  plain data. Encoding happens after, on objects with no user code left in them.
+- Each runner is its own process group and is killed as one, and a forked Python call dies with its runner
+  (`PR_SET_PDEATHSIG`), so a call that outlives its deadline can't keep computing.
 
 ## What is public
 
@@ -103,7 +145,7 @@ flower, has to work in plain view, where every other team can study and copy it.
 
 Private during play: the percent and E of a turn without a feed (the flower's team), the flower's compute
 time on every turn and why it failed (the flower's team), and each team's code, prints, versions, sizes,
-budgets and bee timings. The secret that remains is the flower's compute time, which can't be read off a
+budgets, bee timings and bee MEMORY. The secret that remains is the flower's compute time, which can't be read off a
 public E without the flower's size, which stays private with its code. Everything is revealed at the end.
 
 ## Versions are pinned per turn
@@ -119,9 +161,9 @@ can't steer that turn.
 
 | Game time | What happens |
 |---|---|
-| 0 ms | The last round's turns go out to every program's ledger. A crashed bee starts afresh; new code for a bee between turns takes over; a bee with nothing queued is asked `first` (at most once a round). Each bee with a challenge queued, no call in flight and no rounds left to sit out takes its turn: a flower is drawn at random, the arrival is recorded and flushed at once, both versions are pinned, and the flower is called. A bee with nothing queued loses the round. |
-| 150 ms | Every response is delivered; each bee with a turn is called: `decide(challenge, response, ledger)`. |
-| 200 ms | Each reply is in, or its deadline has passed. Each turn is settled: nectar, pollen and the ledgers; the turn's end (`feed` or `leave`, carrying the whole turn) is recorded; a feed sits the bee out `feedCost` rounds; new code for the bee takes over. |
+| 0 ms | The last round's turns go out to every program's HISTORY. A crashed bee's runner is restarted (its MEMORY kept); new code for a bee between turns takes over (with an empty MEMORY); a bee with nothing queued is asked `first` (at most once a round). Each bee with a challenge queued, no call in flight and no rounds left to sit out takes its turn: a flower is drawn at random, the arrival is recorded and flushed at once, both versions are pinned, and the flower is called. A bee with nothing queued loses the round. |
+| 150 ms | Every response is delivered; each bee with a turn is called: `decide(challenge, response)`, with its MEMORY. |
+| 200 ms | Each reply is in, or its deadline has passed. Each bee's MEMORY is saved if it fits. Each turn is settled: nectar, pollen and the ledgers; the turn's end (`feed` or `leave`, carrying the whole turn) is recorded and joins the history; a feed sits the bee out `feedCost` rounds; new code for the bee takes over. |
 
 At most one turn per bee per round: with 6 teams, at most 30 turns (60 actions) a second.
 
@@ -129,23 +171,30 @@ At most one turn per bee per round: with 6 teams, at most 30 turns (60 actions) 
 
 - `server/engine.js`: a `Garden` runs one game's rounds (above). Per bee it keeps the challenge queued for
   its next turn, whether a call is in flight, the turn in progress, rounds left to sit out, and a
-  generation number so replies from a replaced or restarted process are ignored. It keeps every finished
-  turn (`history`) and how many of them the programs have (`delivered`). `paced: false` runs rounds back to
+  generation number so replies from a replaced or restarted process are ignored, and its MEMORY. It keeps
+  every finished turn (`history`, as `turns` records) and how many of them the programs have
+  (`delivered`). `paced: false` runs rounds back to
   back (tests and the "try" tool); a request outside the round flow then makes the next round if it
   answers within the bee's 50 ms.
-- `server/runners/`: `proc.js` speaks JSON lines to a runner process, one request at a time, in order;
-  `sync(entries)` appends to the program's ledger. `py_runner.py` and `ts_runner.cjs` run flowers (stateless,
-  CPU-timed) and bees (stateful).
+- `server/runners/`: `proc.js` speaks JSON lines to a runner process (its own process group), one request
+  at a time, in order; `sync(entries)` appends to the program's HISTORY. `py_runner.py` and `ts_runner.cjs`
+  run every call fresh: flowers CPU-timed, bees with their MEMORY passed in and sent back. Both load the
+  generated query client (`vendor/query/history.py`, `history.js`) for HISTORY.
 - `server/live.js`: each running game's garden runs in exactly one server process, whichever holds the
   game's Postgres advisory lock; every process adopts running games nobody holds, so a game survives its
   process dying. Adoption restores the round, clock, ledgers, each bee's turn count, the rounds a bee still
-  has to sit out, and the team ledgers (from the stored turn ends), so new processes start with the whole
-  ledger. A hard crash loses the round in progress (its arrivals may be stored without their ends); a clean
-  shutdown settles it first. Four times a second the garden's new actions, round, clock and ledgers are
-  written; arrivals are written at once.
+  has to sit out, the history (from the stored turn ends) and each bee's MEMORY, so new processes start with
+  the whole history. A hard crash loses the round in progress (its arrivals may be stored without their
+  ends); a clean shutdown settles it first. Four times a second the garden's new actions, round, clock,
+  ledgers and changed MEMORY are written; arrivals are written at once.
 - `server/games.js`: the clock lives in the database (`games.clock_ms`, game time, which stops while
-  paused). Budgets as before. The views filter every action, ledger entry and game view for the viewer
-  (`actionView`, `ledgerEntry`).
+  paused). Budgets as before. The views filter every action, history record and game view for the viewer
+  (`actionView`, the schema's `mask`). Queries (`POST …/query`) go to `server/query/sql.js`.
+- `server/query/`: the schema (`schema.js`: entities, types, indexes, visibility), the mask for in-memory
+  records (`mask.js`), and the SQL compiler (`sql.js`): parameterised SQL with each field masked for the
+  viewer before WHERE, GROUP BY and ORDER BY, a statement timeout and a row cap.
+- `scripts/gen-query/`: generates the typed clients in `vendor/query/` (records, an immutable builder, an
+  in-memory executor with indexes, and a remote executor) from the schema. See [QUERY.md](QUERY.md).
 - `server/realtime.js`, `server/sockets.js`: the per-viewer feed over SSE and WebSocket, fed by Postgres
   `LISTEN/NOTIFY`.
 
@@ -169,6 +218,7 @@ N² × pollination share × forage share, so a perfectly even game scores 1 for 
 | size | 1,100 nodes | 11,000 nodes |
 | change | 220 a minute, banking a minute's worth | 2,200 a minute, banking a minute's worth |
 | time | 150 ms | 50 ms |
+| memory | none | 1,024 bytes of canonical JSON |
 
 The flower keeps the cosmos's limits: small and slow to change. Its size cap is also the size cap of the
 energy formula, so every node of flower code costs energy on every turn. The bee keeps room for detector
@@ -177,9 +227,9 @@ repertoires but little time per decision, so the best checks are cheap ones. All
 ## Flowers are stateless, not pure
 
 A flower runs fresh for every call, so nothing carries over between calls. But each call gets fresh
-randomness and the clock, and can read the team ledger: it can't count visitors itself, but it can read
-what the ledger says about past turns (at the cost of the CPU time it spends reading). The engine never
-caches answers.
+randomness and the clock, and can query HISTORY: it can't count visitors itself, but it can read what
+HISTORY says about past turns (at the cost of the CPU time it spends querying). The engine never caches
+answers.
 
 ## Programs are measured on, and run as, their minified form
 
@@ -202,7 +252,7 @@ names keep their spelling where renaming could change behaviour:
 - parameters also passed by keyword somewhere
 - names that shadow a builtin
 - the first part of a dotted import
-- the names the game looks up (`flower`, `first`, `decide`, `GAME`)
+- the names the game looks up (`flower`, `first`, `decide`, `GAME`, `HISTORY`, `MEMORY`)
 
 **Change** is a weighted Zhang–Shasha tree edit distance between the program playing now and the new one.
 Inserting or deleting a node costs its weight. Relabelling a literal costs the byte-level edit distance
