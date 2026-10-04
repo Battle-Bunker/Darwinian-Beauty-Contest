@@ -7,7 +7,8 @@ change them or ignore them. Code fragments are sketches, not programs.
 ## What a response can do
 
 - **Show wealth, this turn.** Each flower call has its own time budget R, between 50 and 150 ms, known to
-  that call and to nobody else (RULES.md says how a call reads it).
+  that call and to nobody else: a call reads it as `GAME["ms"]` (`GAME.ms` in TypeScript), and
+  `GAME["flower_ms"]` is the maximum, 150.
   - E = (1100 − size) × max(0, R − CPU ms).
   - Responses always arrive at 150 ms, so only the response itself can show anything about R.
   - Work worth t ms fits only in a call with R ≥ t.
@@ -30,7 +31,8 @@ change them or ignore them. Code fragments are sketches, not programs.
   - Every feed hands the feeding team a pollen grain: ⌊pollen^(1/3)⌋ characters of the flower's minified
     code (27,000 pollen gives 30 characters). The more a flower is fed, the more of its recipe its
     pollinators see.
-- **The shape of a response.** It is `graph[any]`: any nodes, edges, and JSON labels on both, within 1 MB.
+- **The shape of a response.** It is `graph[any]`: any nodes, edges, and JSON labels on both, within 64 KiB
+  (65,536 bytes of compact JSON).
   Writing the JSON is part of the flower's compute.
   - Flower and bee can build the same instance from the challenge with the same seeded generator, so the
     response needs to carry only the answer: `G = random_graph(Random(c), n, p)`.
