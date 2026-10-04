@@ -47,7 +47,7 @@ async function loadGame(arena, row) {
     queryAll(Api, gPath, { from: "turns" })]);
   const idOf = Object.fromEntries(teamRows.map((t) => [t.index, t.id]));
   // Stored metrics, or (from before the ecology metrics) recomputed in memory: this script doesn't write to the games.
-  const m = row.metrics?.ecology && row.metrics?.grains ? row.metrics : await computeGameMetrics(gPath);
+  const m = row.metrics?.ecology && row.metrics?.grains && "wealth" in row.metrics ? row.metrics : await computeGameMetrics(gPath);
   const turns = turnRows.map((t) => ({ atMs: Number(t.atMs) || 0, bee: idOf[t.bee], flower: idOf[t.flower], action: t.fed ? "feed" : "leave", nectar: t.nectar, flowerVersion: t.flowerVersion, beeVersion: t.beeVersion }));
   const ents = await all(`SELECT e.*, p.name AS persona_name, p.model, p.breeder_id FROM arena.entries e JOIN arena.personas p ON p.id = e.persona_id WHERE e.game_id = $1`, [row.id]);
   const ids = teamRows.map((t) => t.id);
@@ -131,7 +131,7 @@ function gameSummary(G, seen) {
   const E = m.ecology || {};
   const copies = E.imitation?.copies || [];
   return {
-    G, flowers, bees, byMech, winner, winnerLabel: winnerFlower?.label, dyn, ecology: E, grains: m.grains || {},
+    G, flowers, bees, byMech, winner, winnerLabel: winnerFlower?.label, dyn, ecology: E, grains: m.grains || {}, wealth: m.wealth || null,
     beeLevel: (() => { const xs = bees.map((b) => b.label.level).filter((x) => x != null); return xs.length ? sum(xs) / xs.length : null; })(),
     families: dyn.families, innovationsPerMinute: dyn.newTokens / Math.max(1 / 60, (G.clockMs || 1) / 60000),
     signalsCopied: E.imitation?.signalsCopied ?? 0, imitationLag: E.imitation?.medianLagMs ?? null,
@@ -216,6 +216,14 @@ async function cohortReport(arenaId) {
       `${f2(x.dyn.entropyMean)} / ${f2(x.dyn.entropyEnd)}`, `${x.dyn.turnover.mechanism} / ${x.dyn.turnover.species}`,
       `${x.signalsCopied} (${x.imitationLag != null ? `${(x.imitationLag / 1000).toFixed(1)} s` : "-"})`, `${x.detected}/${x.copiesN} (${x.feedsBeforeDetection ?? "-"})`,
       x.rotations, x.predictions, pct(x.selfShare), x.autarkic ?? "-", x.collapse]));
+  if (sums.some((x) => x.wealth)) {
+    p("Wealth signals (each flower call's hidden time budget R: is visible work an honest signal of it, and do bees feed more at rich instances? " +
+      "Spearman's rho of R with each species' visible work; honest = rho ≥ 0.3 over 30+ answered turns):");
+    table(["game", "honest species", "per species: work ~ R (effort ~ R)", "rival feed rate at poor / middle / rich instances", "fed ~ R", "bees feeding more at rich instances"],
+      sums.filter((x) => x.wealth).map((x) => [x.G.gen, x.wealth.honestSpecies, x.wealth.species.map((s) => `${s.team} ${f2(s.bytes ?? s.nodes)} (${f2(s.effort)})${s.honest ? " honest" : ""}`).join("; "),
+        `${pct(x.wealth.feedRate.poor)} / ${pct(x.wealth.feedRate.middle)} / ${pct(x.wealth.feedRate.rich)}`, f2(x.wealth.feedRho),
+        x.wealth.bees.filter((b) => (b.lift ?? 0) >= 0.1).map((b) => `${b.team} +${pct(b.lift)}`).join(", ") || "none"]));
+  }
   if (sums.some((x) => x.grains.grains)) {
     p("Pollen grains (pieces of the answering flower's minified code a feeding bee's team got: floor(pollen^(1/3)) characters each; leaked = to " +
       "other teams' bees; fully held = one other team held every character of a flower version, timed from when it went live; acting on leaks = a later " +
@@ -350,6 +358,8 @@ async function main() {
       ["copies detected by game (median rival feeds before)", ...per((x) => `${x.detected}/${x.copiesN} (${x.feedsBeforeDetection ?? "-"})`)],
       ["rotations / cracks by game", ...per((x) => `${x.rotations}/${x.predictions}`)],
       ["autarkic species by game", ...per((x) => x.autarkic ?? "-")],
+      ["honest wealth signallers by game (visible work follows R)", ...per((x) => (x.wealth ? `${x.wealth.honestSpecies}/${x.G.teams.length}` : "-"))],
+      ["rival feed rate at poor / rich instances by game", ...per((x) => (x.wealth ? `${pct(x.wealth.feedRate.poor)}/${pct(x.wealth.feedRate.rich)}` : "-"))],
       ["grain characters leaked per minute by game", ...per((x) => big(x.grains.perMinute))],
       ["flower versions fully held by another team (median time) by game", ...per((x) => `${x.grains.versionsFullyHeld ?? 0}/${x.grains.versionsWithGrains ?? 0} (${x.grains.medianMsToFullyHeld != null ? mmss(x.grains.medianMsToFullyHeld) : "-"})`)],
       ["acting on leaked code (secrets / copies; median lag from leak to use) by game", ...per((x) => `${x.grains.secretUses ?? 0}/${x.grains.copies ?? 0}` +

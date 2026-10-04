@@ -183,6 +183,19 @@ for (const a of arenas) {
       }
     }
 
+    // Honest wealth signalling: the flower's hidden time budget R.
+    const Wl = m.wealth;
+    if (Wl) {
+      p(`Wealth signals (each flower call's hidden time budget R${Wl.range?.[0] != null ? `, ${Wl.range[0]}-${Wl.range[1]} ms` : ""}: does a species' effort and visible work follow R, ` +
+        `and do bees feed more at rich instances? Spearman's rho over answered turns; honest = visible work rising with R, rho ≥ 0.3 over 30+ turns). ` +
+        `Rival bees' feed rate at poor / middle / rich instances (R terciles, cuts ${Wl.cuts?.map((x) => f2(x)).join(" / ")} ms): ` +
+        `${pc(Wl.feedRate.poor)} / ${pc(Wl.feedRate.middle)} / ${pc(Wl.feedRate.rich)} (rho ${f2(Wl.feedRho)}); ${Wl.honestSpecies} honest species.`);
+      table(["species of", "answered turns", "effort (CPU ms) ~ R", "response bytes ~ R", "graph nodes ~ R", "fed ~ R", "honest?"],
+        Wl.species.map((x) => [x.team, x.turns, f2(x.effort), f2(x.bytes), f2(x.nodes), f2(x.fed), x.honest ? "yes" : "-"]));
+      table(["bee of", "turns at rival flowers", "feed rate at poor / rich instances", "lift", "fed ~ R"],
+        Wl.bees.map((x) => [x.team, x.turns, `${pc(x.poor)} / ${pc(x.rich)}`, f2(x.lift), f2(x.rho)]));
+    }
+
     // Self-feeding and handshakes.
     p("Self-feeding (a bee at its own flower; flowers are drawn at random, so about 1/N of a bee's turns) and handshakes " +
       "(flagged when, over at least 5 such turns, the flower's own bee feeds there 30 points more often than other bees do, or is offered 15 points more):");

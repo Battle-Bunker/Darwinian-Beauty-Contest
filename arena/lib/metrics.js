@@ -27,6 +27,9 @@
 //   grains         lib/grains.js: pollen grains (pieces of the answering flower's minified code a feeding bee's team got):
 //                  leak rates per species, how much of each flower version other teams held and when one (or all of
 //                  them together) first held all of it, and teams acting on leaked code (a leaked secret or a copy)
+//   wealth         lib/wealth.js: each flower call's hidden time budget R against its effort (CPU ms) and its visible work
+//                  (response size, graph size), per species (an honest wealth signal when visible work follows R), and
+//                  whether bees feed more at rich instances; null when the game has no budgets
 //   memory         per bee: its MEMORY at the end (bytes of the cap, keys, the value, its last save error), saves refused
 //                  (over the cap or of the wrong shape, from decide), failed fed() calls and other save errors the runner's
 //                  samples saw, its size over the game, and how often the team changed its bee (each change empties it)
@@ -38,6 +41,7 @@
 import { Api } from "./api.js";
 import { autarky, energySplit, imitation, percentOverTime, predictions, rotation, shapeOf } from "./ecology.js";
 import { grainMetrics } from "./grains.js";
+import { wealthMetrics } from "./wealth.js";
 
 const r3 = (x) => (x == null || !Number.isFinite(x) ? null : Math.round(x * 1000) / 1000);
 const quantile = (xs, p) => { if (!xs.length) return null; const s = [...xs].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; };
@@ -82,7 +86,8 @@ export function computeMetrics({ game, teams: teamRows, turns: turnRows, version
   const turns = turnRows.map((r) => ({ atMs: Number(r.atMs) || 0, round: r.round, bee: idOf(r.bee), flower: idOf(r.flower), action: r.fed ? "feed" : "leave",
     c: r.challenge, r: responseOf(r, shapes), rBytes: r.responseBytes ?? null, percent: r.percent, energy: r.energy, nectar: r.nectar, pollen: r.pollen, ms: r.ms, flowerVersion: r.flowerVersion,
     flowerError: r.flowerError, beeMs: r.beeMs, beeVersion: r.beeVersion, beeError: r.beeError,
-    grain: r.grain ?? null, grainVersion: r.grainVersion ?? null, grainCodeLength: r.grainCodeLength ?? null }));
+    grain: r.grain ?? null, grainVersion: r.grainVersion ?? null, grainCodeLength: r.grainCodeLength ?? null,
+    R: Number.isFinite(r.budgetMs) ? r.budgetMs : null }));
   const durationMs = Math.max(Number(game.clockMs) || 0, ...turns.map((t) => t.atMs));
   const W = windowMs || windowFor(durationMs || config.minutes * 60000);
   const flowerMs = config.budgets?.flower?.ms ?? 150, cap = config.budgets?.flower?.size ?? 1100;
@@ -280,6 +285,9 @@ export function computeMetrics({ game, teams: teamRows, turns: turnRows, version
   const grains = config.grains === "off" && !turns.some((t) => t.grain) ? { setting: "off" }
     : grainMetrics({ turns, ids, name, minified: minCode, liveAt, durationMs, grains: config.grains ?? "feeder" });
 
+  const fb = config.budgets?.flower || {};
+  const wealth = wealthMetrics({ turns, ids, name, range: [fb.minMs ?? null, fb.maxMs ?? fb.ms ?? null] });
+
   const fedTurns = turns.filter((t) => t.action === "feed");
   return {
     windowMs: W, durationMs, turns: turns.length, rounds: Number(game.round) || Math.max(0, ...turns.map((t) => t.round || 0)),
@@ -291,7 +299,7 @@ export function computeMetrics({ game, teams: teamRows, turns: turnRows, version
     distributions: { responseBytes: q5(turns.map((t) => t.rBytes).filter((x) => x != null)), percent: q5(answered.map((t) => t.percent)), energy: q5(turns.map((t) => t.energy || 0)), nectar: q5(fedTurns.map((t) => t.nectar || 0)), pollen: q5(fedTurns.map((t) => t.pollen || 0)) },
     teams, handshakes: { pairs, mutual }, versions, discrimination,
     copies: { matches: copies.length, copies: att.length, medianLatencyMs: median(att.map((x) => x.latencyMs)), byCopier },
-    changes, final, memory, ecology, grains,
+    changes, final, memory, ecology, grains, wealth,
     config: { minutes: config.minutes, feedCost: config.feedCost, challengeType: config.challengeType, responseType: config.responseType, budgets: config.budgets,
       grains: config.grains ?? null, pollenGrain: config.pollenGrain ?? null, maxResponseBytes: config.maxResponseBytes ?? null },
     clockMs: Number(game.clockMs) || 0, round: Number(game.round) || 0,

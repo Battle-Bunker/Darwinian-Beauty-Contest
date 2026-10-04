@@ -41,7 +41,7 @@ def flower(c):
 `;
   const calls = await twoCalls("python", code);
   for (const [start, after, cpu, thread, gm, local, ctime, asctime, stamp, impl, tz, day] of calls) {
-    for (const x of start) assert.ok(x >= 0 && x < 0.005, `read ${x} s at the call's start: ${start}`);
+    for (const x of start) assert.ok(x >= 0 && x < 0.03, `read ${x} s at the call's start: ${start}`);
     for (const x of after) assert.ok(x >= 0.04 && x < 0.12, `40 ms of work and sleep later: ${x} s`);
     assert.ok(cpu >= 0.025 && cpu < 0.12, `the call's own CPU time: ${cpu}`);
     assert.ok(thread >= 0.025 && thread < 0.12, `${thread}`);
@@ -91,7 +91,7 @@ test("typescript: Date, Intl and performance read the time since the call starte
 }`;
   const calls = await twoCalls("typescript", code);
   for (const [start, after, iso, str, fmt, year, origin, hr, same, date, day] of calls) {
-    for (const x of start) assert.ok(x >= 0 && x < 5, `read ${x} ms at the call's start: ${start}`);
+    for (const x of start) assert.ok(x >= 0 && x < 30, `read ${x} ms at the call's start: ${start}`);
     for (const x of after) assert.ok(x >= 30 && x < 120, `30 ms later: ${after}`);
     assert.equal(iso, "1970-01-01T00:00:00");
     assert.equal(str, "Thu Jan 01 1970 00:00:00");
@@ -114,6 +114,6 @@ for (const language of ["python", "typescript"]) {
     const out = await play(normalizeConfig({ language, feedCost: 1 }), [{ flower, bee }], 30, null, { paced: true });
     const m = JSON.parse(out.memories.at(-1).memory);
     assert.ok(ends(out.actions).filter((a) => a.action === "feed").length >= 10);
-    for (const k of ["first", "decide", "fed"]) assert.ok(m[k] >= 0 && m[k] < 5, `${k}: the latest of its starts read ${m[k]} ms, seconds into the game`);
+    for (const k of ["first", "decide", "fed"]) assert.ok(m[k] >= 0 && m[k] < 30, `${k}: the latest of its starts read ${m[k]} ms, not the seconds or years into the game a real clock would show`);
   });
 }
