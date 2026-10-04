@@ -124,6 +124,18 @@ check("query --room: across the room's finished games", qr.ok && qr.rows[0].coun
 r = await py(`print(json.dumps(call("query", ast={"from": "nope"})))`);
 qr = JSON.parse(r.stdout || "{}");
 check("query: a bad query comes back as the server's reason", qr.ok === false && /400 unknown entity/.test(qr.error), r.stdout + r.stderr);
+if (fs.existsSync(path.join(ws, "tools", "history.py"))) {
+  // garden.game / garden.room: the generated client's builder, run by the game through the runner (no token here).
+  fs.writeFileSync(path.join(ws, "config.json"), JSON.stringify({ public_api: "http://localhost:4100/api/rooms/R/games/G" }));
+  r = await py(`import garden; rows = garden.game.turns.my_bee().eq("fed", True).group_by("flower").sum("nectar").count().rows(); print(rows[0].sum_nectar, rows[0].flower, garden.room.scores.count().value() if False else "-")`);
+  const last = calls.filter((c) => c[0] === "query").pop();
+  check("garden.game: the programs' builder, run by the game with the team's token (through the runner)", r.stdout.trim() === "123.5 0 -" && last?.[1] === SECRET
+    && last[3].scope === "myBee" && last[3].groupBy[0] === "flower" && last[3].where[0].field === "fed", r.stdout + r.stderr);
+  r = await py(`import garden; print(garden.room.turns.eq("fed", True).count().rows()[0]["count"])`);
+  check("garden.room: across the room's finished games", r.stdout.trim() === "7" && calls.filter((c) => c[0] === "roomQuery").pop()?.[3]?.where?.[0]?.field === "fed", r.stdout + r.stderr);
+  r = await py(`import garden; garden.game.turns.eq("no_such_field", 1).rows()`);
+  check("garden.game: the client checks a query against the schema before sending it", r.status !== 0 && /no field/.test(r.stderr), r.stderr);
+}
 r = await py(`print(json.dumps(call("query", ast="SELECT 1")))`);
 check("query: only query objects", JSON.parse(r.stdout || "{}").ok === false, r.stdout);
 r = await py(`print(json.dumps(call("submit", kind="bee", code=open("bee.py").read(), memory={"x": 1})))`);
