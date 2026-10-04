@@ -102,6 +102,10 @@ assert.match(big.errors[0], /Too big: \d+ nodes > budget 1100/);
 const tf = await api(players[0].token, "POST", `${g}/try`, { kind: "flower", code: variants[0].flower, challenges: [1, 2, 500] });
 assert.deepEqual(tf.results.map((x) => [x.r, x.percent]), [[4, 30], [7, 30], [501, 30]]);
 assert.ok(tf.results.every((x) => x.energy > 0 && typeof x.ms === "number"));
+// Every call's clock starts at 0 (as if at the Unix epoch): a program can time itself, not the world.
+const clock = await api(players[0].token, "POST", `${g}/try`, { kind: "flower", challenges: [1, 2],
+  code: `import time\ndef flower(c):\n    return [round(time.time() * 1000, 3), time.gmtime()[0]], 50\n` });
+assert.ok(clock.results.every((x) => x.r[0] >= 0 && x.r[0] < 20 && x.r[1] === 1970), JSON.stringify(clock.results));
 const tb = await api(players[0].token, "POST", `${g}/try`, { kind: "bee", code: variants[0].bee, rounds: 60 });
 assert.ok(tb.actions.length > 10 && tb.actions.every((a) => a.bee === players[0].team.id && a.flower === players[0].team.id));
 assert.ok(tb.feeds > 0 && tb.nectar > 0 && tb.pollen > 0);
@@ -187,6 +191,19 @@ assert.equal(await whole.text(), bigText, "the whole response, by seq");
 const smallTurn = ends.find((a) => a.r !== null);
 assert.equal(await (await fetch(BASE + `/api${g}/responses/${smallTurn.seq}`)).text(), JSON.stringify(smallTurn.r), "a small one too");
 assert.equal((await fetch(BASE + `/api${g}/responses/${seen.actions.find((a) => a.action === "arrive").seq}`)).status, 404, "an arrival has none");
+
+// Pollen carries genes: each feed's grain of the answering flower's minified code goes to the feeding bee's
+// team (Bo sees its own bee's), and to nobody else during play.
+const grainLen = (pollen) => Math.floor(Math.cbrt(pollen) + 1e-9);
+const boFeeds = seen.actions.filter((a) => a.action === "feed");
+assert.ok(boFeeds.some((a) => a.bee === bo) && boFeeds.some((a) => a.bee !== bo));
+for (const a of boFeeds) {
+  if (a.bee !== bo) { assert.ok(!("grain" in a), "another team's grain is hidden"); continue; }
+  if (a.pollen < 1) continue;
+  assert.equal(a.grain.length, Math.min(grainLen(a.pollen), a.grainCodeLength), `${a.pollen} pollen`);
+  assert.ok(Number.isInteger(a.grainVersion) && a.grainCodeLength > 0);
+}
+assert.ok(spectator.every((a) => !("grain" in a)), "a spectator sees no grains");
 
 // The team ledger: every finished turn, with the team's private details.
 const boLedger = await api(players[1].token, "GET", `${g}/ledger?limit=5000`);
@@ -369,6 +386,10 @@ assert.ok(after.every((a) => "beeVersion" in a && "flowerVersion" in a), "a spec
 assert.ok(after.filter(isEnd).every((a) => "ms" in a && "beeMs" in a && "percent" in a && "energy" in a), "and every timing, percent and energy");
 assert.ok(after.some((a) => a.bee === ada && /fed \d+/.test(a.log || "")), "prints are revealed");
 assert.ok(done.teams.filter((t) => t.participant).every((t) => t.memory && typeof t.memory.value === "object"), "every bee's MEMORY is revealed");
+const allGrains = after.filter((a) => a.action === "feed" && a.pollen >= 1);
+assert.ok(allGrains.length && allGrains.every((a) => typeof a.grain === "string" && a.grain.length > 0), "every grain is revealed");
+const lens = allGrains.map((a) => a.grain.length).sort((x, y) => x - y);
+console.log(`grains: ${lens.length}, ${lens[0]}–${lens.at(-1)} characters (median ${lens[lens.length >> 1]}); flower code lengths ${[...new Set(allGrains.map((a) => a.grainCodeLength))].sort((x, y) => x - y).join(", ")}`);
 const roomQuery = await api(null, "POST", `/rooms/${room.shortId}/query`, { from: "turns", groupBy: ["game"], aggregates: [{ fn: "count", as: "n" }, { fn: "count", field: "ms", as: "timed" }] });
 assert.equal(roomQuery.rows.length, 1, "the finished game, across the room");
 assert.ok(roomQuery.rows[0].n > 0 && roomQuery.rows[0].timed > 0, "fully revealed");

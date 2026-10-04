@@ -33,19 +33,22 @@ class Turn(NamedTuple):
     bee_ms: Optional[float]  # how long the bee took to decide (ms; null if it was late)
     bee_version: Optional[int]  # the bee version that decided
     bee_error: Optional[str]  # what went wrong with the bee's reply (late, a crash, a bad next challenge)
+    grain: Optional[str]  # on a feed, the pollen grain: ⌊pollen^(1/3)⌋ characters of the answering flower version's minified code, from a random start, wrapping
+    grain_version: Optional[int]  # the flower version the grain came from
+    grain_code_length: Optional[int]  # that version's minified code's length in characters
 
     @classmethod
     def from_json(cls, d: dict) -> "Turn":
         """From a dict with canonical (camelCase) field names."""
         g = d.get
-        return cls(g("game"), g("seq"), g("round"), g("atMs"), g("turn"), g("bee"), g("flower"), g("challenge"), g("response"), g("responseBytes"), g("responseHash"), g("fed"), g("percent"), g("energy"), g("nectar"), g("pollen"), g("ms"), g("flowerVersion"), g("flowerError"), g("beeMs"), g("beeVersion"), g("beeError"))
+        return cls(g("game"), g("seq"), g("round"), g("atMs"), g("turn"), g("bee"), g("flower"), g("challenge"), g("response"), g("responseBytes"), g("responseHash"), g("fed"), g("percent"), g("energy"), g("nectar"), g("pollen"), g("ms"), g("flowerVersion"), g("flowerError"), g("beeMs"), g("beeVersion"), g("beeError"), g("grain"), g("grainVersion"), g("grainCodeLength"))
 
     def to_json(self) -> dict:
         """As a dict with canonical (camelCase) field names."""
-        return {"game": self.game, "seq": self.seq, "round": self.round, "atMs": self.at_ms, "turn": self.turn, "bee": self.bee, "flower": self.flower, "challenge": self.challenge, "response": self.response, "responseBytes": self.response_bytes, "responseHash": self.response_hash, "fed": self.fed, "percent": self.percent, "energy": self.energy, "nectar": self.nectar, "pollen": self.pollen, "ms": self.ms, "flowerVersion": self.flower_version, "flowerError": self.flower_error, "beeMs": self.bee_ms, "beeVersion": self.bee_version, "beeError": self.bee_error}
+        return {"game": self.game, "seq": self.seq, "round": self.round, "atMs": self.at_ms, "turn": self.turn, "bee": self.bee, "flower": self.flower, "challenge": self.challenge, "response": self.response, "responseBytes": self.response_bytes, "responseHash": self.response_hash, "fed": self.fed, "percent": self.percent, "energy": self.energy, "nectar": self.nectar, "pollen": self.pollen, "ms": self.ms, "flowerVersion": self.flower_version, "flowerError": self.flower_error, "beeMs": self.bee_ms, "beeVersion": self.bee_version, "beeError": self.bee_error, "grain": self.grain, "grainVersion": self.grain_version, "grainCodeLength": self.grain_code_length}
 
 
-TurnField = Literal["game", "seq", "round", "at_ms", "turn", "bee", "flower", "challenge", "response", "response_bytes", "response_hash", "fed", "percent", "energy", "nectar", "pollen", "ms", "flower_version", "flower_error", "bee_ms", "bee_version", "bee_error"]
+TurnField = Literal["game", "seq", "round", "at_ms", "turn", "bee", "flower", "challenge", "response", "response_bytes", "response_hash", "fed", "percent", "energy", "nectar", "pollen", "ms", "flower_version", "flower_error", "bee_ms", "bee_version", "bee_error", "grain", "grain_version", "grain_code_length"]
 
 
 class Version(NamedTuple):
@@ -184,6 +187,9 @@ _NAMES = {
         "bee_ms": "beeMs",
         "bee_version": "beeVersion",
         "bee_error": "beeError",
+        "grain": "grain",
+        "grain_version": "grainVersion",
+        "grain_code_length": "grainCodeLength",
     },
     "versions": {
         "game": "game",
@@ -275,6 +281,9 @@ SCHEMA = {
                 {"name": "beeMs", "type": "float", "nullable": True},
                 {"name": "beeVersion", "type": "int", "nullable": True},
                 {"name": "beeError", "type": "str", "nullable": True},
+                {"name": "grain", "type": "str", "nullable": True},
+                {"name": "grainVersion", "type": "int", "nullable": True},
+                {"name": "grainCodeLength", "type": "int", "nullable": True},
             ],
         },
         "versions": {

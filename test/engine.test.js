@@ -266,17 +266,20 @@ test("GAME's keys: the game's settings, nothing about other teams", async () => 
 
 test("turn records (the ledger's, and the query schema's): every turn's public fields, plus the team's own private details", () => {
   const base = { game: "g", seq: 9, round: 5, atMs: 800, turn: 2, flowerVersion: 3, flowerError: null, beeMs: 1.5, beeVersion: 4, beeError: null };
-  const fed = { ...base, bee: 0, flower: 1, challenge: 3, response: 4, responseBytes: 1, responseHash: null, fed: true, percent: 25, energy: 1000, nectar: 250, pollen: 750, ms: 12 };
-  const left = { ...base, bee: 2, flower: 1, challenge: 7, response: null, responseBytes: 5000, responseHash: "ab", fed: false, percent: 60, energy: 800, nectar: null, pollen: 0, ms: 3 };
+  const fed = { ...base, bee: 0, flower: 1, challenge: 3, response: 4, responseBytes: 1, responseHash: null, fed: true, percent: 25, energy: 1000, nectar: 250, pollen: 750, ms: 12,
+    grain: "abc", grainVersion: 3, grainCodeLength: 9 };
+  const left = { ...base, bee: 2, flower: 1, challenge: 7, response: null, responseBytes: 5000, responseHash: "ab", fed: false, percent: 60, energy: 800, nectar: null, pollen: 0, ms: 3,
+    grain: null, grainVersion: null, grainCodeLength: null };
   const names = SCHEMA.entities.turns.fields.map((f) => f.name);
   const view = (r, ti) => mask("turns", r, ti);
   for (const r of [fed, left]) for (const ti of [0, 1, 2, null]) assert.deepEqual(Object.keys(view(r, ti)), names, "every schema field, in order");
-  // A feed: public, but the flower's CPU time, version and errors are its team's, the bee's timing its team's.
-  const pub = { ...fed, ms: null, flowerVersion: null, flowerError: null, beeMs: null, beeVersion: null, beeError: null };
+  // A feed: public, but the flower's CPU time, version and errors are its team's, the bee's timing (and its
+  // pollen grain) its team's.
+  const pub = { ...fed, ms: null, flowerVersion: null, flowerError: null, beeMs: null, beeVersion: null, beeError: null, grain: null, grainVersion: null, grainCodeLength: null };
   assert.deepEqual(view(fed, 2), pub);
   assert.deepEqual(view(fed, null), pub, "a spectator sees the same");
   assert.deepEqual(view(fed, 1), { ...pub, ms: 12, flowerVersion: 3 });
-  assert.deepEqual(view(fed, 0), { ...pub, beeMs: 1.5, beeVersion: 4 });
+  assert.deepEqual(view(fed, 0), { ...pub, beeMs: 1.5, beeVersion: 4, grain: "abc", grainVersion: 3, grainCodeLength: 9 });
   // No feed: pollen 0, no nectar; the percent and energy are the flower's team's. A big response's size and hash are public.
   const hid = { ...left, percent: null, energy: null, ms: null, flowerVersion: null, flowerError: null, beeMs: null, beeVersion: null, beeError: null };
   assert.deepEqual(view(left, 0), hid);
@@ -390,33 +393,24 @@ test("a bee call that swallows its timeout is killed; the bee carries on", async
   assert.ok(out.actions.some(tooSlow));
 });
 
-test("responses can't reveal timing: every response reaches the bee at the end of the flower window (paced)", async () => {
-  // Two flowers, one working 120 ms, one answering at once. The bee times the gap between its decisions,
-  // keeping the time of its last one in MEMORY.
+test("responses can't reveal timing: every response reaches the bee at the end of the flower window, and the bee's clock starts at 0 (paced)", async () => {
+  // Two flowers, one working 120 ms, one answering at once. The bee reads its clock as decide starts: about
+  // 0, whichever flower answered (every call's clock starts at 0).
   const slow = `import time\ndef flower(c):\n    ${busy(120)}    return 1, 50\n`;
   const quick = flower("2");
-  const bee = `import time
-def first():
-    return 1
-def decide(c, r):
-    t = time.perf_counter()
-    if "last" in MEMORY:
-        print(round((t - MEMORY["last"]) * 1000, 1))
-    MEMORY["last"] = time.perf_counter()
-    return "leave", 1
-`;
-  const gapsOf = (acts) => {
-    const gaps = { 1: [], 2: [] };
-    for (const a of ends(acts).filter((x) => x.bee === 0 && x.log)) gaps[a.r]?.push(Number(a.log));
-    return gaps;
+  const bee = `import time\ndef first():\n    return 1\ndef decide(c, r):\n    print(round(time.time() * 1000, 3))\n    return "leave", 1\n`;
+  const startsOf = (acts) => {
+    const starts = { 1: [], 2: [] };
+    for (const a of ends(acts).filter((x) => x.bee === 0 && x.log)) starts[a.r]?.push(Number(a.log));
+    return starts;
   };
-  const enough = (acts) => { const g = gapsOf(acts); return g[1].length >= 4 && g[2].length >= 4; };
+  const enough = (acts) => { const s = startsOf(acts); return s[1].length >= 4 && s[2].length >= 4; };
   const out = await play(normalizeConfig({}), [{ flower: slow, bee }, { flower: quick, bee: leaver() }], 80, stopWhen(enough), { paced: true });
-  const gaps = gapsOf(out.actions);
-  assert.ok(gaps[1].length >= 3 && gaps[2].length >= 3, JSON.stringify(gaps));
-  for (const g of [...gaps[1], ...gaps[2]]) assert.ok(g > 180 && g < 230, `${g} ms between decisions`);
-  const mean = (xs) => xs.reduce((s, x) => s + x, 0) / xs.length;
-  assert.ok(Math.abs(mean(gaps[1]) - mean(gaps[2])) < 15, JSON.stringify(gaps));
+  const starts = startsOf(out.actions);
+  assert.ok(starts[1].length >= 3 && starts[2].length >= 3, JSON.stringify(starts));
+  for (const ms of [...starts[1], ...starts[2]]) assert.ok(ms >= 0 && ms < 5, `the bee's clock read ${ms} ms as decide started`);
+  // Every turn is settled 150 ms into its round, whichever flower answered.
+  for (const a of ends(out.actions)) assert.equal(a.atMs, (a.round - 1) * 200 + 150);
 });
 
 for (const language of ["python", "typescript"]) {

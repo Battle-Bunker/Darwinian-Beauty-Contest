@@ -53,6 +53,12 @@ var DbcHistory = (function () {
                                      
                                                                                    
                                    
+                                                                                                                                              
+                                
+                                               
+                                       
+                                                            
+                                          
  
 
 /** Every version of every program: when it went live, its size and what the change cost. (entity "versions") */
@@ -405,6 +411,21 @@ const SCHEMA         = {
         {
           "name": "beeError",
           "type": "str",
+          "nullable": true
+        },
+        {
+          "name": "grain",
+          "type": "str",
+          "nullable": true
+        },
+        {
+          "name": "grainVersion",
+          "type": "int",
+          "nullable": true
+        },
+        {
+          "name": "grainCodeLength",
+          "type": "int",
           "nullable": true
         }
       ]

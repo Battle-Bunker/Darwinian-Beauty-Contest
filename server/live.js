@@ -126,7 +126,8 @@ async function loadPrograms(run) {
 }
 
 const ACTION_COLUMNS = ["game_id", "seq", "at_ms", "round", "turn", "bee_team", "flower_team", "action", "c", "r", "percent", "energy",
-  "cpu_ms", "pollen", "flower_error", "nectar", "bee_ms", "bee_error", "log", "bee_version", "flower_version", "r_bytes", "r_hash", "r_preview"];
+  "cpu_ms", "pollen", "flower_error", "nectar", "bee_ms", "bee_error", "log", "bee_version", "flower_version", "r_bytes", "r_hash", "r_preview",
+  "grain", "grain_version", "grain_code_length"];
 const json = (v) => (v === null || v === undefined ? null : JSON.stringify(v));
 
 /**
@@ -142,7 +143,7 @@ export async function insertActions(c, gameId, actions, ids) {
       const end = a.action !== "arrive";
       params.push(gameId, a.seq, a.atMs, a.round, a.turn, ids[a.bee], ids[a.flower], a.action, end ? json(a.c) : null, end ? json(a.r) : null,
         a.percent, a.energy, a.ms, a.pollen, a.flowerError, a.nectar, a.beeMs, a.beeError, a.log, a.beeVersion, a.flowerVersion,
-        end ? a.rBytes ?? null : null, a.rHash ?? null, a.rPreview ?? null);
+        end ? a.rBytes ?? null : null, a.rHash ?? null, a.rPreview ?? null, a.grain ?? null, a.grainVersion ?? null, a.grainCodeLength ?? null);
     });
     await c.query(`INSERT INTO actions (${cols.join(",")}) VALUES ${rows.join(",")}`, params);
   }

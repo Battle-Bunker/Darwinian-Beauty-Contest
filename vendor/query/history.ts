@@ -50,6 +50,12 @@ export interface Turn {
   readonly beeVersion: number | null;
   /** what went wrong with the bee's reply (late, a crash, a bad next challenge) */
   readonly beeError: string | null;
+  /** on a feed, the pollen grain: ⌊pollen^(1/3)⌋ characters of the answering flower version's minified code, from a random start, wrapping */
+  readonly grain: string | null;
+  /** the flower version the grain came from */
+  readonly grainVersion: number | null;
+  /** that version's minified code's length in characters */
+  readonly grainCodeLength: number | null;
 }
 
 /** Every version of every program: when it went live, its size and what the change cost. (entity "versions") */
@@ -402,6 +408,21 @@ export const SCHEMA: Schema = {
         {
           "name": "beeError",
           "type": "str",
+          "nullable": true
+        },
+        {
+          "name": "grain",
+          "type": "str",
+          "nullable": true
+        },
+        {
+          "name": "grainVersion",
+          "type": "int",
+          "nullable": true
+        },
+        {
+          "name": "grainCodeLength",
+          "type": "int",
           "nullable": true
         }
       ]

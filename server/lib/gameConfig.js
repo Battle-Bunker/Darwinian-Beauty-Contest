@@ -18,6 +18,7 @@ const BUDGETS = {
 };
 
 export const KINDS = ["flower", "bee"];
+export const GRAINS = ["feeder", "public", "off"];
 
 export const DEFAULT_CONFIG = Object.freeze({
   language: "python",          // "python" | "typescript"
@@ -29,6 +30,8 @@ export const DEFAULT_CONFIG = Object.freeze({
   maxNodes: 512,               // max nodes in a challenge's tree or graph (graphs: at most 4× as many edges)
   maxResponseBytes: 1048576,   // max UTF-8 bytes of a response's JSON text (responses have no maxLen/maxNodes)
   revealOnFinish: true,        // when the game ends, everyone can see all code and every bee's print output
+  grains: "feeder",            // who sees a feed's pollen grain during play: "feeder" (the bee's team) | "public" | "off"
+  pollenGrain: Object.freeze({ exponent: 1 / 3, scale: 1 }), // a grain is ⌊scale × pollen^exponent⌋ characters of code
   budgets: BUDGETS,
 });
 
@@ -55,6 +58,11 @@ export function normalizeConfig(input = {}, base = DEFAULT_CONFIG) {
     maxNodes: int(c.maxNodes, 1, 4096, base.maxNodes),
     maxResponseBytes: int(c.maxResponseBytes, 16, 16777216, base.maxResponseBytes ?? DEFAULT_CONFIG.maxResponseBytes),
     revealOnFinish: bool(c.revealOnFinish, base.revealOnFinish),
+    grains: GRAINS.includes(c.grains) ? c.grains : GRAINS.includes(base.grains) ? base.grains : DEFAULT_CONFIG.grains,
+    pollenGrain: {
+      exponent: num(c.pollenGrain?.exponent, 0.01, 1, base.pollenGrain?.exponent ?? DEFAULT_CONFIG.pollenGrain.exponent),
+      scale: num(c.pollenGrain?.scale, 0, 1000, base.pollenGrain?.scale ?? DEFAULT_CONFIG.pollenGrain.scale),
+    },
     budgets: {},
   };
   for (const kind of KINDS) {

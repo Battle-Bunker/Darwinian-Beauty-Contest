@@ -7,7 +7,8 @@
 // bee's MEMORY, which the engine keeps and sends with every call.
 // The code is the program's minified form (vendor/measure.js), so names can't carry data.
 //
-// Globals: GAME and, for a bee, MEMORY (a key-value store).
+// Globals: GAME and, for a bee, MEMORY (a key-value store). Date, Intl and performance read the game's
+// clock: every call's clock reads 0 as its time starts (PRELUDE).
 //
 // Protocol: JSON lines on stdin/stdout, one reply per request, in order. The first line is the setup
 // {code, ms, limitMs, game, maxChars, maxResponseBytes}. Requests (as in py_runner.py):
@@ -39,12 +40,40 @@ const ENTRY = role === "bee" ? ["first", "decide"] : ["flower"];
 const OPTIONAL = role === "bee" ? ["fed"] : [];
 const SIGNATURE = role === "bee" ? "function first() and function decide(challenge, response)" : "function flower(challenge)";
 
-// Runs inside each program context before the program: captured console and GAME. The console keeps its
-// output as one string, read back with intrinsics captured here, so reading it runs no program code.
-// FinalizationRegistry is removed: its callbacks would run between calls, off the clock.
+// Runs inside each program context before the program: captured console, GAME and the game's clock. The
+// console keeps its output as one string, read back with intrinsics captured here, so reading it runs no
+// program code. FinalizationRegistry is removed: its callbacks would run between calls, off the clock.
+// The clock: Date (now, new Date(), Date()), Intl date formatting without a date, and performance all read
+// the time since the call started (__startClock, called by the runner as each call's time starts), as if
+// it began at the Unix epoch. Its source is the host's high-resolution clock (__hr), kept in this closure
+// only: the program can't reach it, nor the real Date constructor (Date.prototype.constructor is the
+// game's Date).
 const PRELUDE = (game) => `
 (() => {
-  const apply = Reflect.apply, slice = String.prototype.slice, stringify = JSON.stringify;
+  "use strict";
+  const apply = Reflect.apply, construct = Reflect.construct, slice = String.prototype.slice, stringify = JSON.stringify;
+  const floor = Math.floor, define = Object.defineProperty, describe = Object.getOwnPropertyDescriptor;
+  const hr = globalThis.__hr;
+  delete globalThis.__hr;
+  let origin = hr();
+  const now = () => hr() - origin;
+  const nowMs = () => floor(hr() - origin);
+  define(globalThis, "__startClock", { value: () => { origin = hr(); } });
+  const RealDate = globalThis.Date, toString = RealDate.prototype.toString;
+  const GameDate = function Date(...args) {
+    if (new.target === undefined) return apply(toString, construct(RealDate, [nowMs()]), []);
+    return construct(RealDate, args.length ? args : [nowMs()], new.target);
+  };
+  define(GameDate, "prototype", { value: RealDate.prototype, writable: false, enumerable: false, configurable: false });
+  define(GameDate, "length", { value: 7 });
+  for (const k of ["parse", "UTC"]) define(GameDate, k, { value: RealDate[k], writable: true, configurable: true });
+  define(GameDate, "now", { value: function now() { return nowMs(); }, writable: true, configurable: true });
+  define(RealDate.prototype, "constructor", { value: GameDate, writable: true, configurable: true });
+  define(globalThis, "Date", { value: GameDate, writable: true, configurable: true });
+  const DTF = Intl.DateTimeFormat.prototype, format = describe(DTF, "format").get, toParts = DTF.formatToParts;
+  define(DTF, "format", { get() { const f = apply(format, this, []); return (d) => f(d === undefined ? nowMs() : d); }, configurable: true });
+  define(DTF, "formatToParts", { value: function formatToParts(d) { return apply(toParts, this, [d === undefined ? nowMs() : d]); }, writable: true, configurable: true });
+  define(globalThis, "performance", { value: Object.freeze({ now() { return now(); }, timeOrigin: 0, toJSON() { return { timeOrigin: 0 }; } }), writable: true, configurable: true });
   let text = "";
   Object.defineProperty(globalThis, "__takeOut", { value: () => { const o = text; text = ""; return o.length > 2000 ? apply(slice, o, [0, 2000]) : o; } });
   const log = (...a) => { if (text.length < 2000) text += a.map((x) => typeof x === "string" ? x : stringify(x)).join(" ") + "\\n"; };
@@ -63,12 +92,18 @@ let staged = null; // the next decide's context, its arguments already read in
 let kept = null;   // the context of a feed decision, kept for fed()
 const maxChars = () => setup.maxChars || 20000;
 
+const hostNow = () => performance.now();
+
 /** A fresh context with the prelude run. */
 function fresh() {
   const c = newContext();
+  c.__hr = hostNow; // taken into the prelude's closure, and deleted from the context
   vm.runInContext(PRELUDE(setup.game), c);
   return c;
 }
+
+/** The program's clock reads 0 from now (each call's time starts). */
+const startClock = (c) => vm.runInContext("__startClock()", c);
 
 /**
  * Set globals of context c from JSON texts ({name: text}), parsed inside the context (only strings cross).
@@ -128,6 +163,7 @@ function callFlower(req) {
   if (loadError) return out({ e: "the program failed to load: " + loadError, cpu: 0 });
   const c = fresh();
   setGlobals(c, { __c: text(req.c) });
+  startClock(c);
   const t0 = performance.now(), cpu0 = process.cpuUsage();
   const left = () => Math.max(1, Math.round(setup.ms - (performance.now() - t0)));
   try {
@@ -181,6 +217,7 @@ function callBee(req) {
   } catch (e) {
     return out({ e: "the bee's MEMORY could not be read", out: "" });
   }
+  startClock(c);
   const t0 = performance.now();
   const rest = () => Math.max(1, Math.round(limit - (performance.now() - t0)));
   try {
@@ -206,6 +243,7 @@ function callFed(req) {
   const c = kept;
   kept = null;
   if (!c) return out({ skipped: true });
+  try { startClock(c); } catch { return out({ e: "the bee's clock could not be started", out: "" }); }
   const t0 = performance.now();
   const rest = () => Math.max(1, Math.round(setup.ms - (performance.now() - t0)));
   try {

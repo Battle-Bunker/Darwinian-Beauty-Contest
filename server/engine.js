@@ -42,7 +42,7 @@
 // names, which minifying shortens, can't hide data.
 import os from "node:os";
 import { ProgramProcess } from "./runners/proc.js";
-import { createHash } from "node:crypto";
+import { createHash, randomInt } from "node:crypto";
 import { checkValue, parseType } from "./lib/types.js";
 import { zeroLedger } from "./lib/scoring.js";
 import { KINDS, excessEnergy, limitsOf, responseLimits, roundMs } from "./lib/gameConfig.js";
@@ -220,6 +220,31 @@ function rawResponse(res) {
   return i > 0 && j > i + 5 ? raw.slice(i + 5, j) : null;
 }
 
+/**
+ * A pollen grain's length for a feed's pollen: ⌊scale × pollen^exponent⌋ characters (0: no grain, as when
+ * grains are off).
+ */
+export function grainLength(config, pollen) {
+  const { exponent, scale } = config.pollenGrain ?? { exponent: 1 / 3, scale: 1 };
+  if (config.grains === "off" || !(pollen > 0) || !(scale > 0)) return 0;
+  const root = exponent === 1 / 3 ? Math.cbrt(pollen) : pollen ** exponent;
+  return Math.max(0, Math.floor(scale * root + 1e-9));
+}
+
+/**
+ * A pollen grain: `length` characters (code points) of `code` from a uniformly random start, wrapping past
+ * the end, so every character is as likely to leak; the whole code if it is no longer than that.
+ * { grain, grainCodeLength } (grain null for length 0 or no code).
+ */
+export function grainOf(code, length, start = null) {
+  const chars = Array.from(code ?? "");
+  if (!(length > 0) || !chars.length) return { grain: null, grainCodeLength: chars.length || null };
+  if (length >= chars.length) return { grain: chars.join(""), grainCodeLength: chars.length };
+  const at = start ?? randomInt(chars.length);
+  const piece = at + length <= chars.length ? chars.slice(at, at + length) : chars.slice(at).concat(chars.slice(0, at + length - chars.length));
+  return { grain: piece.join(""), grainCodeLength: chars.length };
+}
+
 /** A response over INLINE_BYTES: its JSON text, its SHA-256 (hex) and its first INLINE_BYTES (whole characters). */
 export function largeResponse(full) {
   const head = Buffer.from(full.slice(0, INLINE_BYTES));
@@ -336,7 +361,7 @@ export class Garden {
     pool.ready.then((r) => { if (!r.ok) this.#problem(ti, "flower", version, r.e); });
     const slot = (this.flowers[ti] ??= { team: ti });
     if (slot.pool) this.#retire(slot.pool);
-    Object.assign(slot, { version, size, pool }); // for turns that start from now on
+    Object.assign(slot, { version, size, pool, code: minified }); // for turns that start from now on
   }
 
   /** Pause after the round in progress (the clock stands still until resume). */
@@ -417,7 +442,7 @@ export class Garden {
       const slot = this.#draw();
       if (!slot) continue;
       const t = {
-        b, gen: b.gen, no: ++b.turns, round: r, start, c: b.queued.c, flower: slot.team, pool: slot.pool, size: slot.size,
+        b, gen: b.gen, no: ++b.turns, round: r, start, c: b.queued.c, flower: slot.team, pool: slot.pool, size: slot.size, flowerCode: slot.code,
         flowerVersion: slot.version, beeVersion: b.version, fed: false, nectar: null, pollen: 0, beeMs: null, beeError: null, log: null,
         staged: null, // the response's delivery to the bee, ahead of its decision window
       };
@@ -484,7 +509,7 @@ export class Garden {
       seq: ++this.seq, atMs: Math.round(atMs), round: t.round, turn: t.no, bee: t.b.ti, flower: t.flower, action,
       beeVersion: t.beeVersion, flowerVersion: t.flowerVersion,
       c: null, r: null, rBytes: null, percent: null, energy: null, ms: null, pollen: null, nectar: null, flowerError: null,
-      beeMs: null, beeError: null, log: null, ...fields,
+      beeMs: null, beeError: null, log: null, grain: null, grainVersion: null, grainCodeLength: null, ...fields,
     });
   }
 
@@ -729,18 +754,22 @@ export class Garden {
   /** Settle a turn: nectar and pollen, the ledgers, the end of the turn's record; then the bee moves on. */
   #settle(t) {
     const b = t.b, f = t.flower;
+    let grain = {};
     if (t.fed) {
       t.nectar = ((t.percent ?? 0) / 100) * t.energy;
       t.pollen = t.energy - t.nectar;
       this.feeds[b.ti][f]++;
       this.nectar[b.ti][f] += t.nectar;
       this.pollen[b.ti][f] += t.pollen;
+      // Pollen carries genes: a grain of the code of the flower version that answered.
+      const g = grainOf(t.flowerCode, grainLength(this.config, t.pollen));
+      if (g.grain !== null) grain = { grain: g.grain, grainVersion: t.flowerVersion, grainCodeLength: g.grainCodeLength };
     }
     const large = t.rFull !== undefined ? { rFull: t.rFull, rHash: t.rHash, rPreview: t.rPreview } : {};
     this.#record(t, t.fed ? "feed" : "leave", {
       c: t.c, r: t.rFull !== undefined ? null : t.r, rBytes: t.rBytes ?? null, ...large,
       percent: t.percent, energy: t.energy, ms: t.ms, pollen: t.pollen, nectar: t.fed ? t.nectar : null,
-      flowerError: t.flowerError, beeMs: t.beeMs, beeError: t.beeError, log: t.log,
+      flowerError: t.flowerError, beeMs: t.beeMs, beeError: t.beeError, log: t.log, ...grain,
     }, t.start + this.windowMs);
     // The turn as a `turns` record (server/query/schema.js), unmasked.
     if (this.history) {
@@ -749,6 +778,7 @@ export class Garden {
         challenge: t.c, response: t.rFull !== undefined ? null : t.r, responseBytes: t.rBytes ?? null, responseHash: t.rHash ?? null,
         fed: t.fed, percent: t.percent, energy: t.energy, nectar: t.fed ? t.nectar : null, pollen: t.pollen, ms: t.ms,
         flowerVersion: t.flowerVersion, flowerError: t.flowerError, beeMs: t.beeMs, beeVersion: t.beeVersion, beeError: t.beeError,
+        grain: grain.grain ?? null, grainVersion: grain.grainVersion ?? null, grainCodeLength: grain.grainCodeLength ?? null,
       };
     }
     // The turn is over: its flower version may go, and new code for the bee takes over now.

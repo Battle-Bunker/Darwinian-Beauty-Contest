@@ -9,7 +9,9 @@
 # The code is the program's minified form (vendor/measure.js), so names can't carry data.
 #
 # Globals: GAME (the game's settings) and, for a bee, MEMORY (a key-value store: str keys, str / number /
-# bool / None values).
+# bool / None values). Imports give module views (public names only), and `time` is the game's clock
+# (game_clock): every call's clock reads 0 as its time starts, as if at the Unix epoch, so a program can time
+# its own work but learns nothing of the world's time or the game's progress.
 #
 # Protocol: JSON lines on stdin/stdout, one reply per request, in order. The first line is the setup
 # {code, ms, limitMs, game, maxChars, maxResponseBytes}.
@@ -30,7 +32,7 @@
 # No user code runs after the clock stops: the reply and MEMORY are copied into exact built-in types, and
 # the response written as JSON, inside the timed window.
 # NOT a security sandbox: restricted builtins + import whitelist + timeouts + memory cap only.
-import builtins, io, json, math, os, random, resource, select, signal, sys, time
+import builtins, importlib, io, json, math, os, random, resource, select, signal, sys, time, types
 
 ALLOWED_MODULES = {
     "math", "cmath", "random", "hashlib", "string", "itertools", "functools", "collections",
@@ -43,10 +45,144 @@ for _m in ALLOWED_MODULES:
 _real_import = builtins.__import__
 
 
+def _view(mod):
+    """
+    What a program gets for a module: a module object with its public names only. Names that start with an
+    underscore, and other modules a module happens to hold (random._os, statistics.sys, dataclasses.builtins,
+    ...), are left out; its own public submodules (collections.abc, json.decoder) are views too.
+    """
+    v = types.ModuleType(mod.__name__, mod.__doc__)
+    for k, x in list(vars(mod).items()):
+        if k.startswith("_"):
+            continue
+        if isinstance(x, types.ModuleType):
+            if x.__name__ == f"{mod.__name__}.{k}":
+                setattr(v, k, _view_of(x.__name__))
+            continue
+        setattr(v, k, x)
+    return v
+
+
+_VIEWS = {}
+
+
+def _view_of(name):
+    if name not in _VIEWS:
+        _VIEWS[name] = None  # (a module that holds itself)
+        _VIEWS[name] = _view(importlib.import_module(name))
+        parent, _, child = name.rpartition(".")
+        if parent and _VIEWS.get(parent) is not None:
+            setattr(_VIEWS[parent], child, _VIEWS[name])
+    return _VIEWS[name]
+
+
+# The game's `time` module for the call in progress (made in the forked child as its time starts).
+_CLOCK = {"module": None}
+
+
 def _safe_import(name, globals=None, locals=None, fromlist=(), level=0):
-    if level != 0 or name.split(".")[0] not in ALLOWED_MODULES:
+    parts = name.split(".")
+    if level != 0 or parts[0] not in ALLOWED_MODULES or any(p.startswith("_") for p in parts):
         raise ImportError(f"module '{name}' is not allowed in this game")
-    return _real_import(name, globals, locals, fromlist, level)
+    if parts[0] == "time":
+        if len(parts) > 1:
+            raise ImportError(f"module '{name}' is not allowed in this game")
+        return _CLOCK["module"]
+    try:
+        target = _view_of(name)
+    except ImportError:
+        raise ImportError(f"module '{name}' is not allowed in this game") from None
+    return target if fromlist else _view_of(parts[0])
+
+
+for _m in ALLOWED_MODULES - {"time"}:
+    _view_of(_m)  # made once, before any fork
+
+
+def game_clock():
+    """
+    The `time` module a program gets: the time since its call started, as if the call began at the Unix
+    epoch, at real speed and full resolution; CPU time since the call started; and the calendar functions
+    on that clock (UTC). Returns (module, start): start() sets the clock to zero, as each call's time starts.
+    """
+    pc, pc_ns = time.perf_counter, time.perf_counter_ns
+    pt, pt_ns, tt, tt_ns = time.process_time, time.process_time_ns, time.thread_time, time.thread_time_ns
+    zero = [0.0, 0, 0.0, 0, 0.0, 0]  # perf s, perf ns, process s, process ns, thread s, thread ns
+
+    def start():
+        zero[:] = [pc(), pc_ns(), pt(), pt_ns(), tt(), tt_ns()]
+
+    def now():
+        return pc() - zero[0]
+
+    def now_ns():
+        return pc_ns() - zero[1]
+
+    def process_time():
+        return pt() - zero[2]
+
+    def process_time_ns():
+        return pt_ns() - zero[3]
+
+    def thread_time():
+        return tt() - zero[4]
+
+    def thread_time_ns():
+        return tt_ns() - zero[5]
+
+    cpu = {getattr(time, "CLOCK_PROCESS_CPUTIME_ID", -1): (process_time, process_time_ns),
+           getattr(time, "CLOCK_THREAD_CPUTIME_ID", -2): (thread_time, thread_time_ns)}
+
+    def clock_gettime(clk_id):
+        return cpu.get(clk_id, (now, now_ns))[0]()
+
+    def clock_gettime_ns(clk_id):
+        return cpu.get(clk_id, (now, now_ns))[1]()
+
+    def clock_getres(clk_id):
+        return 1e-09
+
+    def gmtime(secs=None):
+        return time.gmtime(now() if secs is None else secs)
+
+    def localtime(secs=None):
+        return time.gmtime(now() if secs is None else secs)  # the game's clock is UTC
+
+    def ctime(secs=None):
+        return time.asctime(gmtime(secs))
+
+    def asctime(t=None):
+        return time.asctime(gmtime() if t is None else t)
+
+    def strftime(fmt, t=None):
+        return time.strftime(fmt, gmtime() if t is None else t)
+
+    def get_clock_info(name):
+        if name in ("process_time", "thread_time"):
+            return time.get_clock_info(name)
+        if name not in ("time", "monotonic", "perf_counter"):
+            raise ValueError("unknown clock")
+        return types.SimpleNamespace(implementation="the game's clock: time since the call started", monotonic=True,
+                                     adjustable=False, resolution=1e-09)
+
+    m = types.ModuleType("time", "The game's clock: the time since this call started, as if it began at the Unix epoch.")
+    for name, fn in [("time", now), ("time_ns", now_ns), ("monotonic", now), ("monotonic_ns", now_ns),
+                     ("perf_counter", now), ("perf_counter_ns", now_ns), ("process_time", process_time),
+                     ("process_time_ns", process_time_ns), ("thread_time", thread_time), ("thread_time_ns", thread_time_ns),
+                     ("clock_gettime", clock_gettime), ("clock_gettime_ns", clock_gettime_ns), ("clock_getres", clock_getres),
+                     ("gmtime", gmtime), ("localtime", localtime), ("ctime", ctime), ("asctime", asctime),
+                     ("strftime", strftime), ("mktime", time.mktime), ("strptime", time.strptime), ("sleep", time.sleep),
+                     ("get_clock_info", get_clock_info)]:
+        if callable(fn) and getattr(fn, "__module__", None) == __name__:
+            fn.__name__ = fn.__qualname__ = name
+        setattr(m, name, fn)
+    m.struct_time = time.struct_time
+    for k in dir(time):
+        if k.startswith("CLOCK_"):
+            setattr(m, k, getattr(time, k))
+    m.timezone, m.altzone, m.daylight, m.tzname = 0, 0, 0, ("UTC", "UTC")
+    start()
+    return m, start
 
 
 SAFE_BUILTINS = {k: v for k, v in vars(builtins).items()
@@ -219,11 +355,13 @@ def main(role, setup):
         random.seed()  # fresh entropy: the forked child would otherwise repeat the parent's sequence
         die_with_parent()
         t0 = time.process_time()
+        _CLOCK["module"], start_clock = game_clock()
         ns = {"__name__": "__program__", "__builtins__": SAFE_BUILTINS, "GAME": dict(game)}
         keep = False
         try:
             if role == "bee":
                 ns["MEMORY"] = json.loads(req["memory"]) if req.get("memory") is not None else {}
+            start_clock()  # the program's clock reads 0 as its time starts
             timer(budget / 1000)
             exec(code, ns)
             for name in ENTRY[role]:
@@ -280,6 +418,7 @@ def main(role, setup):
         captured.truncate()
         try:
             nectar = json.loads(got)["nectar"]
+            start_clock()
             timer(ms / 1000)
             ns["fed"](nectar)
             line, _ = bee_reply("fed", None, ns)

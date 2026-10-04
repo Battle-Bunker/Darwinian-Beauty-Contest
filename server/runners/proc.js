@@ -6,7 +6,8 @@ import { fileURLToPath } from "node:url";
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const RAW_ABOVE = 4096;
 // Programs never see the server's environment (DATABASE_URL, secrets, ...).
-const CHILD_ENV = { PATH: process.env.PATH || "/usr/bin:/bin", PYTHONHASHSEED: "0", PYTHONDONTWRITEBYTECODE: "1", LANG: "C.UTF-8" };
+// TZ: the game's clock is UTC, whatever the server's time zone.
+const CHILD_ENV = { PATH: process.env.PATH || "/usr/bin:/bin", PYTHONHASHSEED: "0", PYTHONDONTWRITEBYTECODE: "1", LANG: "C.UTF-8", TZ: "UTC" };
 
 function command(language, role) {
   if (language === "python") return [process.env.PYTHON || "python3", ["-s", "-u", path.join(DIR, "py_runner.py"), role]];

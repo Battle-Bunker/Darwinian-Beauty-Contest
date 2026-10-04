@@ -61,7 +61,7 @@ function flowerNotes(ts, config) {
   const c = ts ? "//" : "#", G = (k) => (ts ? `GAME.${k}` : `GAME["${k}"]`), nul = ts ? "null" : "None";
   const { flower } = config.budgets;
   return `${c} Your flower species: each call is one flower of it, meeting one bee, and runs fresh: nothing is kept between\n` +
-    `${c} calls. ${ts ? "Math.random()" : "random"} is freshly seeded every call and the clock is available. ${G("ms")} = ${flower.ms}: your time limit\n` +
+    `${c} calls. ${ts ? "Math.random()" : "random"} is freshly seeded every call; the clock reads 0 (the epoch) as each call starts. ${G("ms")} = ${flower.ms}: your time limit\n` +
     `${c} per call in ms; a response that isn't done in time (or an error, a malformed return, or more than\n` +
     `${c} ${G("max_response_bytes")} = ${config.maxResponseBytes} bytes of JSON) reaches the bee as ${nul}.\n` +
     `${c} If the bee feeds, it gets nectar = percent/100 × E and pollen = the rest; no feed, nothing is given.\n` +
@@ -81,7 +81,7 @@ function beeNotes(ts, config) {
     `${c} intact), within ${G("ms")}. Otherwise every turn runs fresh. Only MEMORY carries over: a key-value store ({} at\n` +
     `${c} first; string keys; string, number, ${ts ? "boolean or null" : "bool or None"} values) you change in place or reassign. It is saved after\n` +
     `${c} each first, decide or fed that returns, if Σ (key bytes + value JSON bytes) ≤ ${G("memory")} = ${config.budgets.bee.memory}.\n` +
-    `${c} response is ${nul} if the flower failed. Programs get no history.`;
+    `${c} response is ${nul} if the flower failed. Programs get no history; each call's clock reads 0 as it starts.`;
 }
 
 export function programInterface(config) {

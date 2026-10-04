@@ -18,6 +18,7 @@
 //   publicOnFeed  everyone on a turn where the bee fed, else the flower's team
 //   team          the team the record belongs to (the entity's `owner` field)
 //   code          the record's team; after the game everyone, if the game is revealed (revealOnFinish)
+//   grain         the team whose bee took the turn (turns.bee); everyone, if the game's grains are "public"
 // An entity with `rows: "team"` shows each team only its own records during play.
 // Hidden fields read as null: filters, sorts and aggregates see null too, so they never leak.
 
@@ -33,7 +34,7 @@ export const TYPES = {
 
 export const OPS = ["eq", "ne", "lt", "le", "gt", "ge", "in", "between", "isNull"];
 export const AGGREGATES = ["count", "sum", "avg", "min", "max"];
-export const VISIBILITY = ["public", "flower", "bee", "publicOnFeed", "team", "code"];
+export const VISIBILITY = ["public", "flower", "bee", "publicOnFeed", "team", "code", "grain"];
 
 const f = (name, type, visibility, doc, nullable = false) => ({ name, type, nullable, visibility, doc });
 
@@ -79,6 +80,9 @@ export const SCHEMA = {
         f("beeMs", "float", "bee", "how long the bee took to decide (ms; null if it was late)", true),
         f("beeVersion", "int", "bee", "the bee version that decided", true),
         f("beeError", "str", "bee", "what went wrong with the bee's reply (late, a crash, a bad next challenge)", true),
+        f("grain", "str", "grain", "on a feed, the pollen grain: ⌊pollen^(1/3)⌋ characters of the answering flower version's minified code, from a random start, wrapping", true),
+        f("grainVersion", "int", "grain", "the flower version the grain came from", true),
+        f("grainCodeLength", "int", "grain", "that version's minified code's length in characters", true),
       ],
     },
     versions: {

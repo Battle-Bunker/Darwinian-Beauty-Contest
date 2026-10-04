@@ -5,9 +5,10 @@ import { SCHEMA } from "./schema.js";
 
 /**
  * May `viewer` (a team index, or null for a spectator) see field `f` of record `r`? `over`: the game is
- * finished (everything is visible); `revealed`: it is finished and revealed (code is visible).
+ * finished (everything is visible); `revealed`: it is finished and revealed (code is visible);
+ * `grainsPublic`: the game's grains are public as they happen.
  */
-export function visible(entityName, f, r, viewer, { over = false, revealed = over } = {}) {
+export function visible(entityName, f, r, viewer, { over = false, revealed = over, grainsPublic = false } = {}) {
   const e = SCHEMA.entities[entityName];
   const own = (team) => viewer !== null && viewer !== undefined && team === viewer;
   switch (f.visibility) {
@@ -17,6 +18,7 @@ export function visible(entityName, f, r, viewer, { over = false, revealed = ove
     case "publicOnFeed": return over || r.fed === true || own(r.flower);
     case "team": return over || own(r[e.owner]);
     case "code": return revealed || own(r[e.owner]);
+    case "grain": return over || grainsPublic || own(r.bee);
     default: throw new Error(`unknown visibility "${f.visibility}"`);
   }
 }

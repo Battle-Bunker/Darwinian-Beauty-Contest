@@ -81,7 +81,7 @@ test("the team ledger over the API: the viewer's own view during play, every fie
   const idx = new Map([["B", 0], ["F", 1], ["X", 2]]);
   const opts = { game: "g", flowerMs: 150 };
   const t = turnOf(leave, idx, opts);
-  const priv = { ms: null, flowerVersion: null, flowerError: null, beeMs: null, beeVersion: null, beeError: null };
+  const priv = { ms: null, flowerVersion: null, flowerError: null, beeMs: null, beeVersion: null, beeError: null, grain: null, grainVersion: null, grainCodeLength: null };
   const pub = { game: "g", seq: 9, round: 3, atMs: 400, turn: 2, bee: 0, flower: 1, challenge: 5, response: 7, responseBytes: 1, responseHash: null,
     fed: false, percent: null, energy: null, nectar: null, pollen: 0, ...priv };
   assert.deepEqual(mask("turns", t, 2), pub);

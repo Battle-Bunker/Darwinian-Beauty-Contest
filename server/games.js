@@ -445,7 +445,8 @@ export async function viewActions(game, user, { after = 0, before = null, limit 
   const { rows } = before !== null && before !== undefined && before !== ""
     ? await query(`SELECT * FROM (SELECT * FROM actions WHERE ${where} AND seq < $2 ORDER BY seq DESC LIMIT $3) t ORDER BY seq`, params(Number(before) || 0))
     : await query(`SELECT * FROM actions WHERE ${where} AND seq > $2 ORDER BY seq LIMIT $3`, params(Math.max(0, Number(after) || 0)));
-  return { actions: rows.map((a) => actionView(a, mine?.id, over, revealed)), lastSeq: g.last_seq, clockMs: g.clock_ms, round: g.round, status: g.status };
+  const grainsPublic = g.config.grains === "public";
+  return { actions: rows.map((a) => actionView(a, mine?.id, over, revealed, grainsPublic)), lastSeq: g.last_seq, clockMs: g.clock_ms, round: g.round, status: g.status };
 }
 
 /**
@@ -454,7 +455,7 @@ export async function viewActions(game, user, { after = 0, before = null, limit 
  * whether the bee fed (the action itself) and the pollen (0 on a leave); on a feed also the percent,
  * energy and nectar.
  */
-export function actionView(a, me, over, revealed) {
+export function actionView(a, me, over, revealed, grainsPublic = false) {
   const myBee = over || (!!me && a.bee_team === me), myFlower = over || (!!me && a.flower_team === me);
   const out = { seq: a.seq, atMs: a.at_ms, round: a.round, turn: a.turn, bee: a.bee_team, flower: a.flower_team, action: a.action };
   if (myBee) out.beeVersion = a.bee_version;
@@ -470,6 +471,10 @@ export function actionView(a, me, over, revealed) {
     if (myBee) Object.assign(out, { beeMs: a.bee_ms, beeError: a.bee_error });
   }
   if (a.log && (revealed || (!!me && a.bee_team === me))) out.log = a.log;
+  // A feed's pollen grain: the feeding bee's team's (everyone's if grains are public, or once it's over).
+  if (a.grain !== null && a.grain !== undefined && (over || grainsPublic || (!!me && a.bee_team === me))) {
+    Object.assign(out, { grain: a.grain, grainVersion: a.grain_version, grainCodeLength: a.grain_code_length });
+  }
   return out;
 }
 
@@ -493,7 +498,7 @@ export async function viewLedger(game, user, { after = 0, limit = 1000 } = {}) {
   const opts = { game: shortId(g), flowerMs: g.config.budgets.flower.ms };
   return {
     participants, team, lastSeq: g.last_seq, round: g.round, status: g.status,
-    entries: rows.map((a) => mask("turns", turnOf(a, idx, opts), team, { over })),
+    entries: rows.map((a) => mask("turns", turnOf(a, idx, opts), team, { over, grainsPublic: g.config.grains === "public" })),
   };
 }
 
@@ -503,6 +508,7 @@ export const turnOf = (a, idx, { game, flowerMs }) => ({
   challenge: a.c, response: a.r, responseBytes: a.r_bytes ?? null, responseHash: a.r_hash ?? null,
   fed: a.action === "feed", percent: a.percent, energy: a.energy, nectar: a.nectar, pollen: a.pollen ?? 0,
   ms: a.cpu_ms, flowerVersion: a.flower_version, flowerError: a.flower_error, beeMs: a.bee_ms, beeVersion: a.bee_version, beeError: a.bee_error,
+  grain: a.grain ?? null, grainVersion: a.grain_version ?? null, grainCodeLength: a.grain_code_length ?? null,
 });
 
 /**

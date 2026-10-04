@@ -19,6 +19,8 @@ A flower now *chooses* how much to pay, out of energy it can only have by being 
 | every finished turn, as one team may see it | **history** | for teams and agents, over HTTP and the generated query clients; programs get none |
 | a bee's only state from one turn to the next | **MEMORY** | a key-value store the engine keeps, 50 bytes by default |
 | a bee's call after an in-time feed, in the instance that decided | **fed(nectar)** | the bee keeps what it worked out that turn long enough to store some of it |
+| ⌊pollen^(1/3)⌋ characters of the answering flower's minified code, to the feeding bee's team | **pollen grain** | pollen carries genes |
+| each call's clock, reading 0 as the call's time starts | **the game's clock** | programs can time themselves, not the world |
 | Σ√xᵢ | **rootsum** | the diversity-weighted size of an earnings vector |
 | rootsum of a flower's pollen column | **pollination** | how widely, and how profitably, the flower is pollinated |
 | rootsum of a bee's nectar row | **forage** | how widely the bee eats |
@@ -113,6 +115,31 @@ Statelessness is what makes the cap mean something: a bee can't keep a lookup ta
 can't remember more than its 50 bytes. `fed` exists because the nectar of a feed is only known once the bee
 has decided: without it, a bee could only remember what it guessed, not what it got.
 
+## The game's clock: every call starts at the epoch
+
+Flowers shouldn't know what round it is, and bees shouldn't either: no program gets an anchor to the
+world's time or the game's progress. So every call's clock (flower, `first`, `decide`, `fed`) reads 0 as
+the call's time starts, as if at 1970-01-01 00:00:00 UTC, and runs at real speed in fine steps. A program
+can time its own work as precisely as before; every call looks the same in absolute time.
+
+- Python: an import of `time` gives the game's `time` module (`game_clock` in the runner): `time`,
+  `monotonic`, `perf_counter` (and `_ns`) and `clock_gettime` read the time since the call started;
+  `process_time` and `thread_time` the call's own CPU time; `gmtime`, `localtime`, `ctime`, `asctime` and
+  `strftime` use that clock, in UTC. `monotonic` was the machine's uptime, a real clock, and is now the
+  call's. Every other allowed module is a **view**: its public names only. That drops the modules some
+  of them carry (`random._os`, `statistics.sys`, `dataclasses.builtins`, `enum.sys`, …), which led
+  straight to `os`, `sys` and the real clock. `os`, `sys`, `datetime` and `uuid` stay disallowed.
+- TypeScript: the prelude replaces `Date` (with the real constructor out of reach: `Date.prototype.
+  constructor` is the game's), makes `Intl` date formatting without a date use the game's clock, and adds
+  `performance` (`now()` from 0, in fractions of a millisecond, `timeOrigin` 0). The clock's source is the
+  host's `performance.now`, held in the prelude's closure, where the program can't reach it.
+- The runners run with `TZ=UTC`, so no time zone leaks either. `GAME` holds the game's settings only (no
+  round, turn or clock); a bee that counts its turns in MEMORY is counting its own experience.
+
+The Python runner is still not a security sandbox (README): a program that digs into the interpreter's
+internals (`__globals__`, frames, `__subclasses__`) can reach the real clock, just as it can reach `os`.
+Everything a program can reach through the documented interface reads the game's clock.
+
 ## No user code runs after the clock stops
 
 A program could buy free compute by doing its work while the runner encodes its reply: a `toJSON` method, a
@@ -163,6 +190,27 @@ that remains is storage: up to about 30 MB per game-second of incompressible res
 writes 0.94 MB of ints in 13 ms of CPU.
 
 
+## Pollen carries genes
+
+On every feed, after the turn is settled, the engine cuts a **pollen grain** from the minified code of the
+flower version that answered (the version pinned to the turn): ⌊scale × pollen^exponent⌋ characters
+(`pollenGrain`, by default scale 1 and exponent 1/3: 27,000 pollen gives 30 characters, 150,000 gives 53),
+from a start drawn uniformly at random, wrapping from the end back to the start so every character is as
+likely to leak (`grainOf`). A grain at least as long as the code is the whole code. The grain goes with
+the flower's version and its code's length in characters, but not its start: teams line grains up by
+their overlaps.
+
+During play a grain is the feeding bee's team's (`grains: "feeder"`; `"public"` shows it to everyone, `"off"`
+cuts none); after the game everyone's. It is a field of the feed action (`grain`, `grainVersion`,
+`grainCodeLength`) and of the `turns` record, masked with a `grain` visibility rule in the views, the ledger
+and SQL. Programs never get one (`fed` gets the nectar only).
+
+So the more pollen a flower gives away, the more of its code travels with it. In the smoke and demo games
+(pollen mostly 30,000–170,000 node·ms) grains were 25 to 53 characters (median 37), and the demo's flowers
+were 37 to 119 characters minified: about a third of the grains were whole flowers. The version that comes
+with a grain also tells the feeding team which version of that flower answered, which is otherwise the
+flower's team's business during play.
+
 ## What is public
 
 Arrivals, challenges, responses and every feed (with its percent, E, nectar and pollen) are public to
@@ -172,7 +220,7 @@ flower, has to work in plain view, where every other team can study and copy it.
 
 Private during play: the percent and E of a turn without a feed (the flower's team), the flower's compute
 time on every turn and why it failed (the flower's team), and each team's code, prints, versions, sizes,
-budgets, bee timings and bee MEMORY. The secret that remains is the flower's compute time, which can't be read off a
+budgets, bee timings, bee MEMORY and pollen grains (the feeding team's). The secret that remains is the flower's compute time, which can't be read off a
 public E without the flower's size, which stays private with its code. Everything is revealed at the end.
 
 ## Versions are pinned per turn
@@ -202,8 +250,8 @@ At most one turn per bee per round: with 6 teams, at most 30 turns (60 actions) 
   in flight. `paced: false` runs rounds back to back (tests and the "try" tool); a request outside the
   round flow then makes the next round if it answers within the bee's 50 ms. `keepHistory` keeps every
   finished turn's record (tests).
-- `server/runners/`: `proc.js` speaks JSON lines to a runner process (its own process group), one request
-  at a time, in order. `py_runner.py` and `ts_runner.cjs` run every call fresh: flowers CPU-timed with
+- `server/runners/`: `proc.js` speaks JSON lines to a runner process (its own process group, `TZ=UTC`), one
+  request at a time, in order. Programs get the game's clock and (Python) module views. `py_runner.py` and `ts_runner.cjs` run every call fresh: flowers CPU-timed with
   their response's size checked, bees with their MEMORY passed in and sent back, the next decision's
   response staged ahead of its call, and a feed decision's instance kept for `fed`.
 - `server/live.js`: each running game's garden runs in exactly one server process, whichever holds the

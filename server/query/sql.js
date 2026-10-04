@@ -33,6 +33,7 @@ const SOURCES = {
       fed: "(a.action = 'feed')", percent: "a.percent", energy: "a.energy", nectar: "a.nectar",
       pollen: "coalesce(a.pollen, 0)", ms: "a.cpu_ms", flowerVersion: "a.flower_version", flowerError: "a.flower_error",
       beeMs: "a.bee_ms", beeVersion: "a.bee_version", beeError: "a.bee_error",
+      grain: "a.grain", grainVersion: "a.grain_version", grainCodeLength: "a.grain_code_length",
     },
   },
   versions: {
@@ -82,6 +83,7 @@ function visibleSql(vis, roles) {
     case "publicOnFeed": return `gs.over OR ${roles.fed} OR ${roles.flower} = gs.viewer`;
     case "team": return `gs.over OR ${roles.owner} = gs.viewer`;
     case "code": return `gs.revealed OR ${roles.owner} = gs.viewer`;
+    case "grain": return `gs.over OR gs.grains_public OR ${roles.bee} = gs.viewer`;
     default: throw new Error(`unknown visibility "${vis}"`);
   }
 }
@@ -100,6 +102,7 @@ export function compile(ast, { gameId = null, roomId = null, userId = null, scor
   const cte = `WITH gs AS (
     SELECT g.id, substr(g.code, 1, g.prefix_len) AS short, g.participants, g.status = 'finished' AS over,
       (g.status = 'finished' AND coalesce((g.config->>'revealOnFinish')::boolean, true)) AS revealed,
+      coalesce(g.config->>'grains', 'feeder') = 'public' AS grains_public,
       (g.config->'budgets'->'flower'->>'ms')::int AS flower_ms,
       ((g.config->'budgets'->'flower'->>'ms')::int + (g.config->'budgets'->'bee'->>'ms')::int) AS round_ms,
       (SELECT (array_position(g.participants, m.team_id) - 1)::int FROM team_members m

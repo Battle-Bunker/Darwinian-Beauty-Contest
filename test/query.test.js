@@ -246,8 +246,18 @@ test("visibility in SQL: non-owners never see private fields, through rows, filt
   const teams = await sql({ from: "teams" }, t1);
   assert.ok(teams.every((t) => (t.index === 1) === (t.memory !== null && t.memoryBytes !== null)));
   assert.ok(teams.find((t) => t.index === 1).memory.n > 0);
+  // Pollen grains: the feeding bee's team's (filters and aggregates too); everyone's if the game's grains are public.
+  const grained = db.records.filter((t) => t.grain !== null);
+  assert.ok(grained.length > 5 && grained.some((t) => t.bee !== 1), "the game has grains to protect");
+  assert.equal((await sql(agg("count", "grain"), spectator))[0].x, 0, "a spectator sees none");
+  assert.equal((await sql(agg("count", "grainVersion"), t1))[0].x, grained.filter((t) => t.bee === 1).length, "team 1 its own bee's");
+  assert.ok((await sql({ from: "turns", where: [W("grain", "isNull", false)] }, t1)).every((t) => t.bee === 1 && t.fed));
+  await pool.query("UPDATE games SET config = jsonb_set(config, '{grains}', '\"public\"') WHERE id = $1", [db.game]);
+  assert.equal((await sql(agg("count", "grain"), spectator))[0].x, grained.length, "public grains: everyone's, as they happen");
+  await pool.query("UPDATE games SET config = jsonb_set(config, '{grains}', '\"feeder\"') WHERE id = $1", [db.game]);
   // After the game, everything; code only if revealed.
   await setStatus("finished", false);
+  assert.equal((await sql(agg("count", "grain"), spectator))[0].x, grained.length, "every grain, after the game");
   assert.ok((await sql(agg("count", "percent", unfedW), spectator))[0].x > at1.length);
   const all = await sql({ from: "versions" }, spectator);
   assert.equal(all.length, 4 * N);

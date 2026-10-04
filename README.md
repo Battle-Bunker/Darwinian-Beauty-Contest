@@ -18,7 +18,10 @@ a turn without a feed pays nobody. Every turn is public as it
 happens (who visited whom, the challenge, the response, whether the bee fed, and a feed's percent, energy,
 nectar and pollen), and so is the scoreboard; code, timings and the details of unfed turns stay with
 their teams until the end. Programs see no history; teams, operators and agents query every finished turn
-over HTTP with typed clients (docs/QUERY.md). A response can be up to 1 MB of JSON. Each program earns a change budget as the game goes on, and a team can spend it at any
+over HTTP with typed clients (docs/QUERY.md). A response can be up to 1 MB of JSON. Every call's clock
+starts at 0, so programs can time their own work but not tell what time or round it is. Pollen carries
+genes: each feed gives the bee's team a grain of the flower's minified code, ⌊pollen^(1/3)⌋ characters
+long. Each program earns a change budget as the game goes on, and a team can spend it at any
 moment on a new version. Fitness rewards *diverse* success: energy your flower kept from many teams' bees
 (**pollination**) and nectar your bee got from many teams' flowers (**forage**).
 
