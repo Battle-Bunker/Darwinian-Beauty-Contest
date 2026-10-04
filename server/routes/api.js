@@ -42,6 +42,9 @@ export function apiRouter() {
   const base = "/rooms/:room/games/:game";
   r.get(base, wrap(async (req, res) => res.json(await G.viewGame(req.room, req.game, req.user))));
   r.get(`${base}/actions`, wrap(async (req, res) => res.json(await G.viewActions(req.game, req.user, { after: req.query.after, before: req.query.before, limit: req.query.limit, mine: req.query.mine }))));
+  r.post(`${base}/query`, wrap(async (req, res) => res.json(await G.queryGame(req.game, req.user, req.body))));
+  r.post("/rooms/:room/query", wrap(async (req, res) => res.json(await G.queryRoom(req.room, req.user, req.body))));
+  r.get("/query/schema", (_req, res) => res.json(G.querySchema()));
   r.get(`${base}/ledger`, wrap(async (req, res) => res.json(await G.viewLedger(req.game, req.user, { after: req.query.after, limit: req.query.limit }))));
   r.get(`${base}/scores`, wrap(async (req, res) => res.json(await G.viewScores(req.game))));
   r.get(`${base}/events`, wrap(async (req, res) => gameStream(req, res, {

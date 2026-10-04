@@ -45,6 +45,17 @@ export function fitnessAll(nectar, pollen) {
   });
 }
 
+/** The score with own cells weighted (selfW) and smoothed shares (eps): the variants E12 compares. */
+export function fitnessWeighted(nectar, pollen, selfW, eps) {
+  const N = nectar.length;
+  const w = (b, f, k) => (selfW && b === f ? selfW[k] : 1);
+  const P = [...Array(N).keys()].map((f) => nectar.reduce((s, row, b) => s + w(b, f, "poll") * Math.sqrt(pollen[b][f]), 0));
+  const F = nectar.map((row, b) => row.reduce((s, x, f) => s + w(b, f, "forage") * Math.sqrt(x), 0));
+  const tP = P.reduce((a, b) => a + b, 0), tF = F.reduce((a, b) => a + b, 0);
+  const sh = (v, t) => (eps > 0 ? (v + eps) / (t + N * eps) : t > 0 ? v / t : 1 / N);
+  return P.map((_, i) => ({ pollination: P[i], forage: F[i], pollinationShare: sh(P[i], tP), forageShare: sh(F[i], tF), fitness: N * N * sh(P[i], tP) * sh(F[i], tF) }));
+}
+
 /**
  * teams[i] = {
  *   E                         energy per turn of its flower (a constant)
@@ -69,7 +80,13 @@ export function fitnessAll(nectar, pollen) {
 // constancy = "reward": the same, and the pollen a bee delivers also counts toward its own forage (in the
 // cell of the species it delivered to), so a bee is paid for being constant.
 // selfSterile: pollen a flower gives its own team's bee never counts toward its pollination (self-incompatibility).
-export function simulate({ teams, R = 600, feedCost = 10, seed = 1, prior = 30, check = false, constancy = false, selfSterile = false }) {
+// selfW: { poll, forage } weights of the own cells (i, i) in pollination and forage (1 = today; 0 = excluded).
+// eps: smoothed shares, (x + eps) / (Σ + N·eps), in rootsum units (0 = today: 1/N only when Σ = 0).
+// learnLag: rounds after a label first appears anywhere before rival bees can value it (they must infer a new
+// signal family from public data, as an imitator must); until then it is "unknown" (the prior).
+export function simulate({ teams, R = 600, feedCost = 10, seed = 1, prior = 30, check = false, constancy = false, selfSterile = false,
+  selfW = null, eps = 0, learnLag = 0 }) {
+  const wP = (b, g) => (selfW && b === g ? selfW.poll : 1), wF = (b, g) => (selfW && b === g ? selfW.forage : 1);
   const N = teams.length;
   const rand = rng(seed);
   const z = () => Array.from({ length: N }, () => new Array(N).fill(0));
@@ -82,21 +99,20 @@ export function simulate({ teams, R = 600, feedCost = 10, seed = 1, prior = 30, 
   const lastP = new Array(N).fill(null);   // last public percent each flower paid a bee it didn't recognise as its own
   const labelOf = (g, b, r) => (b === g && teams[g].handshake ? `hs${g}` : teams[g].labelAt ? teams[g].labelAt(r) : teams[g].label);
 
-  const fitNow = (i) => N * N * (tP > 0 ? P[i] / tP : 1 / N) * (tF > 0 ? F[i] / tF : 1 / N);
+  const sh = (v, t) => (eps > 0 ? (v + eps) / (t + N * eps) : t > 0 ? v / t : 1 / N);
+  const fitNow = (i) => N * N * sh(P[i], tP) * sh(F[i], tF);
   function fitAfter(i, b, g, x, y0) {
     const y = selfSterile && b === g ? 0 : y0;
-    const dP = Math.sqrt(pollen[b][g] + y) - Math.sqrt(pollen[b][g]);
-    const dF = Math.sqrt(nectar[b][g] + x) - Math.sqrt(nectar[b][g]);
+    const dP = wP(b, g) * (Math.sqrt(pollen[b][g] + y) - Math.sqrt(pollen[b][g]));
+    const dF = wF(b, g) * (Math.sqrt(nectar[b][g] + x) - Math.sqrt(nectar[b][g]));
     const Pi = P[i] + (i === g ? dP : 0), Fi = F[i] + (i === b ? dF : 0);
-    const sh = (v, t) => (t > 0 ? v / t : 1 / N);
     return N * N * sh(Pi, tP + dP) * sh(Fi, tF + dF);
   }
   const pExpected = (g, b) => (b === g && teams[g].handshake ? teams[g].pOwn : lastP[g] ?? prior);
   // Fitness change of team i if only the pollen cell (b, g) grew by y.
   const fitPollen = (i, b, g, y0) => {
     const y = selfSterile && b === g ? 0 : y0;
-    const dP = Math.sqrt(pollen[b][g] + y) - Math.sqrt(pollen[b][g]);
-    const sh = (v, t) => (t > 0 ? v / t : 1 / N);
+    const dP = wP(b, g) * (Math.sqrt(pollen[b][g] + y) - Math.sqrt(pollen[b][g]));
     return N * N * sh(P[i] + (i === g ? dP : 0), tP + dP) * sh(F[i], tF) - fitNow(i);
   };
   const delta = (b, g) => {
@@ -127,11 +143,13 @@ export function simulate({ teams, R = 600, feedCost = 10, seed = 1, prior = 30, 
 
   // What public history has taught every bee: which flowers have shown each label (identities are known only
   // for finished turns). A label never seen before is unknown: it could be any rival flower, at the prior.
-  const seen = new Map();
-  const learn = (l, g) => { if (!seen.has(l)) seen.set(l, new Set()); seen.get(l).add(g); };
+  const seen = new Map(), born = new Map();
+  let now = 0;
+  const learn = (l, g) => { if (!seen.has(l)) { seen.set(l, new Set()); born.set(l, now); } seen.get(l).add(g); };
+  const known = (l) => seen.has(l) && now - born.get(l) >= learnLag;
   function valueOf(b, l) {
     // A bee with a handshake knows its own flower would have shown it the handshake, so it isn't this one.
-    const s = [...(seen.get(l) || [])].filter((h) => !(h === b && teams[b].handshake && l !== `hs${b}`));
+    const s = [...(known(l) || l === `hs${b}` ? seen.get(l) || [] : [])].filter((h) => !(h === b && teams[b].handshake && l !== `hs${b}`));
     if (s.length) return s.reduce((sum, h) => sum + delta(b, h), 0) / s.length;
     let sum = 0;
     for (let h = 0; h < N; h++) if (h !== b) { const E = teams[h].E, p = prior / 100; sum += fitAfter(b, b, h, p * E, (1 - p) * E) - fitNow(b); }
@@ -171,6 +189,7 @@ export function simulate({ teams, R = 600, feedCost = 10, seed = 1, prior = 30, 
   }
 
   for (let r = 1; r <= R; r++) {
+    now = r;
     const turns = [];
     for (let b = 0; b < N; b++) {
       if (sitOut[b] > 0) { sitOut[b]--; continue; }
@@ -185,20 +204,20 @@ export function simulate({ teams, R = 600, feedCost = 10, seed = 1, prior = 30, 
       const p = own ? teams[g].pOwn : teams[g].pRival, E = teams[g].E;
       const x = (p / 100) * E, y = E - x;
       const bonus = constancy === "reward" && carried[b] && carried[b].g === g ? carried[b].y : 0;
-      const dF = Math.sqrt(nectar[b][g] + x + bonus) - Math.sqrt(nectar[b][g]);
+      const dF = wF(b, g) * (Math.sqrt(nectar[b][g] + x + bonus) - Math.sqrt(nectar[b][g]));
       F[b] += dF; tF += dF;
       feeds[b][g]++; nectar[b][g] += x + bonus; given[b][g] += y;
       // Pollen that counts: all of it, or (constancy) what the bee carried here from the same species.
       let [cb, cg, cy] = !constancy ? [b, g, y] : carried[b] && carried[b].g === g ? [b, g, carried[b].y] : [b, g, 0];
       if (constancy) carried[b] = { g, y };
       if (selfSterile && cb === cg) cy = 0;
-      const dP = Math.sqrt(pollen[cb][cg] + cy) - Math.sqrt(pollen[cb][cg]);
+      const dP = wP(cb, cg) * (Math.sqrt(pollen[cb][cg] + cy) - Math.sqrt(pollen[cb][cg]));
       P[cg] += dP; tP += dP; pollen[cb][cg] += cy;
       if (!own) lastP[g] = p;
       sitOut[b] = feedCost;
     });
   }
-  const scores = fitnessAll(nectar, pollen);
+  const scores = selfW || eps ? fitnessWeighted(nectar, pollen, selfW, eps) : fitnessAll(nectar, pollen);
   if (check && realScore) {
     const real = realScore(teams.map((_, i) => i), feeds, nectar, pollen);
     real.forEach((x, i) => { if (Math.abs(x.fitness - scores[i].fitness) > 1e-9 * Math.max(1, x.fitness)) throw new Error(`score mismatch team ${i}: ${x.fitness} vs ${scores[i].fitness}`); });
@@ -207,14 +226,14 @@ export function simulate({ teams, R = 600, feedCost = 10, seed = 1, prior = 30, 
 }
 
 /** Each team's mean results over `seeds` games. */
-export function meanScores(teams, { R = 600, seeds = 20, feedCost = 10, seed0 = 1, prior = 30, constancy = false, selfSterile = false } = {}) {
+export function meanScores(teams, { R = 600, seeds = 20, feedCost = 10, seed0 = 1, prior = 30, constancy = false, selfSterile = false, selfW = null, eps = 0, learnLag = 0 } = {}) {
   const N = teams.length;
-  const acc = Array.from({ length: N }, () => ({ fitness: 0, pollinationShare: 0, forageShare: 0, feeds: 0, selfFeeds: 0, rivalFeedRate: 0, fedByRivals: 0, nectar: 0, pollen: 0, delivered: 0, rivalDelivered: 0 }));
+  const acc = Array.from({ length: N }, () => ({ fitness: 0, fitnessSq: 0, pollinationShare: 0, forageShare: 0, feeds: 0, selfFeeds: 0, rivalFeedRate: 0, fedByRivals: 0, nectar: 0, pollen: 0, delivered: 0, rivalDelivered: 0 }));
   for (let s = 0; s < seeds; s++) {
-    const out = simulate({ teams, R, feedCost, seed: seed0 + s, prior, check: s === 0 && !selfSterile && !constancy, constancy, selfSterile });
+    const out = simulate({ teams, R, feedCost, seed: seed0 + s, prior, check: s === 0 && !selfSterile && !constancy && !selfW && !eps, constancy, selfSterile, selfW, eps, learnLag });
     out.scores.forEach((x, i) => {
       const a = acc[i];
-      a.fitness += x.fitness / seeds; a.pollinationShare += x.pollinationShare / seeds; a.forageShare += x.forageShare / seeds;
+      a.fitness += x.fitness / seeds; a.fitnessSq += (x.fitness * x.fitness) / seeds; a.pollinationShare += x.pollinationShare / seeds; a.forageShare += x.forageShare / seeds;
       a.feeds += out.feeds[i].reduce((p, c) => p + c, 0) / seeds;
       a.selfFeeds += out.feeds[i][i] / seeds;
       a.nectar += out.nectar[i].reduce((p, c) => p + c, 0) / seeds;

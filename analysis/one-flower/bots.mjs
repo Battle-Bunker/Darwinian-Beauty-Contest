@@ -20,7 +20,7 @@ const handshakeFlower = (key, pOwn) => `
  * kind: "rule" (answers c·K mod M), "mimic" (reads the ledger, finds the rival flower with the best mean percent
  * on rival feeds, learns its K and answers with it), "pow" (hashcash until `powMs` of CPU, then the rule).
  */
-export function flowerCode({ K, pct, kind = "rule", handshake = null, pOwn = 50, powMs = 125 }) {
+export function flowerCode({ K, pct, kind = "rule", handshake = null, pOwn = 50, powMs = 125, rotate = 20, seed = "rot" }) {
   const head = `import hashlib, time\nM = ${M}\n`;
   const hs = handshake ? handshakeFlower(handshake, pOwn) : "";
   if (kind === "rule") return `${head}def flower(c, ledger):${hs}\n    return c * ${K} % M, ${pct}\n`;
@@ -31,6 +31,11 @@ export function flowerCode({ K, pct, kind = "rule", handshake = null, pOwn = 50,
         hashlib.sha256(b"%d:%d" % (c, k)).digest()
         k += 1
     return c * ${K} % M, ${pct}
+`;
+  if (kind === "rotating") return `${head}def flower(c, ledger):${hs}
+    rnd = (ledger[-1]["round"] if ledger else 0) + 1
+    k = int(hashlib.sha256(b"${seed}%d" % (rnd // ${rotate})).hexdigest()[:6], 16) % (M - 1) + 1
+    return c * k % M, ${pct}
 `;
   if (kind === "mimic") return `${head}def flower(c, ledger):${hs}
     me = GAME["team"]

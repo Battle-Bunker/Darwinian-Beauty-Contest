@@ -4,7 +4,8 @@ import { parseType, typeToString } from "./types.js";
 // Budgets per program kind, in weighted syntax-tree nodes of the minified program (vendor/measure.js).
 //   flower: small (1,100 nodes) and slow to change (220 a minute), with the whole 150 ms flower window.
 //           Its size cap is also the "size cap" of the energy formula: E = (cap − size) × max(0, ms − CPU ms).
-//   bee:    room for detector repertoires (11,000 nodes, 2,200 a minute), and 50 ms to decide.
+//   bee:    room for detector repertoires (11,000 nodes, 2,200 a minute), 50 ms to decide, and a MEMORY of
+//           at most `memory` bytes of canonical JSON: the only thing that carries over between its calls.
 // Time: a round is one turn for every bee, flower.ms (the flower window: every response is delivered then)
 // + bee.ms (the bees' decision window) = 200 ms of game time.
 // Change budget accrues continuously while the game runs, `perMinute` nodes a minute, and banks up to
@@ -12,7 +13,7 @@ import { parseType, typeToString } from "./types.js";
 // program goes live at once. Before the game starts, writing programs is free.
 const BUDGETS = {
   flower: { size: 1100, perMinute: 220, cap: 220, ms: 150 },
-  bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 50 },
+  bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 50, memory: 1024 },
 };
 
 export const KINDS = ["flower", "bee"];
@@ -61,6 +62,7 @@ export function normalizeConfig(input = {}, base = DEFAULT_CONFIG) {
       cap: int(b.cap, 0, 10000000, d.cap),
       ms: int(b.ms, 1, 10000, d.ms),
     };
+    if (kind === "bee") out.budgets.bee.memory = int(b.memory, 2, 1000000, d.memory ?? BUDGETS.bee.memory);
   }
   return out;
 }

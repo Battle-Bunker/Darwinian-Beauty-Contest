@@ -44,27 +44,25 @@ function python(cT, rT, r) {
   const [a, b, salt, pct] = [2 * r(1, 48) + 1, r(1, 999), r(1000, 9999), r(10, 90)];
   const flower = intInt
     ? `# A flower: a fixed rule, and a fixed share of the energy for a bee that feeds.
-def flower(challenge, ledger):
+def flower(challenge):
     return (challenge * ${a} + ${b}) % 1000, ${pct}
 `
     : `# A flower: a fixed rule, and a fixed share of the energy for a bee that feeds.
 import hashlib, json
 
-def flower(challenge, ledger):
+def flower(challenge):
     h = hashlib.sha256(("flower${salt}" + json.dumps(challenge)).encode()).hexdigest()
     return ${pyFromHex(rT)}, ${pct}
 `;
-  const bee = `# A bee: always asks the same question, and feeds every other turn.
+  const bee = `# A bee: always asks the same question, and feeds every other turn (it counts them in MEMORY).
 QUESTION = ${q}
-turns = 0
 
-def first(ledger):
+def first():
     return QUESTION
 
-def decide(challenge, response, ledger):
-    global turns
-    turns += 1
-    return ("feed" if turns % 2 else "leave"), QUESTION
+def decide(challenge, response):
+    MEMORY["turns"] = MEMORY.get("turns", 0) + 1
+    return ("feed" if MEMORY["turns"] % 2 else "leave"), QUESTION
 `;
   return { flower, bee };
 }
@@ -87,29 +85,28 @@ function hex(s: string): string {
 `;
   const flower = intInt
     ? `// A flower: a fixed rule, and a fixed share of the energy for a bee that feeds.
-function flower(challenge: number, ledger: readonly unknown[]): [number, number] {
+function flower(challenge: number): [number, number] {
   return [(((challenge * ${a} + ${b}) % 1000) + 1000) % 1000, ${pct}];
 }
 `
     : `// A flower: a fixed rule, and a fixed share of the energy for a bee that feeds.
 ${hash}
-function flower(challenge: ${C}, ledger: readonly unknown[]): [${R}, number] {
+function flower(challenge: ${C}): [${R}, number] {
   const h = hex("flower${salt}" + JSON.stringify(challenge));
   return [${tsFromHex(rT)}, ${pct}];
 }
 `;
-  const bee = `// A bee: always asks the same question, and feeds every other turn.
+  const bee = `// A bee: always asks the same question, and feeds every other turn (it counts them in MEMORY).
 type Challenge = ${C};
 const QUESTION: Challenge = ${q};
-let turns = 0;
 
-function first(ledger: readonly unknown[]): Challenge {
+function first(): Challenge {
   return QUESTION;
 }
 
-function decide(challenge: Challenge, response: ${R} | null, ledger: readonly unknown[]): ["feed" | "leave", Challenge] {
-  turns += 1;
-  return [turns % 2 ? "feed" : "leave", QUESTION];
+function decide(challenge: Challenge, response: ${R} | null): ["feed" | "leave", Challenge] {
+  MEMORY.turns = (MEMORY.turns ?? 0) + 1;
+  return [MEMORY.turns % 2 ? "feed" : "leave", QUESTION];
 }
 `;
   return { flower, bee };

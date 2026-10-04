@@ -1,38 +1,41 @@
 // The garden: one continuous stream of turns. Pure with respect to the database: programs go in (and can
-// be replaced at any moment), actions and the ledgers come out.
+// be replaced at any moment), actions, the ledgers and the bees' MEMORY come out.
 //
-// Every team has one flower and one bee. Time runs in rounds, in lockstep: a round lasts exactly roundMs
-// (flower.ms + bee.ms = 150 + 50 = 200 ms) of game time; game time is rounds × roundMs. A live game paces
-// rounds to real time (each lasts at least roundMs of wall time, longer if the machine is short of cores:
-// game time stays virtual, so that's still fair). Every bee that isn't feeding gets one TURN per round:
-//   0 ms   The last round's turns are delivered to every program's ledger. Each bee with a challenge
+// Every team has one flower species and one bee. Time runs in rounds, in lockstep: a round lasts exactly
+// roundMs (flower.ms + bee.ms = 150 + 50 = 200 ms) of game time; game time is rounds × roundMs. A live game
+// paces rounds to real time (each lasts at least roundMs of wall time, longer if the machine is short of
+// cores: game time stays virtual, so that's still fair). Every bee that isn't feeding gets one TURN per round:
+//   0 ms   The last round's turns are delivered to every program's HISTORY. Each bee with a challenge
 //          QUEUED (and no call in flight) takes its turn; one with nothing queued loses it. The engine
-//          draws a flower uniformly at random among all N, the bee's own included (a public `arrive`,
-//          flushed at once), pins both versions, and calls flower(challenge, ledger), which has
+//          draws a flower uniformly at random among all N species, the bee's own included (a public
+//          `arrive`, flushed at once), pins both versions, and calls flower(challenge), which has
 //          flower.ms to return [response, percent]. The runner reports the CPU time of the call;
 //          excess energy E = (flower size cap − the flower's size) × max(0, flower.ms − CPU ms). A late
 //          answer, an error or a malformed return: response null, E = 0.
 //   150 ms Every response is delivered at once, however fast its flower was. Each bee that took a turn
-//          is called: decide(challenge, response, ledger), with bee.ms to return ["feed" | "leave", next].
-//   200 ms The turn is settled. A feed: nectar = percent/100 × E to the bee, (1 − percent/100) × E to the
-//          flower team's pollen, and the bee sits out feedCost rounds. No feed: nobody gets anything.
+//          is called: decide(challenge, response), with bee.ms to return ["feed" | "leave", next].
+//   200 ms The turn is settled. A feed: the flower gives the bee nectar = percent/100 × E and pollen =
+//          (1 − percent/100) × E, and the bee sits out feedCost rounds. No feed: nothing is given.
 //          `next` is queued for the bee's next turn.
 // A late reply doesn't stop the round: at the deadline the turn is settled without it (never a feed), but
 // the engine keeps listening (the call runs on, up to a hard limit of 2 s). If the late reply is
-// ["leave", c], c is queued; anything else gets the bee asked first(ledger) for a challenge, outside the
-// round flow (as does any reply that gives no usable next challenge). At most one such request is in
-// flight per bee, and at most one new one a round.
+// ["leave", c], c is queued; anything else gets the bee asked first() for a challenge, outside the round
+// flow (as does any reply that gives no usable next challenge). At most one such request is in flight per
+// bee, and at most one new one a round.
 //
-// The ledger: each team's programs see every finished turn (the public part) plus their own team's
-// private details (entryFor). A round's turns reach them together, at the start of the next round,
+// Every call runs fresh: flowers and bees alike are stateless, except for a bee's MEMORY, a JSON value
+// the engine keeps (canonical JSON, at most budgets.bee.memory bytes) and sends with every call; the reply
+// carries it back and the engine saves it if it fits (else keeps the old one). A new bee version starts
+// with {}; a crash or a restarted process keeps it.
+//
+// HISTORY: each team's programs see every finished turn (the `turns` records of server/query/schema.js),
+// masked for the team (entryFor). A round's turns reach them together, at the start of the next round,
 // incrementally and outside every timed call, so neither side learns its counterpart until the turn is
-// over, and a growing ledger never costs a program time or energy.
+// over, and a growing history never costs a program time or energy until it queries it.
 //
-// Flowers are stateless: every call runs the flower afresh. A bee keeps its state for as long as that
-// version of it plays; new code (or a crash) starts it afresh. A turn keeps the program versions in effect
-// at its arrival until it is settled: a new flower answers turns that start after it went live; a new bee
-// takes over when its turn in progress is settled (or at once between turns), dropping whatever the old
-// bee had queued, and is asked first(ledger) at once.
+// A turn keeps the program versions in effect at its arrival until it is settled: a new flower answers
+// turns that start after it went live; a new bee takes over when its turn in progress is settled (or at
+// once between turns), dropping whatever the old bee had queued, and is asked first() at once.
 // Every program runs in its minified form (vendor/measure.js): the same text its size is measured on, so
 // names, which minifying shortens, can't hide data.
 import os from "node:os";
@@ -148,7 +151,7 @@ export class FlowerPool {
       this.pending[i]--;
     }
   }
-  /** New ledger entries for every live process (a dead one's replacement starts with the whole ledger). */
+  /** New HISTORY records for every live process (a dead one's replacement starts with the whole history). */
   deliver(entries) {
     for (const p of this.procs) if (!p.dead) p.sync(entries);
   }
@@ -734,11 +737,17 @@ export async function tryFlower({ config, code, challenges, ledger = [] }) {
   }
 }
 
-/** A bee foraging a garden of just its own team's flower for `rounds` rounds, unpaced (the "try it" tool). */
-export async function tryBee({ config, programs, rounds = 300 }) {
-  const garden = new Garden({ config, teams: 1, endMs: Infinity, maxRounds: rounds, paced: false });
+/**
+ * A bee foraging a garden of just its own team's flower for `rounds` rounds, unpaced (the "try it" tool).
+ * `memory`: the test bee's MEMORY to start with (a local simulation; it never touches a game's bee).
+ */
+export async function tryBee({ config, programs, rounds = 300, memory = {} }) {
+  const memories = [{ version: 1, memory: canonicalJson(memory ?? {}), error: null }];
+  const garden = new Garden({ config, teams: 1, endMs: Infinity, maxRounds: rounds, paced: false, memories, game: "try" });
   await Promise.all(KINDS.map((k) => garden.setProgram(0, k, programs[k], 1)));
   await garden.run();
   const { actions, problems, feeds, nectar, pollen } = garden.drain();
-  return { actions, problems, feeds: feeds[0][0], nectar: nectar[0][0], pollen: pollen[0][0], rounds: garden.rounds };
+  const m = garden.memoryOf(0);
+  return { actions, problems, feeds: feeds[0][0], nectar: nectar[0][0], pollen: pollen[0][0], rounds: garden.rounds,
+    memory: { value: JSON.parse(m.memory), bytes: m.bytes, cap: config.budgets.bee.memory, error: m.error } };
 }

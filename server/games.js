@@ -7,8 +7,11 @@ import { DEFAULT_CONFIG, KINDS, available, normalizeConfig } from "./lib/gameCon
 import { changes, size } from "./lib/measure.js";
 import { score, zeroLedger } from "./lib/scoring.js";
 import { programInterface } from "./lib/interface.js";
-import { entryFor, tryBee, tryFlower } from "./engine.js";
+import { canonicalJson, tryBee, tryFlower } from "./engine.js";
 import { exampleValue, parseType } from "./lib/types.js";
+import { mask } from "./query/mask.js";
+import { runQuery } from "./query/sql.js";
+import { SCHEMA } from "./query/schema.js";
 
 export class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -234,7 +237,7 @@ async function measure(client, g, team, kind, code) {
   else {
     const missing = entryPoints(kind).filter((name) => !defines(g.config.language, name, minified));
     if (missing.length) {
-      errors.push(kind === "bee" ? "A bee must define first(ledger) and decide(challenge, response, ledger)" : "A flower must define flower(challenge, ledger)");
+      errors.push(kind === "bee" ? "A bee must define first() and decide(challenge, response)" : "A flower must define flower(challenge)");
     }
   }
   if (measured > budget.size) {
@@ -309,7 +312,7 @@ export async function submitProgram(game, user, kind, code) {
 }
 
 /** Try a program without submitting it. A flower answers challenges; a bee forages a garden of your own flower. */
-export async function tryProgram(game, user, { kind, code, challenges, ledger, flower, rounds } = {}) {
+export async function tryProgram(game, user, { kind, code, challenges, ledger, flower, rounds, memory } = {}) {
   const team = await myTeam(game.id, user.id);
   if (!team) fail(403, "Join a team first");
   if (!KINDS.includes(kind) || typeof code !== "string") fail(400, "kind (flower or bee) and code required");
@@ -321,7 +324,13 @@ export async function tryProgram(game, user, { kind, code, challenges, ledger, f
   const own = typeof flower === "string" ? flower : (await latestProgram({ query }, game.id, team.id, "flower"))?.code;
   if (!own) fail(409, "Your bee needs a flower to visit: write your flower first (or pass one as `flower`)");
   const n = Math.max(1, Math.min(1000, Number(rounds) || 300));
-  const result = await tryBee({ config: cfg, programs: { flower: own, bee: code }, rounds: n });
+  // The test bee's MEMORY to start with: a local simulation only (a game's bee memory has no write path).
+  if (memory !== undefined && memory !== null) {
+    let bytes;
+    try { bytes = Buffer.byteLength(canonicalJson(memory)); } catch { fail(400, "memory must be JSON"); }
+    if (bytes > cfg.budgets.bee.memory) fail(400, `memory is ${bytes} bytes, over the cap of ${cfg.budgets.bee.memory}`);
+  }
+  const result = await tryBee({ config: cfg, programs: { flower: own, bee: code }, rounds: n, memory: memory ?? {} });
   return { ...result, actions: result.actions.map((a) => ({ ...a, bee: team.id, flower: team.id })) };
 }
 
@@ -359,6 +368,7 @@ export async function viewGame(room, game, user) {
     `SELECT p.*, u.name AS submitted_by_name FROM programs p JOIN users u ON u.id = p.submitted_by
       WHERE p.game_id = $1 ORDER BY p.team_id, p.kind, p.version`, [g.id])).rows;
   const banks = (await query("SELECT * FROM banks WHERE game_id = $1", [g.id])).rows;
+  const memories = (await query("SELECT * FROM bee_memories WHERE game_id = $1", [g.id])).rows;
   const participants = g.participants || null;
   const indexOf = (teamId) => (participants ? participants.indexOf(teamId) : -1);
   const canSeeCode = (teamId) => revealed || mine?.id === teamId;
@@ -371,6 +381,10 @@ export async function viewGame(room, game, user) {
   });
   const programsOf = (teamId) => Object.fromEntries(KINDS.map((k) => [k, progs.filter((p) => p.team_id === teamId && p.kind === k).map(versionView)]));
   const banksOf = (teamId) => Object.fromEntries(banks.filter((b) => b.team_id === teamId).map((b) => [b.kind, { bank: b.bank, atMs: b.at_ms }]));
+  const memoryOf = (teamId) => {
+    const m = memories.find((x) => x.team_id === teamId);
+    return { value: m ? JSON.parse(m.memory) : {}, bytes: m ? m.bytes : 2, cap: cfg.budgets.bee.memory, version: m?.bee_version ?? null, error: m?.error ?? null };
+  };
 
   return {
     room: { id: room.id, shortId: shortId(room), url: `/room/${shortId(room)}`, isOwner },
@@ -392,6 +406,8 @@ export async function viewGame(room, game, user) {
       // during play, everyone's once it's over. Code only where you may see it.
       programs: canSeeChanges(t.id) ? programsOf(t.id) : null,
       banks: canSeeChanges(t.id) ? banksOf(t.id) : null,
+      // the bee's MEMORY (read only): your own team's during play, everyone's once it's over
+      memory: participants?.includes(t.id) && canSeeChanges(t.id) ? memoryOf(t.id) : null,
     })),
     myTeam: mine ? { id: mine.id, name: mine.name, joinCode: mine.join_code, index: indexOf(mine.id) >= 0 ? indexOf(mine.id) : null } : null,
     interface: programInterface(cfg),
@@ -460,7 +476,7 @@ export function actionView(a, me, over, revealed) {
  * fields; once the game is over, everyone gets every field.
  */
 export async function viewLedger(game, user, { after = 0, limit = 1000 } = {}) {
-  const g = (await query("SELECT status, participants, last_seq, round FROM games WHERE id = $1", [game.id])).rows[0];
+  const g = (await query("SELECT * FROM games WHERE id = $1", [game.id])).rows[0];
   const participants = g.participants || null;
   const mine = await myTeam(game.id, user?.id);
   const team = mine && participants && participants.includes(mine.id) ? participants.indexOf(mine.id) : null;
@@ -471,23 +487,32 @@ export async function viewLedger(game, user, { after = 0, limit = 1000 } = {}) {
     [game.id, Math.max(0, Number(after) || 0), n]);
   const idx = new Map(participants.map((id, i) => [id, i]));
   const over = g.status === "finished";
+  const opts = { game: shortId(g), flowerMs: g.config.budgets.flower.ms };
   return {
     participants, team, lastSeq: g.last_seq, round: g.round, status: g.status,
-    entries: rows.map((a) => ({ seq: a.seq, ...ledgerEntry(turnOf(a, idx), over ? null : team ?? -1) })),
+    entries: rows.map((a) => ({ seq: a.seq, ...mask("turns", turnOf(a, idx, opts), team, { over }) })),
   };
 }
 
-/** A stored turn end as the engine's finished turn (team indices). */
-export const turnOf = (a, idx) => ({
-  round: a.round, bee: idx.get(a.bee_team), flower: idx.get(a.flower_team), c: a.c, r: a.r, fed: a.action === "feed",
-  nectar: a.nectar, percent: a.percent, energy: a.energy, ms: a.cpu_ms, pollen: a.pollen,
+/** A stored turn end as a `turns` record of the query schema (team indices), unmasked. */
+export const turnOf = (a, idx, { game, flowerMs }) => ({
+  game, round: Number(a.round), atMs: Number(a.at_ms) - flowerMs, turn: a.turn, bee: idx.get(a.bee_team), flower: idx.get(a.flower_team),
+  challenge: a.c, response: a.r, fed: a.action === "feed", percent: a.percent, energy: a.energy, nectar: a.nectar, pollen: a.pollen ?? 0,
+  ms: a.cpu_ms, flowerVersion: a.flower_version, flowerError: a.flower_error, beeMs: a.bee_ms, beeVersion: a.bee_version, beeError: a.bee_error,
 });
 
-/** entryFor, or every field (ti === null: the game is over). */
-export function ledgerEntry(t, ti) {
-  if (ti !== null) return entryFor(t, ti);
-  return { round: t.round, bee: t.bee, flower: t.flower, challenge: t.c, response: t.r, fed: t.fed, percent: t.percent, energy: t.energy,
-    nectar: t.fed ? t.nectar : null, pollen: t.fed ? t.pollen : 0, ms: t.ms };
+// ---------- querying history (docs/QUERY.md) ----------
+
+/** A query over one game, as the viewer may see it. */
+export async function queryGame(game, user, ast) {
+  return runQuery(ast, { gameId: game.id, userId: user?.id ?? null });
 }
+
+/** A query across a room's finished games (fully revealed; scopes mean the viewer's team in each). */
+export async function queryRoom(room, user, ast) {
+  return runQuery(ast, { roomId: room.id, userId: user?.id ?? null });
+}
+
+export const querySchema = () => SCHEMA;
 
 export { DEFAULT_CONFIG };

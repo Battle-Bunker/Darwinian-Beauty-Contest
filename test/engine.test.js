@@ -1,24 +1,26 @@
-// The garden (server/engine.js), one flower per team: lockstep rounds of one turn per bee, queued
+// The garden (server/engine.js), one flower species per team: lockstep rounds of one turn per bee, queued
 // challenges, flowers drawn at random, [response, percent] within 150 ms and excess energy from CPU time,
 // responses delivered at 150 ms, the bees' 50 ms decision deadline with late replies and re-requests, the
-// nectar/pollen split and feedCost, the team ledger delivered between turns, stateless flowers, bees that
-// keep their state until replaced, versions pinned per turn, pacing and the game clock.
+// nectar/pollen split and feedCost, HISTORY delivered between turns, stateless programs, versions pinned per
+// turn, pacing and the game clock. Bee MEMORY has its own file (memory.test.js).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import crypto from "node:crypto";
 import { Garden, entryFor, tryBee, tryFlower } from "../server/engine.js";
 import { starters } from "./fixtures/programs.js";
 import { play } from "./fixtures/garden.js";
 import { DEFAULT_CONFIG, available, excessEnergy, normalizeConfig, roundMs } from "../server/lib/gameConfig.js";
 import { size } from "../server/lib/measure.js";
+import { SCHEMA } from "../server/query/schema.js";
 
 const ends = (actions) => actions.filter((a) => a.action === "feed" || a.action === "leave");
 const byBee = (actions, b) => actions.filter((a) => a.bee === b);
 const arrivals = (actions, b) => byBee(actions, b).filter((a) => a.action === "arrive");
 const tooSlow = (a) => a.action === "leave" && /too slow/.test(a.beeError || "");
 const busy = (ms) => `t = time.perf_counter()\n    while time.perf_counter() - t < ${ms / 1000}:\n        pass\n`;
-const flower = (expr, pct = 50) => `def flower(c, ledger):\n    return ${expr}, ${pct}\n`;
-const leaver = (next = "1") => `def first(ledger):\n    return 1\ndef decide(c, r, ledger):\n    return "leave", ${next}\n`;
+const flower = (expr, pct = 50) => `def flower(c):\n    return ${expr}, ${pct}\n`;
+const leaver = (next = "1") => `def first():\n    return 1\ndef decide(c, r):\n    return "leave", ${next}\n`;
+// A Python bee that counts its decide() calls in MEMORY: `n` is the call's number.
+const counting = (body, firstBody = "return 1") => `def first():\n    ${firstBody}\ndef decide(c, r):\n    n = MEMORY["n"] = MEMORY.get("n", 0) + 1\n${body}`;
 const close = (a, b, eps = 1e-6) => assert.ok(Math.abs(a - b) <= eps * Math.max(1, Math.abs(b)), `${a} != ${b}`);
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 // Stop the garden once done(actions so far) holds (or it runs out of rounds).
@@ -27,20 +29,20 @@ const stopWhen = (done) => async (garden) => {
   await garden.stop();
 };
 
-test("defaults: a 1,100-node flower with 150 ms, an 11,000-node bee with 50 ms, 200 ms rounds, feedCost 10", () => {
+test("defaults: a 1,100-node flower with 150 ms, an 11,000-node bee with 50 ms and 1,024 bytes of memory, 200 ms rounds, feedCost 10", () => {
   const { flower: f, bee } = DEFAULT_CONFIG.budgets;
   assert.deepEqual(f, { size: 1100, perMinute: 220, cap: 220, ms: 150 });
-  assert.deepEqual(bee, { size: 11000, perMinute: 2200, cap: 2200, ms: 50 });
+  assert.deepEqual(bee, { size: 11000, perMinute: 2200, cap: 2200, ms: 50, memory: 1024 });
   assert.equal(roundMs(DEFAULT_CONFIG), 200);
   assert.equal(DEFAULT_CONFIG.feedCost, 10);
   assert.equal(DEFAULT_CONFIG.minutes, 2);
   // all configurable
-  const c = normalizeConfig({ feedCost: 3, budgets: { flower: { size: 900, perMinute: 100, cap: 50, ms: 120 }, bee: { size: 5000, ms: 30 } } });
+  const c = normalizeConfig({ feedCost: 3, budgets: { flower: { size: 900, perMinute: 100, cap: 50, ms: 120 }, bee: { size: 5000, ms: 30, memory: 64 } } });
   assert.deepEqual(c.budgets.flower, { size: 900, perMinute: 100, cap: 50, ms: 120 });
-  assert.deepEqual(c.budgets.bee, { size: 5000, perMinute: 2200, cap: 2200, ms: 30 });
+  assert.deepEqual(c.budgets.bee, { size: 5000, perMinute: 2200, cap: 2200, ms: 30, memory: 64 });
   assert.equal(roundMs(c), 150);
   assert.equal(c.feedCost, 3);
-  assert.ok(!("cosmos" in c.budgets) && !("orchid" in c.budgets));
+  assert.ok(!("cosmos" in c.budgets) && !("orchid" in c.budgets) && !("memory" in c.budgets.flower));
 });
 
 test("excess energy: E = (size cap − size) × max(0, 150 − CPU ms)", () => {
@@ -75,6 +77,8 @@ for (const language of ["python", "typescript"]) {
         assert.deepEqual([e.round, e.turn, e.flower], [a.round, a.turn, a.flower], "a turn ends in the round it began, at the same flower");
         expect = a.round + 1 + (e.action === "feed" ? config.feedCost : 0);
       }
+      // The bee fed every other turn, counting its turns in MEMORY.
+      assert.deepEqual(end.map((a) => a.action), end.map((_, i) => (i % 2 ? "leave" : "feed")));
     }
     for (const a of out.actions) assert.equal(a.atMs, (a.round - 1) * 200 + (a.action === "arrive" ? 0 : 150), JSON.stringify(a));
     const seqs = out.actions.map((a) => a.seq);
@@ -84,6 +88,10 @@ for (const language of ["python", "typescript"]) {
     assert.equal(out.feeds.flat().reduce((x, y) => x + y, 0), feeds.length);
     close(out.nectar.flat().reduce((x, y) => x + y, 0), feeds.reduce((s, a) => s + a.nectar, 0));
     close(out.pollen.flat().reduce((x, y) => x + y, 0), feeds.reduce((s, a) => s + a.pollen, 0));
+    // The history is in natural order: by round, then bee.
+    const keys = out.history.map((t) => t.round * 100 + t.bee);
+    assert.deepEqual(keys, [...keys].sort((x, y) => x - y));
+    assert.equal(out.history.length, ends(out.actions).length);
   });
 }
 
@@ -104,24 +112,24 @@ test("every turn draws a flower uniformly at random among all N, the bee's own i
 test("energy is counted in CPU time: a busy flower spends it, a sleeping one doesn't; late or malformed answers give none", async () => {
   const config = normalizeConfig({ responseType: "any" });
   const cases = {
-    busy60: `import time\ndef flower(c, ledger):\n    ${busy(60)}    return c, 40\n`,
-    sleep60: `import time\ndef flower(c, ledger):\n    time.sleep(0.06)\n    return c, 40\n`,
-    late: `import time\ndef flower(c, ledger):\n    ${busy(200)}    return c, 40\n`,
-    bare: `def flower(c, ledger):\n    return c\n`,
-    badPercent: `def flower(c, ledger):\n    return c, "half"\n`,
-    nanPercent: `def flower(c, ledger):\n    return c, float("nan")\n`,
-    crash: `def flower(c, ledger):\n    return 1 / 0, 40\n`,
-    high: `def flower(c, ledger):\n    return c, 250\n`,
-    low: `def flower(c, ledger):\n    return c, -3.5\n`,
-    oneArg: `def flower(c):\n    return [c, c], 12.5\n`,
+    busy60: `import time\ndef flower(c):\n    ${busy(60)}    return c, 40\n`,
+    sleep60: `import time\ndef flower(c):\n    time.sleep(0.06)\n    return c, 40\n`,
+    late: `import time\ndef flower(c):\n    ${busy(200)}    return c, 40\n`,
+    bare: `def flower(c):\n    return c\n`,
+    badPercent: `def flower(c):\n    return c, "half"\n`,
+    nanPercent: `def flower(c):\n    return c, float("nan")\n`,
+    crash: `def flower(c):\n    return 1 / 0, 40\n`,
+    high: `def flower(c):\n    return c, 250\n`,
+    low: `def flower(c):\n    return c, -3.5\n`,
+    list: `def flower(c):\n    return [c, c], 12.5\n`,
   };
-  const bee = `def first(ledger):\n    return 7\ndef decide(c, r, ledger):\n    return "feed", 7\n`;
+  const bee = `def first():\n    return 7\ndef decide(c, r):\n    return "feed", 7\n`;
   const got = {};
   for (const [name, code] of Object.entries(cases)) { // one at a time, so a busy flower has a core to itself
     const out = await play(normalizeConfig({ responseType: "any", feedCost: 0 }), [{ flower: code, bee }], 3);
     got[name] = { turns: ends(out.actions), size: (await size("python", code)).size, problems: out.problems };
   }
-  for (const name of ["busy60", "sleep60", "high", "low", "oneArg"]) {
+  for (const name of ["busy60", "sleep60", "high", "low", "list"]) {
     const { turns, size: s } = got[name];
     assert.equal(turns.length, 3, name);
     for (const t of turns) {
@@ -136,7 +144,7 @@ test("energy is counted in CPU time: a busy flower spends it, a sleeping one doe
   assert.ok(got.sleep60.turns[0].energy > got.busy60.turns[0].energy * 1.4, "sleeping costs no energy, working does");
   assert.deepEqual(got.high.turns.map((t) => t.percent), [100, 100, 100], "percent is clamped to 0–100");
   assert.deepEqual(got.low.turns.map((t) => t.percent), [0, 0, 0]);
-  assert.deepEqual(got.oneArg.turns.map((t) => [t.r, t.percent]), [[[7, 7], 12.5], [[7, 7], 12.5], [[7, 7], 12.5]], "the ledger argument is optional");
+  assert.deepEqual(got.list.turns.map((t) => [t.r, t.percent]), [[[7, 7], 12.5], [[7, 7], 12.5], [[7, 7], 12.5]]);
   for (const [name, pattern] of [["late", /Timeout/], ["bare", /must return \[response, percent\]/], ["badPercent", /percent must be a number/],
     ["nanPercent", /not plain data|percent/], ["crash", /ZeroDivisionError/]]) {
     const { turns, problems } = got[name];
@@ -157,8 +165,8 @@ test("energy is counted in CPU time: a busy flower spends it, a sleeping one doe
 
 test("typescript: energy from CPU time, and a late flower gives none", async () => {
   const config = normalizeConfig({ language: "typescript" });
-  const busyTs = (ms) => `function flower(c: number, ledger: readonly unknown[]): [number, number] { const t = Date.now(); while (Date.now() - t < ${ms}) {} return [c, 30]; }`;
-  const bee = `function first(ledger: unknown[]) { return 3; }\nfunction decide(c: number, r: number | null, ledger: unknown[]) { return ["leave", 3]; }`;
+  const busyTs = (ms) => `function flower(c: number): [number, number] { const t = Date.now(); while (Date.now() - t < ${ms}) {} return [c, 30]; }`;
+  const bee = `function first() { return 3; }\nfunction decide(c: number, r: number | null) { return ["leave", 3]; }`;
   const runs = [];
   for (const code of [busyTs(40), busyTs(200)]) {
     const out = await play(config, [{ flower: code, bee }], 2);
@@ -177,8 +185,8 @@ test("typescript: energy from CPU time, and a late flower gives none", async () 
   }
 });
 
-test("nectar and pollen: a feed splits E by percent; a turn without a feed pays nobody", async () => {
-  const bee = `n = 0\ndef first(ledger):\n    return 1\ndef decide(c, r, ledger):\n    global n\n    n += 1\n    return ("feed" if n % 2 else "leave"), n\n`;
+test("nectar and pollen: a feed splits E by percent between them; a turn without a feed gives nothing", async () => {
+  const bee = counting(`    return ("feed" if n % 2 else "leave"), n\n`);
   const out = await play(normalizeConfig({ feedCost: 1 }), [{ flower: flower("c", 30), bee }], 40);
   const turns = ends(out.actions);
   const fed = turns.filter((a) => a.action === "feed"), left = turns.filter((a) => a.action === "leave");
@@ -201,7 +209,7 @@ test("nectar and pollen: a feed splits E by percent; a turn without a feed pays 
 
 test("feedCost: a bee that feeds sits out exactly feedCost rounds, then plays the challenge it queued", async () => {
   for (const feedCost of [0, 7]) {
-    const bee = `def first(ledger):\n    return 0\ndef decide(c, r, ledger):\n    return "feed", c + 1\n`;
+    const bee = `def first():\n    return 0\ndef decide(c, r):\n    return "feed", c + 1\n`;
     const out = await play(normalizeConfig({ feedCost }), [{ flower: flower("c"), bee }], 30);
     const arr = arrivals(out.actions, 0).map((a) => a.round);
     assert.deepEqual(arr, arr.map((_, i) => 1 + i * (feedCost + 1)), `feedCost ${feedCost}: ${arr}`);
@@ -209,15 +217,16 @@ test("feedCost: a bee that feeds sits out exactly feedCost rounds, then plays th
   }
 });
 
-test("neither side learns its counterpart until the turn is over: the ledger holds only finished turns", async () => {
-  // Every flower answers with what its ledger holds; every bee prints what its ledger holds as it decides.
+test("neither side learns its counterpart until the turn is over: HISTORY holds only finished turns", async () => {
+  // Every flower answers with what its HISTORY holds; every bee prints what its HISTORY holds as it decides.
   const config = normalizeConfig({ responseType: "any", feedCost: 2 });
-  const fl = `def flower(c, ledger, *rest):\n    return [len(ledger), max([e["round"] for e in ledger] or [0]), len(rest), sorted(GAME)], 50\n`;
+  const fl = `def flower(c, *rest):\n    h = HISTORY.turns\n    return [h.count().value(), h.max("round").value() or 0, len(rest), sorted(GAME)], 50\n`;
   const bee = `import json
 def first(*args):
     return 1
-def decide(c, r, ledger, *rest):
-    print(json.dumps([len(ledger), max([e["round"] for e in ledger] or [0]), len(rest)]))
+def decide(c, r, *rest):
+    h = HISTORY.turns
+    print(json.dumps([h.count().value(), h.max("round").value() or 0, len(rest), sorted(GAME)]))
     return ("feed" if c % 3 == 0 else "leave"), c + 1
 `;
   const out = await play(config, [0, 1, 2].map(() => ({ flower: fl, bee })), 40);
@@ -226,83 +235,128 @@ def decide(c, r, ledger, *rest):
   assert.ok(turns.length > 60);
   for (const a of turns) {
     const [len, maxRound, extra, gameKeys] = a.r;
-    assert.equal(len, finishedBefore(a.round), "the flower's ledger: every turn finished before this round, none of this one");
+    assert.equal(len, finishedBefore(a.round), "the flower's HISTORY: every turn finished before this round, none of this one");
     assert.ok(maxRound < a.round);
-    assert.equal(extra, 0, "flower(challenge, ledger): nothing about the bee that asked");
+    assert.equal(extra, 0, "flower(challenge): nothing about the bee that asked");
     assert.deepEqual(gameKeys, ["challenge_type", "feed_cost", "flower_ms", "flower_size_cap", "max_len", "max_nodes", "ms", "response_type", "round_ms", "size", "team", "teams"]);
-    const [blen, bmax, bextra] = JSON.parse(a.log);
-    assert.equal(blen, finishedBefore(a.round), "the bee decides without its own turn in its ledger");
+    const [blen, bmax, bextra, beeKeys] = JSON.parse(a.log);
+    assert.equal(blen, finishedBefore(a.round), "the bee decides without its own turn in its HISTORY");
     assert.ok(bmax < a.round);
-    assert.equal(bextra, 0, "decide(challenge, response, ledger): nothing about the flower");
+    assert.equal(bextra, 0, "decide(challenge, response): nothing about the flower");
+    assert.deepEqual(beeKeys, ["challenge_type", "feed_cost", "flower_ms", "flower_size_cap", "max_len", "max_nodes", "memory", "ms", "response_type", "round_ms", "team", "teams"]);
   }
-  // After the turn, both sides find it in their ledgers, counterpart included.
-  const t = turns.find((a) => a.round < 30);
-  const later = turns.find((a) => a.bee === t.bee && a.round > t.round);
-  assert.ok(later.r[0] > out.history.indexOf(out.history.find((h) => h.round === t.round && h.bee === t.bee)));
-  const entry = entryFor(out.history.find((h) => h.round === t.round && h.bee === t.bee), t.bee);
-  assert.equal(entry.flower, t.flower, "the bee's team learns whose flower it was");
-  assert.equal(entryFor(out.history.find((h) => h.round === t.round && h.bee === t.bee), t.flower).bee, t.bee, "and the flower's team whose bee");
+  // After the turn, both sides find it in their HISTORY, counterpart included.
+  const t = out.history.find((h) => h.round < 30);
+  assert.equal(entryFor(t, t.bee).flower, t.flower, "the bee's team learns whose flower it was");
+  assert.equal(entryFor(t, t.flower).bee, t.bee, "and the flower's team whose bee");
 });
 
-test("the team ledger: every turn's public fields, plus the team's own private details", () => {
-  const fed = { round: 5, bee: 0, flower: 1, c: 3, r: 4, fed: true, percent: 25, energy: 1000, nectar: 250, pollen: 750, ms: 12 };
-  const left = { round: 5, bee: 2, flower: 1, c: 7, r: null, fed: false, percent: 60, energy: 800, nectar: null, pollen: 0, ms: 3 };
-  // A feed: public, but the flower's CPU time is its own team's.
-  for (const ti of [0, 2]) assert.deepEqual(entryFor(fed, ti), { round: 5, bee: 0, flower: 1, challenge: 3, response: 4, fed: true, percent: 25, energy: 1000, nectar: 250, pollen: 750, ms: null });
-  assert.equal(entryFor(fed, 1).ms, 12);
+test("HISTORY records: every turn's public fields, plus the team's own private details", () => {
+  const base = { game: "g", round: 5, atMs: 800, turn: 2, flowerVersion: 3, flowerError: null, beeMs: 1.5, beeVersion: 4, beeError: null };
+  const fed = { ...base, bee: 0, flower: 1, challenge: 3, response: 4, fed: true, percent: 25, energy: 1000, nectar: 250, pollen: 750, ms: 12 };
+  const left = { ...base, bee: 2, flower: 1, challenge: 7, response: null, fed: false, percent: 60, energy: 800, nectar: null, pollen: 0, ms: 3 };
+  const names = SCHEMA.entities.turns.fields.map((f) => f.name);
+  for (const r of [fed, left]) for (const ti of [0, 1, 2, null]) assert.deepEqual(Object.keys(entryFor(r, ti)), names, "every schema field, in order");
+  // A feed: public, but the flower's CPU time, version and errors are its team's, the bee's timing its team's.
+  const pub = { ...fed, ms: null, flowerVersion: null, flowerError: null, beeMs: null, beeVersion: null, beeError: null };
+  assert.deepEqual(entryFor(fed, 2), pub);
+  assert.deepEqual(entryFor(fed, null), pub, "a spectator sees the same");
+  assert.deepEqual(entryFor(fed, 1), { ...pub, ms: 12, flowerVersion: 3 });
+  assert.deepEqual(entryFor(fed, 0), { ...pub, beeMs: 1.5, beeVersion: 4 });
   // No feed: pollen 0, no nectar; the percent and energy are the flower's team's.
-  for (const ti of [0, 2]) assert.deepEqual(entryFor(left, ti), { round: 5, bee: 2, flower: 1, challenge: 7, response: null, fed: false, percent: null, energy: null, nectar: null, pollen: 0, ms: null });
-  assert.deepEqual(entryFor(left, 1), { round: 5, bee: 2, flower: 1, challenge: 7, response: null, fed: false, percent: 60, energy: 800, nectar: null, pollen: 0, ms: 3 });
+  const hid = { ...left, percent: null, energy: null, ms: null, flowerVersion: null, flowerError: null, beeMs: null, beeVersion: null, beeError: null };
+  assert.deepEqual(entryFor(left, 0), hid);
+  assert.deepEqual(entryFor(left, 1), { ...hid, percent: 60, energy: 800, ms: 3, flowerVersion: 3 });
+  assert.deepEqual(entryFor(left, 2), { ...hid, beeMs: 1.5, beeVersion: 4 });
 });
 
-test("python: every team's programs get exactly its own view of the ledger, delivered incrementally", async () => {
-  // Bees and flowers print/return a digest of their whole ledger; it must equal the engine's view for the team.
-  const config = normalizeConfig({ responseType: "str", feedCost: 1, maxLen: 64 });
-  const digest = `json.dumps(ledger, separators=(",", ":"))`;
-  const fl = (pct) => `import hashlib, json\ndef flower(c, ledger):\n    return hashlib.sha256(${digest}.encode()).hexdigest()[:40], ${pct}\n`;
-  const bee = `import hashlib, json
-def first(ledger):
-    return 0
-def decide(c, r, ledger):
-    print(len(ledger), hashlib.sha256(${digest}.encode()).hexdigest()[:40])
-    return ("feed" if c % 2 else "leave"), c + 1
+// A digest of HISTORY as a program sees it: per turn, round, bee, flower, fed and which fields are null.
+const PY_DIGEST = `def digest():
+    s = ";".join(f"{t.round},{t.bee},{t.flower},{int(t.fed)},{''.join('0' if v is None else '1' for v in t)}" for t in HISTORY.turns.rows())
+    h = 2166136261
+    for ch in s:
+        h = ((h ^ ord(ch)) * 16777619) % 4294967296
+    return h
 `;
-  const out = await play(config, [10, 50, 90].map((p) => ({ flower: fl(p), bee })), 30);
-  const sha = (x) => crypto.createHash("sha256").update(x).digest("hex").slice(0, 40);
-  const view = (ti, round) => JSON.stringify(out.history.filter((t) => t.round < round).map((t) => entryFor(t, ti)));
-  const turns = ends(out.actions);
-  assert.ok(turns.length > 40);
-  for (const a of turns) {
-    if (a.r !== null) assert.equal(a.r, sha(view(a.flower, a.round)), `flower ${a.flower}, round ${a.round}`);
-    const [len, h] = a.log.trim().split(" ");
-    assert.equal(Number(len), out.history.filter((t) => t.round < a.round).length);
-    assert.equal(h, sha(view(a.bee, a.round)), `bee ${a.bee}, round ${a.round}`);
-  }
-  // The views differ by team: each sees the percent of its own unfed turns only.
-  const last = out.round + 1;
-  assert.notEqual(view(0, last), view(1, last));
-});
+const TS_DIGEST = `function digest(): number {
+  const s = HISTORY.turns.rows().map((t: any) => [t.round, t.bee, t.flower, t.fed ? 1 : 0, Object.values(t).map((v) => (v === null ? "0" : "1")).join("")].join(",")).join(";");
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619) >>> 0;
+  return h;
+}
+`;
+function digestOf(records) {
+  const s = records.map((t) => [t.round, t.bee, t.flower, t.fed ? 1 : 0, Object.values(t).map((v) => (v === null ? "0" : "1")).join("")].join(",")).join(";");
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619) >>> 0;
+  return h;
+}
 
-test("typescript: a flower's ledger is frozen and shared safely; nothing it does survives the call", async () => {
+for (const language of ["python", "typescript"]) {
+  test(`${language}: every team's programs get exactly its own view of the history, delivered incrementally`, async () => {
+    const py = language === "python";
+    const config = normalizeConfig({ language, responseType: "any", feedCost: 1 });
+    const fl = (pct) => py ? `${PY_DIGEST}def flower(c):\n    return digest(), ${pct}\n` : `${TS_DIGEST}function flower(c: number): [number, number] { return [digest(), ${pct}]; }`;
+    const bee = py
+      ? `${PY_DIGEST}def first():\n    return 0\ndef decide(c, r):\n    print(digest())\n    return ("feed" if c % 2 else "leave"), c + 1\n`
+      : `${TS_DIGEST}function first() { return 0; }\nfunction decide(c: number, r: any): ["feed" | "leave", number] { console.log(digest()); return [c % 2 ? "feed" : "leave", c + 1]; }`;
+    const out = await play(config, [10, 50, 90].map((p) => ({ flower: fl(p), bee })), 30);
+    const view = (ti, round) => digestOf(out.history.filter((t) => t.round < round).map((t) => entryFor(t, ti)));
+    const turns = ends(out.actions);
+    assert.ok(turns.length > 40);
+    for (const a of turns) {
+      assert.equal(a.r, view(a.flower, a.round), `flower ${a.flower}, round ${a.round}`);
+      assert.equal(Number(a.log.trim()), view(a.bee, a.round), `bee ${a.bee}, round ${a.round}`);
+    }
+    // The views differ by team: each sees the percent of its own unfed turns only.
+    const last = out.round + 1;
+    assert.notEqual(view(0, last), view(1, last));
+  });
+}
+
+test("typescript: HISTORY is frozen and shared safely; nothing a program does to it survives the call", async () => {
   const config = normalizeConfig({ language: "typescript", responseType: "any" });
-  const fl = `function flower(c: number, ledger: any[]): [any, number] {
-  const out: any[] = [ledger.length, Object.isFrozen(ledger), ledger.length ? Object.isFrozen(ledger[0]) : true];
-  try { (ledger as any).push(1); } catch { out.push("no push"); }
-  try { ledger.constructor.constructor("return 1")(); out.push("compiled"); } catch { out.push("no compile"); }
-  try { (ledger as any).__proto__.stash = ((ledger as any).__proto__.stash || 0) + 1; } catch {}
-  out.push((ledger as any).stash ?? null);
+  const fl = `function flower(c: number): [any, number] {
+  const rows: any = HISTORY.turns.rows();
+  const out: any[] = [rows.length, Object.isFrozen(rows), rows.length ? Object.isFrozen(rows[0]) : true, Object.isFrozen(HISTORY), Object.isFrozen(HISTORY.turns)];
+  try { rows.push(1); } catch { out.push("no push"); }
+  try { (HISTORY as any).turns = null; } catch { out.push("no reassign"); }
+  try { rows.constructor.constructor("return 1")(); out.push("compiled"); } catch { out.push("no compile"); }
+  try { (HISTORY.turns as any).__proto__.stash = ((HISTORY.turns as any).__proto__.stash || 0) + 1; } catch {}
+  out.push((HISTORY.turns as any).stash ?? null);
+  out.push(typeof (HISTORY as any).append);
   return [out, 50];
 }`;
-  const bee = `function first(l: any[]) { return 1; }\nfunction decide(c: number, r: any, l: any[]) { return ["leave", 1]; }`;
+  const bee = `function first() { return 1; }\nfunction decide(c: number, r: any): ["leave", number] { return ["leave", 1]; }`;
   const out = await play(config, [{ flower: fl, bee }], 6);
   const rs = ends(out.actions).map((a) => a.r);
-  assert.deepEqual(rs.map((r) => r[0]), [0, 1, 2, 3, 4, 5], "one more entry each round");
-  for (const r of rs) assert.deepEqual(r.slice(1), [true, true, "no push", "no compile", null]);
+  assert.deepEqual(rs.map((r) => r[0]), [0, 1, 2, 3, 4, 5], "one more turn each round");
+  for (const r of rs) assert.deepEqual(r.slice(1), [true, true, true, true, "no push", "no reassign", "no compile", null, "undefined"]);
+});
+
+test("nothing persists between calls but MEMORY: globals start afresh every call, in both languages", async () => {
+  const py = {
+    flower: `seen = []\ndef flower(c):\n    seen.append(c)\n    return len(seen), 50\n`,
+    bee: `calls = [0]\ndef first():\n    calls[0] += 1\n    return calls[0]\ndef decide(c, r):\n    calls[0] += 1\n    MEMORY["n"] = MEMORY.get("n", 0) + 1\n    print(calls[0], MEMORY["n"])\n    return "leave", calls[0]\n`,
+  };
+  const ts = {
+    flower: `const seen: number[] = [];\nfunction flower(c: number): [number, number] { seen.push(c); return [seen.length, 50]; }`,
+    bee: `let calls = 0;\nfunction first() { calls += 1; return calls; }\nfunction decide(c: number, r: any): ["leave", number] { calls += 1; MEMORY.n = (MEMORY.n ?? 0) + 1; console.log(calls, MEMORY.n); return ["leave", calls]; }`,
+  };
+  for (const [language, p] of [["python", py], ["typescript", ts]]) {
+    const out = await play(normalizeConfig({ language }), [p], 8);
+    const turns = ends(out.actions);
+    assert.equal(turns.length, 8);
+    assert.ok(turns.every((a) => a.r === 1), `${language}: a flower's globals start afresh`);
+    assert.deepEqual(turns.map((a) => a.c), [1, 1, 1, 1, 1, 1, 1, 1], `${language}: so do a bee's (first: 1; each decide: 1)`);
+    assert.deepEqual(turns.map((a) => a.log.trim()), turns.map((_, i) => `1 ${i + 1}`), `${language}: only MEMORY carries over`);
+  }
 });
 
 test("a bare \"leave\" gets first() asked at once: in time it makes the next round, slower costs a round (paced)", async () => {
-  const fast = `def first(ledger):\n    return 1\ndef decide(c, r, ledger):\n    return "leave"\n`;
-  const slow = `import time\nn = 0\ndef first(ledger):\n    global n\n    n += 1\n    if n > 1:\n        time.sleep(0.12)\n    return 2\ndef decide(c, r, ledger):\n    return "leave"\n`;
+  const fast = `def first():\n    return 1\ndef decide(c, r):\n    return "leave"\n`;
+  // first() is slow once the bee has decided once (it notes that in MEMORY).
+  const slow = `import time\ndef first():\n    if MEMORY.get("decided"):\n        time.sleep(0.12)\n    return 2\ndef decide(c, r):\n    MEMORY["decided"] = True\n    return "leave"\n`;
   const out = await play(normalizeConfig({}), [{ flower: flower("c"), bee: fast }, { flower: flower("c"), bee: slow }], 12, null, { paced: true });
   assert.deepEqual(out.problems, []);
   const r0 = arrivals(out.actions, 0).map((a) => a.round), r1 = arrivals(out.actions, 1).map((a) => a.round);
@@ -313,7 +367,7 @@ test("a bare \"leave\" gets first() asked at once: in time it makes the next rou
 });
 
 test("a bad next challenge: the feed still counts, then first() supplies the next one", async () => {
-  const bee = `n = 0\ndef first(ledger):\n    return 1000\ndef decide(c, r, ledger):\n    global n\n    n += 1\n    return ("feed", "seven") if n == 2 else ("leave", n)\n`;
+  const bee = counting(`    return ("feed", "seven") if n == 2 else ("leave", n)\n`, "return 1000");
   const out = await play(normalizeConfig({ feedCost: 0 }), [{ flower: flower("c"), bee }], 6);
   const turns = ends(out.actions);
   assert.deepEqual(turns.map((a) => [a.action, a.c]), [["leave", 1000], ["feed", 1], ["leave", 1000], ["leave", 3], ["leave", 4], ["leave", 5]]);
@@ -321,17 +375,7 @@ test("a bad next challenge: the feed still counts, then first() supplies the nex
 });
 
 test("a late [\"leave\", c] queues c, though the turn is settled without it; the bee loses a round (paced)", async () => {
-  const bee = `import time
-n = 0
-def first(ledger):
-    return 1
-def decide(c, r, ledger):
-    global n
-    n += 1
-    if n == 3:
-        ${busy(80).replaceAll("\n    ", "\n        ")}        return "leave", 777
-    return "feed" if n == 99 else "leave", 100 + n
-`;
+  const bee = counting(`    if n == 3:\n        import time\n        t = time.perf_counter()\n        while time.perf_counter() - t < 0.08:\n            pass\n        return "leave", 777\n    return "leave", 100 + n\n`);
   const out = await play(normalizeConfig({}), [{ flower: flower("c"), bee }], 10, null, { paced: true });
   const mine = byBee(out.actions, 0);
   const turns = ends(mine);
@@ -339,7 +383,7 @@ def decide(c, r, ledger):
   assert.ok(late, JSON.stringify(mine));
   assert.equal(late.atMs, (late.round - 1) * 200 + 150);
   assert.equal(late.beeMs, null);
-  assert.deepEqual(turns.map((a) => a.c).slice(0, 5), [1, 101, 102, 777, 104]);
+  assert.deepEqual(turns.map((a) => a.c).slice(0, 5), [1, 101, 102, 777, 104], "the late reply's MEMORY was saved too (n = 3, then 4)");
   const a777 = turns.find((a) => a.c === 777);
   assert.equal(late.c, 102, "too slow deciding after asking 102");
   assert.equal(a777.round, late.round + 2, "the round after, its call was still running: no turn");
@@ -347,20 +391,8 @@ def decide(c, r, ledger):
 });
 
 test("a late reply never feeds: a late [\"feed\", c] is a leave, c is never asked, and first() supplies the next (paced)", async () => {
-  const bee = `import time
-n = 0
-k = 0
-def first(ledger):
-    global k
-    k += 1
-    return 500 + k
-def decide(c, r, ledger):
-    global n
-    n += 1
-    if n == 3:
-        ${busy(80).replaceAll("\n    ", "\n        ")}        return "feed", 7
-    return "leave", 100 + n
-`;
+  const bee = counting(`    if n == 3:\n        import time\n        t = time.perf_counter()\n        while time.perf_counter() - t < 0.08:\n            pass\n        return "feed", 7\n    return "leave", 100 + n\n`,
+    `k = MEMORY["k"] = MEMORY.get("k", 0) + 1\n    return 500 + k`);
   const out = await play(normalizeConfig({}), [{ flower: flower("c"), bee }], 10, null, { paced: true });
   const turns = ends(byBee(out.actions, 0));
   const late = turns.find(tooSlow);
@@ -374,19 +406,21 @@ def decide(c, r, ledger):
 });
 
 for (const language of ["python", "typescript"]) {
-  test(`${language}: a bee that runs over 2 s: too slow at 50 ms, a Timeout at 2 s, then first() (paced)`, async () => {
+  test(`${language}: a bee call that runs over 2 s: too slow at 50 ms, a Timeout at 2 s, then first() (paced)`, async () => {
+    // It hangs deciding after challenge 3; first() starts it at 1 again.
     const bee = language === "python"
-      ? `n = 0\ndef first(ledger):\n    return 1000\ndef decide(c, r, ledger):\n    global n\n    n += 1\n    if n == 3:\n        while True:\n            pass\n    return "leave", n\n`
-      : `let n = 0;\nfunction first(l: any[]) { return 1000; }\nfunction decide(c: number, r: any, l: any[]) { n += 1; if (n === 3) { while (true) {} } return ["leave", n]; }\n`;
-    const other = language === "python" ? leaver("9") : `function first(l: any[]) { return 9; }\nfunction decide(c: number, r: any, l: any[]) { return ["leave", 9]; }`;
-    const fl = language === "python" ? flower("c") : `function flower(c: number, l: any[]) { return [c, 50]; }`;
+      ? `def first():\n    return 1\ndef decide(c, r):\n    if c == 3:\n        while True:\n            pass\n    return "leave", c + 1\n`
+      : `function first() { return 1; }\nfunction decide(c: number, r: any): ["leave", number] { if (c === 3) { while (true) {} } return ["leave", c + 1]; }\n`;
+    const other = language === "python" ? leaver("9") : `function first() { return 9; }\nfunction decide(c: number, r: any) { return ["leave", 9]; }`;
+    const fl = language === "python" ? flower("c") : `function flower(c: number) { return [c, 50]; }`;
     const out = await play(normalizeConfig({ language }), [{ flower: fl, bee }, { flower: fl, bee: other }], 18, null, { paced: true });
     const mine = byBee(out.actions, 0);
     const late = mine.find(tooSlow);
     assert.ok(late, JSON.stringify(mine));
+    assert.equal(late.c, 3);
     const after = ends(mine).filter((a) => a.round > late.round);
-    assert.ok(after.length && after[0].c === 1000, JSON.stringify(after[0]));
-    assert.ok(after[0].round >= late.round + 9 && after[0].round <= late.round + 13, `back in round ${after[0].round} (late in ${late.round})`);
+    assert.ok(after.length && after[0].c === 1, JSON.stringify(after[0]));
+    assert.ok(after[0].round >= late.round + 9 && after[0].round <= late.round + 14, `back in round ${after[0].round} (late in ${late.round})`);
     assert.ok(out.problems.some((p) => p.team === 0 && p.kind === "bee"));
     const others = arrivals(out.actions, 1).filter((a) => a.round > late.round && a.round < after[0].round);
     assert.ok(others.length >= after[0].round - late.round - 2, "the other bee played on");
@@ -394,47 +428,31 @@ for (const language of ["python", "typescript"]) {
   });
 }
 
-test("a hung bee is killed and starts afresh", async () => {
-  // It swallows the runner's timeout, so the runner never replies: the process is killed and restarted.
-  const bee = `n = 0
-def first(ledger):
-    return 0
-def decide(c, r, ledger):
-    global n
-    n += 1
-    if n == 3:
-        while True:
-            try:
-                while True:
-                    pass
-            except BaseException:
-                pass
-    return "leave", n
-`;
+test("a bee call that swallows its timeout is killed; the bee carries on", async () => {
+  const bee = `def first():\n    return 1\ndef decide(c, r):\n    if c == 3:\n        while True:\n            try:\n                while True:\n                    pass\n            except BaseException:\n                pass\n    return "leave", c + 1\n`;
   const out = await play(normalizeConfig({}), [{ flower: flower("c"), bee }], 40, async (garden) => {
-    while (garden.history.filter((t) => t.c === 1).length < 2 && garden.rounds < 40) await wait(50);
+    while (garden.history.filter((t) => t.challenge === 1).length < 2 && garden.rounds < 40) await wait(50);
     await garden.stop();
   }, { paced: true });
   const cs = ends(out.actions).map((a) => a.c);
-  assert.deepEqual(cs.slice(0, 3), [0, 1, 2]);
-  assert.ok(cs.slice(3).includes(0), "it starts again from first()");
+  assert.deepEqual(cs.slice(0, 3), [1, 2, 3]);
+  assert.ok(cs.slice(3).includes(1), "it starts again from first()");
   assert.ok(out.actions.some(tooSlow));
 });
 
 test("responses can't reveal timing: every response reaches the bee at the end of the flower window (paced)", async () => {
-  // Two flowers, one working 120 ms, one answering at once. The bee times the gap between its decisions.
-  const slow = `import time\ndef flower(c, ledger):\n    ${busy(120)}    return 1, 50\n`;
+  // Two flowers, one working 120 ms, one answering at once. The bee times the gap between its decisions,
+  // keeping the time of its last one in MEMORY.
+  const slow = `import time\ndef flower(c):\n    ${busy(120)}    return 1, 50\n`;
   const quick = flower("2");
   const bee = `import time
-last = 0.0
-def first(ledger):
+def first():
     return 1
-def decide(c, r, ledger):
-    global last
+def decide(c, r):
     t = time.perf_counter()
-    if last:
-        print(round((t - last) * 1000, 1))
-    last = time.perf_counter()
+    if "last" in MEMORY:
+        print(round((t - MEMORY["last"]) * 1000, 1))
+    MEMORY["last"] = time.perf_counter()
     return "leave", 1
 `;
   const gapsOf = (acts) => {
@@ -446,23 +464,23 @@ def decide(c, r, ledger):
   const out = await play(normalizeConfig({}), [{ flower: slow, bee }, { flower: quick, bee: leaver() }], 80, stopWhen(enough), { paced: true });
   const gaps = gapsOf(out.actions);
   assert.ok(gaps[1].length >= 3 && gaps[2].length >= 3, JSON.stringify(gaps));
-  for (const g of [...gaps[1], ...gaps[2]]) assert.ok(g > 185 && g < 225, `${g} ms between decisions`);
+  for (const g of [...gaps[1], ...gaps[2]]) assert.ok(g > 180 && g < 230, `${g} ms between decisions`);
   const mean = (xs) => xs.reduce((s, x) => s + x, 0) / xs.length;
   assert.ok(Math.abs(mean(gaps[1]) - mean(gaps[2])) < 15, JSON.stringify(gaps));
 });
 
 for (const language of ["python", "typescript"]) {
-  test(`${language}: GAME: the team, the time limits, the size cap and the flower's own size`, async () => {
+  test(`${language}: GAME: the team, the time limits, the size cap, the flower's own size and the bee's memory cap`, async () => {
     const config = normalizeConfig({ language, responseType: "any", challengeType: "any" });
     const p = language === "python"
-      ? { flower: `def flower(c, ledger):\n    return [GAME["team"], GAME["teams"], GAME["ms"], GAME["round_ms"], GAME["flower_size_cap"], GAME["size"]], 1\n`,
-        bee: `def first(ledger):\n    return [GAME["team"], GAME["ms"], GAME["flower_ms"], GAME["feed_cost"]]\ndef decide(c, r, ledger):\n    return "leave", c\n` }
-      : { flower: `function flower(c: any, l: any[]) { return [[GAME.team, GAME.teams, GAME.ms, GAME.round_ms, GAME.flower_size_cap, GAME.size], 1]; }`,
-        bee: `function first(l: any[]) { return [GAME.team, GAME.ms, GAME.flower_ms, GAME.feed_cost]; }\nfunction decide(c: any, r: any, l: any[]) { return ["leave", c]; }` };
+      ? { flower: `def flower(c):\n    return [GAME["team"], GAME["teams"], GAME["ms"], GAME["round_ms"], GAME["flower_size_cap"], GAME["size"]], 1\n`,
+        bee: `def first():\n    return [GAME["team"], GAME["ms"], GAME["flower_ms"], GAME["feed_cost"], GAME["memory"]]\ndef decide(c, r):\n    return "leave", c\n` }
+      : { flower: `function flower(c: any) { return [[GAME.team, GAME.teams, GAME.ms, GAME.round_ms, GAME.flower_size_cap, GAME.size], 1]; }`,
+        bee: `function first() { return [GAME.team, GAME.ms, GAME.flower_ms, GAME.feed_cost, GAME.memory]; }\nfunction decide(c: any, r: any) { return ["leave", c]; }` };
     const out = await play(config, [p, p], 10);
     const s = (await size(language, p.flower)).size;
     for (const a of ends(out.actions)) {
-      assert.deepEqual(a.c, [a.bee, 50, 150, 10]);
+      assert.deepEqual(a.c, [a.bee, 50, 150, 10, 1024]);
       assert.deepEqual(a.r, [a.flower, 2, 150, 200, 1100, s]);
     }
   });
@@ -472,15 +490,15 @@ for (const language of ["python", "typescript"]) {
   test(`${language}: flowers are stateless: fresh randomness, a clock, no answer cache`, async () => {
     const config = normalizeConfig({ language });
     const py = {
-      counter: `import math\nn = 0\ndef flower(c, ledger):\n    global n\n    n += 1\n    math.k = getattr(math, "k", 0) + 1\n    return n * 1000 + math.k, 1\n`,
-      anytime: `import random, time\ndef flower(c, ledger):\n    t0 = time.perf_counter()\n    best = 0\n    while time.perf_counter() - t0 < 0.3 * GAME["ms"] / 1000:\n        best = max(best, random.randint(0, 10**9))\n    return best, 1\n`,
+      counter: `import math\nn = 0\ndef flower(c):\n    global n\n    n += 1\n    math.k = getattr(math, "k", 0) + 1\n    return n * 1000 + math.k, 1\n`,
+      anytime: `import random, time\ndef flower(c):\n    t0 = time.perf_counter()\n    best = 0\n    while time.perf_counter() - t0 < 0.3 * GAME["ms"] / 1000:\n        best = max(best, random.randint(0, 10**9))\n    return best, 1\n`,
     };
     const ts = {
-      counter: `let n = 0;\nfunction flower(c: number, l: any[]): [number, number] { n += 1; (Math as any).k = ((Math as any).k || 0) + 1; return [n * 1000 + (Math as any).k, 1]; }\n`,
-      anytime: `function flower(c: number, l: any[]): [number, number] {\n  const t0 = Date.now(); let best = 0;\n  while (Date.now() - t0 < 0.3 * GAME.ms) best = Math.max(best, Math.floor(Math.random() * 1e9));\n  return [best, 1];\n}\n`,
+      counter: `let n = 0;\nfunction flower(c: number): [number, number] { n += 1; (Math as any).k = ((Math as any).k || 0) + 1; return [n * 1000 + (Math as any).k, 1]; }\n`,
+      anytime: `function flower(c: number): [number, number] {\n  const t0 = Date.now(); let best = 0;\n  while (Date.now() - t0 < 0.3 * GAME.ms) best = Math.max(best, Math.floor(Math.random() * 1e9));\n  return [best, 1];\n}\n`,
     };
     const p = language === "python" ? py : ts;
-    const bee = language === "python" ? leaver("7") : `function first(l: any[]) { return 7; }\nfunction decide(c: number, r: any, l: any[]) { return ["leave", 7]; }`;
+    const bee = language === "python" ? leaver("7") : `function first() { return 7; }\nfunction decide(c: number, r: any) { return ["leave", 7]; }`;
     const out = await play(config, [{ flower: p.counter, bee }, { flower: p.anytime, bee }], 16);
     const turns = ends(out.actions);
     for (const a of turns) assert.equal(a.flowerError, null, a.flowerError);
@@ -494,7 +512,7 @@ for (const language of ["python", "typescript"]) {
 
 test("programs run minified: the names they define can't carry data", async () => {
   const config = normalizeConfig({ responseType: "any" });
-  const helper = (name) => `def ${name}():\n    return 0\ndef flower(c, ledger):\n    return [len(${name}.__name__), sorted(k for k in globals() if not k.startswith("__"))], 1\n`;
+  const helper = (name) => `def ${name}():\n    return 0\ndef flower(c):\n    return [len(${name}.__name__), sorted(k for k in globals() if not k.startswith("__"))], 1\n`;
   const answers = async (code) => {
     const out = await play(config, [{ flower: code, bee: leaver() }], 4);
     return new Set(ends(out.actions).map((a) => JSON.stringify(a.r)));
@@ -503,32 +521,40 @@ test("programs run minified: the names they define can't carry data", async () =
   assert.equal(long.size, 1);
   const [nameLength, globalNames] = JSON.parse([...long][0]);
   assert.equal(nameLength, 1);
-  assert.ok(globalNames.every((k) => ["GAME", "flower"].includes(k) || k.length === 1), globalNames.join());
+  assert.ok(globalNames.every((k) => ["GAME", "HISTORY", "flower"].includes(k) || k.length === 1), globalNames.join());
   assert.deepEqual([...await answers(helper("h"))], [...long]);
 });
 
 for (const language of ["python", "typescript"]) {
-  test(`${language}: a bee keeps its state until new code replaces it; between turns, new code goes live at once`, async () => {
+  test(`${language}: new code goes live at once between turns; a new bee version starts with an empty MEMORY`, async () => {
     const config = normalizeConfig({ language });
     const py = {
       flower: (k) => flower(String(k)),
-      bee: `n = 0\ndef first(ledger):\n    global n\n    n += 1\n    return n\ndef decide(c, r, ledger):\n    global n\n    n += 1\n    return "leave", n\n`,
+      bee: `def first():\n    MEMORY["n"] = MEMORY.get("n", 0) + 1\n    return MEMORY["n"]\ndef decide(c, r):\n    MEMORY["n"] = MEMORY.get("n", 0) + 1\n    return "leave", MEMORY["n"]\n`,
     };
     const ts = {
-      flower: (k) => `function flower(c: number, l: any[]) { return [${k}, 50]; }`,
-      bee: `let n = 0;\nfunction first(l: any[]) { n += 1; return n; }\nfunction decide(c: number, r: any, l: any[]) { n += 1; return ["leave", n]; }\n`,
+      flower: (k) => `function flower(c: number) { return [${k}, 50]; }`,
+      bee: `function first() { MEMORY.n = (MEMORY.n ?? 0) + 1; return MEMORY.n; }\nfunction decide(c: number, r: any) { MEMORY.n = (MEMORY.n ?? 0) + 1; return ["leave", MEMORY.n]; }\n`,
     };
     const p = language === "python" ? py : ts;
+    let memoryBefore = null, memoryAfter = null;
     const out = await play(config, [{ flower: p.flower(1), bee: p.bee }], 60, async (garden) => {
       while (garden.rounds < 20) await wait(5);
+      memoryBefore = garden.memoryOf(0);
       await garden.setProgram(0, "flower", p.flower(3), 2);
       await garden.setProgram(0, "bee", p.bee, 2);
+      while (garden.rounds < 22) await wait(5);
+      memoryAfter = garden.memoryOf(0);
     });
     const turns = ends(out.actions);
     const v1 = turns.filter((a) => a.beeVersion === 1), v2 = turns.filter((a) => a.beeVersion === 2);
     assert.ok(v1.length > 5 && v2.length > 5, `${v1.length} then ${v2.length}`);
-    assert.deepEqual(v1.map((a) => a.c), v1.map((_, i) => i + 1), "the bee remembers between calls");
-    assert.deepEqual(v2.map((a) => a.c), v2.map((_, i) => i + 1), "new code starts afresh");
+    assert.deepEqual(v1.map((a) => a.c), v1.map((_, i) => i + 1), "MEMORY carries over between calls");
+    assert.deepEqual(v2.map((a) => a.c), v2.map((_, i) => i + 1), "the new version starts from an empty MEMORY");
+    assert.equal(memoryBefore.version, 1);
+    assert.ok(JSON.parse(memoryBefore.memory).n > 5);
+    assert.equal(memoryAfter.version, 2);
+    assert.ok(JSON.parse(memoryAfter.memory).n < 5);
     assert.ok(v1.every((a) => a.round < v2[0].round));
     assert.ok(turns.some((a) => a.flowerVersion === 1 && a.r === 1) && turns.some((a) => a.flowerVersion === 2 && a.r === 3));
     assert.ok(turns.every((a) => a.r === (a.flowerVersion === 1 ? 1 : 3)), "each response comes from the version it's labelled with");
@@ -547,7 +573,7 @@ const midTurn = (swap, done) => async (garden) => {
 };
 
 test("versions are pinned per turn: a flower swap reaches turns that start after it", async () => {
-  const slowFlower = (v) => `import time\ndef flower(c, ledger):\n    time.sleep(0.1)\n    return ${v}, 50\n`;
+  const slowFlower = (v) => `import time\ndef flower(c):\n    time.sleep(0.1)\n    return ${v}, 50\n`;
   let at = null, retiredDuring = null;
   const out = await play(normalizeConfig({}), [{ flower: slowFlower(1), bee: leaver() }], 200, async (garden) => {
     at = await midTurn(async (g) => { await g.setProgram(0, "flower", slowFlower(3), 2); retiredDuring = g.retiring.size; },
@@ -566,9 +592,9 @@ test("versions are pinned per turn: a flower swap reaches turns that start after
 });
 
 test("versions are pinned per turn: a bee swap takes over when the turn is settled; the old bee's feed counts, its queued challenge goes", async () => {
-  const slowFlower = `import time\ndef flower(c, ledger):\n    time.sleep(0.1)\n    return c, 50\n`;
-  const v1 = `def first(ledger):\n    return 100\ndef decide(c, r, ledger):\n    return "feed", 999\n`;
-  const v2 = `def first(ledger):\n    return 5000\ndef decide(c, r, ledger):\n    return "leave", 5001\n`;
+  const slowFlower = `import time\ndef flower(c):\n    time.sleep(0.1)\n    return c, 50\n`;
+  const v1 = `def first():\n    return 100\ndef decide(c, r):\n    return "feed", 999\n`;
+  const v2 = `def first():\n    return 5000\ndef decide(c, r):\n    return "leave", 5001\n`;
   const config = normalizeConfig({ feedCost: 3 });
   let at = null;
   const out = await play(config, [{ flower: slowFlower, bee: v1 }], 300, async (garden) => {
@@ -586,19 +612,20 @@ test("versions are pinned per turn: a bee swap takes over when the turn is settl
 });
 
 test("a broken bee: errors and bad replies are leaves, and first() is asked again; a bee that can't load sits out", async () => {
-  const bee = `n = 0\ndef first(ledger):\n    return 0\ndef decide(c, r, ledger):\n    global n\n    n += 1\n    if n == 2:\n        return "dance"\n    if n == 4:\n        raise ValueError("oops")\n    return "feed" if n == 6 else "leave", n\n`;
+  const bee = counting(`    if n == 2:\n        return "dance"\n    if n == 4:\n        raise ValueError("oops")\n    return "feed" if n == 6 else "leave", n\n`, "return 0");
   const out = await play(normalizeConfig({ feedCost: 0 }), [{ flower: flower("c"), bee }], 12);
   const turns = ends(out.actions);
   assert.match(turns[1].beeError, /decide must return/);
   assert.match(turns[3].beeError, /ValueError: oops/);
   assert.equal(turns[1].action, "leave");
-  assert.deepEqual(turns.map((a) => a.c).slice(0, 6), [0, 1, 0, 3, 0, 5], "after a bad reply, first() opens the next turn");
+  // The crash at n = 4 saved nothing, so the next call is n = 4 again (and returns normally).
+  assert.deepEqual(turns.map((a) => a.c).slice(0, 7), [0, 1, 0, 3, 0, 4, 5], "after a bad reply, first() opens the next turn");
   assert.ok(out.problems.some((p) => p.kind === "bee"));
   const dud = await play(normalizeConfig({}), [{ flower: flower("c"), bee: `import os\n` + bee }], 5);
   assert.equal(dud.actions.length, 0);
   assert.match(dud.problems[0].error, /not allowed/);
-  const missing = await play(normalizeConfig({}), [{ flower: flower("c"), bee: `def first(ledger):\n    return 1\n` }], 3);
-  assert.match(missing.problems[0].error, /must define first\(ledger\) and decide/);
+  const missing = await play(normalizeConfig({}), [{ flower: flower("c"), bee: `def first():\n    return 1\n` }], 3);
+  assert.match(missing.problems[0].error, /must define first\(\) and decide\(challenge, response\)/);
 });
 
 // A garden that plays no rounds, holding a flower whose pool of processes a test asks directly. Running
@@ -644,10 +671,11 @@ test("a flower process that stops responding is replaced: later calls are answer
   for (const p of seen) assert.ok(await exited(p), "closing the garden kills every process, respawned ones too");
 });
 
-test("a flower whose processes keep dying is respawned at most once a second per process, with the ledger so far", async () => {
-  const { garden, pool, ask } = await flowerPool(`def flower(c, ledger):\n    return len(ledger), 50\n`);
+test("a flower whose processes keep dying is respawned at most once a second per process, with the history so far", async () => {
+  const { garden, pool, ask } = await flowerPool(`def flower(c):\n    return HISTORY.turns.count().value(), 50\n`);
   try {
-    garden.history.push({ round: 1, bee: 0, flower: 0, c: 1, r: 1, fed: false, nectar: null, percent: 50, energy: 1, ms: 1, pollen: 0 });
+    garden.history.push({ game: "", round: 1, atMs: 0, turn: 1, bee: 0, flower: 0, challenge: 1, response: 1, fed: false, percent: 50, energy: 1,
+      nectar: null, pollen: 0, ms: 1, flowerVersion: 1, flowerError: null, beeMs: 1, beeVersion: 1, beeError: null });
     garden.delivered = 1; // as if delivered at the last round boundary: a respawned process starts with it
     const n = pool.procs.length;
     const seen = new Set(pool.procs);
@@ -660,7 +688,7 @@ test("a flower whose processes keep dying is respawned at most once a second per
     }
     assert.ok(performance.now() - t0 < 1000, "all within a second");
     assert.equal(seen.size, 2 * n, "one respawn per slot");
-    assert.deepEqual(answers.slice(0, n), answers.slice(0, n).map(() => ({ v: [1, 50] })), "respawned with the ledger so far");
+    assert.deepEqual(answers.slice(0, n), answers.slice(0, n).map(() => ({ v: [1, 50] })), "respawned with the history so far");
     assert.ok(answers.slice(n).every((a) => a.dead), JSON.stringify(answers));
     await wait(1000);
     assert.deepEqual(await ask(7), { v: [1, 50] });
@@ -702,16 +730,14 @@ test("the clock: game time is rounds × 200 ms; it stands still while paused, an
   assert.ok(actions.every((a) => a.round <= 6 && a.atMs < 1200));
 });
 
-test("adoption: a garden carries on from the stored round, clock, turn counts, ledgers and team ledger", async () => {
+test("adoption: a garden carries on from the stored round, clock, turn counts, ledgers, history and MEMORY", async () => {
   const config = normalizeConfig({ feedCost: 4 });
-  const history = [
-    { round: 37, bee: 0, flower: 0, c: 5, r: 5, fed: false, nectar: null, percent: 50, energy: 10, ms: 1, pollen: 0 },
-    { round: 38, bee: 0, flower: 0, c: 5, r: 5, fed: true, nectar: 5, percent: 50, energy: 10, ms: 1, pollen: 5 },
-  ];
-  const bee = `def first(ledger):\n    print(len(ledger), ledger[-1]["fed"])\n    return 1\ndef decide(c, r, ledger):\n    return "leave", 1\n`;
+  const rec = (round, fed) => ({ game: "g", round, atMs: (round - 1) * 200, turn: round - 30, bee: 0, flower: 0, challenge: 5, response: 5, fed,
+    percent: 50, energy: 10, nectar: fed ? 5 : null, pollen: fed ? 5 : 0, ms: 1, flowerVersion: 3, flowerError: null, beeMs: 1, beeVersion: 2, beeError: null });
+  const bee = `import json\ndef first():\n    print(HISTORY.turns.count().value(), HISTORY.turns.rows()[-1].fed, json.dumps(MEMORY))\n    return 1\ndef decide(c, r):\n    return "leave", 1\n`;
   const garden = new Garden({
-    config, teams: 1, round: 40, clockMs: 8000, lastSeq: 77, endMs: 9200, paced: false, history, turns: [12],
-    ledgers: { feeds: [[1]], nectar: [[5]], pollen: [[5]] },
+    config, teams: 1, round: 40, clockMs: 8000, lastSeq: 77, endMs: 9200, paced: false, history: [rec(37, false), rec(38, true)], turns: [12],
+    ledgers: { feeds: [[1]], nectar: [[5]], pollen: [[5]] }, memories: [{ version: 2, memory: '{"x":5}', error: null }], game: "g",
   });
   await garden.setProgram(0, "flower", flower("c"), 3);
   await garden.setProgram(0, "bee", bee, 2);
@@ -722,10 +748,11 @@ test("adoption: a garden carries on from the stored round, clock, turn counts, l
   assert.equal(d.actions[0].seq, 78);
   assert.equal(d.actions[0].turn, 13, "turn numbers carry on");
   assert.equal(d.actions[0].round, 43, "the feed in round 38 still sits the bee out until round 43");
-  assert.equal(ends(d.actions)[0].log.trim(), "2 True", "the new bee's ledger starts with the stored turns");
+  assert.equal(ends(d.actions)[0].log.trim(), '2 True {"x": 5}', "the bee starts with the stored history and its MEMORY");
   assert.ok(d.actions.every((a) => a.atMs === 8000 + (a.round - 41) * 200 + (a.action === "arrive" ? 0 : 150)));
   assert.deepEqual(d.feeds, [[1]]);
   assert.equal(d.pollen[0][0], 5);
+  assert.equal(garden.history[2].game, "g");
 });
 
 test("change budgets accrue per minute of game time up to a cap", () => {
@@ -737,9 +764,10 @@ test("change budgets accrue per minute of game time up to a cap", () => {
   assert.equal(available(bee, { bank: 0, atMs: 0 }, 30000), 1100);
 });
 
-test("try a flower: responses, percent, energy and CPU time", async () => {
+test("try a flower: responses, percent, energy and CPU time, with a HISTORY of the turns passed in", async () => {
   const config = normalizeConfig({});
-  const r = await tryFlower({ config, code: `def flower(c, ledger):\n    return c + len(ledger), 40\n`, challenges: [1, 2, "x"], ledger: [{ round: 1 }] });
+  const turn = { game: "x", round: 1, atMs: 0, turn: 1, bee: 0, flower: 0, challenge: 1, response: 2, fed: false, pollen: 0 };
+  const r = await tryFlower({ config, code: `def flower(c):\n    return c + HISTORY.turns.count().value(), 40\n`, challenges: [1, 2, "x"], ledger: [turn] });
   assert.deepEqual(r.results.map((x) => x.r), [2, 3, null]);
   assert.deepEqual(r.results.map((x) => x.percent), [40, 40, null]);
   assert.ok(r.results[0].energy > 0 && typeof r.results[0].ms === "number");
@@ -747,11 +775,13 @@ test("try a flower: responses, percent, energy and CPU time", async () => {
   assert.ok(r.results[2].error);
 });
 
-test("try a bee: unpaced, in a garden of its own flower", async () => {
+test("try a bee: unpaced, in a garden of its own flower, with a simulated MEMORY", async () => {
   const config = normalizeConfig({});
   const t0 = performance.now();
-  const r = await tryBee({ config, programs: starters(config), rounds: 100 });
+  const r = await tryBee({ config, programs: starters(config), rounds: 100, memory: { turns: 41 } });
   assert.equal(r.rounds, 100);
   assert.ok(performance.now() - t0 < (100 * 200) / 2, "much faster than real time");
   assert.ok(r.actions.length > 20 && r.feeds > 0 && r.nectar > 0 && r.pollen > 0);
+  assert.ok(r.memory.value.turns > 41 && r.memory.cap === 1024, JSON.stringify(r.memory));
+  assert.equal(ends(r.actions)[0].action, "leave", "it started from the memory it was given (41 turns: the next is even)");
 });

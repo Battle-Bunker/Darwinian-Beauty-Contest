@@ -246,3 +246,87 @@ if (want("e9")) {
   }
   table(["rule", "greedy bee: rival feed rate", "self-feeds / feeds", "rival pollen that counts", "naive deviant", "self-only deviant", "team 0's fitness by its % to rivals (vs 30%)", "stingy 5% own label: stingy / generous fitness", "stingy 5% mimic: stingy / generous fitness"], rows);
 }
+
+// ---------------------------------------------------------------------------------------------------------
+// The user's theory: a cooperator keeps moving its signal; a lean imitator follows with a lag.
+// Team 1 = cooperator C (50% to rivals), team 0 = imitator I (5%, a lean 40-node flower), teams 2–5 at 30%.
+const Eof = (size) => (1100 - size) * 149.3;
+function dynamic({ T = Infinity, Li = 0, copies = true, pI = 5, pC = 50, Sc = 60, Si = 40 }) {
+  const teams = pop(6);
+  const cLabel = (r) => (Number.isFinite(T) ? "c" + Math.floor(r / T) : "c0");
+  teams[1] = { ...teams[1], pRival: pC, E: Eof(Sc), label: undefined, labelAt: cLabel };
+  teams[0] = { ...teams[0], pRival: pI, E: Eof(Si), label: undefined, labelAt: (r) => (copies && r - Li >= 1 ? cLabel(r - Li) : "i") };
+  return teams;
+}
+if (want("e10")) {
+  console.log("### E10. The user's dynamic: a moving cooperator (50%) and a lean imitator (5%) that copies its signal after a lag\n");
+  console.log("T = rounds between the cooperator's signal changes; L_i = the imitator's copy lag; L_b = rounds rival bees need to learn a new signal family (5 rounds = 1 s).\n");
+  const rows = [];
+  for (const R of [1500, 3000]) {
+    const cases = [
+      ["no imitation (its own label, or C signs)", { copies: false }, 0],
+      ["static signal, copied from the start", {}, 0],
+      ["C moves every 150 (30 s); runtime mimic, lag 1; bees recognise at once", { T: 150, Li: 1 }, 0],
+      ["C moves every 150; copy lag 150 (30 s); bees recognise at once", { T: 150, Li: 150 }, 0],
+      ["C moves every 150; copy lag 150; bees also need 150", { T: 150, Li: 150 }, 150],
+      ["C moves every 500 (100 s); copy lag 300 (60 s); bees at once", { T: 500, Li: 300 }, 0],
+      ["C moves every 500; copy lag 300; bees also need 300", { T: 500, Li: 300 }, 300],
+      ["static signal copied; C's signal costs 400 nodes, I's copy 40", { Sc: 400 }, 0],
+      ["no imitation; C's signal costs 400 nodes", { copies: false, Sc: 400 }, 0],
+    ];
+    for (const [name, o, Lb] of cases) {
+      const res = run(dynamic(o), { R, learnLag: Lb, seeds: Math.max(10, SEEDS / 2) });
+      rows.push([R === 1500 ? "5 min" : "10 min", name, f3(res[1].fitness), f1(res[1].fedByRivals), f3(res[0].fitness), f1(res[0].fedByRivals), f3(othersMean(res.slice(1).concat([]), "fitness"))]);
+    }
+  }
+  table(["game", "case", "cooperator fitness", "rival feeds at C", "imitator fitness", "rival feeds at I"], rows.map((r) => r.slice(0, 6)));
+
+  console.log("#### E10b. When bees learn a new signal as slowly as imitators copy it, a moving cooperator is a newcomer: valued at the bees' prior for unknown signals, which a stingy flower with a fresh signal every round (a whitewasher, 5%) exploits too (5 min, T = L_b = 150)\n");
+  const rows2 = [];
+  for (const prior of [30, 15, 5]) {
+    const mover = run(dynamic({ T: 150, copies: false }), { R: 1500, learnLag: 150, prior, seeds: Math.max(10, SEEDS / 2) });
+    const ww = dynamic({ T: 150, copies: false }); ww[0] = { ...ww[0], labelAt: (r) => "w" + r };
+    const wres = run(ww, { R: 1500, learnLag: 150, prior, seeds: Math.max(10, SEEDS / 2) });
+    const still = run(dynamic({ copies: false }), { R: 1500, learnLag: 150, prior, seeds: Math.max(10, SEEDS / 2) });
+    rows2.push([prior, f3(still[1].fitness), f3(mover[1].fitness), f3(mover[0].fitness), f3(wres[1].fitness), f3(wres[0].fitness)]);
+  }
+  table(["bees' prior for an unknown signal (%)", "C static, no imitator", "C moving, no imitator", "stingy flower, own static signal", "C moving, stingy whitewasher present", "whitewasher fitness"], rows2);
+}
+
+if (want("e11")) {
+  console.log("### E11. Partial defection: an imitator wearing the cooperator's (static) signal, by the percent it pays\n");
+  const rows = [];
+  for (const pI of [0, 5, 10, 20, 30, 40, 50]) {
+    const res = run(dynamic({ pI }), { R: 1500 });
+    rows.push([pI, f3(res[0].fitness), f1(res[0].fedByRivals), f3(res[1].fitness), f1(res[1].fedByRivals)]);
+  }
+  const alone = run(dynamic({ copies: false }), { R: 1500 });
+  rows.push(["(own label, 5%)", f3(alone[0].fitness), f1(alone[0].fedByRivals), f3(alone[1].fitness), f1(alone[1].fedByRivals)]);
+  table(["imitator's percent", "imitator fitness", "rival feeds at imitator", "cooperator (50%) fitness", "rival feeds at cooperator"], rows);
+}
+
+if (want("e12")) {
+  console.log("### E12. Selfing: own cells counted (today), excluded, or self-pollination discounted (×0.25)\n");
+  const VARIANTS = [
+    ["counted (today)", {}],
+    ["own cells excluded", { selfW: { poll: 0, forage: 0 } }],
+    ["own cells excluded, smoothed shares (ε = 300)", { selfW: { poll: 0, forage: 0 }, eps: 300 }],
+    ["self-pollination ×0.25", { selfW: { poll: 0.25, forage: 1 } }],
+    ["self-pollination ×0.25, smoothed shares (ε = 300)", { selfW: { poll: 0.25, forage: 1 }, eps: 300 }],
+    ["counted, smoothed shares (ε = 300)", { eps: 300 }],
+  ];
+  const hetero = () => {
+    // flowers 60, 60, 30, 30, 5, 5 to rivals; bees greedy / naive alternating; all with handshakes.
+    const ps = [60, 60, 30, 30, 5, 5];
+    return ps.map((p, i) => team({ label: "sig" + i, pRival: p, bee: i % 2 ? "naive" : "greedy" }));
+  };
+  const rows = [];
+  for (const [name, opts] of VARIANTS) {
+    const base = run(pop(6), opts)[0];
+    const dev = (o) => { const t = pop(6); t[0] = { ...t[0], ...o }; return run(t, opts)[0].fitness; };
+    const h = run(hetero(), opts).map((x) => x.fitness);
+    const spread = Math.max(...h) - Math.min(...h);
+    rows.push([name, f1(base.selfFeeds) + " / " + f1(base.feeds), f2(base.rivalFeedRate), f3(dev({ pOwn: 0 })), f3(dev({ bee: "selfOnly", pOwn: 0 })), f3(dev({ noSelf: true })), h.map((x) => x.toFixed(2)).join(" "), f2(spread)]);
+  }
+  table(["scoring", "greedy bee: self-feeds / feeds", "rival feed rate", "deviant gives own bee 0%", "deviant self-only at 0%", "deviant never self-feeds", "mixed population fitness (60g 60n 30g 30n 5g 5n)", "spread (max − min)"], rows);
+}

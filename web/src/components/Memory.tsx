@@ -28,6 +28,7 @@ export function MemoryView({ memory, team, view, own = false }: { memory: BeeMem
         <Meter label="MEMORY (bytes)" value={memory.bytes} max={memory.cap} />
         <span className="small muted">{cleared}. {own ? "Read only: only your bee writes it." : "Read only."}</span>
       </div>
+      {memory.error && <p className="small warn-text memory-empty">The latest save was refused, so this is the memory from before it: <span className="mono">{memory.error}</span></p>}
       {empty ? <p className="small muted memory-empty">Empty ({"{}"}).</p> : <pre className="memory-value" aria-label={`${team.name}'s bee MEMORY`}>{pretty(memory.value)}</pre>}
     </div>
   );

@@ -58,7 +58,9 @@ async function play(name, teams, rounds = ROUNDS) {
     const rivalVisits = byB.filter((a) => a.flower !== i), rivalFed = rivalVisits.filter((a) => a.action === "feed");
     const fedByRivals = ends.filter((a) => a.flower === i && a.bee !== i && a.action === "feed");
     const beeMs = byB.map((a) => a.beeMs).filter((x) => typeof x === "number");
+    const win = [0, 1, 2].map((w) => fedByRivals.filter((a) => a.round > (w * rounds) / 3 && a.round <= ((w + 1) * rounds) / 3).length);
     return {
+      win1: win[0], win2: win[1], win3: win[2],
       team: t.name, size: garden.flowers[i]?.size, flowerMs: q(atF.map((a) => a.ms), 0.5), E: q(atF.map((a) => a.energy), 0.5),
       flowerFail: ends.filter((a) => a.flower === i && a.r === null).length,
       fedByRivals: fedByRivals.length, pctToRivals: fedByRivals.length ? fedByRivals.reduce((s, a) => s + a.percent, 0) / fedByRivals.length : null,
@@ -139,4 +141,41 @@ if (want("g5")) {
   const hs = (i) => ({ pct: 30, handshake: KEYS[i], pOwn: 50 });
   const res = await play("g5", [0, 1, 2, 3, 4, 5].map((i) => T(`handshake, greedy bee ${i}`, i, hs(i), { kind: "greedy", handshake: KEYS[i] })), 3000);
   print(`G5. A 10-minute game (3,000 rounds): bees rebuild their state from the whole history on every call (one game, ${res.ledger} actions)`, res);
+}
+
+if (want("g6")) {
+  // Partial defection, on the real engine: G3b's runtime mimic (team 4) at several percents.
+  console.log(`#### G6. The runtime mimic's percent (it wears the best-paying rival rule; teams 0–1 pay 60%, 2–3 30%, 5 5%; N = 6; mean of ${REPS} games of ${ROUNDS} rounds)\n`);
+  console.log("| mimic's percent | mimic fitness | rival feeds at mimic (rounds 1–200 / 201–400 / 401–600) | 60% teams' mean fitness | rival feeds at the 60% teams |");
+  console.log("|---|---|---|---|---|");
+  for (const p of [0, 5, 15, 30, 45]) {
+    const teams = [
+      T("60%, greedy bee", 0, { pct: 60 }, { kind: "greedy" }), T("60%, naive bee", 1, { pct: 60 }, { kind: "naive" }),
+      T("30%, greedy bee", 2, { pct: 30 }, { kind: "greedy" }), T("30%, naive bee", 3, { pct: 30 }, { kind: "naive" }),
+      T("mimic", 4, { pct: p, kind: "mimic" }, { kind: "greedy" }), T("5%, naive bee", 5, { pct: 5 }, { kind: "naive" }),
+    ];
+    const r = await playReps(`g6 p=${p}`, teams);
+    const m = r.rows[4];
+    console.log(`| ${p} | ${f3(m.fitness)} ± ${m.fitnessSd.toFixed(2)} | ${f1(m.fedByRivals)} (${f1(m.win1)} / ${f1(m.win2)} / ${f1(m.win3)}) | ${f3((r.rows[0].fitness + r.rows[1].fitness) / 2)} | ${f1(r.rows[0].fedByRivals + r.rows[1].fedByRivals)} |`);
+  }
+  console.log();
+}
+
+if (want("g7")) {
+  // Moving: the 60% flowers derive a new rule every T rounds from a secret and the round number (no code change).
+  console.log(`#### G7. Cooperators that change their rule every T rounds, against the runtime mimic at 5% (mean of ${REPS} games of ${ROUNDS} rounds)\n`);
+  console.log("| cooperators' rule | 60% teams' mean fitness | rival feeds at the 60% teams | mimic fitness | rival feeds at mimic |");
+  console.log("|---|---|---|---|---|");
+  for (const [name, fl] of [["static (G3b)", {}], ["new rule every 20 rounds (4 s)", { kind: "rotating", rotate: 20 }], ["new rule every 5 rounds (1 s)", { kind: "rotating", rotate: 5 }]]) {
+    for (const mimic of [false, true]) {
+      const teams = [
+        T("60%, greedy bee", 0, { pct: 60, ...fl, seed: "rotA" }, { kind: "greedy" }), T("60%, naive bee", 1, { pct: 60, ...fl, seed: "rotB" }, { kind: "naive" }),
+        T("30%, greedy bee", 2, { pct: 30 }, { kind: "greedy" }), T("30%, naive bee", 3, { pct: 30 }, { kind: "naive" }),
+        T("x", 4, { pct: 5, kind: mimic ? "mimic" : "rule" }, { kind: "greedy" }), T("5%, naive bee", 5, { pct: 5 }, { kind: "naive" }),
+      ];
+      const r = await playReps(`g7 ${name} ${mimic}`, teams);
+      console.log(`| ${name}; team 4 ${mimic ? "mimics" : "has its own 5% rule"} | ${f3((r.rows[0].fitness + r.rows[1].fitness) / 2)} | ${f1(r.rows[0].fedByRivals + r.rows[1].fedByRivals)} | ${f3(r.rows[4].fitness)} ± ${r.rows[4].fitnessSd.toFixed(2)} | ${f1(r.rows[4].fedByRivals)} |`);
+    }
+  }
+  console.log();
 }

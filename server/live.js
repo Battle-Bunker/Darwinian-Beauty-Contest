@@ -1,7 +1,7 @@
 // Runs the gardens of running games. Each game's garden runs in exactly one server process, whichever
 // holds the game's advisory lock; every process adopts running games nobody holds (on boot, on any change
 // to the game, and every few seconds), so a game survives its process dying (its bees start afresh, and
-// the rounds carry on from the stored round, clock, turn counts and team ledgers). Live gardens are paced:
+// the rounds carry on from the stored round, clock, turn counts, history and bees' MEMORY). Live gardens are paced:
 // a round lasts at least its 200 ms of game time on the wall clock.
 // Every FLUSH_MS the garden's new actions, round, clock and ledgers are written and announced; arrivals
 // are written at once. Submissions,
@@ -12,6 +12,7 @@ import { env } from "./config.js";
 import { query, tx } from "./db/pool.js";
 import { Garden, KINDS } from "./engine.js";
 import { turnOf } from "./games.js";
+import { shortId } from "./lib/shortid.js";
 import { zeroLedger } from "./lib/scoring.js";
 import { bus } from "./realtime.js";
 
@@ -80,8 +81,16 @@ async function syncNow(gameId) {
 
 async function adopt(g) {
   const index = new Map(g.participants.map((id, i) => [id, i]));
-  // The finished turns so far (the programs' ledgers start from them) and each bee's turn count.
-  const ends = (await query("SELECT * FROM actions WHERE game_id = $1 AND action IN ('feed', 'leave') ORDER BY seq", [g.id])).rows;
+  // The finished turns so far, in natural order (the programs' HISTORY starts from them), each bee's turn
+  // count, and each bee's MEMORY.
+  const ends = (await query(
+    `SELECT * FROM actions WHERE game_id = $1 AND action IN ('feed', 'leave') ORDER BY round, array_position($2::uuid[], bee_team)`,
+    [g.id, g.participants])).rows;
+  const memories = new Array(g.participants.length).fill(null);
+  for (const m of (await query("SELECT * FROM bee_memories WHERE game_id = $1", [g.id])).rows) {
+    if (index.has(m.team_id)) memories[index.get(m.team_id)] = { version: m.bee_version, memory: m.memory, error: m.error };
+  }
+  const game = shortId(g);
   const turns = new Array(g.participants.length).fill(0);
   for (const r of (await query("SELECT bee_team, max(turn) AS n FROM actions WHERE game_id = $1 GROUP BY bee_team", [g.id])).rows) {
     if (index.has(r.bee_team)) turns[index.get(r.bee_team)] = Number(r.n);
@@ -89,7 +98,7 @@ async function adopt(g) {
   const garden = new Garden({
     config: g.config, teams: g.participants.length, clockMs: Number(g.clock_ms), round: Number(g.round), lastSeq: Number(g.last_seq),
     ledgers: { feeds: g.feeds, nectar: g.nectar, pollen: g.pollen ?? zeroLedger(g.participants.length) },
-    history: ends.map((a) => turnOf(a, index)), turns, paced: true,
+    history: ends.map((a) => turnOf(a, index, { game, flowerMs: g.config.budgets.flower.ms })), turns, memories, game, paced: true,
   });
   if (g.status === "paused") garden.pause();
   const run = { id: g.id, room: g.room_id, participants: g.participants, index, garden, versions: new Map(), flushing: null, again: false, abandoned: false };
@@ -127,7 +136,7 @@ async function flush(run) {
   if (run.flushing) return run.flushing;
   run.flushing = (async () => {
     const d = run.garden.drain();
-    if (!d.actions.length && !d.problems.length && d.clockMs === run.lastClock) return;
+    if (!d.actions.length && !d.problems.length && !d.memories.length && d.clockMs === run.lastClock) return;
     const ids = run.participants;
     try {
       await tx(async (c) => {
@@ -146,6 +155,12 @@ async function flush(run) {
         }
         await c.query("UPDATE games SET clock_ms = $2, round = $3, last_seq = $4, feeds = $5, nectar = $6, pollen = $7 WHERE id = $1",
           [run.id, d.clockMs, d.round, d.lastSeq, JSON.stringify(d.feeds), JSON.stringify(d.nectar), JSON.stringify(d.pollen)]);
+        for (const m of d.memories) {
+          await c.query(
+            `INSERT INTO bee_memories (game_id, team_id, bee_version, memory, bytes, error, at_round) VALUES ($1, $2, $3, $4, $5, $6, $7)
+             ON CONFLICT (game_id, team_id) DO UPDATE SET bee_version = $3, memory = $4, bytes = $5, error = $6, at_round = $7`,
+            [run.id, ids[m.team], m.version, m.memory, m.bytes, m.error, d.round]);
+        }
         for (const p of d.problems) {
           await c.query("UPDATE programs SET problem = COALESCE(problem, $5) WHERE game_id = $1 AND team_id = $2 AND kind = $3 AND version = $4",
             [run.id, ids[p.team], p.kind, p.version, p.error]);
@@ -161,6 +176,7 @@ async function flush(run) {
       // Put them back for the next flush.
       run.garden.out.unshift(...d.actions);
       run.garden.problems.unshift(...d.problems);
+      for (const m of d.memories) run.garden.bees[m.team].memoryChanged = true;
       throw e;
     }
   })().finally(() => {

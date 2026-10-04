@@ -76,6 +76,7 @@ export interface BeeMemory {
   bytes: number;      // its size as canonical JSON (sorted keys, no spaces, UTF-8)
   cap: number;        // budgets.bee.memory
   version: number;    // the bee version it belongs to (it was cleared when that version went live)
+  error?: string | null;  // why the latest save was refused (over the cap, not plain JSON): the old memory was kept
 }
 
 export interface MyTeam { id: string; name: string; joinCode: string; index?: number | null }
