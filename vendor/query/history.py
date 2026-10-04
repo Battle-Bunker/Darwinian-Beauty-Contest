@@ -12,13 +12,16 @@ Json = Any  # any JSON value: a challenge, a response, a bee's memory
 class Turn(NamedTuple):
     """One finished turn: a bee's challenge, a flower's response and the bee's decision. (entity "turns")"""
     game: str  # the game's short id
+    seq: int  # the number of the turn's feed or leave action (GET .../responses/:seq has its whole response)
     round: int  # the round the turn was taken in (1, 2, ...)
     at_ms: int  # game time the round began: (round - 1) × round_ms
     turn: int  # the bee's turn number (1, 2, ...)
     bee: int  # the bee's team index
     flower: int  # the flower's team index
     challenge: Json  # the bee's challenge
-    response: Json  # the flower's response (null if it failed)
+    response: Json  # the flower's response (null if it failed, or if its JSON is over 4 KB: see responseBytes)
+    response_bytes: Optional[int]  # the response's size: UTF-8 bytes of its JSON text (null if it failed)
+    response_hash: Optional[str]  # for a response over 4 KB: the SHA-256 (hex) of its JSON text, else null
     fed: bool  # whether the bee fed
     percent: Optional[float]  # the share of E the flower offered, 0-100 (null if it failed)
     energy: Optional[float]  # E, the flower's excess energy (node·ms; 0 if it failed)
@@ -35,14 +38,14 @@ class Turn(NamedTuple):
     def from_json(cls, d: dict) -> "Turn":
         """From a dict with canonical (camelCase) field names."""
         g = d.get
-        return cls(g("game"), g("round"), g("atMs"), g("turn"), g("bee"), g("flower"), g("challenge"), g("response"), g("fed"), g("percent"), g("energy"), g("nectar"), g("pollen"), g("ms"), g("flowerVersion"), g("flowerError"), g("beeMs"), g("beeVersion"), g("beeError"))
+        return cls(g("game"), g("seq"), g("round"), g("atMs"), g("turn"), g("bee"), g("flower"), g("challenge"), g("response"), g("responseBytes"), g("responseHash"), g("fed"), g("percent"), g("energy"), g("nectar"), g("pollen"), g("ms"), g("flowerVersion"), g("flowerError"), g("beeMs"), g("beeVersion"), g("beeError"))
 
     def to_json(self) -> dict:
         """As a dict with canonical (camelCase) field names."""
-        return {"game": self.game, "round": self.round, "atMs": self.at_ms, "turn": self.turn, "bee": self.bee, "flower": self.flower, "challenge": self.challenge, "response": self.response, "fed": self.fed, "percent": self.percent, "energy": self.energy, "nectar": self.nectar, "pollen": self.pollen, "ms": self.ms, "flowerVersion": self.flower_version, "flowerError": self.flower_error, "beeMs": self.bee_ms, "beeVersion": self.bee_version, "beeError": self.bee_error}
+        return {"game": self.game, "seq": self.seq, "round": self.round, "atMs": self.at_ms, "turn": self.turn, "bee": self.bee, "flower": self.flower, "challenge": self.challenge, "response": self.response, "responseBytes": self.response_bytes, "responseHash": self.response_hash, "fed": self.fed, "percent": self.percent, "energy": self.energy, "nectar": self.nectar, "pollen": self.pollen, "ms": self.ms, "flowerVersion": self.flower_version, "flowerError": self.flower_error, "beeMs": self.bee_ms, "beeVersion": self.bee_version, "beeError": self.bee_error}
 
 
-TurnField = Literal["game", "round", "at_ms", "turn", "bee", "flower", "challenge", "response", "fed", "percent", "energy", "nectar", "pollen", "ms", "flower_version", "flower_error", "bee_ms", "bee_version", "bee_error"]
+TurnField = Literal["game", "seq", "round", "at_ms", "turn", "bee", "flower", "challenge", "response", "response_bytes", "response_hash", "fed", "percent", "energy", "nectar", "pollen", "ms", "flower_version", "flower_error", "bee_ms", "bee_version", "bee_error"]
 
 
 class Version(NamedTuple):
@@ -82,21 +85,22 @@ class Team(NamedTuple):
     color: str  # the team's colour
     members: int  # how many people are on the team
     memory: Json  # the team's bee's MEMORY, as last saved
-    memory_bytes: Optional[int]  # its size in bytes of canonical JSON
+    memory_bytes: Optional[int]  # its size: Σ over entries of the key's UTF-8 bytes + the value's JSON bytes
     memory_version: Optional[int]  # the bee version it belongs to
+    memory_error: Optional[str]  # why its last save failed (over the cap, the wrong shape, fed() failed), if it did
 
     @classmethod
     def from_json(cls, d: dict) -> "Team":
         """From a dict with canonical (camelCase) field names."""
         g = d.get
-        return cls(g("game"), g("index"), g("id"), g("name"), g("color"), g("members"), g("memory"), g("memoryBytes"), g("memoryVersion"))
+        return cls(g("game"), g("index"), g("id"), g("name"), g("color"), g("members"), g("memory"), g("memoryBytes"), g("memoryVersion"), g("memoryError"))
 
     def to_json(self) -> dict:
         """As a dict with canonical (camelCase) field names."""
-        return {"game": self.game, "index": self.index, "id": self.id, "name": self.name, "color": self.color, "members": self.members, "memory": self.memory, "memoryBytes": self.memory_bytes, "memoryVersion": self.memory_version}
+        return {"game": self.game, "index": self.index, "id": self.id, "name": self.name, "color": self.color, "members": self.members, "memory": self.memory, "memoryBytes": self.memory_bytes, "memoryVersion": self.memory_version, "memoryError": self.memory_error}
 
 
-TeamField = Literal["game", "index", "id", "name", "color", "members", "memory", "memory_bytes", "memory_version"]
+TeamField = Literal["game", "index", "id", "name", "color", "members", "memory", "memory_bytes", "memory_version", "memory_error"]
 
 
 class Pair(NamedTuple):
@@ -159,6 +163,7 @@ PROGRAM_ENTITY = "turns"
 _NAMES = {
     "turns": {
         "game": "game",
+        "seq": "seq",
         "round": "round",
         "at_ms": "atMs",
         "turn": "turn",
@@ -166,6 +171,8 @@ _NAMES = {
         "flower": "flower",
         "challenge": "challenge",
         "response": "response",
+        "response_bytes": "responseBytes",
+        "response_hash": "responseHash",
         "fed": "fed",
         "percent": "percent",
         "energy": "energy",
@@ -201,6 +208,7 @@ _NAMES = {
         "memory": "memory",
         "memory_bytes": "memoryBytes",
         "memory_version": "memoryVersion",
+        "memory_error": "memoryError",
     },
     "pairs": {"game": "game", "bee": "bee", "flower": "flower", "feeds": "feeds", "nectar": "nectar", "pollen": "pollen"},
     "scores": {
@@ -246,6 +254,7 @@ SCHEMA = {
             "program": True,
             "fields": [
                 {"name": "game", "type": "str", "nullable": False},
+                {"name": "seq", "type": "int", "nullable": False},
                 {"name": "round", "type": "int", "nullable": False},
                 {"name": "atMs", "type": "int", "nullable": False},
                 {"name": "turn", "type": "int", "nullable": False},
@@ -253,6 +262,8 @@ SCHEMA = {
                 {"name": "flower", "type": "int", "nullable": False},
                 {"name": "challenge", "type": "json", "nullable": False},
                 {"name": "response", "type": "json", "nullable": True},
+                {"name": "responseBytes", "type": "int", "nullable": True},
+                {"name": "responseHash", "type": "str", "nullable": True},
                 {"name": "fed", "type": "bool", "nullable": False},
                 {"name": "percent", "type": "float", "nullable": True},
                 {"name": "energy", "type": "float", "nullable": True},
@@ -311,6 +322,7 @@ SCHEMA = {
                 {"name": "memory", "type": "json", "nullable": True},
                 {"name": "memoryBytes", "type": "int", "nullable": True},
                 {"name": "memoryVersion", "type": "int", "nullable": True},
+                {"name": "memoryError", "type": "str", "nullable": True},
             ],
         },
         "pairs": {
@@ -365,7 +377,7 @@ SCHEMA = {
 
 
 class ProgramHistory:
-    """What programs get as HISTORY: HISTORY.turns is a query over One finished turn: a bee's challenge, a flower's response and the bee's decision."""
+    """local()'s read-only root (Local.history): .turns is a query over One finished turn: a bee's challenge, a flower's response and the bee's decision."""
     __slots__ = ("turns",)
     turns: "Query[Turn, TurnField]"
 
@@ -373,7 +385,7 @@ class ProgramHistory:
         object.__setattr__(self, "turns", turns)
 
     def __setattr__(self, k: str, v: Any) -> None:
-        raise AttributeError("HISTORY is read-only")
+        raise AttributeError("history is read-only")
 
 
 class RemoteHistory:
@@ -1171,8 +1183,9 @@ _MISSING = object()
 class Local:
     """
     An in-memory history over turn records you hold (canonical camelCase dicts, as `GET .../ledger` and
-    `.../query` return them), for team `team`. `history` is exactly what programs get as HISTORY
-    (read-only); `turns` is the same query; append() adds new turns, keeping the indexes up to date.
+    `.../query` return them), for team `team`: what that team may see. `history` is a read-only root (no
+    append) to hand to code that should only read; `turns` is the same query; append() adds new turns,
+    keeping the indexes up to date. (Game programs get no history.)
     """
     __slots__ = ("_table", "history", "team")
 

@@ -201,12 +201,23 @@ export function readAnswer(config, rType, res, size) {
   if (typeof v[1] !== "number" || !Number.isFinite(v[1])) return fail(`percent must be a number from 0 to 100 (got ${JSON.stringify(v[1])?.slice(0, 30)})`);
   let rBytes = typeof res.bytes === "number" ? res.bytes : null, full = null;
   if (rBytes === null || rBytes > INLINE_BYTES) {
-    full = JSON.stringify(v[0]);
+    full = rawResponse(res) ?? JSON.stringify(v[0]);
     rBytes = Buffer.byteLength(full);
     if (rBytes > config.maxResponseBytes) return fail(`the response is ${rBytes} bytes of JSON, over the cap of ${config.maxResponseBytes}`);
   }
   const answer = { r: v[0], rBytes, percent: Math.min(100, Math.max(0, v[1])), energy: ms === null ? 0 : excessEnergy(config, size, ms), ms, flowerError: null };
   return rBytes > INLINE_BYTES ? { ...answer, ...largeResponse(full) } : answer;
+}
+
+/**
+ * The response's JSON text as the runner wrote it, cut from its reply line {"cpu":…,"bytes":…,"v":[R,P]}
+ * (P is a number, so the last comma is R's end), or null.
+ */
+function rawResponse(res) {
+  const raw = res.raw;
+  if (typeof raw !== "string" || !raw.endsWith("]}")) return null;
+  const i = raw.indexOf('"v":['), j = raw.lastIndexOf(",");
+  return i > 0 && j > i + 5 ? raw.slice(i + 5, j) : null;
 }
 
 /** A response over INLINE_BYTES: its JSON text, its SHA-256 (hex) and its first INLINE_BYTES (whole characters). */

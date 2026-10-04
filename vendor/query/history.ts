@@ -8,6 +8,8 @@ export type Json = null | boolean | number | string | readonly Json[] | { readon
 export interface Turn {
   /** the game's short id */
   readonly game: string;
+  /** the number of the turn's feed or leave action (GET .../responses/:seq has its whole response) */
+  readonly seq: number;
   /** the round the turn was taken in (1, 2, ...) */
   readonly round: number;
   /** game time the round began: (round - 1) × round_ms */
@@ -20,8 +22,12 @@ export interface Turn {
   readonly flower: number;
   /** the bee's challenge */
   readonly challenge: Json;
-  /** the flower's response (null if it failed) */
+  /** the flower's response (null if it failed, or if its JSON is over 4 KB: see responseBytes) */
   readonly response: Json;
+  /** the response's size: UTF-8 bytes of its JSON text (null if it failed) */
+  readonly responseBytes: number | null;
+  /** for a response over 4 KB: the SHA-256 (hex) of its JSON text, else null */
+  readonly responseHash: string | null;
   /** whether the bee fed */
   readonly fed: boolean;
   /** the share of E the flower offered, 0-100 (null if it failed) */
@@ -88,10 +94,12 @@ export interface Team {
   readonly members: number;
   /** the team's bee's MEMORY, as last saved */
   readonly memory: Json;
-  /** its size in bytes of canonical JSON */
+  /** its size: Σ over entries of the key's UTF-8 bytes + the value's JSON bytes */
   readonly memoryBytes: number | null;
   /** the bee version it belongs to */
   readonly memoryVersion: number | null;
+  /** why its last save failed (over the cap, the wrong shape, fed() failed), if it did */
+  readonly memoryError: string | null;
 }
 
 /** The score ledgers, one row per (bee team, flower team): feeds, nectar and pollen over the whole game. (entity "pairs") */
@@ -151,7 +159,7 @@ export interface Records {
   readonly scores: Score;
 }
 export type EntityName = keyof Records;
-/** The entity programs query as HISTORY.turns. */
+/** The entity local() holds and appends to (Local.history.turns). */
 export type ProgramEntity = "turns";
 export const PROGRAM_ENTITY: ProgramEntity = "turns";
 
@@ -292,6 +300,11 @@ export const SCHEMA: Schema = {
           "nullable": false
         },
         {
+          "name": "seq",
+          "type": "int",
+          "nullable": false
+        },
+        {
           "name": "round",
           "type": "int",
           "nullable": false
@@ -324,6 +337,16 @@ export const SCHEMA: Schema = {
         {
           "name": "response",
           "type": "json",
+          "nullable": true
+        },
+        {
+          "name": "responseBytes",
+          "type": "int",
+          "nullable": true
+        },
+        {
+          "name": "responseHash",
+          "type": "str",
           "nullable": true
         },
         {
@@ -526,6 +549,11 @@ export const SCHEMA: Schema = {
         {
           "name": "memoryVersion",
           "type": "int",
+          "nullable": true
+        },
+        {
+          "name": "memoryError",
+          "type": "str",
           "nullable": true
         }
       ]
@@ -1364,17 +1392,18 @@ export class Table<R extends object = Record<string, unknown>> {
   }
 }
 
-// ---------------------------------------------------------------- roots: programs, local and remote
+// ------------------------------------------------------------------------------- roots: local and remote
 
-/** What programs get as HISTORY: a query per program entity. */
+/** A local history's read-only root (Local.history): a query over the entity it holds. */
 export type ProgramHistory = { readonly [E in ProgramEntity]: Query<Records[E]> };
 /** Every entity, queried remotely. */
 export type RemoteHistory = { readonly [E in EntityName]: Query<Records[E], Records[E], "records", "async"> };
 
 /**
  * An in-memory history over turn records you hold (canonical camelCase, as `GET …/ledger` and
- * `…/query` return them), for team `team`. `history` is exactly what programs get as HISTORY (read-only);
- * `turns` is the same query; append() adds new turns, keeping the indexes up to date.
+ * `…/query` return them), for team `team`: what that team may see. `history` is a read-only root (no
+ * append) to hand to code that should only read; `turns` is the same query; append() adds new turns,
+ * keeping the indexes up to date. (Game programs get no history.)
  */
 export class Local {
   readonly #table: Table<Records[ProgramEntity]>;

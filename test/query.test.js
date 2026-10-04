@@ -35,14 +35,18 @@ const python = (job) => JSON.parse(execFileSync("python3", [HARNESS], { input: J
 const N = 4;
 const db = {}; // ids and the garden's output
 
+// Team 3's flower fails now and then; team 2's answers some challenges with a response over 4 KB (stored
+// apart: its record has response null, with its size and hash).
 const flowerCode = (ti) => ti === 3
   ? `def flower(c):\n    if c % 5 == 0:\n        return 1 // 0, 1\n    return (c * 7) % 13, 15\n`
-  : `def flower(c):\n    return (c * ${3 + ti}) % 11, ${20 + 25 * ti}\n`;
-const beeCode = (ti) => `def first():\n    return ${ti}\ndef decide(c, r):\n    MEMORY["n"] = MEMORY.get("n", 0) + 1\n    return ("feed" if r is not None and (r + ${ti}) % 3 == 0 else "leave"), (c * 5 + 3) % 17\n`;
+  : ti === 2
+    ? `def flower(c):\n    if c % 4 == 1:\n        return list(range(c, c + 1500)), 30\n    return (c * 5) % 11, 70\n`
+    : `def flower(c):\n    return (c * ${3 + ti}) % 11, ${20 + 25 * ti}\n`;
+const beeCode = (ti) => `def first():\n    return ${ti}\ndef decide(c, r):\n    MEMORY["n"] = MEMORY.get("n", 0) + 1\n    if isinstance(r, list):\n        r = len(r)\n    return ("feed" if r is not None and (r + ${ti}) % 3 == 0 else "leave"), (c * 5 + 3) % 17\n`;
 
 before(async () => {
   await migrate();
-  const config = normalizeConfig({ feedCost: 2 });
+  const config = normalizeConfig({ feedCost: 2, responseType: "any" });
   const out = await play(config, Array.from({ length: N }, (_, ti) => ({ flower: flowerCode(ti), bee: beeCode(ti) })), 80);
   const uid = () => crypto.randomUUID();
   db.users = Array.from({ length: N + 1 }, uid); // one per team, and a spectator
@@ -267,6 +271,33 @@ test("room queries: across the room's finished games only, fully revealed, scope
     db.records.filter((t) => t.ms !== null).length, "fully revealed");
 });
 
+test("big responses: the record shows their size and hash; the whole text is stored apart, and served by seq", async () => {
+  const { viewResponse } = await import("../server/games.js");
+  const big = db.records.filter((t) => t.responseHash !== null);
+  assert.ok(big.length >= 3, `${big.length} big responses`);
+  for (const t of big.slice(0, 5)) {
+    assert.equal(t.response, null);
+    assert.ok(t.responseBytes > 4096);
+    const text = await viewResponse({ id: db.game }, t.seq);
+    assert.equal(Buffer.byteLength(text), t.responseBytes);
+    assert.equal(crypto.createHash("sha256").update(text).digest("hex"), t.responseHash);
+    assert.deepEqual(JSON.parse(text), Array.from({ length: 1500 }, (_, i) => t.challenge + i));
+    // The action (what pages and live feeds carry) has the preview.
+    const a = db.out.actions.find((x) => x.seq === t.seq);
+    assert.equal(a.r, null);
+    assert.equal(a.rPreview, text.slice(0, 4096), "(ASCII: the first 4,096 characters)");
+    assert.equal(a.rHash, t.responseHash);
+  }
+  const small = db.records.find((t) => t.responseHash === null && t.response !== null);
+  assert.equal(await viewResponse({ id: db.game }, small.seq), JSON.stringify(small.response));
+  const failed = db.records.find((t) => t.response === null && t.responseBytes === null);
+  assert.equal(await viewResponse({ id: db.game }, failed.seq), null, "a failed flower's turn has no response");
+  // Queries see the same: response null, size and hash public.
+  const rows = await sql({ from: "turns", where: [W("responseHash", "isNull", false)], select: ["seq", "response", "responseBytes"] }, null);
+  assert.deepEqual(rows.map((r) => r.seq).sort((x, y) => x - y), big.map((t) => t.seq).sort((x, y) => x - y));
+  assert.ok(rows.every((r) => r.response === null && r.responseBytes > 4096));
+});
+
 test("bad queries are refused with a reason; limits are capped", async () => {
   const bad = [
     [{ from: "nope" }, /unknown entity/],
@@ -316,7 +347,7 @@ test("the builders build the same AST in Python and TypeScript", () => {
   assert.deepEqual(T.turns.count("beeMs").ast().aggregates, [{ fn: "count", field: "beeMs", as: "count_beeMs" }]);
 });
 
-test("immutability: queries, results, records and HISTORY can't be changed, in either language", () => {
+test("immutability: queries, results, records and local().history can't be changed, in either language", () => {
   const recs = db.records.slice(0, 30);
   const local = H.local(recs, 1);
   const q = local.turns;
@@ -330,10 +361,10 @@ test("immutability: queries, results, records and HISTORY can't be changed, in e
   assert.throws(() => { "use strict"; rows.push(1); });
   const agg = q.groupBy("flower").count().rows();
   assert.ok(Object.isFrozen(agg) && Object.isFrozen(agg[0]));
-  assert.equal(typeof local.history.append, "undefined", "HISTORY has no append");
+  assert.equal(typeof local.history.append, "undefined", "history has no append");
   assert.equal(local.history.turns.rows().length, 30);
   local.append(db.records.slice(30, 40));
-  assert.equal(local.history.turns.rows().length, 40, "append() reaches the same HISTORY");
+  assert.equal(local.history.turns.rows().length, 40, "append() reaches the same history");
   const py = python({ mode: "immutable" });
   for (const [check, ok] of Object.entries(py)) assert.ok(ok, `python: ${check}`);
 });

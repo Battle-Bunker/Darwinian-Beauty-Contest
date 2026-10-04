@@ -32,7 +32,7 @@ const PROGRAMS = {
     return (challenge * 3 + 1) % 1000, 40
 `,
     // Feeds when the answer fits its own flower's rule, and sometimes to explore. Counts its turns in
-    // MEMORY and now and then prints the nectar it has had, from HISTORY.
+    // MEMORY; after a feed, fed() adds up the nectar it got, and now and then prints it.
     bee: `import random
 
 def first():
@@ -40,13 +40,15 @@ def first():
 
 def decide(challenge, response):
     MEMORY["turns"] = MEMORY.get("turns", 0) + 1
-    if MEMORY["turns"] % 40 == 0:
-        paid = HISTORY.turns.my_bee().eq("fed", True).sum("nectar").value() or 0
-        print("turn", MEMORY["turns"], "nectar so far", round(paid))
     nxt = random.randint(0, 99)
     if response == (challenge * 3 + 1) % 1000 or random.random() < 0.2:
         return "feed", nxt
     return "leave", nxt
+
+def fed(nectar):
+    MEMORY["nectar"] = MEMORY.get("nectar", 0) + round(nectar)
+    if MEMORY["turns"] % 10 < 2:
+        print("turn", MEMORY["turns"], "nectar so far", MEMORY["nectar"])
 `,
   },
   Bo: {
@@ -99,23 +101,29 @@ def flower(challenge):
         best = (best * 31 + challenge) % 1000
     return best, 60
 `,
-    // Learns from HISTORY which answers to its question came with good nectar.
+    // Remembers (in MEMORY: one answer and what it paid) the best-paying answer to its question so far.
     bee: `import random
+
+ANSWER = None
 
 def first():
     return 3
 
 def decide(challenge, response):
+    global ANSWER
     if response is None:
         return "leave", 3
-    worth = 0
-    for t in HISTORY.turns.eq("fed", True).eq("challenge", 3).eq("response", response).rows():
-        worth = max(worth, t.nectar or 0)
-    if worth > 20000 or random.random() < 0.3:
-        if not worth:
+    ANSWER = response
+    if response == MEMORY.get("best") or random.random() < 0.3:
+        if response != MEMORY.get("best"):
             print("trying", response)
         return "feed", 3
     return "leave", 3
+
+def fed(nectar):
+    if nectar > MEMORY.get("paid", 0):
+        MEMORY["best"] = ANSWER
+        MEMORY["paid"] = round(nectar)
 `,
   },
   Fin: {

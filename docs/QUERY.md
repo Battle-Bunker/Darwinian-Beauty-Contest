@@ -1,12 +1,12 @@
 # Querying history
 
-Operators, LLM team agents and in-game programs all query a game's history the same way: with a small,
-typed, immutable **query builder** that builds a language-neutral **query AST** (JSON), run by one of
-three executors:
+Operators and LLM team agents query a game's history the same way: with a small, typed, immutable
+**query builder** that builds a language-neutral **query AST** (JSON), run by one of three executors.
+(Game programs get no history: only their arguments, `GAME` and the bee's `MEMORY`; RULES.md.)
 
 | Executor | Where | Data | Visibility |
 |---|---|---|---|
-| **in-memory** | inside programs, as the global `HISTORY`; or in any client over rows it holds | the team ledger | already masked: it holds exactly what the team may see |
+| **in-memory** | in any client, over rows it holds (`local()`) | the team ledger | already masked: it holds exactly what the team may see |
 | **SQL** | the server: `POST …/query` | Postgres | enforced in SQL, per viewer, with the same rules |
 | **remote** | the generated clients (Python stdlib `urllib`, TypeScript `fetch`) | the server, over HTTP | the server's |
 
@@ -19,7 +19,7 @@ of truth: entities, fields, types, indexes, scopes and each field's visibility r
 |---|---|
 | `vendor/query/history.py` | Python: named-tuple records (immutable), the typed builder, the in-memory and remote executors (stdlib only) |
 | `vendor/query/history.ts` | TypeScript: readonly record interfaces, the typed builder, the in-memory and remote executors |
-| `vendor/query/history.js` | the same TypeScript with its types stripped, as a plain script (`DbcHistory`): what the TypeScript runner and the server load |
+| `vendor/query/history.js` | the same TypeScript with its types stripped, as a plain script (`DbcHistory`): what the server and its tests load |
 | `vendor/query/schema.json` | the schema as JSON, for anything else |
 
 `npm run gen:query` regenerates them; `npm test` fails if they are stale. The generator lives in
@@ -28,22 +28,27 @@ of truth: entities, fields, types, indexes, scopes and each field's visibility r
 
 ## Entities
 
-| Entity | One row per | Key (natural order) | In programs |
+| Entity | One row per | Key (natural order) | In `local()` |
 |---|---|---|---|
-| `turns` | finished turn | game, round, bee | `HISTORY.turns` |
+| `turns` | finished turn | game, round, bee | `h.turns` |
 | `versions` | program version | game, team, kind, version | |
-| `teams` | team playing | game, index | |
+| `teams` | team playing (with its bee's MEMORY: value, size, version, last error) | game, index | |
 | `pairs` | (bee team, flower team): the score ledgers | game, bee, flower | |
 | `scores` | team: the scoreboard | game, team | |
 
 Fields, types and visibility are in the schema (and in `vendor/query/schema.json`). Teams are numbered by
 **index** (0 to N − 1, `GAME.team` in programs), as in the team ledger. `game` is the game's short id.
 
+**Big responses.** A turn whose response is over 4 KB of JSON has `response: null`, with its size in
+`responseBytes` and the SHA-256 of its JSON text in `responseHash` (filter on that for equality); its whole
+text is at `GET /api/rooms/:room/games/:game/responses/:seq`, `seq` being the turn's `seq`.
+
 **Visibility.** During play a field you may not see reads as `null`, everywhere: in rows, in filters, in
 sorts and in aggregates (`sum(percent)` over turns without a feed adds up only your own flower's). The
 rules: `turns.percent` and `turns.energy` are public on a feed, else the flower's team's; `turns.ms`,
 `flowerVersion` and `flowerError` are the flower's team's; `beeMs`, `beeVersion` and `beeError` the bee's
-team's; `versions` rows are your own team's only; everything else is public. Once a game is over,
+team's; `teams.memory`, `memoryBytes`, `memoryVersion` and `memoryError` (the bee's MEMORY) the team's own;
+`versions` rows are your own team's only; everything else is public. Once a game is over,
 everything is visible (`versions.code` only if the game is revealed).
 
 ## The query AST
@@ -96,13 +101,14 @@ shared and extended freely. Results are immutable too.
 **Python** (`history.py`; field names in snake_case: `at_ms`, `bee_ms`, `flower_version`, …):
 
 ```python
-q = HISTORY.turns.my_bee().eq("fed", True).group_by("flower").sum("nectar").count()
+h = history.local(turn_records, team=2)          # or connect(...), below
+q = h.turns.my_bee().eq("fed", True).group_by("flower").sum("nectar").count()
 q.rows()        # (Row(flower=0, sum_nectar=..., count=...), ...)
 q.ast()         # the JSON AST above, as a dict
 
-HISTORY.turns.rounds(10, 20).eq("flower", 2).order_by("round", desc=True).limit(5).rows()   # (Turn, ...)
-HISTORY.turns.count().value()                    # an int
-HISTORY.turns.offset(done).rows()                # the turns after the first `done`
+h.turns.rounds(10, 20).eq("flower", 2).order_by("round", desc=True).limit(5).rows()   # (Turn, ...)
+h.turns.count().value()                          # an int
+h.turns.offset(done).rows()                      # the turns after the first `done`
 ```
 
 Conditions: `eq ne lt le gt ge` (field, value), `in_` (field, values), `between` (field, lo, hi),
@@ -113,9 +119,9 @@ order_by(field, desc=False) limit(n) offset(n)`. Run: `rows() first() value() as
 **TypeScript** (`history.ts`; canonical camelCase names):
 
 ```ts
-const q = HISTORY.turns.myBee().eq("fed", true).groupBy("flower").sum("nectar").count();
+const q = h.turns.myBee().eq("fed", true).groupBy("flower").sum("nectar").count();
 q.rows();       // readonly { flower: number; sum_nectar: number | null; count: number }[]
-HISTORY.turns.rounds(10, 20).eq("flower", 2).orderBy("round", "desc").limit(5).rows();   // readonly Turn[]
+h.turns.rounds(10, 20).eq("flower", 2).orderBy("round", "desc").limit(5).rows();   // readonly Turn[]
 ```
 
 Conditions: `eq ne lt le gt ge in between isNull notNull rounds`; scopes `myBee myFlower mine`; shape
@@ -125,20 +131,18 @@ values and result rows are typed from the schema.
 Aggregate names default to `count` for rows and `<fn>_<field>` otherwise (in the language's own field
 naming); pass `as_` / a second argument to choose one.
 
-## In programs: `HISTORY`
+## In memory: indexes and cost
 
-Programs get `HISTORY` as an immutable global next to `GAME`: `HISTORY.turns` is every finished turn of
-every bee, masked for the team (the records `GET …/ledger` returns). It is built between turns, outside the
-timed calls, with indexes kept up to date incrementally:
+`local()` (below) keeps the turns as the team may see them, with indexes kept up to date as records are
+appended:
 - records in natural order, so `rounds(lo, hi)`, `offset` and `limit` are binary searches and slices;
 - per-value indexes on `bee`, `flower`, `fed` and (`bee`, `flower`);
 - running statistics per (`bee`, `flower`, `fed`) cell: count, and sum, non-null count, min and max of
   every numeric field, so aggregates filtered and grouped by those fields cost O(cells), not O(turns).
 
-Running a query is the program's own compute (a flower pays for it in energy), so the executor picks the
-cheapest plan it can (below). Python programs see records as named tuples with snake_case fields
-(`t.round`, `t.bee_ms`); TypeScript programs as frozen objects (`t.round`, `t.beeMs`). Records and results
-are read-only; nested JSON values (a list-shaped challenge, say) are shared, so don't change them.
+Python sees records as named tuples with snake_case fields (`t.round`, `t.bee_ms`); TypeScript as frozen
+objects (`t.round`, `t.beeMs`). Records and results are read-only; nested JSON values (a list-shaped
+challenge, say) are shared, so don't change them.
 
 Measured on a 20,000-turn history (8 teams × 2,500 rounds; `npm test` prints the table):
 
@@ -190,13 +194,13 @@ unchanged.
 
 ## A history you hold: `local()`
 
-`local(records, team)` (both languages) builds the same in-memory history programs get, over turn records
-you hold: canonical camelCase dicts or objects, exactly as `GET …/ledger` and `…/query` return them (extra
-fields such as `seq` are ignored).
+`local(records, team)` (both languages) builds an in-memory history over turn records you hold:
+canonical camelCase dicts or objects, exactly as `GET …/ledger` and `…/query` return them (fields the
+schema doesn't have are ignored).
 
 | | Python | TypeScript |
 |---|---|---|
-| the read-only root programs get as `HISTORY` | `h.history` | `h.history` |
+| a read-only root, to hand to code that should only read | `h.history` | `h.history` |
 | its turns query (the same as `h.history.turns`) | `h.turns` | `h.turns` |
 | add new turns; the indexes are updated incrementally | `h.append(records)` | `h.append(records)` |
 | run a raw query AST | `h.run(ast)` | `h.run(ast)` |
@@ -207,8 +211,8 @@ h.turns.my_bee().eq("fed", True).group_by("flower").sum("nectar").rows()
 h.append(new_turn_records)
 ```
 
-`HISTORY` itself has no `append`: a program can't add to it. (Underneath, `Table(entity, records)` is the
-in-memory executor for any entity: `Table("scores", rows).query(team)`.)
+`h.history` has no `append`. (Underneath, `Table(entity, records)` is the in-memory executor for any
+entity: `Table("scores", rows).query(team)`.)
 
 ## How the in-memory executor runs a query
 
@@ -245,5 +249,4 @@ emitter writes, from the schema:
 
 The Python and TypeScript emitters are the reference: most of each is a fixed runtime with the schema
 tables filled in. Add the new language to the parity test (`test/query.test.js`), which runs the same
-ASTs through every executor and compares the results, and to the staleness check. To make it a **program
-language** too, add a runner (`server/runners/`) that loads the generated module and exposes `HISTORY`.
+ASTs through every executor and compares the results, and to the staleness check.

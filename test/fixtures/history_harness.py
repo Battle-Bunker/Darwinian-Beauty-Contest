@@ -97,10 +97,10 @@ def immutable(job):
     loc = H.local([], 0)
     try:
         loc.history.turns = None
-        checks["HISTORY can't be changed"] = False
+        checks["history can't be changed"] = False
     except AttributeError:
-        checks["HISTORY can't be changed"] = True
-    checks["HISTORY has no append"] = not hasattr(loc.history, "append")
+        checks["history can't be changed"] = True
+    checks["history has no append"] = not hasattr(loc.history, "append")
     return checks
 
 

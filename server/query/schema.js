@@ -1,7 +1,8 @@
 // The history schema: the single source of truth for querying a game's history. Everything else is
 // derived from it:
 //   - the SQL each entity is read from, with per-viewer visibility (server/query/sql.js)
-//   - the records programs get as HISTORY, masked for their team (server/query/mask.js)
+//   - each record as a team may see it (server/query/mask.js: the ledger endpoint, and the in-memory
+//     executors' records)
 //   - the typed client libraries, one per language (scripts/gen-query/, written to vendor/query/)
 //   - vendor/query/schema.json, for anything else that wants it
 // docs/QUERY.md describes the query AST, the executor algorithm and how to add a language.
@@ -54,16 +55,19 @@ export const SCHEMA = {
       // Convenience scopes, resolved against the querying team.
       scopes: { myBee: ["bee"], myFlower: ["flower"], mine: ["bee", "flower"] },
       owner: null,
-      program: true, // available to programs as HISTORY.turns
+      program: true, // what local(records, team) holds (vendor/query/): the entity built up incrementally
       fields: [
         f("game", "str", "public", "the game's short id"),
+        f("seq", "int", "public", "the number of the turn's feed or leave action (GET .../responses/:seq has its whole response)"),
         f("round", "int", "public", "the round the turn was taken in (1, 2, ...)"),
         f("atMs", "int", "public", "game time the round began: (round - 1) × round_ms"),
         f("turn", "int", "public", "the bee's turn number (1, 2, ...)"),
         f("bee", "int", "public", "the bee's team index"),
         f("flower", "int", "public", "the flower's team index"),
         f("challenge", "json", "public", "the bee's challenge"),
-        f("response", "json", "public", "the flower's response (null if it failed)", true),
+        f("response", "json", "public", "the flower's response (null if it failed, or if its JSON is over 4 KB: see responseBytes)", true),
+        f("responseBytes", "int", "public", "the response's size: UTF-8 bytes of its JSON text (null if it failed)", true),
+        f("responseHash", "str", "public", "for a response over 4 KB: the SHA-256 (hex) of its JSON text, else null", true),
         f("fed", "bool", "public", "whether the bee fed"),
         f("percent", "float", "publicOnFeed", "the share of E the flower offered, 0-100 (null if it failed)", true),
         f("energy", "float", "publicOnFeed", "E, the flower's excess energy (node·ms; 0 if it failed)", true),
@@ -120,8 +124,9 @@ export const SCHEMA = {
         f("color", "str", "public", "the team's colour"),
         f("members", "int", "public", "how many people are on the team"),
         f("memory", "json", "team", "the team's bee's MEMORY, as last saved", true),
-        f("memoryBytes", "int", "team", "its size in bytes of canonical JSON", true),
+        f("memoryBytes", "int", "team", "its size: Σ over entries of the key's UTF-8 bytes + the value's JSON bytes", true),
         f("memoryVersion", "int", "team", "the bee version it belongs to", true),
+        f("memoryError", "str", "team", "why its last save failed (over the cap, the wrong shape, fed() failed), if it did", true),
       ],
     },
     pairs: {

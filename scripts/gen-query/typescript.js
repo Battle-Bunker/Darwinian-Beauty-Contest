@@ -34,7 +34,7 @@ export function emit(schema, types) {
   for (const [name, e] of Object.entries(schema.entities)) out.push(`  readonly ${name}: ${e.record};`);
   out.push("}");
   out.push("export type EntityName = keyof Records;");
-  out.push(`/** The entity programs query as HISTORY.${t.program}. */`);
+  out.push(`/** The entity local() holds and appends to (Local.history.${t.program}). */`);
   out.push(`export type ProgramEntity = ${JSON.stringify(t.program)};`);
   out.push(`export const PROGRAM_ENTITY: ProgramEntity = ${JSON.stringify(t.program)};`);
   out.push("");

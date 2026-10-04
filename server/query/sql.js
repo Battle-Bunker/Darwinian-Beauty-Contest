@@ -28,8 +28,9 @@ const SOURCES = {
       WHERE a.action IN ('feed', 'leave')`,
     roles: { bee: "pb.idx", flower: "pf.idx", fed: "(a.action = 'feed')" },
     cols: {
-      game: "gs.short", round: "a.round::int", atMs: "(a.at_ms - gs.flower_ms)::int", turn: "a.turn", bee: "pb.idx", flower: "pf.idx",
-      challenge: "a.c", response: "a.r", fed: "(a.action = 'feed')", percent: "a.percent", energy: "a.energy", nectar: "a.nectar",
+      game: "gs.short", seq: "a.seq::int", round: "a.round::int", atMs: "(a.at_ms - gs.flower_ms)::int", turn: "a.turn", bee: "pb.idx", flower: "pf.idx",
+      challenge: "a.c", response: "a.r", responseBytes: "a.r_bytes", responseHash: "a.r_hash",
+      fed: "(a.action = 'feed')", percent: "a.percent", energy: "a.energy", nectar: "a.nectar",
       pollen: "coalesce(a.pollen, 0)", ms: "a.cpu_ms", flowerVersion: "a.flower_version", flowerError: "a.flower_error",
       beeMs: "a.bee_ms", beeVersion: "a.bee_version", beeError: "a.bee_error",
     },
@@ -49,7 +50,7 @@ const SOURCES = {
     cols: {
       game: "gs.short", index: "pt.idx", id: "t.id::text", name: "t.name", color: "t.color",
       members: "(SELECT count(*)::int FROM team_members m WHERE m.team_id = t.id)",
-      memory: "coalesce(bm.memory, '{}')::jsonb", memoryBytes: "coalesce(bm.bytes, 2)", memoryVersion: "bm.bee_version",
+      memory: "coalesce(bm.memory, '{}')::jsonb", memoryBytes: "coalesce(bm.bytes, 0)", memoryVersion: "bm.bee_version", memoryError: "bm.error",
     },
   },
   pairs: {

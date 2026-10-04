@@ -19,7 +19,7 @@ export function tables(schema, types) {
     };
   }
   const programs = Object.keys(entities).filter((k) => entities[k].program);
-  if (programs.length !== 1) throw new Error("exactly one entity can be a program entity (HISTORY.<entity>)");
+  if (programs.length !== 1) throw new Error("exactly one entity can be local()'s entity (`program: true`)");
   return { types, entities, program: programs[0] };
 }
 

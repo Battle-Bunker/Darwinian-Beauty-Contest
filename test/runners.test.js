@@ -68,7 +68,8 @@ test("python: subclasses of dict, list, str, int and float are refused: their ho
 test("python: copying a big reply into plain data is the flower's own compute", async () => {
   const { turns } = await turnsOf("python", `def flower(c):\n    return [[i] * 60 for i in range(60)], 50\n`, 2);
   for (const t of turns) {
-    assert.equal(t.r.length, 60);
+    assert.equal(t.flowerError, null);
+    assert.equal(t.rBytes, JSON.stringify(Array.from({ length: 60 }, (_, i) => Array(60).fill(i))).length, "(over 4 KB: shown by size and preview)");
     assert.ok(t.ms > 0);
   }
 });

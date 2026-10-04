@@ -1,7 +1,7 @@
 // What every team knows before writing a line: the function names, their arguments, and the game's
 // types. Deliberately no behaviour: no starter code, so there's no shared starting point to converge on.
 import { parseType } from "./types.js";
-import { limitsOf, roundMs } from "./gameConfig.js";
+import { RESPONSE_DEPTH, limitsOf, roundMs } from "./gameConfig.js";
 
 function describe(t) {
   switch (t.kind) {
@@ -35,21 +35,21 @@ function tsType(t) {
 }
 const usesKind = (t, k) => t.kind === k || (t.of ? usesKind(t.of, k) : false);
 
-function typeRules(cT, rT, { maxLen, maxNodes }) {
-  const notes = [];
+function typeRules(cT, rT, { maxLen, maxNodes }, maxResponseBytes) {
+  const notes = [`challenges are small (the limits below); a response is at most ${maxResponseBytes} bytes of JSON and ${RESPONSE_DEPTH} levels deep, with no other limit.`];
   for (const t of [cT, rT]) {
     if (usesKind(t, "tree") && !notes.some((n) => n.startsWith("tree"))) {
-      notes.push(`tree: {"value": v, "children": [...]}, at most ${maxNodes} nodes in total. A leaf has "children": [].`);
+      notes.push(`tree: {"value": v, "children": [...]}, at most ${maxNodes} nodes in total in a challenge. A leaf has "children": [].`);
     }
     if ((usesKind(t, "graph") || usesKind(t, "digraph")) && !notes.some((n) => n.startsWith("graph"))) {
-      notes.push(`graph: {"nodes": n, "edges": [[a, b], ...]}: nodes are numbered 0..n-1 (n ≤ ${maxNodes}), at most ${4 * maxNodes} edges, no self-loops, no repeated edges${usesKind(t, "graph") ? " ([a, b] and [b, a] are the same edge)" : ""}.`);
+      notes.push(`graph: {"nodes": n, "edges": [[a, b], ...]}: nodes are numbered 0..n-1 (in a challenge n ≤ ${maxNodes}, at most ${4 * maxNodes} edges), no self-loops, no repeated edges${usesKind(t, "graph") ? " ([a, b] and [b, a] are the same edge)" : ""}.`);
       if ((t.kind === "graph" || t.kind === "digraph") && t.of) {
         notes.push(`labels: "labels" has exactly one label per node (labels[i] belongs to node i); "edgeLabels", if present, one per edge in the same order as "edges". Labels can repeat.`);
       }
     }
-    if (usesKind(t, "any") && !notes.some((n) => n.startsWith("any"))) notes.push(`any: plain data only; strings and lists at most ${maxLen} long, at most 32 levels deep.`);
-    if (usesKind(t, "str") || usesKind(t, "list")) {
-      if (!notes.some((n) => n.startsWith("strings"))) notes.push(`strings and lists: at most ${maxLen} long.`);
+    if (usesKind(t, "any") && !notes.some((n) => n.startsWith("any"))) notes.push(`any: plain data only; in a challenge, strings and lists at most ${maxLen} long, at most 32 levels deep.`);
+    if (t === cT && (usesKind(t, "str") || usesKind(t, "list"))) {
+      if (!notes.some((n) => n.startsWith("strings"))) notes.push(`strings and lists in a challenge: at most ${maxLen} long.`);
     }
     if (usesKind(t, "int") && !notes.some((n) => n.startsWith("ints"))) notes.push("ints: whole numbers within ±9007199254740991.");
   }
@@ -62,10 +62,11 @@ function flowerNotes(ts, config) {
   const { flower } = config.budgets;
   return `${c} Your flower species: each call is one flower of it, meeting one bee, and runs fresh: nothing is kept between\n` +
     `${c} calls. ${ts ? "Math.random()" : "random"} is freshly seeded every call and the clock is available. ${G("ms")} = ${flower.ms}: your time limit\n` +
-    `${c} per call in ms; a response that isn't done in time (or an error, or a malformed return) reaches the bee as ${nul}.\n` +
+    `${c} per call in ms; a response that isn't done in time (or an error, a malformed return, or more than\n` +
+    `${c} ${G("max_response_bytes")} = ${config.maxResponseBytes} bytes of JSON) reaches the bee as ${nul}.\n` +
     `${c} If the bee feeds, it gets nectar = percent/100 × E and pollen = the rest; no feed, nothing is given.\n` +
-    `${c} E = (${G("flower_size_cap")} - ${G("size")}) * max(0, ${G("flower_ms")} - CPU ms of this call).\n` +
-    `${c} HISTORY.turns: every finished turn, a typed query (docs/QUERY.md). Querying it is part of your compute.`;
+    `${c} E = (${G("flower_size_cap")} - ${G("size")}) * max(0, ${G("flower_ms")} - CPU ms of this call, writing the response as JSON included).\n` +
+    `${c} Programs see only their arguments and GAME: no history.`;
 }
 
 // How a bee runs.
@@ -73,12 +74,14 @@ function beeNotes(ts, config) {
   const c = ts ? "//" : "#", G = (k) => (ts ? `GAME.${k}` : `GAME["${k}"]`), nul = ts ? "null" : "None";
   return `${c} Rounds of ${G("round_ms")} = ${roundMs(config)} ms. As each round starts, a bee with a challenge queued (and not feeding)\n` +
     `${c} takes its turn: a flower of a species drawn at random among all ${G("teams")} (your own included) answers within\n` +
-    `${c} ${config.budgets.flower.ms} ms; then decide has ${G("ms")} = ${config.budgets.bee.ms} ms. You aren't told whose flower it is (or its percent) until the turn is over.\n` +
+    `${c} ${config.budgets.flower.ms} ms; then decide has ${G("ms")} = ${config.budgets.bee.ms} ms. You are never told whose flower it is, nor its percent.\n` +
     `${c} A feed sits your bee out ${G("feed_cost")} rounds. A late reply never feeds; only a late ["leave", c] queues c. After any\n` +
     `${c} other late reply, or a reply with no usable next challenge, first() is called at once. A call is stopped after 2 s.\n` +
-    `${c} Every call runs fresh. Only MEMORY carries over: a JSON value ({} at first) you change in place or reassign;\n` +
-    `${c} it is saved after each call that returns if its canonical JSON is at most ${G("memory")} = ${config.budgets.bee.memory} bytes.\n` +
-    `${c} response is ${nul} if the flower failed. HISTORY.turns: every finished turn, a typed query (docs/QUERY.md).`;
+    `${c} fed(nectar), optional, runs after a feed decided in time, in the same instance as that decide (its globals\n` +
+    `${c} intact), within ${G("ms")}. Otherwise every turn runs fresh. Only MEMORY carries over: a key-value store ({} at\n` +
+    `${c} first; string keys; string, number, ${ts ? "boolean or null" : "bool or None"} values) you change in place or reassign. It is saved after\n` +
+    `${c} each first, decide or fed that returns, if Σ (key bytes + value JSON bytes) ≤ ${G("memory")} = ${config.budgets.bee.memory}.\n` +
+    `${c} response is ${nul} if the flower failed. Programs get no history.`;
 }
 
 export function programInterface(config) {
@@ -87,7 +90,7 @@ export function programInterface(config) {
   const types = {
     challenge: c, response: r,
     challengeMeans: describe(cT), responseMeans: describe(rT),
-    rules: typeRules(cT, rT, limitsOf(config)),
+    rules: typeRules(cT, rT, limitsOf(config), config.maxResponseBytes),
   };
   if (config.language === "typescript") {
     const C = tsType(cT), R = tsType(rT);
@@ -101,13 +104,15 @@ export function programInterface(config) {
       types,
       flower: `${pre}function flower(challenge: ${C}): [${R}, number]   // [response, percent]\n${flowerNotes(true, config)}`,
       bee: `${pre}function first(): ${C}   // the challenge for your bee's next turn\n` +
-        `function decide(challenge: ${C}, response: ${R} | null): ["feed" | "leave", ${C}]   // [decision, next challenge]\n${beeNotes(true, config)}`,
+        `function decide(challenge: ${C}, response: ${R} | null): ["feed" | "leave", ${C}]   // [decision, next challenge]\n` +
+        `function fed(nectar: number): void   // optional\n${beeNotes(true, config)}`,
     };
   }
   return {
     types,
     flower: `def flower(challenge):    # challenge: ${c}  ->  return (response, percent); response: ${r}\n${flowerNotes(false, config)}`,
     bee: `def first():                         # -> the challenge (${c}) for your bee's next turn\n` +
-      `def decide(challenge, response):     # -> ("feed", next_challenge) or ("leave", next_challenge)\n${beeNotes(false, config)}`,
+      `def decide(challenge, response):     # -> ("feed", next_challenge) or ("leave", next_challenge)\n` +
+      `def fed(nectar):                     # optional: after a feed, same instance as decide\n${beeNotes(false, config)}`,
   };
 }

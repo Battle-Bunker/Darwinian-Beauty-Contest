@@ -220,24 +220,27 @@ function callFed(req) {
   }
 }
 
-function stage(req) {
+/** The next decide's context, made now: the stage request's own text is parsed in it (once, off the clock). */
+function stage(line) {
   if (loadError) return out({ ok: true });
   const c = fresh();
-  setGlobals(c, { __c: text(req.c), __r: text(req.r) });
+  c.__in = line;
+  vm.runInContext("(() => { const o = JSON.parse(globalThis.__in); delete globalThis.__in; globalThis.__c = o.c; globalThis.__r = o.r; })()", c);
   staged = c;
   return out({ ok: true });
 }
 
 const lines = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 lines.on("line", (line) => {
+  if (setup && role === "bee" && line.startsWith('{"op":"stage",')) { // (the engine writes it so)
+    kept = null;
+    try { return stage(line); } catch (e) { staged = null; return out({ e: short(e) }); }
+  }
   let req;
   try { req = JSON.parse(line); } catch { return out({ e: "unreadable request", out: "" }); }
   if (!setup) return load(req);
   if (role === "flower") return callFlower(req);
   if (req.op === "fed") return callFed(req);
   kept = null;
-  if (req.op === "stage") {
-    try { return stage(req); } catch (e) { staged = null; return out({ e: short(e) }); }
-  }
   return callBee(req);
 });

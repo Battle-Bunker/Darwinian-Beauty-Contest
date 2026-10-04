@@ -238,18 +238,18 @@ def main(role, setup):
                     if type(v) in (list, tuple) and len(v) == 2:
                         rt, pt = dumps(plain(v[0])), dumps(plain(v[1]))
                         size = len(rt.encode("utf-8"))
-                        line = None if size > max_bytes else f'{{"bytes":{size},"v":[{rt},{pt}]'
-                        if line is None:
+                        if size > max_bytes:
                             raise NotPlain(f"the response is {size} bytes of JSON, over the cap of {max_bytes}")
+                        tail = f'"bytes":{size},"v":[{rt},{pt}]}}'
                     else:
-                        line = f'{{"v":{dumps(plain(v))}'
+                        tail = f'"v":{dumps(plain(v))}}}'
                 except NotPlain as e:
                     m = str(e)
-                    line = '{"e":' + json.dumps(m if m.startswith("the response") else f"flower returned something that is not plain data ({m})")
+                    tail = '"e":' + json.dumps(m if m.startswith("the response") else f"flower returned something that is not plain data ({m})") + "}"
                 except UnicodeEncodeError:
-                    line = '{"e":' + json.dumps("the response is not valid Unicode (a lone surrogate)")
+                    tail = '"e":' + json.dumps("the response is not valid Unicode (a lone surrogate)") + "}"
                 timer(0)
-                line += f',"cpu":{(time.process_time() - t0) * 1000}}}'
+                line = f'{{"cpu":{(time.process_time() - t0) * 1000},' + tail
             else:
                 if req["op"] == "first":
                     v = ns["first"]()
@@ -300,11 +300,12 @@ def main(role, setup):
         if op != "fed":
             try:
                 a = plain(v)
-                if len(json.dumps(a)) > max_chars:
-                    raise NotPlain(f"over {max_chars} characters")
             except NotPlain as e:
                 timer(0)
-                return json.dumps({"e": f"{op} returned something that is not plain data or too large ({e})"}), None
+                return json.dumps({"e": f"{op} returned something that is not plain data ({e})"}), None
+            if len(json.dumps(a)) > max_chars:
+                timer(0)
+                return json.dumps({"e": f"{op} returned something too large (over {max_chars} characters)"}), None
             out = {"a": a}
         try:
             memory = json.dumps(plain_memory(ns.get("MEMORY")), allow_nan=False)

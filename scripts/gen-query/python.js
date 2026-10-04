@@ -55,7 +55,7 @@ export function emit(schema, types) {
   out.push("");
   const program = schema.entities[t.program];
   out.push("class ProgramHistory:");
-  out.push(`    """What programs get as HISTORY: HISTORY.${t.program} is a query over ${doc(program.doc).replace(/\.$/, "")}."""`);
+  out.push(`    """local()'s read-only root (Local.history): .${t.program} is a query over ${doc(program.doc).replace(/\.$/, "")}."""`);
   out.push(`    __slots__ = (${JSON.stringify(t.program)},)`);
   out.push(`    ${t.program}: "Query[${program.record}, ${program.record}Field]"`);
   out.push("");
@@ -63,7 +63,7 @@ export function emit(schema, types) {
   out.push(`        object.__setattr__(self, ${JSON.stringify(t.program)}, ${t.program})`);
   out.push("");
   out.push("    def __setattr__(self, k: str, v: Any) -> None:");
-  out.push('        raise AttributeError("HISTORY is read-only")');
+  out.push('        raise AttributeError("history is read-only")');
   out.push("");
   out.push("");
   out.push("class RemoteHistory:");

@@ -28,7 +28,7 @@ const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const keysAre = (v, keys) => Object.keys(v).length === keys.length && keys.every((k) => k in v);
 
 function checkAny(v, maxLen, path, depth = 0, maxDepth = 32) {
-  if (depth > maxDepth) return `${path} is nested more than ${maxDepth} levels deep`;
+  if (depth > maxDepth) return `${path.split(/[.[]/)[0]} is nested more than ${maxDepth} levels deep`;
   if (v === null || typeof v === "boolean") return null;
   if (typeof v === "number") return Number.isFinite(v) ? null : `${path} must be a finite number`;
   if (typeof v === "string") return v.length > maxLen ? `${path} is longer than ${maxLen} characters` : null;
@@ -68,11 +68,7 @@ export function checkValue(t, v, limits, path = "value") {
     case "list":
       if (!Array.isArray(v)) return `${path} must be a list`;
       if (v.length > maxLen) return `${path} has more than ${maxLen} items`;
-      for (let i = 0; i < v.length; i++) {
-        const e = checkValue(t.of, v[i], limits, `${path}[${i}]`);
-        if (e) return e;
-      }
-      return null;
+      return checkItems(t.of, v, limits, path);
     case "tree": {
       let count = 0;
       const walk = (node, p, depth) => {
@@ -102,10 +98,12 @@ export function checkValue(t, v, limits, path = "value") {
         const bare = checkValue({ kind: t.kind }, { nodes: v.nodes, edges: v.edges }, limits, path);
         if (bare) return bare;
         if (!Array.isArray(v.labels) || v.labels.length !== v.nodes) return `${path}.labels must be a list with one label per node (${v.nodes})`;
-        for (let i = 0; i < v.labels.length; i++) { const e = checkValue(t.of, v.labels[i], limits, `${path}.labels[${i}]`); if (e) return e; }
+        const le = checkItems(t.of, v.labels, limits, `${path}.labels`);
+        if (le) return le;
         if ("edgeLabels" in v) {
           if (!Array.isArray(v.edgeLabels) || v.edgeLabels.length !== v.edges.length) return `${path}.edgeLabels must be a list with one label per edge (${v.edges.length})`;
-          for (let i = 0; i < v.edgeLabels.length; i++) { const e = checkValue(t.of, v.edgeLabels[i], limits, `${path}.edgeLabels[${i}]`); if (e) return e; }
+          const ee = checkItems(t.of, v.edgeLabels, limits, `${path}.edgeLabels`);
+          if (ee) return ee;
         }
         return null;
       }
@@ -129,6 +127,24 @@ export function checkValue(t, v, limits, path = "value") {
     }
   }
   return `${path}: unknown type`;
+}
+
+/**
+ * Check every item of a list against type t. Lists of plain values (a big response can have hundreds of
+ * thousands) are checked in one tight loop; the item's path is only spelled out for the one that fails.
+ */
+function checkItems(t, items, limits, path) {
+  const quick = t.kind === "int" ? (x) => typeof x === "number" && Number.isInteger(x) && x <= MAX_INT && x >= -MAX_INT
+    : t.kind === "float" ? (x) => typeof x === "number" && Number.isFinite(x)
+    : t.kind === "bool" ? (x) => typeof x === "boolean"
+    : t.kind === "str" ? (x) => typeof x === "string" && x.length <= (typeof limits === "number" ? limits : limits.maxLen)
+    : null;
+  for (let i = 0; i < items.length; i++) {
+    if (quick && quick(items[i])) continue;
+    const e = checkValue(t, items[i], limits, `${path}[${i}]`);
+    if (e) return e;
+  }
+  return null;
 }
 
 /** A small valid value of the type: used as a default "try it" challenge and in docs. */

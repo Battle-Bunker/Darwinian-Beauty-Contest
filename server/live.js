@@ -1,17 +1,17 @@
 // Runs the gardens of running games. Each game's garden runs in exactly one server process, whichever
 // holds the game's advisory lock; every process adopts running games nobody holds (on boot, on any change
 // to the game, and every few seconds), so a game survives its process dying (its bees start afresh, and
-// the rounds carry on from the stored round, clock, turn counts, history and bees' MEMORY). Live gardens are paced:
-// a round lasts at least its 200 ms of game time on the wall clock.
-// Every FLUSH_MS the garden's new actions, round, clock and ledgers are written and announced; arrivals
-// are written at once. Submissions,
+// the rounds carry on from the stored round, clock, turn counts, sit-outs and bees' MEMORY). Live gardens
+// are paced: a round lasts at least its 200 ms of game time on the wall clock.
+// Every FLUSH_MS the garden's new actions, round, clock, ledgers and changed memories are written and
+// announced (a response over INLINE_BYTES into `responses`, its action keeping its size, hash and preview);
+// arrivals are written at once. Submissions,
 // pauses and finishes are written to the database by whichever process got the request; the change
 // notification brings them here, and new programs go live at once.
 import pg from "pg";
 import { env } from "./config.js";
 import { query, tx } from "./db/pool.js";
 import { Garden, KINDS } from "./engine.js";
-import { turnOf } from "./games.js";
 import { shortId } from "./lib/shortid.js";
 import { zeroLedger } from "./lib/scoring.js";
 import { bus } from "./realtime.js";
@@ -81,11 +81,11 @@ async function syncNow(gameId) {
 
 async function adopt(g) {
   const index = new Map(g.participants.map((id, i) => [id, i]));
-  // The finished turns so far, in natural order (the programs' HISTORY starts from them), each bee's turn
-  // count, and each bee's MEMORY.
-  const ends = (await query(
-    `SELECT * FROM actions WHERE game_id = $1 AND action IN ('feed', 'leave') ORDER BY round, array_position($2::uuid[], bee_team)`,
-    [g.id, g.participants])).rows;
+  // Each bee's last feed (it may still be sitting it out), its turn count, and its MEMORY.
+  const lastFed = new Array(g.participants.length).fill(null);
+  for (const r of (await query("SELECT bee_team, max(round) AS round FROM actions WHERE game_id = $1 AND action = 'feed' GROUP BY bee_team", [g.id])).rows) {
+    if (index.has(r.bee_team)) lastFed[index.get(r.bee_team)] = Number(r.round);
+  }
   const memories = new Array(g.participants.length).fill(null);
   for (const m of (await query("SELECT * FROM bee_memories WHERE game_id = $1", [g.id])).rows) {
     if (index.has(m.team_id)) memories[index.get(m.team_id)] = { version: m.bee_version, memory: m.memory, error: m.error };
@@ -98,7 +98,7 @@ async function adopt(g) {
   const garden = new Garden({
     config: g.config, teams: g.participants.length, clockMs: Number(g.clock_ms), round: Number(g.round), lastSeq: Number(g.last_seq),
     ledgers: { feeds: g.feeds, nectar: g.nectar, pollen: g.pollen ?? zeroLedger(g.participants.length) },
-    history: ends.map((a) => turnOf(a, index, { game, flowerMs: g.config.budgets.flower.ms })), turns, memories, game, paced: true,
+    lastFed, turns, memories, game, paced: true,
   });
   if (g.status === "paused") garden.pause();
   const run = { id: g.id, room: g.room_id, participants: g.participants, index, garden, versions: new Map(), flushing: null, again: false, abandoned: false };
@@ -126,10 +126,13 @@ async function loadPrograms(run) {
 }
 
 const ACTION_COLUMNS = ["game_id", "seq", "at_ms", "round", "turn", "bee_team", "flower_team", "action", "c", "r", "percent", "energy",
-  "cpu_ms", "pollen", "flower_error", "nectar", "bee_ms", "bee_error", "log", "bee_version", "flower_version"];
+  "cpu_ms", "pollen", "flower_error", "nectar", "bee_ms", "bee_error", "log", "bee_version", "flower_version", "r_bytes", "r_hash", "r_preview"];
 const json = (v) => (v === null || v === undefined ? null : JSON.stringify(v));
 
-/** Write a garden's actions (team indices → ids). */
+/**
+ * Write a garden's actions (team indices → ids). A response over INLINE_BYTES (`rFull`, its JSON text) goes
+ * to `responses`; its action keeps r = null with the size, hash and preview.
+ */
 export async function insertActions(c, gameId, actions, ids) {
   const cols = ACTION_COLUMNS;
   for (let i = 0; i < actions.length; i += 300) {
@@ -138,9 +141,20 @@ export async function insertActions(c, gameId, actions, ids) {
       rows.push(`(${cols.map((_, k) => `$${j * cols.length + k + 1}`).join(",")})`);
       const end = a.action !== "arrive";
       params.push(gameId, a.seq, a.atMs, a.round, a.turn, ids[a.bee], ids[a.flower], a.action, end ? json(a.c) : null, end ? json(a.r) : null,
-        a.percent, a.energy, a.ms, a.pollen, a.flowerError, a.nectar, a.beeMs, a.beeError, a.log, a.beeVersion, a.flowerVersion);
+        a.percent, a.energy, a.ms, a.pollen, a.flowerError, a.nectar, a.beeMs, a.beeError, a.log, a.beeVersion, a.flowerVersion,
+        end ? a.rBytes ?? null : null, a.rHash ?? null, a.rPreview ?? null);
     });
     await c.query(`INSERT INTO actions (${cols.join(",")}) VALUES ${rows.join(",")}`, params);
+  }
+  // Big responses, a few to a statement (each can be a megabyte).
+  const big = actions.filter((a) => a.rFull !== undefined);
+  for (let i = 0; i < big.length; i += 8) {
+    const chunk = big.slice(i, i + 8), params = [];
+    const rows = chunk.map((a, j) => {
+      params.push(gameId, a.seq, a.rBytes, a.rHash, a.rFull);
+      return `($${j * 5 + 1}, $${j * 5 + 2}, $${j * 5 + 3}, $${j * 5 + 4}, $${j * 5 + 5})`;
+    });
+    await c.query(`INSERT INTO responses (game_id, seq, bytes, sha256, body) VALUES ${rows.join(",")}`, params);
   }
 }
 

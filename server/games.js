@@ -7,7 +7,7 @@ import { DEFAULT_CONFIG, KINDS, available, normalizeConfig } from "./lib/gameCon
 import { changes, size } from "./lib/measure.js";
 import { score, zeroLedger } from "./lib/scoring.js";
 import { programInterface } from "./lib/interface.js";
-import { canonicalJson, tryBee, tryFlower } from "./engine.js";
+import { canonicalJson, memoryShapeError, memorySize, tryBee, tryFlower } from "./engine.js";
 import { exampleValue, parseType } from "./lib/types.js";
 import { mask } from "./query/mask.js";
 import { runQuery } from "./query/sql.js";
@@ -312,22 +312,23 @@ export async function submitProgram(game, user, kind, code) {
 }
 
 /** Try a program without submitting it. A flower answers challenges; a bee forages a garden of your own flower. */
-export async function tryProgram(game, user, { kind, code, challenges, ledger, flower, rounds, memory } = {}) {
+export async function tryProgram(game, user, { kind, code, challenges, flower, rounds, memory } = {}) {
   const team = await myTeam(game.id, user.id);
   if (!team) fail(403, "Join a team first");
   if (!KINDS.includes(kind) || typeof code !== "string") fail(400, "kind (flower or bee) and code required");
   const cfg = game.config;
   if (kind === "flower") {
     const list = Array.isArray(challenges) && challenges.length ? challenges : [exampleValue(parseType(cfg.challengeType))];
-    return tryFlower({ config: cfg, code, challenges: list, ledger: Array.isArray(ledger) ? ledger : [] });
+    return tryFlower({ config: cfg, code, challenges: list });
   }
   const own = typeof flower === "string" ? flower : (await latestProgram({ query }, game.id, team.id, "flower"))?.code;
   if (!own) fail(409, "Your bee needs a flower to visit: write your flower first (or pass one as `flower`)");
   const n = Math.max(1, Math.min(1000, Number(rounds) || 300));
   // The test bee's MEMORY to start with: a local simulation only (a game's bee memory has no write path).
   if (memory !== undefined && memory !== null) {
-    let bytes;
-    try { bytes = Buffer.byteLength(canonicalJson(memory)); } catch { fail(400, "memory must be JSON"); }
+    const bad = memoryShapeError(memory);
+    if (bad) fail(400, bad.replace(/^MEMORY/, "memory"));
+    const bytes = memorySize(memory);
     if (bytes > cfg.budgets.bee.memory) fail(400, `memory is ${bytes} bytes, over the cap of ${cfg.budgets.bee.memory}`);
   }
   const result = await tryBee({ config: cfg, programs: { flower: own, bee: code }, rounds: n, memory: memory ?? {} });
@@ -383,7 +384,7 @@ export async function viewGame(room, game, user) {
   const banksOf = (teamId) => Object.fromEntries(banks.filter((b) => b.team_id === teamId).map((b) => [b.kind, { bank: b.bank, atMs: b.at_ms }]));
   const memoryOf = (teamId) => {
     const m = memories.find((x) => x.team_id === teamId);
-    return { value: m ? JSON.parse(m.memory) : {}, bytes: m ? m.bytes : 2, cap: cfg.budgets.bee.memory, version: m?.bee_version ?? null, error: m?.error ?? null };
+    return { value: m ? JSON.parse(m.memory) : {}, bytes: m ? m.bytes : 0, cap: cfg.budgets.bee.memory, version: m?.bee_version ?? null, error: m?.error ?? null };
   };
 
   return {
@@ -460,7 +461,9 @@ export function actionView(a, me, over, revealed) {
   if (myFlower) out.flowerVersion = a.flower_version;
   if (a.action !== "arrive") {
     const fed = a.action === "feed";
-    Object.assign(out, { c: a.c, r: a.r, pollen: a.pollen });
+    Object.assign(out, { c: a.c, r: a.r, rBytes: a.r_bytes ?? null, pollen: a.pollen });
+    // A response over INLINE_BYTES: its size, hash and first INLINE_BYTES; the whole of it from GET .../responses/:seq.
+    if (a.r_hash) Object.assign(out, { rHash: a.r_hash, rPreview: a.r_preview });
     if (fed) out.nectar = a.nectar;
     if (fed || myFlower) Object.assign(out, { percent: a.percent, energy: a.energy });
     if (myFlower) Object.assign(out, { ms: a.cpu_ms, flowerError: a.flower_error });
@@ -471,9 +474,9 @@ export function actionView(a, me, over, revealed) {
 }
 
 /**
- * The team ledger: one entry per finished turn (its feed or leave), oldest first, exactly as the viewer's
- * team's programs get it (team indices into participants), plus `seq` for paging. A spectator gets the public
- * fields; once the game is over, everyone gets every field.
+ * The team ledger: one entry per finished turn (its feed or leave), oldest first, as the viewer's team may
+ * see it (team indices into participants; `seq` for paging). A spectator gets the public fields; once the
+ * game is over, everyone gets every field.
  */
 export async function viewLedger(game, user, { after = 0, limit = 1000 } = {}) {
   const g = (await query("SELECT * FROM games WHERE id = $1", [game.id])).rows[0];
@@ -490,16 +493,31 @@ export async function viewLedger(game, user, { after = 0, limit = 1000 } = {}) {
   const opts = { game: shortId(g), flowerMs: g.config.budgets.flower.ms };
   return {
     participants, team, lastSeq: g.last_seq, round: g.round, status: g.status,
-    entries: rows.map((a) => ({ seq: a.seq, ...mask("turns", turnOf(a, idx, opts), team, { over }) })),
+    entries: rows.map((a) => mask("turns", turnOf(a, idx, opts), team, { over })),
   };
 }
 
 /** A stored turn end as a `turns` record of the query schema (team indices), unmasked. */
 export const turnOf = (a, idx, { game, flowerMs }) => ({
-  game, round: Number(a.round), atMs: Number(a.at_ms) - flowerMs, turn: a.turn, bee: idx.get(a.bee_team), flower: idx.get(a.flower_team),
-  challenge: a.c, response: a.r, fed: a.action === "feed", percent: a.percent, energy: a.energy, nectar: a.nectar, pollen: a.pollen ?? 0,
+  game, seq: Number(a.seq), round: Number(a.round), atMs: Number(a.at_ms) - flowerMs, turn: a.turn, bee: idx.get(a.bee_team), flower: idx.get(a.flower_team),
+  challenge: a.c, response: a.r, responseBytes: a.r_bytes ?? null, responseHash: a.r_hash ?? null,
+  fed: a.action === "feed", percent: a.percent, energy: a.energy, nectar: a.nectar, pollen: a.pollen ?? 0,
   ms: a.cpu_ms, flowerVersion: a.flower_version, flowerError: a.flower_error, beeMs: a.bee_ms, beeVersion: a.bee_version, beeError: a.bee_error,
 });
+
+/**
+ * The whole response of the turn whose end is action `seq`, as its JSON text (responses are public). A big
+ * one comes from `responses`; a small one from the action itself. Null if that turn has no response.
+ */
+export async function viewResponse(game, seq) {
+  const n = Number(seq);
+  if (!Number.isInteger(n) || n < 1) fail(400, "seq must be a positive integer");
+  const big = (await query("SELECT body FROM responses WHERE game_id = $1 AND seq = $2", [game.id, n])).rows[0];
+  if (big) return big.body;
+  const a = (await query("SELECT r, action FROM actions WHERE game_id = $1 AND seq = $2", [game.id, n])).rows[0];
+  if (!a || a.action === "arrive" || a.r === null) return null;
+  return JSON.stringify(a.r);
+}
 
 // ---------- querying history (docs/QUERY.md) ----------
 

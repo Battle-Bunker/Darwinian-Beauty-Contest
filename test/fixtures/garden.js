@@ -6,7 +6,7 @@ import { Garden } from "../../server/engine.js";
  * `paced`. Returns the drained output, plus the finished turns (`history`).
  */
 export async function play(config, teams, rounds, during, { paced = false, endMs = Infinity } = {}) {
-  const garden = new Garden({ config, teams: teams.length, endMs, maxRounds: rounds, paced });
+  const garden = new Garden({ config, teams: teams.length, endMs, maxRounds: rounds, paced, keepHistory: true });
   await Promise.all(teams.flatMap((programs, ti) => Object.entries(programs).map(([k, code]) => garden.setProgram(ti, k, code, 1))));
   const t0 = performance.now();
   const run = garden.run();

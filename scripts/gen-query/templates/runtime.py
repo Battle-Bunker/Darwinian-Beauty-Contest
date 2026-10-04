@@ -774,8 +774,9 @@ _MISSING = object()
 class Local:
     """
     An in-memory history over turn records you hold (canonical camelCase dicts, as `GET .../ledger` and
-    `.../query` return them), for team `team`. `history` is exactly what programs get as HISTORY
-    (read-only); `turns` is the same query; append() adds new turns, keeping the indexes up to date.
+    `.../query` return them), for team `team`: what that team may see. `history` is a read-only root (no
+    append) to hand to code that should only read; `turns` is the same query; append() adds new turns,
+    keeping the indexes up to date. (Game programs get no history.)
     """
     __slots__ = ("_table", "history", "team")
 

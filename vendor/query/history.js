@@ -11,6 +11,8 @@ var DbcHistory = (function () {
                        
                             
                         
+                                                                                                      
+                       
                                                     
                          
                                                           
@@ -23,8 +25,12 @@ var DbcHistory = (function () {
                           
                             
                            
-                                                  
+                                                                                                  
                           
+                                                                              
+                                        
+                                                                                
+                                       
                             
                         
                                                                      
@@ -91,10 +97,12 @@ var DbcHistory = (function () {
                            
                                                
                         
-                                            
+                                                                                   
                                       
                                       
                                         
+                                                                                          
+                                      
  
 
 /** The score ledgers, one row per (bee team, flower team): feeds, nectar and pollen over the whole game. (entity "pairs") */
@@ -154,7 +162,7 @@ var DbcHistory = (function () {
                          
  
                                        
-/** The entity programs query as HISTORY.turns. */
+/** The entity local() holds and appends to (Local.history.turns). */
                                     
 const PROGRAM_ENTITY                = "turns";
 
@@ -295,6 +303,11 @@ const SCHEMA         = {
           "nullable": false
         },
         {
+          "name": "seq",
+          "type": "int",
+          "nullable": false
+        },
+        {
           "name": "round",
           "type": "int",
           "nullable": false
@@ -327,6 +340,16 @@ const SCHEMA         = {
         {
           "name": "response",
           "type": "json",
+          "nullable": true
+        },
+        {
+          "name": "responseBytes",
+          "type": "int",
+          "nullable": true
+        },
+        {
+          "name": "responseHash",
+          "type": "str",
           "nullable": true
         },
         {
@@ -529,6 +552,11 @@ const SCHEMA         = {
         {
           "name": "memoryVersion",
           "type": "int",
+          "nullable": true
+        },
+        {
+          "name": "memoryError",
+          "type": "str",
           "nullable": true
         }
       ]
@@ -1367,17 +1395,18 @@ class Table                                             {
   }
 }
 
-// ---------------------------------------------------------------- roots: programs, local and remote
+// ------------------------------------------------------------------------------- roots: local and remote
 
-/** What programs get as HISTORY: a query per program entity. */
+/** A local history's read-only root (Local.history): a query over the entity it holds. */
                                                                                   
 /** Every entity, queried remotely. */
                                                                                                               
 
 /**
  * An in-memory history over turn records you hold (canonical camelCase, as `GET …/ledger` and
- * `…/query` return them), for team `team`. `history` is exactly what programs get as HISTORY (read-only);
- * `turns` is the same query; append() adds new turns, keeping the indexes up to date.
+ * `…/query` return them), for team `team`: what that team may see. `history` is a read-only root (no
+ * append) to hand to code that should only read; `turns` is the same query; append() adds new turns,
+ * keeping the indexes up to date. (Game programs get no history.)
  */
 class Local {
            #table                               ;

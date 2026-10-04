@@ -1,5 +1,5 @@
 // Per-viewer visibility, from the schema's rules (server/query/schema.js): what a team (or a spectator) may
-// see of a record. The engine uses it to build each team's HISTORY; server/query/sql.js enforces the same
+// see of a record. The ledger endpoint (server/games.js) uses it on turn records; server/query/sql.js enforces the same
 // rules in SQL.
 import { SCHEMA } from "./schema.js";
 

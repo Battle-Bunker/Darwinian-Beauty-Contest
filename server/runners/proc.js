@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
+const RAW_ABOVE = 4096;
 // Programs never see the server's environment (DATABASE_URL, secrets, ...).
 const CHILD_ENV = { PATH: process.env.PATH || "/usr/bin:/bin", PYTHONHASHSEED: "0", PYTHONDONTWRITEBYTECODE: "1", LANG: "C.UTF-8" };
 
@@ -47,7 +48,11 @@ export class ProgramProcess {
       this.inflight = null;
       if (p) {
         clearTimeout(p.timer);
-        try { p.resolve(JSON.parse(line)); } catch { p.resolve({ e: "garbled reply" }); }
+        let res;
+        try { res = JSON.parse(line); } catch { res = { e: "garbled reply" }; }
+        // A long reply keeps its text too (a big response is stored as the runner wrote it, not re-encoded).
+        if (line.length > RAW_ABOVE && res && typeof res === "object") Object.defineProperty(res, "raw", { value: line });
+        p.resolve(res);
       }
       this.#pump();
     }

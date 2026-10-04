@@ -135,6 +135,11 @@
           "nullable": false
         },
         {
+          "name": "seq",
+          "type": "int",
+          "nullable": false
+        },
+        {
           "name": "round",
           "type": "int",
           "nullable": false
@@ -167,6 +172,16 @@
         {
           "name": "response",
           "type": "json",
+          "nullable": true
+        },
+        {
+          "name": "responseBytes",
+          "type": "int",
+          "nullable": true
+        },
+        {
+          "name": "responseHash",
+          "type": "str",
           "nullable": true
         },
         {
@@ -370,6 +385,11 @@
           "name": "memoryVersion",
           "type": "int",
           "nullable": true
+        },
+        {
+          "name": "memoryError",
+          "type": "str",
+          "nullable": true
         }
       ]
     },
@@ -537,6 +557,10 @@
           "doc": "the game's short id",
           "visibility": "public"
         },
+        "seq": {
+          "doc": "the number of the turn's feed or leave action (GET .../responses/:seq has its whole response)",
+          "visibility": "public"
+        },
         "round": {
           "doc": "the round the turn was taken in (1, 2, ...)",
           "visibility": "public"
@@ -562,7 +586,15 @@
           "visibility": "public"
         },
         "response": {
-          "doc": "the flower's response (null if it failed)",
+          "doc": "the flower's response (null if it failed, or if its JSON is over 4 KB: see responseBytes)",
+          "visibility": "public"
+        },
+        "responseBytes": {
+          "doc": "the response's size: UTF-8 bytes of its JSON text (null if it failed)",
+          "visibility": "public"
+        },
+        "responseHash": {
+          "doc": "for a response over 4 KB: the SHA-256 (hex) of its JSON text, else null",
           "visibility": "public"
         },
         "fed": {
@@ -694,11 +726,15 @@
           "visibility": "team"
         },
         "memoryBytes": {
-          "doc": "its size in bytes of canonical JSON",
+          "doc": "its size: Σ over entries of the key's UTF-8 bytes + the value's JSON bytes",
           "visibility": "team"
         },
         "memoryVersion": {
           "doc": "the bee version it belongs to",
+          "visibility": "team"
+        },
+        "memoryError": {
+          "doc": "why its last save failed (over the cap, the wrong shape, fed() failed), if it did",
           "visibility": "team"
         }
       }

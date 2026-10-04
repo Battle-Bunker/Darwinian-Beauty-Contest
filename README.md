@@ -6,8 +6,9 @@ the `claude/one-flower` branch):
 
 - **flower**: answers a bee's challenge with a response and a **percent**: the share of this turn's excess
   energy it gives the bee as nectar if the bee feeds
-- **bee**: asks flowers challenges and, after each answer, decides whether to feed. Every call runs fresh;
-  the bee's only state between calls is its `MEMORY`, a small JSON value (1 KB by default) the game keeps
+- **bee**: asks flowers challenges and, after each answer, decides whether to feed. Every turn runs fresh;
+  the bee's only state from turn to turn is its `MEMORY`, a 50-byte key-value store the game keeps, which
+  an optional `fed(nectar)` can update after a feed, in the same instance that decided
 
 A game is one continuous garden of 200 ms rounds. Every round, each bee that isn't feeding takes a turn at a
 flower drawn at random (its own included): the flower has 150 ms, the bee 50 ms. A flower allocates its
@@ -16,9 +17,8 @@ energy between **compute**, **nectar** and **pollen**: its **excess energy** is 
 a turn without a feed pays nobody. Every turn is public as it
 happens (who visited whom, the challenge, the response, whether the bee fed, and a feed's percent, energy,
 nectar and pollen), and so is the scoreboard; code, timings and the details of unfed turns stay with
-their teams until the end. Both programs query the team's history of every finished turn through a typed,
-immutable `HISTORY` global, kept up to date between their timed calls; operators and agents run the same
-queries over HTTP (docs/QUERY.md). Each program earns a change budget as the game goes on, and a team can spend it at any
+their teams until the end. Programs see no history; teams, operators and agents query every finished turn
+over HTTP with typed clients (docs/QUERY.md). A response can be up to 1 MB of JSON. Each program earns a change budget as the game goes on, and a team can spend it at any
 moment on a new version. Fitness rewards *diverse* success: energy your flower kept from many teams' bees
 (**pollination**) and nectar your bee got from many teams' flowers (**forage**).
 
@@ -47,18 +47,18 @@ To work on the web app with hot reload, run the server and then `API=http://loca
 |---|---|
 | `server/index.js` | Express app: JSON API under `/api`, the web app from `web/dist`, `vendor/` for the browser |
 | `server/games.js` | rooms, games, teams, programs and change budgets, start/pause/finish, and the **viewer-filtered views** (actions, history, game view, scoreboard) and queries |
-| `server/engine.js` | the garden: lockstep 200 ms rounds, one turn per bee; queued challenges, flowers drawn at random, excess energy from CPU time, responses delivered at 150 ms, 50 ms bee decisions with late replies; each bee's MEMORY kept and capped; HISTORY delivered between turns; versions pinned per turn; actions, ledgers and memories out |
-| `server/live.js` | runs each running game's garden in one server process (advisory lock), writing actions, clock, ledgers and bee memories 4× a second (arrivals at once); adoption restores the history and memories |
+| `server/engine.js` | the garden: lockstep 200 ms rounds, one turn per bee; queued challenges, flowers drawn at random, excess energy from CPU time, responses (up to 1 MB) staged at the bee and delivered at 150 ms, 50 ms bee decisions with late replies, `fed(nectar)` after a feed; each bee's MEMORY kept and capped; versions pinned per turn; actions, ledgers and memories out |
+| `server/live.js` | runs each running game's garden in one server process (advisory lock), writing actions (big responses apart), clock, ledgers and bee memories 4× a second (arrivals at once); adoption restores sit-outs and memories |
 | `server/query/` | the history query schema (entities, types, indexes, who sees each field; the single source of truth), the in-memory mask, and the compiler from query ASTs to parameterised, viewer-masked SQL |
 | `scripts/gen-query/` | generates the typed query clients in `vendor/query/` (Python, TypeScript/JavaScript) from the schema: `npm run gen:query`. See [docs/QUERY.md](docs/QUERY.md), which also says how to add a language |
 | `server/realtime.js`, `server/sockets.js` | the live game feed for each viewer, over SSE and WebSocket (the same messages), fed by Postgres `LISTEN/NOTIFY` |
-| `server/runners/` | program runners: every call runs fresh. Python forks per call (HISTORY inherited, already indexed, through the fork); TypeScript runs each call in a fresh `vm` context and reads HISTORY from a locked-down realm. Flowers are CPU-timed; replies and MEMORY are encoded on the program's clock, so no user code runs after it stops |
+| `server/runners/` | program runners: every call runs fresh. Python forks per call; TypeScript runs each call in a fresh `vm` context. A feed decision's instance is kept for `fed`. Flowers are CPU-timed, their response's size checked; replies and MEMORY are encoded on the program's clock, so no user code runs after it stops |
 | `server/lib/scoring.js` | rootsum → pollination / forage → shares → fitness (N² × the two shares) |
 | `server/lib/shortid.js` | Crockford base32 codes and shortest-unique-prefix allocation |
 | `server/auth/` | pluggable login. `dev` = name only. Production adds e.g. Replit Auth in `replit.js` with the same shape |
 | `server/db/migrations/` | SQL schema, applied on boot |
 | `vendor/measure.js` | how programs are measured (size, change, diff marks); the same file runs in the server and the browser |
-| `vendor/query/` | the generated query clients (`history.py`, `history.ts`, `history.js`, `schema.json`): what programs get as HISTORY, and what agents use against the HTTP query endpoints |
+| `vendor/query/` | the generated query clients (`history.py`, `history.ts`, `history.js`, `schema.json`): what agents use against the HTTP query endpoints, or in memory with `local()` |
 | `web/` | the web app: Vite + React + TypeScript, built to `web/dist` |
 | `arena/` | LLM-agent tournaments for exploring the game's ecosystem |
 
@@ -67,7 +67,8 @@ Postgres. `GET /api/rooms/:room/games/:game`, `GET .../actions` and `GET .../led
 whoever is asking: every turn's public part for everyone, and each team's private details (its unfed
 turns' percent and energy, its flower's compute time, its bee's timings and prints, its code and budgets)
 for that team, or for everyone once the game is over. `POST .../query` (and `POST /api/rooms/:room/query`
-across a room's finished games) runs typed history queries under the same rules. Loading a game page mid-game or a year later gives
+across a room's finished games) runs typed history queries under the same rules. A response over 4 KB is
+shown as its size, hash and first 4 KB; `GET .../responses/:seq` has all of it. Loading a game page mid-game or a year later gives
 the same viewer the same information. Live clients follow a stream, over a WebSocket (`.../ws`) or
 Server-Sent Events (`.../events`), with the same messages either way: it carries new actions as they're
 written (each bee's arrival at a flower included, the moment it happens) and tells clients to refetch the

@@ -10,7 +10,7 @@ import { mask } from "../server/query/mask.js";
 
 const row = (fields) => ({
   seq: 9, at_ms: 550, round: 3, turn: 2, bee_team: "B", flower_team: "F", action: "feed",
-  c: 5, r: 7, percent: 25, energy: 1000, cpu_ms: 12.5, pollen: 750, flower_error: null, nectar: 250,
+  c: 5, r: 7, r_bytes: 1, r_hash: null, r_preview: null, percent: 25, energy: 1000, cpu_ms: 12.5, pollen: 750, flower_error: null, nectar: 250,
   bee_ms: 3.25, bee_error: null, log: "hi", bee_version: 2, flower_version: 4, ...fields,
 });
 const leave = row({ action: "leave", nectar: null, pollen: 0, percent: 60, energy: 800 });
@@ -82,8 +82,8 @@ test("the team ledger over the API: the viewer's own view during play, every fie
   const opts = { game: "g", flowerMs: 150 };
   const t = turnOf(leave, idx, opts);
   const priv = { ms: null, flowerVersion: null, flowerError: null, beeMs: null, beeVersion: null, beeError: null };
-  const pub = { game: "g", round: 3, atMs: 400, turn: 2, bee: 0, flower: 1, challenge: 5, response: 7, fed: false, percent: null, energy: null,
-    nectar: null, pollen: 0, ...priv };
+  const pub = { game: "g", seq: 9, round: 3, atMs: 400, turn: 2, bee: 0, flower: 1, challenge: 5, response: 7, responseBytes: 1, responseHash: null,
+    fed: false, percent: null, energy: null, nectar: null, pollen: 0, ...priv };
   assert.deepEqual(mask("turns", t, 2), pub);
   assert.deepEqual(mask("turns", t, null), pub, "a spectator gets the public fields");
   assert.deepEqual(mask("turns", t, 1), { ...pub, percent: 60, energy: 800, ms: 12.5, flowerVersion: 4 });
@@ -92,4 +92,17 @@ test("the team ledger over the API: the viewer's own view during play, every fie
     "after the game: everything");
   const fed = turnOf(row({}), idx, opts);
   assert.deepEqual(mask("turns", fed, 2), { ...pub, fed: true, percent: 25, energy: 1000, nectar: 250, pollen: 750 });
+  // A response over 4 KB: no value, its size and hash (public).
+  const big = turnOf(row({ r: null, r_bytes: 9000, r_hash: "ab12", r_preview: "[1,2" }), idx, opts);
+  assert.deepEqual([big.response, big.responseBytes, big.responseHash], [null, 9000, "ab12"]);
+});
+
+test("a response over 4 KB: actions carry its size, hash and preview, for everyone", () => {
+  const a = row({ r: null, r_bytes: 9000, r_hash: "ab12", r_preview: "[1,2" });
+  for (const [who, me] of Object.entries(viewers)) {
+    const v = actionView(a, me, false, false);
+    assert.deepEqual([v.r, v.rBytes, v.rHash, v.rPreview], [null, 9000, "ab12", "[1,2"], who);
+  }
+  const small = actionView(row({}), undefined, false, false);
+  assert.deepEqual([small.r, small.rBytes, "rHash" in small, "rPreview" in small], [7, 1, false, false]);
 });
