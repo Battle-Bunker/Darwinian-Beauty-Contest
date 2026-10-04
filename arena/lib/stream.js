@@ -16,7 +16,10 @@
 //   <workspace>/stream/mine.jsonl                    per team: the actions of its own bee and at its own flower as that
 //                                                   team sees them (GET .../actions?mine=1): with its bee's printouts,
 //                                                   decision times, errors and versions.
-// No team's file ever holds another team's private fields: the server decides what each request may see.
+// No team's file ever holds another team's private fields: the server decides what each request may see. Pollen
+// grains (on a feed: a piece of the answering flower's minified code, the feeding bee's team's during play) reach a
+// team through its own history.jsonl and mine.jsonl only; the shared public file never carries any (unless the game
+// makes grains public), even after the game, when the public API reveals them.
 //
 // Responses can be up to a megabyte. The server already gives a response over 4 KB as its size, hash and first 4 KB
 // (rBytes, rHash, rPreview; in ledger entries responseBytes and responseHash); the files keep only the first
@@ -37,6 +40,16 @@ export const STREAM_PREVIEW = 256;
 export function slim(a) {
   if (typeof a?.rPreview === "string" && a.rPreview.length > STREAM_PREVIEW) return { ...a, rPreview: a.rPreview.slice(0, STREAM_PREVIEW) };
   return a;
+}
+/** The fields of a feed's pollen grain. */
+export const GRAIN_FIELDS = ["grain", "grainVersion", "grainCodeLength"];
+/** An action for the shared public file: without a pollen grain, unless the game's grains are public. */
+export function publicRow(a, grainsPublic = false) {
+  const x = slim(a);
+  if (grainsPublic || !GRAIN_FIELDS.some((k) => k in x)) return x;
+  const out = { ...x };
+  for (const k of GRAIN_FIELDS) delete out[k];
+  return out;
 }
 /** A turn end without a response (the flower failed): r null and no size (a big response has r null but a size). */
 export const noResponse = (a) => a.action !== "arrive" && ("r" in a) && a.r === null && a.rBytes == null && !a.rHash;
@@ -78,7 +91,7 @@ export class GameStream {
    * root: <WS_ROOT>/<arena>; gen: game number; gPath: API path of the game; teams: [{id, name}] (participants).
    * fetchPage(after) defaults to the public API (no token); fetchMine(tok, after) and fetchLedger(tok, after) use a team's.
    */
-  constructor({ root, gen, gPath, gameUuid, teams, fetchPage, fetchMine, fetchLedger, fetchView, memoryEveryMs = 5000, log = () => {} }) {
+  constructor({ root, gen, gPath, gameUuid, teams, fetchPage, fetchMine, fetchLedger, fetchView, memoryEveryMs = 5000, grainsPublic = false, log = () => {} }) {
     this.sharedFile = path.join(root, ".shared", `g${gen}`, "actions.jsonl");
     this.masterFile = path.join(root, ".runner", `g${gen}`, "actions.jsonl");
     this.memoryFile = memoryFile(root, gen);
@@ -91,6 +104,7 @@ export class GameStream {
     // A team's own view (its token): its bee's MEMORY, sampled for the metrics (the runner only reads it).
     this.fetchView = fetchView || ((tok) => Api.view(tok, gPath));
     this.memoryEveryMs = memoryEveryMs;
+    this.grainsPublic = grainsPublic; // the game's config.grains === "public": grains may go into the shared file
     this.lastMemoryAt = 0;
     this.log = log;
     this.lastSeq = 0;
@@ -132,7 +146,7 @@ export class GameStream {
         this.status = page.status ?? this.status;
         const fresh = (page.actions || []).filter((a) => a.seq > this.lastSeq);
         if (fresh.length) {
-          const text = fresh.map((a) => JSON.stringify(slim(a))).join("\n") + "\n";
+          const text = fresh.map((a) => JSON.stringify(publicRow(a, this.grainsPublic))).join("\n") + "\n";
           this.#checkShared();
           fs.appendFileSync(this.masterFile, text);
           fs.appendFileSync(this.sharedFile, text);

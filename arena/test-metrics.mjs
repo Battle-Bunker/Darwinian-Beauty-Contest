@@ -165,6 +165,45 @@ check("handshakes: two teams favouring each other both ways are mutual", h.hands
   check("big responses: the same hash to the same challenge is an exact copy; a different unfetched one is no shape copy", cp && cp.exact && m.ecology.imitation.copies.length === 1, m.ecology.imitation);
 }
 
+// Pollen grains: leak rates, how much of a version other teams held and when, and teams acting on leaked code.
+{
+  const codeA = 'import hashlib as d\nb="moonflower-key"\ndef flower(c):\n a=d.sha256((b+str(c)).encode()).digest()\n return{"nodes":3,"edges":[[0,1]],"labels":[a[0],a[1],a[2]]},30';
+  const L = codeA.length;
+  const piece = (start, n) => Array.from({ length: n }, (_, i) => codeA[(start + i) % L]).join("");
+  const rowsG = [];
+  const feed = (atMs, bee, flower, grain, extra = {}) => rowsG.push({ game: "G", round: atMs / 200 + 1, atMs, turn: 1, bee: IDX[bee], flower: IDX[flower], challenge: 1, response: 1, fed: true,
+    percent: 50, energy: 100000, nectar: 50000, pollen: 50000, ms: 1, flowerVersion: 1, flowerError: null, beeMs: 1, beeVersion: 1, beeError: null,
+    grain, grainVersion: grain ? 1 : null, grainCodeLength: grain ? L : null, ...extra });
+  // B's bee collects all of A's code by 9 s (grains of 36 characters, overlapping); C's a little; A's own bee some.
+  let t = 1000;
+  for (let p = 0; p < L; p += 30) { feed(t, "B", "A", piece(p, 36)); t += 400; }
+  const fullAt = t - 400;
+  feed(1200, "C", "A", piece(5, 36));
+  feed(1400, "A", "A", piece(50, 36));
+  feed(1600, "A", "C", null); // a feed without a grain (no pollen): nothing
+  rowsG.sort((a, b) => a.atMs - b.atMs);
+  const beeB2 = 'def first():\n return 1\ndef decide(a,b):\n x=" a=d.sha256((b+str(c)).encode()).digest()"\n return"feed",1';
+  const minified = new Map([["0:flower:1", codeA], ["1:flower:1", 'def flower(a):\n return a,40'], ["1:flower:2", 'K="moonflower-key"\ndef flower(a):\n return a,40'],
+    ["1:bee:1", 'def first():\n return 1\ndef decide(a,b):\n return"feed",1'], ["1:bee:2", beeB2], ["2:flower:1", 'def flower(a):\n return a,10'], ["2:flower:2", codeA]]);
+  const versionsG = [ver("A", "flower", 1, 100, 0), ver("B", "flower", 1, 100, 0), ver("B", "flower", 2, 100, 12000), ver("B", "bee", 1, 300, 0), ver("B", "bee", 2, 300, 13000),
+    ver("C", "flower", 1, 100, 0), ver("C", "flower", 2, 100, 14000)];
+  const g = computeMetrics({ game: { config: { ...config, grains: "feeder" }, clockMs: 60000, round: 300 }, teams, turns: rowsG, versions: versionsG, scores: [], windowMs: 10000, minified }).grains;
+  const sA = g.perSpecies.find((x) => x.teamId === "A"), vA = g.versions.find((x) => x.teamId === "A" && x.version === 1);
+  check("grains: per species, the characters leaked to other teams' bees and per minute (its own bee's don't count)", sA.grains === rowsG.filter((r) => r.flower === 0 && r.grain).length
+    && sA.toOthers === sA.grains - 1 && sA.charactersToOthers === 36 * sA.toOthers && sA.receivers === 2 && sA.perMinute === sA.charactersToOthers, sA);
+  check("grains: a version fully held by one team, and when (from when it went live)", vA.codeLength === L && vA.fullByTeam === "Beta" && vA.fullByTeamMs === fullAt && vA.unionShare === 1 && vA.bestShare === 1
+    && vA.placed === vA.grains && g.versionsFullyHeld === 1, vA);
+  const sec = g.uses.find((u) => u.type === "secret"), cp = g.uses.find((u) => u.type === "copy" && u.kind === "bee");
+  check("grains: a leaked secret used in a later version", sec && sec.team === "Beta" && sec.kind === "flower" && sec.version === 2 && sec.from === "Alpha" && sec.secret === "moonflower-key"
+    && sec.usedAtMs === 12000 && sec.lagMs > 0, g.uses);
+  check("grains: leaked code copied into a later version (a bee here)", cp && cp.team === "Beta" && cp.kind === "bee" && cp.version === 2 && cp.characters >= 24, g.uses);
+  const cg = g.uses.filter((u) => u.team === "Gamma");
+  check("grains: only what a team held counts (C's v2 is A's code, but C held 36 characters: a copy of those, not the whole version)",
+    cg.length === 2 && cg.some((u) => u.type === "secret") && cg.find((u) => u.type === "copy")?.characters === 36 && !g.uses.some((u) => u.type === "whole-version"), cg);
+  const off = computeMetrics({ game: { config: { ...config, grains: "off" }, clockMs: 2000, round: 10 }, teams, turns: rows, versions, scores: [], windowMs: 10000 }).grains;
+  check("grains: off", off.setting === "off");
+}
+
 // Fetching big responses for their shapes: distinct hashes once each, in order of first appearance, within the byte budget.
 {
   const g = { nodes: 3, edges: [[0, 1], [1, 2]], labels: ["x".repeat(3000), "y", "z"] }, text = JSON.stringify(g);

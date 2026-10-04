@@ -25,6 +25,7 @@ import { TimingTable } from "../components/Timing";
 import { ChangeTimeline, historyTeams, VersionBrowser } from "../components/History";
 import { ValueTypes } from "../components/Value";
 import { QueryConsole } from "../components/QueryConsole";
+import { PollenPanel, type GrainRec } from "../components/Pollen";
 
 const SCORES_MS = 1500; // how often to poll the live numbers while the game runs
 
@@ -147,6 +148,10 @@ function GameBody({ view, base, store }: { view: GameView; base: string; store: 
       </Section>
     ),
   } : null;
+  const pollen = live && playing && (cfg.grains ?? "feeder") !== "off" && ledger ? {
+    id: "pollen", label: "Pollen collected",
+    node: <Section id="pollen" title="Pollen collected"><LivePollen view={view} ledger={ledger} myIndex={myIndex} /></Section>,
+  } : null;
   const changes = live && playing ? { id: "changes", label: "Your changes", node: <Section id="changes" title="Your team's changes"><MyChanges view={view} store={store} /></Section> } : null;
   const replay = over && history ? { id: "replay", label: "Replay", node: <Section id="replay" title="Replay" className="garden-card"><Replay view={view} history={history} /></Section> } : null;
   const versions = over && history && historyTeams(view).length ? { id: "versions", label: "Changes", node: <Section id="versions" title="Who changed what, when"><Versions view={view} history={history} /></Section> } : null;
@@ -162,7 +167,7 @@ function GameBody({ view, base, store }: { view: GameView; base: string; store: 
   } : null;
   const present = <T,>(x: T | null): x is T => !!x;
   if (lobby) sections.push(teams, ...(programs ? [programs] : []), garden);
-  else if (live) sections.push(garden, ...[programs, scores, feed, ledgerSec, changes, query, teams].filter(present));
+  else if (live) sections.push(garden, ...[programs, scores, feed, ledgerSec, pollen, changes, query, teams].filter(present));
   else sections.push(...[replay, scores, versions, feed, ledgerSec, query, teams].filter(present));
   return (
     <ValueTypes.Provider value={{ challenge: cfg.challengeType, response: cfg.responseType }}>
@@ -231,6 +236,20 @@ function useWasted(ledger: LedgerStore | null, me: number): number | null {
     if (e.flower === me && !e.fed && typeof e.energy === "number") state.sum += e.energy;
   }
   return state.sum;
+}
+
+/** During play: the grains my team's bee has collected (everyone's, if grains are public), from my ledger. */
+function LivePollen({ view, ledger, myIndex }: { view: GameView; ledger: LedgerStore; myIndex: number }) {
+  const rev = useLiveTick(ledger, 2000);
+  const teams = useMemo(() => (view.participants ?? []).map((id) => view.teams.find((t) => t.id === id)!).filter(Boolean), [view.participants, view.teams]);
+  const grains = useMemo(() => {
+    const out: GrainRec[] = [];
+    for (const e of ledger.entries) {
+      if (e.fed && typeof e.grain === "string") out.push({ bee: e.bee, flower: e.flower, version: e.grainVersion ?? 0, grain: e.grain, codeLength: e.grainCodeLength ?? e.grain.length, round: e.round });
+    }
+    return out;
+  }, [ledger, rev]); // eslint-disable-line react-hooks/exhaustive-deps
+  return <PollenPanel view={view} teams={teams} grains={grains} mine={myIndex >= 0 ? myIndex : null} during />;
 }
 
 /** During play: my team's own change timeline (with its budgets) and versions. */

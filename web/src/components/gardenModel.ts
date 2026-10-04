@@ -112,7 +112,7 @@ export interface BeeDraw {
 }
 
 /** A feed: a drop and sparkles, with the nectar the flower gave (public on every feed). */
-export interface FxDraw { x: number; y: number; u: number; text: string | null; pollen: string | null }
+export interface FxDraw { x: number; y: number; u: number; text: string | null; pollen: string | null; grain: string | null }
 /** The latest visit at the focus team's flower, with the details only that team sees (everyone, once revealed). */
 export interface Readout {
   flower: number; line1: string; line2: string; kind: "fed" | "left" | "fail"; age: number;
@@ -242,6 +242,8 @@ export function computeFrame(idx: TurnIndex, layout: Layout, p: FrameParams, now
         ...landPt(layout, T), u: (u - DEC) / FX_MS,
         text: end && typeof end.nectar === "number" ? `+${fmtE(end.nectar)}` : null,
         pollen: T.flower === p.focus && end && typeof end.pollen === "number" ? `${fmtE(end.pollen)} pollen` : null,
+        // The pollen grain the followed team's bee got (where the viewer may see it): a bit of the flower's code.
+        grain: b === p.focus && end && typeof end.grain === "string" ? `grain “${end.grain.replace(/\n/g, "⏎").slice(0, 14)}${end.grain.length > 14 ? "…" : ""}”` : null,
       });
     }
 

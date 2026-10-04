@@ -10,6 +10,7 @@ import { errorText } from "../api";
 import { fmtClock, fmtE, fmtEExact, fmtMs } from "../lib/format";
 import { Value } from "./Value";
 import { noResponse, partsOfAction, ResponseView, responseUrl } from "./ResponseView";
+import { GrainChip } from "./Pollen";
 import { DropIcon, PauseIcon, PlayIcon } from "./Icons";
 import { Alert } from "./ui";
 
@@ -163,6 +164,7 @@ export const FeedRow = memo(function FeedRow({ a, teams, myTeamId, tenths = true
         )}
         {isFed && <span className="ok-text nowrap"><DropIcon size={15} /> fed{typeof a.nectar === "number" && <>: <b title={fmtEExact(a.nectar)}>{fmtE(a.nectar)}</b> nectar</>}</span>}
         {a.action === "leave" && <span className="muted">left</span>}
+        {isFed && typeof a.grain === "string" && <GrainChip grain={a.grain} version={a.grainVersion} length={a.grainCodeLength} />}
         {isFed && fedRuns && <span className="fed-ran" title="The bee defines fed(): it ran after this feed, in the same program instance as the decision, and MEMORY was saved after it. What it printed shows with the next turn.">then fed({typeof a.nectar === "number" ? fmtE(a.nectar) : "nectar"})</span>}
         {a.action !== "arrive" && hasE && (
           <span className="feed-energy" title={`E = ${fmtEExact(a.energy)}: what was left after size and compute. ${a.percent ?? "?"}% offered as nectar; on a feed the rest is given as pollen.`}>

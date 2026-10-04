@@ -7,6 +7,7 @@ import { DEFAULT_CONFIG, KINDS, available, normalizeConfig } from "./lib/gameCon
 import { changes, size } from "./lib/measure.js";
 import { score, zeroLedger } from "./lib/scoring.js";
 import { programInterface } from "./lib/interface.js";
+import { ruleBreaches } from "./lib/pyRules.js";
 import { canonicalJson, memoryShapeError, memorySize, tryBee, tryFlower } from "./engine.js";
 import { exampleValue, parseType } from "./lib/types.js";
 import { mask } from "./query/mask.js";
@@ -239,6 +240,7 @@ async function measure(client, g, team, kind, code) {
     if (missing.length) {
       errors.push(kind === "bee" ? "A bee must define first() and decide(challenge, response)" : "A flower must define flower(challenge)");
     }
+    errors.push(...(await ruleBreaches(g.config.language, code)));
   }
   if (measured > budget.size) {
     errors.push(`Too big: ${measured} nodes > budget ${budget.size} (comments, spacing, types and name lengths don't count; every byte of a string or number does)`);

@@ -24,6 +24,9 @@
 //   ecology        lib/ecology.js: each species' energy split (size, compute, nectar, pollen, lost), its percent over
 //                  time, imitation (signals and their first close copies, the lag, detection windows), key rotation,
 //                  cracking (answers predicted before the other species gave them), autarky
+//   grains         lib/grains.js: pollen grains (pieces of the answering flower's minified code a feeding bee's team got):
+//                  leak rates per species, how much of each flower version other teams held and when one (or all of
+//                  them together) first held all of it, and teams acting on leaked code (a leaked secret or a copy)
 //   memory         per bee: its MEMORY at the end (bytes of the cap, keys, the value, its last save error), saves refused
 //                  (over the cap or of the wrong shape, from decide), failed fed() calls and other save errors the runner's
 //                  samples saw, its size over the game, and how often the team changed its bee (each change empties it)
@@ -34,6 +37,7 @@
 // (computeGameMetrics fetches them from GET .../responses/:seq); past that, a response's shape is its hash.
 import { Api } from "./api.js";
 import { autarky, energySplit, imitation, percentOverTime, predictions, rotation, shapeOf } from "./ecology.js";
+import { grainMetrics } from "./grains.js";
 
 const r3 = (x) => (x == null || !Number.isFinite(x) ? null : Math.round(x * 1000) / 1000);
 const quantile = (xs, p) => { if (!xs.length) return null; const s = [...xs].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; };
@@ -68,7 +72,7 @@ const potential = (t) => (t.percent != null && t.energy != null ? (t.percent / 1
  * teams, turns, versions, scores: the rows of those entities (teams by index); submits: [{ team_id, kind, version, source,
  * session_no }] from arena.requests (who submitted each version), optional. Teams in the result are keyed by team id.
  */
-export function computeMetrics({ game, teams: teamRows, turns: turnRows, versions: versionRows = [], scores: scoreRows = [], submits = [], memorySamples = [], windowMs, shapes = null }) {
+export function computeMetrics({ game, teams: teamRows, turns: turnRows, versions: versionRows = [], scores: scoreRows = [], submits = [], memorySamples = [], windowMs, shapes = null, minified = null }) {
   const config = game.config;
   const byIndex = [...teamRows].sort((a, b) => a.index - b.index);
   const ids = byIndex.map((t) => t.id);
@@ -77,7 +81,8 @@ export function computeMetrics({ game, teams: teamRows, turns: turnRows, version
   // One object per turn, teams as ids.
   const turns = turnRows.map((r) => ({ atMs: Number(r.atMs) || 0, round: r.round, bee: idOf(r.bee), flower: idOf(r.flower), action: r.fed ? "feed" : "leave",
     c: r.challenge, r: responseOf(r, shapes), rBytes: r.responseBytes ?? null, percent: r.percent, energy: r.energy, nectar: r.nectar, pollen: r.pollen, ms: r.ms, flowerVersion: r.flowerVersion,
-    flowerError: r.flowerError, beeMs: r.beeMs, beeVersion: r.beeVersion, beeError: r.beeError }));
+    flowerError: r.flowerError, beeMs: r.beeMs, beeVersion: r.beeVersion, beeError: r.beeError,
+    grain: r.grain ?? null, grainVersion: r.grainVersion ?? null, grainCodeLength: r.grainCodeLength ?? null }));
   const durationMs = Math.max(Number(game.clockMs) || 0, ...turns.map((t) => t.atMs));
   const W = windowMs || windowFor(durationMs || config.minutes * 60000);
   const flowerMs = config.budgets?.flower?.ms ?? 150, cap = config.budgets?.flower?.size ?? 1100;
@@ -269,6 +274,12 @@ export function computeMetrics({ game, teams: teamRows, turns: turnRows, version
     autarky: (() => { const a = autarky(turns, ids); return { ...a, teams: a.teams.map(named) }; })(),
   };
 
+  // Pollen grains: minified codes by `${team id}:${kind}:${version}` (computeGameMetrics minifies the revealed code).
+  const minCode = new Map();
+  for (const [k, v] of minified || []) { const [team, kind, version] = k.split(":"); minCode.set(`${idOf(Number(team))}:${kind}:${version}`, v); }
+  const grains = config.grains === "off" && !turns.some((t) => t.grain) ? { setting: "off" }
+    : grainMetrics({ turns, ids, name, minified: minCode, liveAt, durationMs, grains: config.grains ?? "feeder" });
+
   const fedTurns = turns.filter((t) => t.action === "feed");
   return {
     windowMs: W, durationMs, turns: turns.length, rounds: Number(game.round) || Math.max(0, ...turns.map((t) => t.round || 0)),
@@ -280,8 +291,9 @@ export function computeMetrics({ game, teams: teamRows, turns: turnRows, version
     distributions: { responseBytes: q5(turns.map((t) => t.rBytes).filter((x) => x != null)), percent: q5(answered.map((t) => t.percent)), energy: q5(turns.map((t) => t.energy || 0)), nectar: q5(fedTurns.map((t) => t.nectar || 0)), pollen: q5(fedTurns.map((t) => t.pollen || 0)) },
     teams, handshakes: { pairs, mutual }, versions, discrimination,
     copies: { matches: copies.length, copies: att.length, medianLatencyMs: median(att.map((x) => x.latencyMs)), byCopier },
-    changes, final, memory, ecology,
-    config: { minutes: config.minutes, feedCost: config.feedCost, challengeType: config.challengeType, responseType: config.responseType, budgets: config.budgets },
+    changes, final, memory, ecology, grains,
+    config: { minutes: config.minutes, feedCost: config.feedCost, challengeType: config.challengeType, responseType: config.responseType, budgets: config.budgets,
+      grains: config.grains ?? null, pollenGrain: config.pollenGrain ?? null, maxResponseBytes: config.maxResponseBytes ?? null },
     clockMs: Number(game.clockMs) || 0, round: Number(game.round) || 0,
   };
 }
@@ -303,7 +315,21 @@ export async function computeGameMetrics(gPath, { api = Api, submits = [], memor
   const view = await api.view(null, gPath);
   const [teams, turns, versions, scores] = await Promise.all(["teams", "turns", "versions", "scores"].map((from) => queryAll(api, gPath, { from })));
   const shapes = await bigShapes(api, gPath, turns, fetchBytes);
-  return { ...computeMetrics({ game: view.game, teams, turns, versions, scores, submits, memorySamples, windowMs, shapes }), bigResponses: shapes.stats };
+  const minified = await minifiedCodes(view.game.config?.language || "python", versions);
+  return { ...computeMetrics({ game: view.game, teams, turns, versions, scores, submits, memorySamples, windowMs, shapes, minified }), bigResponses: shapes.stats };
+}
+
+/** Every version's minified code, as the game ran it (the game's own minifier): Map(`${team index}:${kind}:${version}` ->
+ * text). Versions whose code isn't revealed are left out. */
+export async function minifiedCodes(language, versions) {
+  const out = new Map();
+  if (!versions.some((v) => typeof v.code === "string")) return out;
+  const { size } = await import("../../server/lib/measure.js");
+  for (const v of versions) {
+    if (typeof v.code !== "string") continue;
+    try { out.set(`${v.team}:${v.kind}:${v.version}`, (await size(language, v.code)).minified); } catch {}
+  }
+  return out;
 }
 
 /**

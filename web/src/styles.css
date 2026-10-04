@@ -382,7 +382,7 @@ input[type="range"] { accent-color: var(--honey); }
 .list-main { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
 /* grid containers must not grow to fit wide tables (they scroll inside .table-scroll instead) */
-.scores, .garden, .teams, .editor-panel, .editors, .settings, .settings-summary, .feed, .versions, .timeline, .qc, .qc-results, .qc-code, .memory { grid-template-columns: minmax(0, 1fr); }
+.scores, .garden, .teams, .editor-panel, .editors, .settings, .settings-summary, .feed, .versions, .timeline, .qc, .qc-results, .qc-code, .memory, .pollen { grid-template-columns: minmax(0, 1fr); }
 
 
 /* ---------- login + home ---------- */
@@ -951,6 +951,27 @@ input[type="range"] { accent-color: var(--honey); }
 .big-r-full { display: grid; gap: 6px; }
 .big-r-load { display: grid; gap: 4px; }
 .big-r-text { max-height: 320px; max-width: min(640px, 100%); }
+.grain { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; font-size: 12px; padding: 0 6px 0 0; border-radius: 6px; background: color-mix(in srgb, var(--e-pollen) 10%, var(--surface)); border: 1px solid color-mix(in srgb, var(--e-pollen) 35%, var(--line)); white-space: nowrap; overflow: hidden; }
+.grain-tag { font-weight: 800; color: var(--surface); background: var(--e-pollen); padding: 0 5px; border-radius: 5px 0 0 5px; }
+.grain-text { font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; color: var(--ink); }
+.grain-from { color: var(--muted); font-weight: 700; }
+.focus-grain { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; max-width: 100%; }
+.fx-grain { fill: var(--ink-soft); font: 700 10px var(--mono); }
+.pollen-species { border: 1px solid var(--line); border-left: 4px solid var(--team); border-radius: 12px; padding: 8px 12px; display: grid; gap: 6px; background: var(--surface); min-width: 0; }
+.pollen-species-head { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
+.pollen-version { border-top: 1px dashed var(--line); padding-top: 6px; min-width: 0; }
+.pollen-version > summary { cursor: pointer; display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.pollen-version[open] > summary { margin-bottom: 6px; }
+.pollen-badge { font-size: 12px; font-weight: 800; padding: 0 7px; border-radius: 999px; background: var(--surface-2); color: var(--ink-soft); border: 1px solid var(--line); }
+.pollen-badge.full { background: var(--ok-soft); color: var(--ok); }
+.pollen-body, .pollen-recon, .pollen-compare { display: grid; gap: 6px; min-width: 0; }
+.pollen-code { margin: 0; padding: 8px 10px; background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; font: 12.5px/1.5 var(--mono); white-space: pre-wrap; word-break: break-all; max-height: 320px; overflow: auto; }
+.pollen-gap { color: var(--muted); background: var(--surface-2); border-radius: 4px; white-space: pre; }
+.pollen-real .leaked { background: color-mix(in srgb, var(--e-pollen) 22%, transparent); color: var(--ink); }
+.pollen-real .unleaked { color: var(--muted); opacity: .55; }
+.pollen-grains { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 2px; max-height: 240px; overflow: auto; font-size: 12px; }
+.pollen-grains code { word-break: break-all; }
+.pollen-raw > summary { cursor: pointer; color: var(--ink-soft); font-weight: 700; }
 .fed-ran { font-size: 12px; font-weight: 800; padding: 0 7px; border-radius: 999px; background: var(--ok-soft); color: var(--ok); white-space: nowrap; }
 .memory-grid { display: grid; gap: 8px; }
 .memory-card { border: 1px solid var(--line); border-left: 4px solid var(--team); border-radius: 10px; padding: 6px 12px; background: var(--surface); }

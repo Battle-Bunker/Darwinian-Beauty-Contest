@@ -34,13 +34,25 @@ export function timingText(config) {
   percent/100 × E as nectar and the rest as pollen. If it doesn't feed, that energy is lost.
 - Programs run fresh for every call: flower(challenge), first(), decide(challenge, response), and the bee's optional
   fed(nectar), which runs after a feed decided in time, in the same instance as that decide. Programs see only their
-  arguments and GAME (the settings and their team's index): no history. The bee also has MEMORY: a flat key-value store
-  (string keys; string, number, true/false or null values) of at most ${n0(bee.memory ?? 50)} bytes (each key's bytes plus
-  its value's JSON bytes) that it alone writes, the only thing kept from one turn to the next; a new bee version starts
-  with {}.
+  arguments and GAME (the settings and their team's index): no history, no round or game time. A program's clock reads 0
+  when each call starts (as if it were 1970-01-01, then at real speed): it can time its own work, nothing more. The bee
+  also has MEMORY: a flat key-value store (string keys; string, number, true/false or null values) of at most
+  ${n0(bee.memory ?? 50)} bytes (each key's bytes plus its value's JSON bytes) that it alone writes, the only thing kept
+  from one turn to the next; a new bee version starts with {}.
 - Arrivals, challenges, responses and feeds are public as they happen, and so are a feed's percent, energy, nectar and
   pollen. The percent and energy of turns without a feed, and every compute time, stay with the flower's team until the
-  game ends.`;
+  game ends.
+${grainText(config)}`;
+}
+
+/** Pollen grains, as this game sets them (config.grains, config.pollenGrain). */
+export function grainText(config) {
+  const g = config.grains ?? "feeder", pg = config.pollenGrain ?? { exponent: 1 / 3, scale: 1 };
+  if (g === "off") return "- Pollen grains are off in this game.";
+  const e = Math.abs(pg.exponent - 1 / 3) < 1e-9 ? "^(1/3)" : `^${+Number(pg.exponent).toFixed(3)}`, sc = pg.scale === 1 || pg.scale == null ? "" : `${pg.scale} × `;
+  return `- Pollen carries genes: on every feed, the feeding bee's team gets a pollen grain, floor(${sc}pollen${e}) characters of the
+  minified code of the flower version that answered, from a random start, wrapping from its end to its start, with that
+  version and the code's length (not where the grain starts). ${g === "public" ? "In this game everyone sees every grain as\n  it happens." : "During play only the feeding bee's team sees it;\n  everyone sees every grain once the game is over."} Programs never get grains.`;
 }
 
 /** This game's settings, compactly (budgets in nodes). */
@@ -122,7 +134,8 @@ ${personaAndSituation(persona, fixed)}
   pays its change cost; if you can't afford it yet it is refused and you're told when you can. \`tools/check.py\` (size, cost
   now, a quick runtime test) and \`tools/try.py\` (run it on the game's real runner: a flower on challenges with its percent,
   energy and CPU time; a test bee in a garden of your own flower, with a MEMORY of your choosing, fed() called after each
-  feed as in a game) are free.
+  feed as in a game) are free. \`tools/check.py\` also shows what the game's Python refuses (e.g. dunder names such as
+  __class__, or a module's private names), with the message the runner gave.
   \`tools/status.py\` shows the clock, your change budgets, your bee's MEMORY and the live scores.
 - Your programs see no history, but your team can: ask it with \`tools/query.py\`, a typed query builder (docs:
   tools/history.py and README.md): \`python3 tools/query.py 'turns.my_bee().eq("fed", True).group_by("flower").sum("nectar")'\`.
@@ -130,6 +143,9 @@ ${personaAndSituation(persona, fixed)}
   \`--room\` runs across this arena's finished games, fully revealed. The entities are turns, versions, teams (with your
   bee's MEMORY), pairs and scores. A response over 4 KB shows as its size and hash (response_bytes, response_hash); the
   whole of it: \`python3 tools/stream.py response <seq>\` or garden.response(seq).
+- Your pollen grains (a piece of the code of every flower your bee feeds at) are on your bee's feeds in
+  stream/history.jsonl and stream/mine.jsonl; \`python3 tools/grains.py\` lists them per species and version and pieces
+  them together where they overlap (garden.grains(), garden.assemble(flower)).
 - Your bee's MEMORY is written only by your deployed bee. You can read it; nothing you or your tools do can set it, and it
   is emptied whenever your bee's code changes.
 - Games are short (this one: ${durationText(config.minutes)}), and a session is slow by comparison: you think in seconds to
@@ -141,7 +157,7 @@ ${personaAndSituation(persona, fixed)}
   lobby). The runner supervises it: it restarts it if it crashes, stops it when the game ends, and gives it a small CPU share.
   It runs with tools/ on its import path, so \`import garden\` works. garden.py: \`local\` (your team's history file as a query
   builder, kept up to date), \`game\` and \`room\` (the same query builder, run by the game), \`follow()\` (each new turn as it
-  arrives), \`response(seq)\` (a whole response over 4 KB),
+  arrives), \`response(seq)\` (a whole response over 4 KB), \`grains()\` and \`assemble(flower)\` (your pollen grains),
   \`follow_live()\` (public actions as they happen), \`status()\` (clock, round, live scores, your exact budgets and their
   refill rate, your versions), \`memory()\` (your bee's MEMORY, read only), \`live(kind)\` (your code playing now),
   \`measure(kind, code)\` (size and cost, free), \`check(kind, code)\`, \`try_flower(code, challenges)\`, \`try_bee(code)\`,
@@ -154,8 +170,8 @@ ${personaAndSituation(persona, fixed)}
 - What everyone sees, the moment it happens: every arrival (whose bee at whose species), challenge, response and feed; on a
   feed, its percent, energy, nectar and pollen; the nectar and pollen ledgers and the live scoreboard. Private to the
   flower's team during play: the percent and energy of turns without a feed, and the flower's compute time on every turn.
-  Code, versions, budgets, bee decision times, a bee's MEMORY and what it prints stay with their own team. Once the game is
-  over, everything is revealed. (RULES.md and the server decide; queries and files show exactly what your team may see.)
+  Code, versions, budgets, bee decision times, a bee's MEMORY and what it prints stay with their own team, and a feed's
+  pollen grain with the feeding bee's team. Once the game is over, everything is revealed. (RULES.md and the server decide; queries and files show exactly what your team may see.)
 - Your files: stream/history.jsonl holds your team's history (one record per finished turn, growing about once a second);
   stream/actions.jsonl is the public stream; stream/mine.jsonl has your own bee's and flower's actions with your private
   fields and your bee's printouts (stream/SCHEMA.md). They grow big: query them, never print them whole. The public API

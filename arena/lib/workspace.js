@@ -66,6 +66,7 @@ ${examples ? `| examples/ | example programs; every team in this garden has the 
 | \`python3 tools/query.py '<query>' [--local\\|--room]\` | ask the game's history with the typed query builder (below) |
 | \`python3 tools/query.py summary\` | per species and per bee: turns, feeds, nectar, pollen; your own flower's percent, energy and compute |
 | \`python3 tools/stream.py tail [-n 20]\` | the latest public actions |
+| \`python3 tools/grains.py [--flower I] [--version V] [--show] [--save]\` | your pollen grains (a piece of the code of every flower your bee fed at) per species and version, pieced together where they overlap (best effort); --save writes each completely pieced-together version to grains/ |
 | \`python3 tools/stream.py response <seq>\` | the whole response of a turn (a response over 4 KB is only its size, hash and first bytes in the files and queries) |
 
 \`<kind>\` is flower or bee; \`[file]\` defaults to \`<kind>.${ext}\`. Your own scripts can use the same tools through
@@ -142,6 +143,7 @@ your team may not see is null; the server decides (RULES.md, "What everyone can 
 | percent, energy | the share offered as nectar and the turn's excess energy E: on every feed, and on every turn at your own species (else null) |
 | ms, flowerVersion, flowerError | your own flower's compute time, version and error (null elsewhere) |
 | beeMs, beeVersion, beeError | your own bee's decision time, version and error, e.g. a MEMORY over its cap or of the wrong shape (null elsewhere) |
+| grain, grainVersion, grainCodeLength | on your own bee's feeds: the pollen grain (floor(pollen^(1/3)) characters of the answering flower version's minified code, from a random start, wrapping), that version, and its code's length in characters (null elsewhere, and when the pollen was 0) |
 
 ## stream/actions.jsonl: the public stream
 
@@ -162,14 +164,15 @@ actions: its \`arrive\` (written at once) and its end, \`feed\` or \`leave\`.
 
 The actions of your bee and at your species as your team sees them (same \`seq\`), with your private fields: at your
 flower \`percent\` and \`energy\` (also on turns without a feed), \`ms\`, \`flowerError\`, \`flowerVersion\`; for your bee
-\`beeMs\` (decision time), \`beeError\`, \`beeVersion\` and \`log\` (what it printed). A field you may not see is simply
-missing. Once the game is over everything is public.
+\`beeMs\` (decision time), \`beeError\`, \`beeVersion\` and \`log\` (what it printed), and on your bee's feeds its pollen
+grain (\`grain\`, \`grainVersion\`, \`grainCodeLength\`). A field you may not see is simply missing. Once the game is over everything is public.
 
 \`stream/teams.json\`: \`{"teams": {id: name}, "me": your team id, "participants": [ids in index order], "names": [names in
 index order], "myIndex": your index}\` (indices are fixed when the game starts).
 
 Querying them: \`python3 tools/query.py summary\`, \`python3 tools/query.py --local 'turns.my_flower().count()'\`,
-\`python3 tools/stream.py tail -n 20\`; from a script, \`garden.local.turns...\` and \`garden.follow()\`.
+\`python3 tools/stream.py tail -n 20\`, \`python3 tools/grains.py\`; from a script, \`garden.local.turns...\`,
+\`garden.follow()\`, \`garden.grains()\` and \`garden.assemble(flower)\`.
 `;
 
 /** The generated Python history client (docs/QUERY.md), installed as tools/history.py. */

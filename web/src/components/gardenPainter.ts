@@ -39,7 +39,7 @@ interface BeeNodes {
   g: SVGGElement; halo: SVGCircleElement; visitor: SVGCircleElement; pose: SVGGElement; wings: SVGGElement;
   name: SVGTextElement; bubble: SVGGElement; bubbleRect: SVGRectElement; bubbleText: SVGTextElement;
 }
-interface FxNodes { g: SVGGElement; glow: SVGCircleElement; sparkles: SVGPathElement[]; text: SVGTextElement; pollen: SVGTextElement }
+interface FxNodes { g: SVGGElement; glow: SVGCircleElement; sparkles: SVGPathElement[]; text: SVGTextElement; pollen: SVGTextElement; grain: SVGTextElement }
 
 export interface PainterTeam { name: string; color: string }
 
@@ -110,7 +110,8 @@ export class GardenPainter {
       el("path", { d: "M0 -12 C -4 -6 -7 -2 -7 2 a7 7 0 0 0 14 0 c0 -4 -3 -8 -7 -14z", class: "fx-drop", transform: "translate(0 -16) scale(.7)" }, g);
       const text = el("text", { x: 9, y: -18, class: "fx-text" }, g);
       const pollen = el("text", { x: 9, y: -5, class: "fx-text fx-pollen" }, g);
-      this.fxPool.push({ g, glow, sparkles, text, pollen });
+      const grain = el("text", { x: 9, y: 8, class: "fx-text fx-grain" }, g);
+      this.fxPool.push({ g, glow, sparkles, text, pollen, grain });
     }
 
     const rg = el("g", { class: "readout", display: "none" }, root);
@@ -158,6 +159,7 @@ export class GardenPainter {
       c.set(nodes.glow, "r", f1(14 + u * 10));
       c.text(nodes.text, f.text ?? "");
       c.text(nodes.pollen, f.pollen ?? "");
+      c.text(nodes.grain, f.grain ?? "");
       nodes.sparkles.forEach((s, k) => {
         const a = (k / 5) * Math.PI * 2 + u * 3, r = 10 + u * 13;
         c.set(s, "transform", `translate(${f1(Math.cos(a) * r)} ${f1(Math.sin(a) * r)})`);

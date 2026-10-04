@@ -16,6 +16,7 @@ import { Progress } from "./ui";
 import { Value } from "./Value";
 import { partsOfAction, ResponseView, responseUrl } from "./ResponseView";
 import { MemoryTable } from "./Memory";
+import { GrainChip, PollenPanel, type GrainRec } from "./Pollen";
 
 const SPEEDS = [0.1, 0.25, 0.5, 1, 2, 5, 10];
 
@@ -99,6 +100,12 @@ export function Replay({ view, history }: { view: GameView; history: HistoryStor
       </div>
       <RoundInspector index={history.turns} round={round} roundMs={roundMs} teams={teams} mine={mine} focus={focus} rev={hrev} base={base} />
       <ReplayCharts view={view} history={history} teams={teams} mine={mine} focus={focus} setFocus={setFocus} cursor={t} onSeek={(x) => driver.seek(x)} hrev={hrev} />
+      {(view.game.config.grains ?? "feeder") !== "off" && (
+        <section>
+          <h3>Pollen grains</h3>
+          <PollenPanel view={view} teams={teams} grains={grainsOf(history, teams.length)} mine={mine >= 0 ? mine : null} during={false} />
+        </section>
+      )}
       {teams.some((x) => x.memory) && (
         <section>
           <h3>Every bee's MEMORY, as the game ended</h3>
@@ -108,6 +115,18 @@ export function Replay({ view, history }: { view: GameView; history: HistoryStor
       )}
     </div>
   );
+}
+
+/** Every grain in the history (every feed's, revealed now that the game is over). */
+function grainsOf(history: HistoryStore, n: number): GrainRec[] {
+  const out: GrainRec[] = [];
+  for (const list of history.turns.bees) for (const t of list) {
+    const e = t.end;
+    if (e?.action === "feed" && typeof e.grain === "string" && t.flower < n) {
+      out.push({ bee: t.bee, flower: t.flower, version: e.grainVersion ?? 0, grain: e.grain, codeLength: e.grainCodeLength ?? e.grain.length, round: t.round });
+    }
+  }
+  return out;
 }
 
 function countUpTo(sorted: number[], t: number) {
@@ -205,7 +224,7 @@ function InspectorRow({ t, teams, mine, focus, base }: { t: Turn; teams: Team[];
     <tr className={`${hl ? "mine" : ""}`}>
       <td className="left nowrap">{chip(t.bee)} → {chip(t.flower)}</td>
       <td className="left">{e ? <span className="step"><Value v={e.c} role="challenge" max={20} /><span className="arrow">→</span><ResponseView p={partsOfAction(e)} url={responseUrl(base, e.seq)} max={20} failedText={e.flowerError ?? undefined} /></span> : <span className="muted">…</span>}</td>
-      <td className="left">{!e ? "" : isFed ? <span className="ok-text">fed</span> : <span className="muted">left</span>}{e?.beeError && <span className="err-detail mono">{e.beeError}</span>}{e?.flowerError && <span className="err-detail mono">flower: {e.flowerError}</span>}</td>
+      <td className="left">{!e ? "" : isFed ? <span className="ok-text">fed</span> : <span className="muted">left</span>}{e && typeof e.grain === "string" && <GrainChip grain={e.grain} version={e.grainVersion} length={e.grainCodeLength} max={18} />}{e?.beeError && <span className="err-detail mono">{e.beeError}</span>}{e?.flowerError && <span className="err-detail mono">flower: {e.flowerError}</span>}</td>
       <td>{e?.percent ?? "–"}</td>
       <td title={fmtEExact(e?.energy)}>{fmtE(e?.energy)}</td>
       <td title={fmtEExact(e?.nectar)}>{isFed ? fmtE(e?.nectar) : ""}</td>

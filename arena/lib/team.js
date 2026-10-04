@@ -20,6 +20,15 @@ const n0 = (x) => Math.floor(x).toLocaleString("en-US");
 /** JSON as the game measures MEMORY: sorted keys, no spaces. */
 /** A MEMORY's size as the game counts it: Σ over its entries of the key's UTF-8 bytes + the value's JSON bytes. */
 export const memorySize = (m) => (m && typeof m === "object" && !Array.isArray(m) ? Object.entries(m).reduce((a, [k, v]) => a + Buffer.byteLength(k) + Buffer.byteLength(JSON.stringify(v) ?? "null"), 0) : null);
+/** What the game's Python refuses (introspection: dunder names, a module's private names, modules it doesn't allow), as
+ * the runner reports it: a hint for check.py's output when an error looks like one of those. */
+const REFUSED = /__\w+__|\bdunder\b|introspection|private name|not allowed in this game|has no attribute '_|is not allowed/i;
+export function refusalHint(errors) {
+  if (!errors.some((e) => REFUSED.test(String(e)))) return null;
+  return "The game's Python refuses introspection: names with double underscores (such as __class__, __dict__, __globals__), " +
+    "modules' private names (random._os) and modules outside the allowed list (RULES.md, \"The programs\"). Use plain public names instead.";
+}
+
 /** A response as a short text: a big one (over 4 KB, r null with rBytes and rHash) as its size, hash and first characters. */
 const showResponse = (a, n = 40) => (a.rHash ? `<${n0(a.rBytes)} bytes, sha256 ${String(a.rHash).slice(0, 12)}…: ${String(a.rPreview ?? "").slice(0, n)}…>` : JSON.stringify(a.r ?? null).slice(0, n));
 const canonical = (v) => JSON.stringify(v, (k, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map((key) => [key, x[key]])) : x)) ?? "null";
@@ -209,7 +218,8 @@ export function requestHandler(ctx) {
         const cap = config.budgets?.flower?.size, fms = config.budgets?.flower?.ms;
         out.text = [`${kind}: ${n0(c.size)} of ${n0(c.budget?.size ?? 0)} nodes.` + (c.available != null ? ` Submitting now would cost ${n0(c.cost)} of the ${n0(c.available)} you have.` : " (lobby: submitting is free)") +
           (kind === "flower" && cap && fms && c.size != null ? ` Excess energy per turn at most (${n0(cap)} − ${n0(c.size)}) × ${fms} = ${n0(Math.max(0, cap - c.size) * fms)} node·ms, less ${n0(Math.max(0, cap - c.size))} per ms of compute.` : ""),
-          errors.length ? `Problems:\n- ${errors.join("\n- ")}` : "No problems found."].join("\n");
+          errors.length ? `Problems:\n- ${errors.join("\n- ")}` : "No problems found.", refusalHint(errors)].filter(Boolean).join("\n");
+        if (refusalHint(errors)) out.refused = true;
         await record({ op, kind, code: req.code, ok: out.ok, result: { size: c.size, cost: c.cost, available: c.available, errors } });
         return out;
       }
@@ -263,7 +273,7 @@ export function requestHandler(ctx) {
         if (!req.force) {
           const errs = await runtimeTest(api, tok, gPath, kind, req.code, config, fileFlower());
           if (errs.length) {
-            const text = `not submitted: the quick runtime test failed (pass --force to submit anyway):\n- ${errs.join("\n- ")}`;
+            const text = `not submitted: the quick runtime test failed (pass --force to submit anyway):\n- ${errs.join("\n- ")}` + (refusalHint(errs) ? `\n${refusalHint(errs)}` : "");
             await record({ op, kind, code: req.code, ok: false, refused: "runtime test", result: { errors: errs } });
             return { ok: false, errors: errs, text };
           }
@@ -277,7 +287,7 @@ export function requestHandler(ctx) {
           errors: r.errors || [], gameOver: over, waitS: wait ? Number(wait[1]) : never ? null : undefined, never: never || undefined };
         out.text = r.submitted
           ? `${kind} v${r.version} submitted${r.cost ? `: it cost ${n0(r.cost)} nodes of change, ${n0(r.available ?? 0)} left` : ""}. ${r.available != null ? "It is live now." : "(lobby: free)"}`
-          : over ? `not submitted: the game is over.` : `not submitted:\n- ${(r.errors || ["not accepted"]).join("\n- ")}`;
+          : over ? `not submitted: the game is over.` : `not submitted:\n- ${(r.errors || ["not accepted"]).join("\n- ")}` + (refusalHint(r.errors || []) ? `\n${refusalHint(r.errors)}` : "");
         await record({ op, kind, code: req.code, ok: out.ok, refused: over ? "game over" : null, version: r.version ?? null, cost: r.submitted ? r.cost : null,
           clockMs: r.submitted ? r.atMs ?? undefined : undefined, result: { size: r.size, distance: r.distance, cost: r.cost, available: r.available, errors: r.errors } });
         return out;

@@ -33,6 +33,7 @@
 # the response written as JSON, inside the timed window.
 # NOT a security sandbox: restricted builtins + import whitelist + timeouts + memory cap only.
 import builtins, importlib, io, json, math, os, random, resource, select, signal, sys, time, types
+import py_rules  # (this directory)
 
 ALLOWED_MODULES = {
     "math", "cmath", "random", "hashlib", "string", "itertools", "functools", "collections",
@@ -185,9 +186,91 @@ def game_clock():
     return m, start
 
 
+# Introspection guards (py_rules.py has the static half): getattr, setattr, delattr, hasattr and dir refuse
+# dunder attributes and the interpreter's internals, and str.format reached by name; eval, exec, compile,
+# globals, locals, vars, open and the like are gone. Best effort: not a security sandbox.
+_real_getattr, _real_setattr, _real_delattr, _real_hasattr, _real_dir = getattr, setattr, delattr, hasattr, dir
+
+
+def _refused(obj, name):
+    if type(name) is not str:
+        return None  # the real function raises its own TypeError
+    why = py_rules.refused_attr(name)
+    if why:
+        return why
+    if name in ("format", "format_map") and (isinstance(obj, str) or (isinstance(obj, type) and issubclass(obj, str))):
+        return f"str.{name} only on a literal string (use an f-string)"
+    return None
+
+
+def _guard(obj, name):
+    why = _refused(obj, name)
+    if why:
+        raise AttributeError(why)
+
+
+def _getattr(obj, name, *default):
+    _guard(obj, name)
+    return _real_getattr(obj, name, *default)
+
+
+def _setattr(obj, name, value):
+    _guard(obj, name)
+    return _real_setattr(obj, name, value)
+
+
+def _delattr(obj, name):
+    _guard(obj, name)
+    return _real_delattr(obj, name)
+
+
+def _hasattr(obj, name):
+    _guard(obj, name)
+    return _real_hasattr(obj, name)
+
+
+def _dir(*args):
+    names = _real_dir(*args) if args else sorted(sys._getframe(1).f_locals)
+    return [n for n in names if not py_rules.refused_attr(n)]
+
+
+def _gone(name):
+    def gone(*args, **kwargs):
+        raise NameError(f"{name}() is not available in this game")
+    gone.__name__ = gone.__qualname__ = name
+    return gone
+
+
 SAFE_BUILTINS = {k: v for k, v in vars(builtins).items()
-                 if k not in {"open", "input", "breakpoint", "exit", "quit", "help", "__import__", "__loader__", "__spec__"}}
-SAFE_BUILTINS["__import__"] = _safe_import
+                 if k not in {"open", "input", "breakpoint", "exit", "quit", "help", "__import__", "__loader__", "__spec__",
+                              "license", "credits", "copyright"} | py_rules.GONE}
+SAFE_BUILTINS.update({"__import__": _safe_import, "getattr": _getattr, "setattr": _setattr, "delattr": _delattr,
+                      "hasattr": _hasattr, "dir": _dir})
+for _name in py_rules.GONE:
+    SAFE_BUILTINS[_name] = _gone(_name)
+for _f, _name in ((_getattr, "getattr"), (_setattr, "setattr"), (_delattr, "delattr"), (_hasattr, "hasattr"), (_dir, "dir")):
+    _f.__name__ = _f.__qualname__ = _name
+
+
+def _attrgetter(*names):
+    for n in names:
+        for part in (n.split(".") if type(n) is str else ()):
+            _guard("", part)
+    return _operator.attrgetter(*names)
+
+
+def _methodcaller(name, *args, **kwargs):
+    _guard("", name)
+    return _operator.methodcaller(name, *args, **kwargs)
+
+
+import operator as _operator
+_VIEWS["operator"].attrgetter, _VIEWS["operator"].methodcaller = _attrgetter, _methodcaller
+_attrgetter.__name__, _methodcaller.__name__ = "attrgetter", "methodcaller"
+for _mod, _names in (("string", ("Formatter",)), ("typing", ("get_type_hints", "ForwardRef"))):
+    for _name in _names:  # they look attributes up by name, or evaluate strings as code
+        if hasattr(_VIEWS[_mod], _name):
+            delattr(_VIEWS[_mod], _name)
 
 
 class Timeout(BaseException):
@@ -520,6 +603,11 @@ def main(role, setup):
 
     try:
         code = compile(setup["code"], f"<{role}>", "exec")
+        breaches = py_rules.check(setup["code"])
+        if breaches:
+            more = f" (and {len(breaches) - 1} more)" if len(breaches) > 1 else ""
+            reply({"ok": False, "e": f"the program breaks the rules: {breaches[0]}{more}"})
+            code = None
     except SyntaxError as e:
         reply({"ok": False, "e": short(e)})
         code = None

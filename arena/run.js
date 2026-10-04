@@ -222,7 +222,7 @@ async function playGame(arena, ctx, log) {
   const gen = gameRow.generation;
   let view = await Api.view(ownerTok, gPath);
   const teams = view.teams.map((t) => ({ id: t.id, name: t.name }));
-  const stream = new GameStream({ root: path.join(WS_ROOT, arena.id), gen, gPath, gameUuid: gameRow.game_uuid, teams, log }).load();
+  const stream = new GameStream({ root: path.join(WS_ROOT, arena.id), gen, gPath, gameUuid: gameRow.game_uuid, teams, grainsPublic: view.game.config?.grains === "public", log }).load();
   // Every team's desk (its tools' requests, its scaffold) lives from the lobby to the end of the game.
   const allEntries = await all("SELECT * FROM arena.entries WHERE game_id = $1", [gameRow.id]);
   const allPersonas = await all("SELECT * FROM arena.personas WHERE id = ANY($1)", [allEntries.map((e) => e.persona_id)]);

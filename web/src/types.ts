@@ -20,6 +20,8 @@ export interface GameConfig {
   maxNodes: number;         // trees and graphs (challenges only)
   maxResponseBytes?: number; // the most UTF-8 bytes of a response's JSON text (default 1 MiB)
   revealOnFinish: boolean;  // all code and every bee's prints become public when the game ends
+  grains?: "feeder" | "public" | "off";            // who sees a feed's pollen grain during play
+  pollenGrain?: { exponent: number; scale: number }; // a grain is ⌊scale × pollen^exponent⌋ characters
   budgets: Record<Kind, Budget>;
 }
 
@@ -119,6 +121,11 @@ export interface Action {
   beeError?: string | null;
   beeVersion?: number | null;
   log?: string | null;
+  // feed only, the bee's team (everyone if grains are public, and after the game): the pollen grain, a run of
+  // the answering flower version's minified code from an unknown start, wrapping.
+  grain?: string | null;
+  grainVersion?: number | null;
+  grainCodeLength?: number | null;
 }
 
 export interface ActionsPage { actions: Action[]; lastSeq: number; clockMs: number; round: number; status: GameStatus }
@@ -135,6 +142,7 @@ export interface LedgerEntry {
   nectar: number | null; pollen: number | null;    // nectar null and pollen 0 on a leave
   ms: number | null; flowerVersion?: number | null; flowerError?: string | null;  // the flower's team's
   beeMs?: number | null; beeVersion?: number | null; beeError?: string | null;     // the bee's team's
+  grain?: string | null; grainVersion?: number | null; grainCodeLength?: number | null;   // the bee's team's (feeds)
 }
 
 export interface LedgerPage {

@@ -16,6 +16,11 @@ so `import garden` works). Sessions can use it too (after sys.path.insert(0, "to
             ...                                     # a bee fed at your species: t.percent, t.energy, t.nectar, t.pollen
     s = garden.status()                             # clock, round, live scores; YOUR budgets (exact) and versions
     r = garden.response(t)                          # a turn's whole response (one over 4 KB is None in t.response)
+    for g in garden.grains(flower=2): ...           # your pollen grains (a piece of the code of each flower your bee
+                                                    # fed at): {"seq", "round", "at_ms", "flower", "version",
+                                                    # "code_length", "grain"}, oldest first
+    a = garden.assemble(flower=2, version=3)        # those grains pieced together: {"pieces", "covered", "share",
+                                                    # "complete", "code"} (best effort)
     m = garden.memory()                             # your bee's MEMORY: {"value", "bytes", "cap", "version", "error"}
                                                     # (read only)
     m = garden.measure("flower", code)              # free: {"ok", "size", "cost", "available", "errors"}
@@ -43,6 +48,7 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _runner import ROOT, call  # noqa: E402
 from stream import Stream, response as _response  # noqa: E402
+import grains as _grains  # noqa: E402
 
 _s = Stream(ROOT)
 KINDS = ("flower", "bee")
@@ -181,6 +187,30 @@ def response(turn):
     if r is not None or (get("response_bytes") is None and get("responseBytes") is None and get("rBytes") is None):
         return r
     return _response(get("seq"))
+
+
+def grains(flower=None, version=None):
+    """Your team's pollen grains so far, oldest first: on every feed of your bee, floor(pollen ** (1/3)) characters of
+    the minified code of the flower version that answered, from a random start, wrapping. [{"seq", "round", "at_ms",
+    "flower" (team index), "version", "code_length", "grain"}]. Only your team sees them during play; programs never
+    do."""
+    return _grains.grains(flower, version, _s)
+
+
+def assemble(flower, version=None):
+    """Your grains of one species (team index) pieced together where they overlap (best effort), for one version (the
+    latest you have grains of, by default): {"flower", "version", "grains", "code_length", "pieces", "covered",
+    "share", "complete", "code" (the whole minified code once complete), "compiles"}."""
+    _g = _grains
+    gs = _g.grains(flower, version, _s)
+    if version is None and gs:
+        version = gs[-1]["version"]
+        gs = [g for g in gs if g["version"] == version]
+    if not gs:
+        return {"flower": flower, "version": version, "grains": 0, "code_length": None, **_g.assemble([], 0)}
+    lang = CONFIG.get("language", "python")
+    return {"flower": flower, "version": version, "grains": len(gs), "code_length": gs[-1]["code_length"],
+            **_g.assemble([g["grain"] for g in gs], gs[-1]["code_length"], lang)}
 
 
 def actions(after=0, since_ms=None):

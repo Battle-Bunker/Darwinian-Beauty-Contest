@@ -101,6 +101,8 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
   const seconds = Math.round(draft.minutes * 60);
   const roundMs = draft.budgets.flower.ms + draft.budgets.bee.ms;
   const cap = draft.budgets.flower.size;
+  const grain = draft.pollenGrain ?? { exponent: 1 / 3, scale: 1 };
+  const grainLen = (p: number) => (Number.isFinite(grain.exponent) && Number.isFinite(grain.scale) ? Math.floor(grain.scale * Math.pow(p, grain.exponent)) : NaN);
 
   return (
     <form className="settings" onSubmit={save}>
@@ -118,6 +120,15 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
         <label className="field"><span>Max string/list length</span>{num(draft.maxLen, (v) => set("maxLen", v), 1, 1024, "Max string or list length")}</label>
         <label className="field"><span>Max tree/graph nodes</span>{num(draft.maxNodes, (v) => set("maxNodes", v), 1, 4096, "Max tree or graph nodes")}</label>
         <label className="field"><span>Max response (bytes)</span>{num(draft.maxResponseBytes ?? 1048576, (v) => set("maxResponseBytes", v), 16, 16777216, "Max response size in bytes")}</label>
+        <label className="field"><span>Pollen grains</span>
+          <select value={draft.grains ?? "feeder"} onChange={(e) => set("grains", e.target.value as GameConfig["grains"])} aria-label="Who sees pollen grains during play">
+            <option value="feeder">the feeding bee's team</option>
+            <option value="public">everyone, as they happen</option>
+            <option value="off">off</option>
+          </select>
+        </label>
+        <label className="field"><span>Grain exponent</span>{num(grain.exponent, (v) => set("pollenGrain", { ...grain, exponent: v }), 0.01, 1, "Pollen grain exponent", "any")}</label>
+        <label className="field"><span>Grain scale</span>{num(grain.scale, (v) => set("pollenGrain", { ...grain, scale: v }), 0, 1000, "Pollen grain scale", "any")}</label>
       </div>
       <p className="small muted settings-hint">
         {Number.isFinite(seconds) && Number.isFinite(roundMs) && roundMs > 0
@@ -126,6 +137,7 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
         A bee that feeds sits out the next <b>{Number.isFinite(draft.feedCost) ? draft.feedCost : "?"}</b> rounds.
         Each team's flower is a species; every visit is a bee meeting one of its flowers, which spends its budget on its size and compute and, if the bee feeds, gives it nectar and pollen from what's left: E = ({Number.isFinite(cap) ? cap.toLocaleString() : "?"} − its size) × max(0, {draft.budgets.flower.ms} − its CPU ms), so a {Number.isFinite(cap) ? Math.round(cap / 2).toLocaleString() : "?"}-node flower answering in 10 ms has up to {Number.isFinite(cap) ? (Math.round(cap / 2) * Math.max(0, draft.budgets.flower.ms - 10)).toLocaleString() : "?"} node·ms to give.
         {" "}Bees run fresh for every turn and keep only their MEMORY, a key–value store of at most <b>{(draft.budgets.bee.memory ?? 50).toLocaleString()}</b> bytes (each entry: its key's bytes plus its value's JSON bytes).
+        {" "}On every feed, {(draft.grains ?? "feeder") === "off" ? "no pollen grain is given (grains are off)" : <>the bee's team gets a pollen grain: ⌊{grain.scale} × pollen^{+grain.exponent.toFixed(3)}⌋ characters of the flower's minified code from a random start ({Number.isFinite(grainLen(27000)) ? `27,000 pollen gives ${grainLen(27000)}, 100,000 gives ${grainLen(100000)}` : "?"}), seen {(draft.grains ?? "feeder") === "public" ? "by everyone as it happens" : "by that team only until the game ends"}</>}.
         {" "}String and list lengths and tree and graph sizes limit challenges; a response may be up to <b>{fmtBytes(draft.maxResponseBytes ?? 1048576)}</b> of JSON (over that it counts as no answer), and one over 4 KB is shown on the page as its first 4 KB.
       </p>
       <div className="settings-checks">
@@ -179,6 +191,9 @@ export function SettingsSummary({ cfg }: { cfg: GameConfig }) {
         {[cfg.challengeType, cfg.responseType].some((t) => /tree|graph/i.test(t)) && <span className="chip">max {cfg.maxNodes} nodes</span>}
         <span className="chip" title="The most bytes of a response's JSON; over it, no answer">responses up to {fmtBytes(cfg.maxResponseBytes ?? 1048576)}</span>
         <span className="chip" title="A bee's MEMORY: a flat key–value store">bee MEMORY {(cfg.budgets.bee.memory ?? 50).toLocaleString()} bytes</span>
+        <span className="chip" title={`A feed's pollen grain: ⌊${cfg.pollenGrain?.scale ?? 1} × pollen^${+(cfg.pollenGrain?.exponent ?? 1 / 3).toFixed(3)}⌋ characters of the flower's minified code`}>
+          pollen grains: {{ feeder: "the feeding team's", public: "public", off: "off" }[cfg.grains ?? "feeder"]}
+        </span>
         <span className="chip">{cfg.revealOnFinish ? "code and prints revealed at the end" : "code stays secret"}</span>
       </div>
       <div className="table-scroll">

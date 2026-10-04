@@ -13,6 +13,7 @@ import { computeFrame, HEAD_Y, layoutGarden, PATCH_AT, PATCH_SCALE, TOP_PAD, typ
 import { GardenPainter } from "./gardenPainter";
 import { DropIcon } from "./Icons";
 import { responseUrl } from "./ResponseView";
+import { GrainChip } from "./Pollen";
 import { gameBase } from "../api";
 
 /** Says which game time the garden shows, every animation frame. */
@@ -267,6 +268,15 @@ function liveFeeds(view: GameView, actions: Action[], order: string[]): { fedHer
   return { fedHere, fedBy };
 }
 
+/** The latest feed by a team's bee that came with a grain the viewer may see. */
+function lastGrainOf(actions: Action[], bee: string): Action | null {
+  for (let k = actions.length - 1, n = 0; k >= 0 && n < 4000; k--, n++) {
+    const a = actions[k];
+    if (a.action === "feed" && a.bee === bee && typeof a.grain === "string") return a;
+  }
+  return null;
+}
+
 /** The garden during the lobby and the game. */
 export function LiveGarden({ view, store, wasted }: { view: GameView; store: LiveStore; wasted: number | null }) {
   const g = view.game;
@@ -278,6 +288,7 @@ export function LiveGarden({ view, store, wasted }: { view: GameView; store: Liv
     return order.map((id) => byId.get(id)!).filter(Boolean);
   }, [order, view.teams]);
   const mine = view.me?.teamId ? order.indexOf(view.me.teamId) : -1;
+  const teamsById = useMemo(() => Object.fromEntries(view.teams.map((t) => [t.id, t])), [view.teams]);
   const statusRef = useRef(status);
   statusRef.current = status;
   const driver = useMemo(() => new LiveDriver(store, order, cfg.budgets.flower.ms, () => statusRef.current), [store, order.join(","), cfg.budgets.flower.ms]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -321,7 +332,8 @@ export function LiveGarden({ view, store, wasted }: { view: GameView; store: Liv
       )}
       {status !== "lobby" && focus !== null && teams[focus] && (
         <FocusStrip team={teams[focus]} own={focus === mine} score={view.scores?.find((s) => s.teamId === teams[focus].id) ?? null}
-          fedHere={counts.fedHere[focus]} fedBy={counts.fedBy[focus]} wasted={focus === mine ? wasted : null} />
+          fedHere={counts.fedHere[focus]} fedBy={counts.fedBy[focus]} wasted={focus === mine ? wasted : null}
+          lastGrain={lastGrainOf(store.actions, teams[focus].id)} teams={teamsById} />
       )}
       {status !== "lobby" && <GardenLegend own={mine >= 0} />}
     </div>
@@ -357,8 +369,9 @@ export function GardenControls({ teams, mine, focus, setFocus, bubbles, setBubbl
 const fmtScore = (x: number) => (x < 100 ? x.toFixed(2) : Math.round(x).toLocaleString());
 
 /** The followed team at a glance: its bee and its flower over the game so far. */
-export function FocusStrip({ team, own, score, fedHere, fedBy, wasted }: {
+export function FocusStrip({ team, own, score, fedHere, fedBy, wasted, lastGrain, teams }: {
   team: Team; own: boolean; score: TeamScore | null; fedHere: number; fedBy: number; wasted: number | null;
+  lastGrain?: Action | null; teams?: Record<string, Team>;
 }) {
   const who = own ? "Your" : poss(team.name);
   return (
@@ -376,6 +389,9 @@ export function FocusStrip({ team, own, score, fedHere, fedBy, wasted }: {
         {score && typeof score.forage === "number" && <span title="Σ over flower teams of √(nectar got there)">forage <b>{fmtScore(score.forage)}</b></span>}
         {score && score.nectarCollected !== null && <span><DropIcon size={14} /> nectar <b>{fmtE(score.nectarCollected)}</b></span>}
         {score && typeof score.fitness === "number" && <span title="N² × pollination share × forage share">fitness <b>{score.fitness.toFixed(3)}</b></span>}
+        {lastGrain && typeof lastGrain.grain === "string" && (
+          <span className="focus-grain">latest from {teams?.[lastGrain.flower]?.name ?? "a flower"}: <GrainChip grain={lastGrain.grain} version={lastGrain.grainVersion} length={lastGrain.grainCodeLength} max={28} /></span>
+        )}
         {team.memory && <span title={`The bee's MEMORY, read only: bee v${team.memory.version}'s`}>MEMORY <b>{team.memory.bytes.toLocaleString()}</b> / {team.memory.cap.toLocaleString()} bytes</span>}
       </div>
     </div>
