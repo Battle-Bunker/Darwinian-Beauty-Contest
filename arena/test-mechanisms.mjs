@@ -4,14 +4,14 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { classifierPrompt, classifyTeamGame, keywordBee, keywordFlower, levelOf, skeleton, skeletonHash, stripProse } from "./lib/mechanisms.js";
+import { CLASSIFIER_SYSTEM, classifierPrompt, classifyTeamGame, keywordBee, keywordFlower, levelOf, skeleton, skeletonHash, stripProse } from "./lib/mechanisms.js";
 
 let failed = 0;
 const check = (name, ok, extra) => { console.log(`${ok ? "ok  " : "FAIL"} ${name}${ok || extra === undefined ? "" : " " + JSON.stringify(extra)}`); if (!ok) failed++; };
 
 const pow = `# flower: proof of work. sha256 nonces
 import hashlib, time
-def flower(c, ledger):
+def flower(c):
     stop = time.time() + (GAME["ms"] - 15) / 1000
     p = hashlib.sha256(b"%d:" % c)
     found, k = [], 0
@@ -23,7 +23,7 @@ def flower(c, ledger):
     return {"nodes": len(found), "edges": [], "labels": found}, 30
 `;
 const chain = `import time, hashlib
-def flower(challenge, ledger):
+def flower(challenge):
     deadline = time.time() + GAME["ms"] * 0.2 / 1000
     labels, prev, nonce = [], -1, 0
     while time.time() < deadline:
@@ -34,11 +34,11 @@ def flower(challenge, ledger):
     return labels, 20
 `;
 const rule = `# a proof of work would use hashlib and sha256 nonces, but we don't: small and fast is more energy
-def flower(challenge, ledger):
+def flower(challenge):
     return (challenge * 7 + 3) % 97, 25
 `;
 const seq = `import hashlib
-def flower(c, ledger):
+def flower(c):
     h = str(c).encode()
     marks = []
     for i in range(2000):
@@ -50,7 +50,7 @@ def flower(c, ledger):
 const clique = `def is_prime(n):
     return n > 1 and all(n % d for d in range(2, int(n ** 0.5) + 1))
 
-def flower(c, ledger):
+def flower(c):
     q = 5 + c % 40
     while not is_prime(q) or q % 4 != 1:
         q += 1
@@ -62,8 +62,8 @@ def flower(c, ledger):
             found.append(v)
     return found, 35
 `;
-const byLedger = `def flower(c, ledger):
-    fed = sum(1 for e in ledger[-50:] if e["fed"] and e["flower"] == GAME["team"])
+const byHistory = `def flower(c):
+    fed = HISTORY.turns.my_flower().eq("fed", True).count().value()
     pct = 10 if fed > 5 else 40
     return c, pct
 `;
@@ -73,32 +73,37 @@ check("keywords: a chain of nonces (d[0] == 0) = hash-pow", keywordFlower(chain)
 check("keywords: a formula is a rule, whatever its comments say", keywordFlower(rule).mechanism === "rule" && keywordFlower(rule).percent === "fixed", keywordFlower(rule));
 check("keywords: iterated hashing with checkpoints = sequential", keywordFlower(seq).mechanism === "sequential", keywordFlower(seq));
 check("keywords: a checkable puzzle (a Paley clique) = certificate", keywordFlower(clique).mechanism === "certificate", keywordFlower(clique));
-check("keywords: a percent set from the ledger, a flower that knows its own team", keywordFlower(byLedger).percent === "by-ledger?" && keywordFlower(byLedger).tags.includes("reads-ledger")
-  && keywordFlower(byLedger).tags.includes("knows-own-team"), keywordFlower(byLedger));
+const knows = byHistory.replace("my_flower()", 'eq("flower", GAME["team"])');
+check("keywords: a percent set from HISTORY, a flower that knows its own team", keywordFlower(byHistory).percent === "by-history?" && keywordFlower(byHistory).tags.includes("reads-history")
+  && keywordFlower(knows).tags.includes("knows-own-team"), [keywordFlower(byHistory), keywordFlower(knows)]);
 check("prose stripped: comments and docstrings", !/sha256/.test(stripProse(rule)) && !/hello/.test(stripProse('"""hello"""\nx = 1')));
 
 const bee1 = `PRIOR = {"a": [1, 2], "b": [3, 4], "c": [5, 6], "d": [7, 8], "e": [9, 10], "f": [11, 12], "g": [13, 14], "h": [15, 16], "i": [17, 18], "j": [19, 20], "k": [21, 22], "l": [23, 24], "m": [25, 26], "n": [27, 28]}
 T = 120
-def first(ledger):
+def first():
     return 1
 
-def decide(challenge, response, ledger):
+def decide(challenge, response):
     return "leave", 1
 `;
 const bee2 = bee1.replace("[1, 2]", "[9, 9]").replace("T = 120", "T = 133");
 check("skeleton: a scaffold's retuned tables and thresholds don't change it", skeletonHash(bee1) === skeletonHash(bee2) && skeleton(bee1).includes("{T}"));
 check("skeleton: different logic does", skeletonHash(bee1) !== skeletonHash(bee1.replace('return "leave", 1', 'return "feed", 1')));
-check("keywords: a bee that hashes counts work", keywordBee("import hashlib\nT = 5\ndef decide(c, r, ledger):\n    return hashlib.sha256(b'x').digest(), 1").checks.includes("work-count"));
-check("keywords: a bee that learns from the ledger's nectar", keywordBee("seen = {}\ndef decide(c, r, ledger):\n    for e in ledger:\n        seen[e['response']] = e['nectar']\n    return 'feed', 1").checks.includes("learns"));
+check("keywords: a bee that hashes counts work", keywordBee("import hashlib\nT = 5\ndef decide(c, r):\n    return hashlib.sha256(b'x').digest(), 1").checks.includes("work-count"));
+const learner = "def decide(c, r):\n    paid = HISTORY.turns.my_bee().eq('fed', True).group_by('flower').avg('nectar').rows()\n    MEMORY['n'] = MEMORY.get('n', 0) + 1\n    return 'feed', 1";
+check("keywords: a bee that learns from HISTORY's nectar and keeps MEMORY", keywordBee(learner).checks.includes("learns") && keywordBee(learner).checks.includes("uses-memory"), keywordBee(learner));
 
 check("level: rule 0, hash-pow 2, adaptive certificate 4", levelOf({ mechanism: "rule", tags: ["adaptive"] }) === 0 && levelOf({ mechanism: "hash-pow", tags: [] }) === 2 && levelOf({ mechanism: "certificate", tags: ["adaptive"] }) === 4);
 
 const versions = [{ kind: "flower", version: 1, code: pow }, { kind: "flower", version: 2, code: rule }, { kind: "bee", version: 1, code: bee1 }, { kind: "bee", version: 2, code: bee2 }];
 const prompt = classifierPrompt(versions);
 check("prompt: every program, numbered, in order", /## \[1\] FLOWER v1/.test(prompt) && /## \[2\] FLOWER v2/.test(prompt) && /## \[4\] BEE v2/.test(prompt) && prompt.indexOf("FLOWER v1") < prompt.indexOf("FLOWER v2"));
-check("prompt: the percent policy, energy-aware tags, handshakes", /"percent_policy"/.test(prompt) && /"by-visitor"/.test(prompt) && /"lean"/.test(prompt) && /"own-bee-handshake"/.test(prompt) && /"handshake-only"/.test(prompt));
+check("prompt: the percent policy, energy-aware tags, handshakes, how a bee uses MEMORY", /"percent_policy"/.test(prompt) && /"by-history"/.test(prompt) && /"by-visitor"/.test(prompt) && /"lean"/.test(prompt)
+  && /"own-bee-handshake"/.test(prompt) && /"handshake-only"/.test(prompt) && /"memory": how it uses MEMORY/.test(prompt));
+check("system: species, nectar and pollen given, HISTORY, fresh calls, MEMORY", /species/.test(CLASSIFIER_SYSTEM) && /gives it percent% of E as nectar and the rest as pollen/.test(CLASSIFIER_SYSTEM)
+  && /HISTORY/.test(CLASSIFIER_SYSTEM) && /MEMORY/.test(CLASSIFIER_SYSTEM) && !/ledger|surplus/.test(CLASSIFIER_SYSTEM + prompt));
 check("prompt: a search that runs until its time limit is time-bounded, not adaptive", /NOT just\s+running until the time limit/.test(prompt));
-check("prompt: nothing of earlier variants", !/cosmos|orchid|forage\(seen/i.test(prompt));
+check("prompt: nothing of earlier variants", !/cosmos|orchid|forage\(seen|reads-ledger|ledger-value/i.test(prompt));
 
 // A fake model: replies per item; counts calls (a scaffold's retuned bee shares its skeleton: classified once).
 let calls = 0;
@@ -107,14 +112,15 @@ const fake = async ({ model, prompt }) => {
   if (/fable/i.test(model)) throw new Error("fable");
   const items = [...prompt.matchAll(/## \[(\d+)\] (FLOWER|BEE) v(\d+)/g)].reverse().map(([, n, k, v]) => ({ n: Number(n), kind: k.toLowerCase(), version: Number(v),
     ...(k === "FLOWER" ? { mechanism: Number(v) === 1 ? "hash-pow" : "rule", percent_policy: "fixed", percent: 30, tags: ["time-bounded", "challenge-tied"], difficulty: "10 bits" }
-      : { checks: "work-count", feeds: "by-check", threshold: "adaptive", tags: ["learns"] }), summary: "x" }));
+      : { checks: "work-count", feeds: "by-check", threshold: "adaptive", memory: "counters", tags: ["learns"] }), summary: "x" }));
   return { text: "Here you go: " + JSON.stringify({ items }) };
 };
 process.env.ARENA_MECH_CACHE = path.join(os.tmpdir(), `mech-test-${process.pid}.json`);
 const labels = await classifyTeamGame(versions.map((v) => ({ ...v, code: v.code + "\n# test " + Date.now() })), { callModel: fake });
 const f1 = labels.get("flower:1");
 check("classifier: one call; labels for every version, the retuned bee shares one", calls === 1 && f1.mechanism === "hash-pow" && f1.percentPolicy === "fixed" && f1.percent === 30
-  && labels.get("flower:2").mechanism === "rule" && labels.get("bee:1").checks === "work-count" && labels.get("bee:1").feeds === "by-check" && labels.get("bee:2").skeleton === labels.get("bee:1").skeleton,
+  && labels.get("flower:2").mechanism === "rule" && labels.get("bee:1").checks === "work-count" && labels.get("bee:1").feeds === "by-check" && labels.get("bee:1").memory === "counters"
+  && labels.get("bee:2").skeleton === labels.get("bee:1").skeleton,
   { calls, l: [...labels.entries()] });
 check("classifier: keyword evidence attached", f1.kw.mechanism === "hash-pow" && labels.get("flower:2").kw.mechanism === "rule");
 let refused = false;

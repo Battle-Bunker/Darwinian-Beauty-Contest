@@ -5,8 +5,9 @@
 // 1. prepareWorkspace writes the files a team needs (rules, interface, config, tools, its own versions, status), the
 //    public stream as a hard link to the runner's shared copy, and nothing secret; other teams' versions never appear.
 // 2. The shared stream grows in every workspace at once, a team damaging it through its link gets it repaired;
-//    stream/ledger.jsonl and stream/mine.jsonl carry the team's own private fields and nobody else's.
-//    tools/ledger.py and tools/stream.py read them.
+//    stream/history.jsonl (the programs' HISTORY) and stream/mine.jsonl carry the team's own private fields and nobody
+//    else's. tools/stream.py, tools/garden.py and tools/query.py read them (the query checks need vendor/query/history.py,
+//    the generated client: they are skipped while it doesn't exist).
 // 3. The audit: reading the game's public API on localhost is fine; logins, credentials, writes, other hosts and
 //    ports, raw sockets, paths outside the workspace and writes into stream/ are violations.
 import { spawnSync } from "node:child_process";
@@ -19,6 +20,7 @@ process.env.ARENA_WS_ROOT = root;
 const { prepareWorkspace, audit, allowedUrl, escapesWorkspace } = await import("./lib/workspace.js");
 const { GameStream } = await import("./lib/stream.js");
 const { DB_URL, migrate, pool, q } = await import("./lib/db.js");
+const HAVE_CLIENT = fs.existsSync(new URL("../vendor/query/history.py", import.meta.url));
 await migrate();
 let failed = 0;
 const check = (name, ok, extra = "") => { console.log(`${ok ? "ok  " : "FAIL"} ${name}${ok || !extra ? "" : `: ${String(extra).slice(0, 600)}`}`); if (!ok) failed++; };
@@ -39,10 +41,10 @@ const viewFor = (me) => ({
   game: { status: "running", clockMs: 30000, endMs: 120000, round: 150, config },
   me: { teamId: me }, myTeam: { name: me === "T1" ? "Moonpetal" : "Show Your Work" }, participants: ["T1", "T2"],
   interface: { types: { challenge: "int", response: "int", challengeMeans: "an integer", responseMeans: "an integer", rules: ["ints: whole numbers."] },
-    flower: "def flower(challenge, ledger): ...", bee: "def first(ledger): ...\ndef decide(challenge, response, ledger): ..." },
+    flower: "def flower(challenge): ...", bee: "def first(): ...\ndef decide(challenge, response): ..." },
   teams: [
-    { id: "T1", name: "Moonpetal", programs: me === "T1" ? { flower: [{ version: 1, size: 40, cost: 0, atMs: 0, code: "def flower(c, l):\n    return c, 50\n" }, { version: 2, size: 41, cost: 2, atMs: 20000, code: "def flower(c, l):\n    return c + 1, 50\n" }],
-      bee: [{ version: 1, size: 300, cost: 0, atMs: 0, code: "def first(l):\n    return 1\n\ndef decide(c, r, l):\n    return 'leave', 1\n" }] } : null, banks: null },
+    { id: "T1", name: "Moonpetal", programs: me === "T1" ? { flower: [{ version: 1, size: 40, cost: 0, atMs: 0, code: "def flower(c):\n    return c, 50\n" }, { version: 2, size: 41, cost: 2, atMs: 20000, code: "def flower(c):\n    return c + 1, 50\n" }],
+      bee: [{ version: 1, size: 300, cost: 0, atMs: 0, code: "def first():\n    return 1\n\ndef decide(c, r):\n    return 'leave', 1\n" }] } : null, banks: null },
     { id: "T2", name: "Show Your Work", programs: me === "T2" ? { flower: [{ version: 1, size: 40, cost: 0, atMs: 0, code: "SECRET_CODE_OF_T2 = 1\n" }], bee: [] } : null, banks: null },
   ],
   scores: [{ teamId: "T1", fitness: 1.1 }, { teamId: "T2", fitness: 0.9 }],
@@ -65,7 +67,7 @@ const addTurns = (n) => {
 const publicOf = (a) => {
   const { _t: t, ...x } = a;
   if (a.action === "arrive") return x;
-  return { ...x, c: t.c, r: t.r, surplus: t.fed ? (1 - t.percent / 100) * t.energy : 0, ...(t.fed ? { nectar: (t.percent / 100) * t.energy, percent: t.percent, energy: t.energy } : {}) };
+  return { ...x, c: t.c, r: t.r, pollen: t.fed ? (1 - t.percent / 100) * t.energy : 0, ...(t.fed ? { nectar: (t.percent / 100) * t.energy, percent: t.percent, energy: t.energy } : {}) };
 };
 const mineOf = (a, me) => {
   const x = publicOf(a), t = a._t;
@@ -73,16 +75,19 @@ const mineOf = (a, me) => {
   if (t.bee === me && a.action !== "arrive") Object.assign(x, { beeMs: t.beeMs, log: t.log, beeVersion: 1 });
   return x;
 };
-const entryOf = (t, me) => ({ seq: t.seq, round: t.round, bee: IDS.indexOf(t.bee), flower: IDS.indexOf(t.flower), challenge: t.c, response: t.r, fed: t.fed,
-  nectar: t.fed ? (t.percent / 100) * t.energy : null, surplus: t.fed ? (1 - t.percent / 100) * t.energy : 0,
-  percent: t.fed || t.flower === me ? t.percent : null, energy: t.fed || t.flower === me ? t.energy : null, ms: t.flower === me ? t.ms : null });
+/** A turn record as GET .../ledger gives it to a team (the turns entity, masked for that team). */
+const entryOf = (t, me) => ({ seq: t.seq, game: "G", round: t.round, atMs: (t.round - 1) * 200, turn: t.k, bee: IDS.indexOf(t.bee), flower: IDS.indexOf(t.flower), challenge: t.c, response: t.r, fed: t.fed,
+  percent: t.fed || t.flower === me ? t.percent : null, energy: t.fed || t.flower === me ? t.energy : null,
+  nectar: t.fed ? (t.percent / 100) * t.energy : null, pollen: t.fed ? (1 - t.percent / 100) * t.energy : 0,
+  ms: t.flower === me ? t.ms : null, flowerVersion: t.flower === me ? 1 : null, flowerError: null,
+  beeMs: t.bee === me ? t.beeMs : null, beeVersion: t.bee === me ? 1 : null, beeError: null });
 addTurns(25);
 const meOf = (tok) => tok.replace("tok-", "");
 const stream = new GameStream({ root: path.join(root, AID), gen: 1, gPath: "/x", gameUuid: null, teams: [{ id: "T1", name: "Moonpetal" }, { id: "T2", name: "Show Your Work" }],
   fetchPage: async (after) => ({ actions: acts.filter((a) => a.seq > after).slice(0, 5000).map(publicOf), lastSeq: acts.length, clockMs: turns.length * 200, status: "running" }),
   // ?mine=1 with a team's token: its own bee's turns and those at its flower, with its private fields.
   fetchMine: async (tok, after) => ({ actions: acts.filter((a) => a.seq > after && (a.bee === meOf(tok) || a.flower === meOf(tok))).map((a) => mineOf(a, meOf(tok))) }),
-  // The team ledger with a team's token: every finished turn, private fields only at its own flower.
+  // The team's history with its token: every finished turn, private fields only at its own flower and for its own bee.
   fetchLedger: async (tok, after) => ({ participants: IDS, team: IDS.indexOf(meOf(tok)), entries: turns.filter((t) => t.seq > after).map((t) => entryOf(t, meOf(tok))) }) }).load();
 
 const apiBase = "http://localhost:4100/api/rooms/R/games/G";
@@ -93,9 +98,10 @@ await stream.poll();
 const has = (f) => fs.existsSync(path.join(dir, f));
 check("workspace: rules, interface, config, README, notebook, status, schema", ["RULES.md", "interface.txt", "config.json", "README.md", "notebook.md", "status.txt", "stream/SCHEMA.md"].every(has));
 check("workspace: the notebook comes from the persona", fs.readFileSync(path.join(dir, "notebook.md"), "utf8") === "notes of luna");
-check("workspace: the tools", ["tools/_runner.py", "tools/submit.py", "tools/check.py", "tools/try.py", "tools/status.py", "tools/stream.py", "tools/ledger.py", "tools/garden.py", "tools/scaffold.py"].every(has));
+check("workspace: the tools", ["tools/_runner.py", "tools/submit.py", "tools/check.py", "tools/try.py", "tools/status.py", "tools/stream.py", "tools/query.py", "tools/garden.py", "tools/scaffold.py"].every(has)
+  && !has("tools/ledger.py") && (has("tools/history.py") || !HAVE_CLIENT));
 check("workspace: the program files are the versions playing now", fs.readFileSync(path.join(dir, "flower.py"), "utf8").includes("return c + 1, 50") && has("bee.py") && !has("cosmos.py") && !has("orchid.py"));
-check("workspace: interface.txt has both programs", /flower:\ndef flower\(challenge, ledger\)/.test(fs.readFileSync(path.join(dir, "interface.txt"), "utf8")) && /bee:\ndef first/.test(fs.readFileSync(path.join(dir, "interface.txt"), "utf8")));
+check("workspace: interface.txt has both programs", /flower:\ndef flower\(challenge\)/.test(fs.readFileSync(path.join(dir, "interface.txt"), "utf8")) && /bee:\ndef first/.test(fs.readFileSync(path.join(dir, "interface.txt"), "utf8")));
 check("workspace: its own version history", has("history/flower/v1.py") && has("history/flower/v2.py") && /\| 0:20 \| flower \| v2 \| 41 \| 2 \|/.test(fs.readFileSync(path.join(dir, "history/versions.md"), "utf8")));
 const cfg = JSON.parse(fs.readFileSync(path.join(dir, "config.json"), "utf8"));
 check("config.json: the settings, the teams in index order, your index, the public API", cfg.minutes === 2 && cfg.feedCost === 10 && cfg.teams.join() === "Moonpetal,Show Your Work" && cfg.your_index === 0
@@ -115,18 +121,21 @@ const lines = fs.readFileSync(path.join(dir, "stream/actions.jsonl"), "utf8").tr
 check("stream: damage through a link is repaired from the master copy", lines.length === 90 && lines.every((l) => JSON.parse(l).seq));
 // Nothing secret, nothing of other teams' code or versions.
 const devSecret = fs.existsSync(new URL("./runs/.dev-secret", import.meta.url)) ? fs.readFileSync(new URL("./runs/.dev-secret", import.meta.url), "utf8").trim() : "no-dev-secret-file";
-const grep = (d) => spawnSync("grep", ["-rIlF", "-e", devSecret, "-e", "Bearer ", "-e", "postgres://", "-e", "DEV_LOGIN_SECRET", "-e", "SECRET_CODE_OF_T2", "-e", "tok-T", d], { encoding: "utf8" }).stdout.trim();
+// (tools/history.py, the generated client, has the code that would send a token as a Bearer header: it never holds one.)
+const grep = (d) => spawnSync("grep", ["-rIlF", "--exclude=history.py", "-e", devSecret, "-e", "Bearer ", "-e", "postgres://", "-e", "DEV_LOGIN_SECRET", "-e", "SECRET_CODE_OF_T2", "-e", "tok-T", d], { encoding: "utf8" }).stdout.trim()
+  + spawnSync("grep", ["-rIlF", "-e", devSecret, "-e", "postgres://", "-e", "tok-T", path.join(d, "tools", "history.py")], { encoding: "utf8" }).stdout.trim();
 check("workspace: no credentials, tokens, database URLs or other teams' code", grep(dir) === "", grep(dir));
 check("workspace: other teams' versions aren't shown during play", !fs.readFileSync(path.join(dir, "history/versions.md"), "utf8").includes("Show Your Work"));
 
-// The team ledger and mine.jsonl: each team's own private fields, nobody else's.
+// The team's history and mine.jsonl: each team's own private fields, nobody else's.
 const rd = (d, f) => fs.readFileSync(path.join(d, "stream", f), "utf8").trim().split("\n").map((l) => JSON.parse(l));
-const led1 = rd(dir, "ledger.jsonl"), led2 = rd(dir2, "ledger.jsonl");
-check("ledger.jsonl: every finished turn, kept up to date", led1.length === 45 && led2.length === 45 && led1[led1.length - 1].seq === 90, led1.length);
-check("ledger.jsonl: compute time only at your own flower", led1.every((e) => (e.flower === 0) === (e.ms != null)) && led2.every((e) => (e.flower === 1) === (e.ms != null)));
-check("ledger.jsonl: percent and energy on every feed, and on turns without a feed only at your own flower",
+const led1 = rd(dir, "history.jsonl"), led2 = rd(dir2, "history.jsonl");
+check("history.jsonl: every finished turn, kept up to date", led1.length === 45 && led2.length === 45 && led1[led1.length - 1].seq === 90, led1.length);
+check("history.jsonl: compute time only at your own flower, decision time only for your own bee", led1.every((e) => (e.flower === 0) === (e.ms != null)) && led2.every((e) => (e.flower === 1) === (e.ms != null))
+  && led1.every((e) => (e.bee === 0) === (e.beeMs != null)));
+check("history.jsonl: percent and energy on every feed, and on turns without a feed only at your own flower",
   led1.every((e) => (e.fed || e.flower === 0) === (e.percent != null && e.energy != null)) && led2.some((e) => !e.fed && e.flower === 0 && e.percent == null));
-check("ledger.jsonl: nectar and surplus on feeds; surplus 0 otherwise", led1.every((e) => (e.fed ? e.nectar != null : e.nectar == null && e.surplus === 0)));
+check("history.jsonl: nectar and pollen on feeds; pollen 0 otherwise", led1.every((e) => (e.fed ? e.nectar != null : e.nectar == null && e.pollen === 0)));
 const mine1 = rd(dir, "mine.jsonl"), mine2 = rd(dir2, "mine.jsonl");
 check("mine.jsonl: only the team's own bee's turns and those at its flower", mine1.length && mine1.every((a) => a.bee === "T1" || a.flower === "T1") && mine2.every((a) => a.bee === "T2" || a.flower === "T2"));
 check("mine.jsonl: with its private fields (compute time, printouts), up to date with the stream", mine1.some((a) => a.beeMs === 3 && a.log) && mine1.some((a) => a.flower === "T1" && a.ms === 1.5)
@@ -134,29 +143,39 @@ check("mine.jsonl: with its private fields (compute time, printouts), up to date
 const shared = fs.readFileSync(stream.sharedFile, "utf8").trim().split("\n").map((l) => JSON.parse(l));
 check("the shared stream never carries private fields", shared.every((a) => !("ms" in a) && !("beeMs" in a) && !("log" in a) && !(a.action === "leave" && ("percent" in a || "energy" in a))));
 
-// tools/ledger.py and tools/stream.py on the workspace's files.
-const py = (tool, ...a) => spawnSync("python3", [`tools/${tool}.py`, ...a], { cwd: dir, encoding: "utf8" });
-let r = py("ledger", "summary");
-check("ledger.py summary: per flower team and per bee team, yours marked, your flower's private numbers", r.status === 0 && /^45 turns/.test(r.stdout) && /\* Moonpetal/.test(r.stdout)
-  && /your flower: \d+ visits, \d+ feeds; mean percent/.test(r.stdout) && /compute mean 1\.50 ms/.test(r.stdout), r.stdout + r.stderr);
-r = py("ledger", "summary", "--since", "0.1");
-check("ledger.py summary --since: only the recent stretch", r.status === 0 && /^16 turns from round 30/.test(r.stdout), r.stdout + r.stderr);
-r = py("ledger", "mine");
-check("ledger.py mine: your flower and your bee by flower", r.status === 0 && /your bee: +\d+ turns/.test(r.stdout) && /at Show Your Work/.test(r.stdout), r.stdout + r.stderr);
-r = py("ledger", "tail", "-n", "3");
-check("ledger.py tail: the latest entries", r.status === 0 && r.stdout.trim().split("\n").length === 3 && /#90 round 45/.test(r.stdout), r.stdout + r.stderr);
-r = py("stream", "tail", "-n", "4");
+// tools/stream.py, tools/garden.py and tools/query.py on the workspace's files.
+const pyEnv = { PATH: process.env.PATH, PYTHONPATH: path.join(dir, "tools") };
+const py = (tool, ...a) => spawnSync("python3", [`tools/${tool}.py`, ...a], { cwd: dir, encoding: "utf8", env: pyEnv });
+const pyc = (code) => spawnSync("python3", ["-c", code], { cwd: dir, encoding: "utf8", env: pyEnv });
+let r = py("stream", "tail", "-n", "4");
 check("stream.py tail: the latest public actions", r.status === 0 && r.stdout.trim().split("\n").length === 4 && /arrive|feed|leave/.test(r.stdout), r.stdout + r.stderr);
-r = py("stream", "answers", "3");
-check("stream.py answers: what each flower answered", r.status === 0 && /9  x\d+, fed \d+/.test(r.stdout), r.stdout + r.stderr);
-r = py("stream", "sql", "SELECT count(*), sum(fed) FROM turns");
-check("stream.py sql: your ledger as a local SQLite table", r.status === 0 && /45\t15/.test(r.stdout) && fs.existsSync(path.join(dir, "cache/stream.sqlite")), r.stdout + r.stderr);
-r = py("stream", "sql", "SELECT action, count(*) FROM actions GROUP BY 1 ORDER BY 1");
-check("stream.py sql: the public stream as a table", r.status === 0 && /arrive\t45/.test(r.stdout) && /feed\t15/.test(r.stdout) && /leave\t30/.test(r.stdout), r.stdout + r.stderr);
-r = spawnSync("python3", ["-c", "import sys; sys.path.insert(0,'tools'); from stream import Stream; s=Stream(); print(len(list(s.turns(since_round=40))), s.last()['seq'], s.name(1), s.my_index, s.n)"], { cwd: dir, encoding: "utf8" });
-check("stream.py as a library: turns(since_round), last(), names, your index", r.stdout.trim() === "6 90 Show Your Work 0 2", r.stdout + r.stderr);
-r = spawnSync("python3", ["-c", "import garden; print(garden.MY_INDEX, garden.N, garden.name(1), len(list(garden.turns())), garden.API)"], { cwd: dir, encoding: "utf8", env: { PATH: process.env.PATH, PYTHONPATH: path.join(dir, "tools") } });
-check("garden.py imports with tools/ on the path: your index, the teams, the ledger", r.stdout.trim() === `0 2 Show Your Work 45 ${apiBase}`, r.stdout + r.stderr);
+r = pyc("from stream import Stream; s=Stream(); t=list(s.turns(since_round=40)); print(len(t), s.last()['seq'], s.name(1), s.my_index, s.n, sorted(k for k in t[0] if '_' in k))");
+check("stream.py as a library: turns(since_round) with the Python field names, last(), names, your index", r.stdout.trim() === "6 90 Show Your Work 0 2 ['at_ms', 'bee_error', 'bee_ms', 'bee_version', 'flower_error', 'flower_version']", r.stdout + r.stderr);
+r = pyc("import garden; print(garden.MY_INDEX, garden.N, garden.name(1), garden.API)");
+check("garden.py imports with tools/ on the path: your index, the teams, the public API", r.stdout.trim() === `0 2 Show Your Work ${apiBase}`, r.stdout + r.stderr);
+if (HAVE_CLIENT) {
+  r = pyc("import garden; H = garden.HISTORY; print(H.turns.count().value(), H.turns.my_flower().count().value(), H.turns.eq('fed', True).count().value(), H.turns.my_flower().eq('fed', False).not_null('percent').count().value(), H.turns.eq('flower', 1).eq('fed', False).not_null('percent').count().value())");
+  const nMine = led1.filter((e) => e.flower === 0).length, nFed = led1.filter((e) => e.fed).length;
+  check("garden.HISTORY: your programs' HISTORY over history.jsonl, masked as theirs (unfed percent only at your own flower)",
+    r.stdout.trim() === `45 ${nMine} ${nFed} ${led1.filter((e) => e.flower === 0 && !e.fed).length} 0`, r.stdout + r.stderr);
+  r = pyc("import garden; t = garden.HISTORY.turns.order_by('round', desc=True).limit(1).rows()[0]; print(t.round, t.bee, t.flower, t.fed, type(t).__name__)");
+  check("garden.HISTORY: rows are the programs' Turn records", /^45 \d \d (True|False) \w+$/.test(r.stdout.trim()), r.stdout + r.stderr);
+  r = py("query", "--local", 'turns.my_flower().group_by("fed").count()');
+  check("query.py --local: the builder's chain on HISTORY, as a table", r.status === 0 && /fed\s+count/.test(r.stdout) && /True/.test(r.stdout) && /False/.test(r.stdout), r.stdout + r.stderr);
+  r = py("query", "--local", 'turns.eq("fed", True).sum("nectar").value()');
+  const sumN = led1.filter((e) => e.fed).reduce((a, e) => a + e.nectar, 0);
+  check("query.py --local: .value()", r.status === 0 && Math.abs(Number(r.stdout.trim()) - sumN) < 1e-6, r.stdout + r.stderr);
+  r = py("query", "--ast", 'turns.my_bee().eq("fed", True).group_by("flower").sum("nectar")');
+  const astOut = JSON.parse(r.stdout || "{}");
+  check("query.py --ast: the query as JSON (the AST the game runs)", astOut.from === "turns" && astOut.scope === "myBee" && astOut.groupBy?.[0] === "flower" && astOut.where?.[0]?.field === "fed", r.stdout + r.stderr);
+  r = py("query", "--local", 'turns.my_bee().count().__class__');
+  check("query.py: only builder methods with literal arguments", r.status !== 0 && /query error/.test(r.stderr), r.stdout + r.stderr);
+  r = py("query", "--local", 'turns.eq("fed", open("x").read())');
+  check("query.py: arguments are literals only", r.status !== 0 && /query error/.test(r.stderr), r.stdout + r.stderr);
+  r = py("query", "summary", "--local");
+  check("query.py summary --local: per species and per bee, yours marked, your flower's private numbers", r.status === 0 && /\* Moonpetal/.test(r.stdout) && /your flower: \d+ visits/.test(r.stdout)
+    && /compute mean 1\.5 ms/.test(r.stdout), r.stdout + r.stderr);
+} else console.log("SKIP history queries: vendor/query/history.py isn't there yet");
 
 // A workspace prepared in the lobby has no ledger indices yet (participants are fixed at the start): the stream adds
 // them once the game runs, and a scaffold already running (garden.MY_INDEX) sees them without restarting.
@@ -169,17 +188,18 @@ const lobbyView = { ...viewFor("T1"), participants: null, game: { ...viewFor("T1
 await prepareWorkspace({ arena, gameRow: { ...gameRow, generation: 2 }, persona: p1, view: lobbyView, stream: stream2, apiBase, tok: "tok-T1" });
 const tj = () => JSON.parse(fs.readFileSync(path.join(dir, "stream/teams.json"), "utf8"));
 check("lobby: teams.json has no indices yet; the team files exist before the first turn", tj().myIndex === null && tj().me === "T1"
-  && fs.readFileSync(path.join(dir, "stream/ledger.jsonl"), "utf8") === "" && fs.existsSync(path.join(dir, "stream/mine.jsonl")));
+  && fs.readFileSync(path.join(dir, "stream/history.jsonl"), "utf8") === "" && fs.existsSync(path.join(dir, "stream/mine.jsonl")));
 const waiter = spawn("python3", ["-c", "import time, garden\nprint('lobby', garden.MY_INDEX, garden.N, flush=True)\nt = time.time()\nwhile garden.MY_INDEX is None and time.time() - t < 10:\n    time.sleep(0.05)\nprint('started', garden.MY_INDEX, garden.N, garden.name(1), flush=True)"],
   { cwd: dir, env: { PATH: process.env.PATH, PYTHONPATH: path.join(dir, "tools") } });
 let wout = "";
 waiter.stdout.on("data", (d) => (wout += d));
 waiter.stderr.on("data", (d) => (wout += d));
+const waiterDone = new Promise((r) => waiter.on("close", r));
 await stream2.poll();
 await new Promise((r) => setTimeout(r, 400));
 lobbyStarted = true;
 await stream2.poll();
-await new Promise((r) => waiter.on("close", r));
+await waiterDone;
 check("game start: the stream writes the indices into teams.json", tj().myIndex === 0 && tj().participants.join() === "T1,T2" && tj().names[1] === "Show Your Work", JSON.stringify(tj()));
 check("game start: a scaffold started in the lobby learns its index without restarting", /lobby None 0/.test(wout) && /started 0 2 Show Your Work/.test(wout), wout);
 
@@ -199,6 +219,12 @@ check("audit: the game's WebSocket on localhost:4100 is fine, another port's isn
   && sev(writePy(`URL = "ws://localhost:5432/"\n`)) === "violation");
 check("audit: logging in is a violation", sev(bash(`python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:4100/api/auth/dev/login')"`)) === "violation");
 check("audit: a POST to the API is a violation", sev(writePy(`import urllib.request\nurllib.request.urlopen(urllib.request.Request("${apiBase}/programs", data=b"{}", method="POST"))\n`)) === "violation");
+check("audit: a history query POSTed to the game's query endpoint (this game or the room's) is fine", sev(writePy(`import json, urllib.request\nq = json.dumps({"from": "turns", "limit": 5}).encode()\nreq = urllib.request.Request("${apiBase}/query", data=q, method="POST", headers={"content-type": "application/json"})\nprint(urllib.request.urlopen(req).read())\n`)) === "ok"
+  && sev(bash(`curl -s -X POST -H 'content-type: application/json' -d '{"from":"scores"}' http://localhost:4100/api/rooms/R/query`)) === "ok" && sev(bash("curl -s http://localhost:4100/api/query/schema")) === "ok");
+check("audit: a POST elsewhere next to a query, or a query with credentials or on another port, is a violation",
+  sev(writePy(`import urllib.request\nurllib.request.urlopen(urllib.request.Request("${apiBase}/query", data=b"{}"))\nurllib.request.urlopen(urllib.request.Request("${apiBase}/programs", data=b"{}"))\n`)) === "violation"
+  && sev(bash(`curl -s -X POST -H 'Authorization: Bearer x' -d '{}' ${apiBase}/query`)) === "violation" && sev(bash(`curl -s -X POST -d '{}' http://localhost:4000/api/rooms/R/games/G/query`)) === "violation"
+  && sev(writePy(`import urllib.request\nurllib.request.urlopen(urllib.request.Request(API + "/query", data=b"{}"))\n`)) === "violation");
 check("audit: credentials in a request are a violation", sev(writePy(`import urllib.request\nreq = urllib.request.Request("${apiBase}", headers={"Authorization": "Bearer x"})\n`)) === "violation");
 check("audit: another port (the database, another server) is a violation", sev(bash(`python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:3401/api/rooms/X')"`)) === "violation"
   && sev(bash(`python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:4000/api/rooms/X')"`)) === "violation");
@@ -207,7 +233,7 @@ check("audit: raw sockets are a violation", sev(writePy(`import socket\ns = sock
 check("audit: curl is a violation unless it reads the public API", sev(bash(`curl -s ${apiBase}/actions?after=0`)) === "ok" && sev(bash(`curl -s -X POST ${apiBase}/programs -d '{}'`)) === "violation");
 check("audit: writing to stream/ is a violation", sev(["Write", { file_path: path.join(dir, "stream/actions.jsonl"), content: "" }]) === "violation"
   && sev(bash("echo x >> stream/actions.jsonl")) === "violation" && sev(writePy(`open("stream/actions.jsonl", "w").write("")\n`)) === "violation"
-  && sev(writePy(`open("stream/ledger.jsonl", "a").write("")\n`)) === "violation" && sev(bash("truncate -s 0 stream/ledger.jsonl")) === "violation");
+  && sev(writePy(`open("stream/history.jsonl", "a").write("")\n`)) === "violation" && sev(bash("truncate -s 0 stream/history.jsonl")) === "violation");
 check("audit: reading stream/ is fine", sev(bash("tail -n 5 stream/actions.jsonl")) === "ok" && sev(writePy(`for l in open("stream/actions.jsonl"):\n    pass\n`)) === "ok" && sev(bash("cp stream/actions.jsonl copy.jsonl")) === "ok");
 check("audit: paths outside the workspace are violations", sev(bash("cat /etc/hostname")) === "violation" && sev(["Read", { file_path: "/etc/hostname" }]) === "violation" && sev(bash("ls ../")) === "violation");
 check("audit: another team's workspace is a violation", sev(bash(`cat ${root}/${AID}/tess/flower.py`.replace(root, "/home/user/arena-ws"))) === "violation");

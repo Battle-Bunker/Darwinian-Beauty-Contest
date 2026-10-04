@@ -3,7 +3,7 @@
 // calls, no game server (the arena schema in dbc_one for throwaway rows):
 //   node arena/test-scaffold.mjs
 // A stub scaffold: it starts from a session with tools/ on its import path (and a module of its own there, audited
-// too), survives the session's end, submits a change by itself when its team ledger shows a rival flower's answer,
+// too), survives the session's end, submits a change by itself when its history shows a rival species' answer,
 // is refused (with a wait time) when a change is over budget, is restarted after it crashes, a forbidden scaffold
 // fails the audit, a greedy one is throttled to its CPU share, and everything stops at game end.
 import { spawn } from "node:child_process";
@@ -27,7 +27,7 @@ const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { retu
 
 // ---------------------------------------------------------------- a fake game: clock, budgets, submissions
 const config = { language: "python", minutes: 2, feedCost: 10, challengeType: "int", responseType: "int", maxLen: 64, maxNodes: 512,
-  budgets: { flower: { size: 1100, perMinute: 600, cap: 600, ms: 150 }, bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 50 } } };
+  budgets: { flower: { size: 1100, perMinute: 600, cap: 600, ms: 150 }, bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 50, memory: 1024 } } };
 const t0 = Date.now();
 const clock = () => Date.now() - t0;
 const bank = { flower: { bank: 80, atMs: 0 } };
@@ -36,12 +36,11 @@ const avail = (k) => Math.min(config.budgets[k].cap, (bank[k]?.bank ?? 0) + conf
 const fakeApi = {
   view: async () => ({ game: { status: "running", clockMs: clock(), endMs: 120000, round: Math.floor(clock() / 200), config },
     teams: [{ id: "T1", name: "Moonpetal", banks: { flower: bank.flower, bee: { bank: 0, atMs: 0 } },
-      programs: { flower: [{ version: submits.length + 1, size: 10, atMs: 0, code: "def flower(c, ledger):\n    return c, 50\n" }], bee: [] } },
+      programs: { flower: [{ version: submits.length + 1, size: 10, atMs: 0, code: "def flower(c):\n    return c, 50\n" }], bee: [] }, memory: { value: {}, bytes: 2, cap: 1024, version: 1 } },
       { id: "T2", name: "Rival", programs: null, banks: null }], scores: [{ teamId: "T1", fitness: 1 }, { teamId: "T2", fitness: 1 }] }),
   check: async (tok, g, kind, code) => ({ ok: true, size: code.length, budget: config.budgets[kind], cost: code.length, available: Math.floor(avail(kind)), errors: [] }),
   tryFlower: async (tok, g, code, ch) => ({ results: (ch || [1]).map((c) => ({ c, r: 0, percent: 50, energy: 1000, ms: 1 })) }),
-  tryBee: async () => ({ rounds: 60, feeds: 0, nectar: 0, surplus: 0, problems: [], actions: [] }),
-  ledger: async () => ({ entries: [], lastSeq: 0 }),
+  tryBee: async () => ({ rounds: 60, feeds: 0, nectar: 0, pollen: 0, memory: {}, problems: [], actions: [] }),
   submit: async (tok, g, kind, code) => {
     const cost = code.length, a = avail(kind);
     if (cost > a) return { ok: false, errors: [`Not enough change budget: this change costs ${cost} nodes and your ${kind} has ${Math.floor(a)} (it earns ${config.budgets[kind].perMinute} a minute, banking up to ${config.budgets[kind].cap}). ` +
@@ -57,12 +56,12 @@ const AID = `test-scaffold-${process.pid}`;
 const dir = path.join(process.env.ARENA_WS_ROOT, AID, "luna");
 fs.mkdirSync(path.join(dir, "stream"), { recursive: true });
 installTools(dir);
-for (const f of ["actions.jsonl", "ledger.jsonl", "mine.jsonl"]) fs.writeFileSync(path.join(dir, "stream", f), "");
+for (const f of ["actions.jsonl", "history.jsonl", "mine.jsonl"]) fs.writeFileSync(path.join(dir, "stream", f), "");
 fs.writeFileSync(path.join(dir, "stream", "teams.json"), JSON.stringify({ teams: { T1: "Moonpetal", T2: "Rival" }, me: "T1", participants: ["T1", "T2"], names: ["Moonpetal", "Rival"], myIndex: 0 }));
 fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({ ...config, your_index: 0, public_api: "http://localhost:4100/api/rooms/R/games/G" }));
-/** A ledger entry: the rival's flower (index 1) answered c with r to our bee (index 0). */
-const append = (seq, c, r) => fs.appendFileSync(path.join(dir, "stream", "ledger.jsonl"), JSON.stringify({ seq, round: seq, bee: 0, flower: 1, challenge: c, response: r, fed: false,
-  nectar: null, surplus: 0, percent: null, energy: null, ms: null }) + "\n");
+/** A turn record: a flower of the rival's species (index 1) answered c with r to our bee (index 0). */
+const append = (seq, c, r) => fs.appendFileSync(path.join(dir, "stream", "history.jsonl"), JSON.stringify({ seq, game: "G", round: seq, atMs: (seq - 1) * 200, turn: seq, bee: 0, flower: 1,
+  challenge: c, response: r, fed: false, percent: null, energy: null, nectar: null, pollen: 0, ms: null, flowerVersion: null, flowerError: null, beeMs: 1, beeVersion: 1, beeError: null }) + "\n");
 const logs = [];
 const desk = await new TeamDesk({ arena: { id: AID, settings: { scaffold: { cpuShare: 0.2 } } }, gameRow: { id: -424242, generation: 1 }, persona: { id: `${AID}/luna`, slug: "luna", name: "Luna" },
   entry: { team_id: "T1", login_name: "x" }, gPath: "/rooms/R/games/G", dir, stream: { get clockMs() { return clock(); }, status: "running" }, log: (m) => logs.push(m),
@@ -81,24 +80,26 @@ fs.writeFileSync(path.join(dir, "scaffold.py"), `import os
 import garden
 import helper
 
-print("scaffold up; me =", garden.ME, garden.MY_INDEX, "; flower budget", round(garden.status()["budgets"]["flower"]["exact"], 1), flush=True)
+print("scaffold up; me =", garden.ME, garden.MY_INDEX, "; flower budget", round(garden.status()["budgets"]["flower"]["exact"], 1),
+      "; memory", garden.memory()["bytes"], flush=True)
 seen = 0
-for e in garden.follow(after=0):
-    if e["flower"] == garden.MY_INDEX or e["response"] is None:
+for t in garden.follow(from_start=True):
+    if t.flower == garden.MY_INDEX or t.response is None:
         continue
     seen += 1
     if seen == 1:
-        r = garden.submit("flower", helper.table_flower({e["challenge"]: e["response"]}))
-        print("copied", e["challenge"], "->", e["response"], "ok", r["ok"], "cost", r.get("cost"), flush=True)
+        n = garden.HISTORY.turns.eq("flower", 1).count().value()
+        r = garden.submit("flower", helper.table_flower({t.challenge: t.response}))
+        print("copied", t.challenge, "->", t.response, "ok", r["ok"], "cost", r.get("cost"), "seen", n, flush=True)
     elif seen == 2:
-        r = garden.submit("flower", "def flower(c, ledger):\\n    return 0, 50\\n" + "#" * 400)
+        r = garden.submit("flower", "def flower(c):\\n    return 0, 50\\n" + "#" * 400)
         print("big change ok", r["ok"], "wait_s", r.get("wait_s"), flush=True)
     elif seen == 3 and not os.path.exists("crashed.flag"):
         open("crashed.flag", "w").write("once")
         print("crashing on purpose", flush=True)
         raise RuntimeError("boom")
 `);
-fs.writeFileSync(path.join(dir, "tools", "helper.py"), `def table_flower(t):\n    return "T = %r\\ndef flower(c, ledger):\\n    return T.get(c, 0), 50\\n" % t\n`);
+fs.writeFileSync(path.join(dir, "tools", "helper.py"), `def table_flower(t):\n    return "T = %r\\ndef flower(c):\\n    return T.get(c, 0), 50\\n" % t\n`);
 
 // 1. Started by a session; the session ends; the scaffold keeps running.
 desk.session = { id: null, no: 1, gate: () => null, requests: 0, submitted: [] };
@@ -111,10 +112,10 @@ check("start: recorded with its audited source (the entry file and its own modul
 desk.session = null;
 const killed = await killLeftovers("no-such-tag", dir, () => desk.scaffold.pids());
 check("the end of the session doesn't stop the scaffold", pid1 && alive(pid1) && !killed.includes(pid1));
-const ready = await until("scaffold up", () => /scaffold up; me = T1 0 ; flower budget/.test(desk.scaffold.logTail()));
+const ready = await until("scaffold up", () => /scaffold up; me = T1 0 ; flower budget [\d.]+ ; memory 2/.test(desk.scaffold.logTail()));
 check("import garden works with tools/ on the path; it talks to the runner between sessions", !!ready, desk.scaffold.logTail());
 
-// 2. The ledger shows a rival flower's answer: the scaffold copies it into its flower and submits it by itself.
+// 2. Its history shows a rival species' answer: the scaffold copies it into its flower and submits it by itself.
 append(2, 42, 127);
 const sub = await until("an automatic submission", () => submits.length >= 1 && submits[0]);
 check("an automatic submission, with the team's token held by the runner", sub && sub.kind === "flower" && sub.code.includes("T = {42: 127}") && sub.tok === "SECRET-TOKEN", JSON.stringify(sub));
@@ -153,7 +154,8 @@ const bad = {
   "bad_login.py": `import urllib.request\nurllib.request.urlopen("http://localhost:4100/api/auth/dev/login")\n`,
   "bad_port.py": `import urllib.request\nurllib.request.urlopen("http://localhost:4000/api/rooms/X")\n`,
   "bad_stream.py": `open("stream/actions.jsonl", "a").write("x")\n`,
-  "bad_ledger.py": `open("stream/ledger.jsonl", "w").write("")\n`,
+  "bad_history.py": `open("stream/history.jsonl", "w").write("")\n`,
+  "bad_query.py": `import urllib.request\nurllib.request.urlopen(urllib.request.Request("http://localhost:4100/api/rooms/R/games/G/programs", data=b"{}"))\n`,
   "bad_socket.py": `import socket\ns = socket.create_connection(("localhost", 4100))\n`,
   "bad_module.py": `import sneaky\nsneaky.go()\n`,
   "bad_env.py": `import os\nprint(os.environ)\n`,
@@ -164,7 +166,7 @@ for (const [f, code] of Object.entries(bad)) fs.writeFileSync(path.join(dir, f),
 fs.writeFileSync(path.join(dir, "tools", "sneaky.py"), `import subprocess\ndef go():\n    subprocess.Popen(["sleep", "100"])\n`); // its own module in tools/
 const results = {};
 for (const f of Object.keys(bad)) results[f] = auditScaffold(dir, f, { arenaId: AID, slug: "luna", port: "4100" }).found.some((x) => x.severity === "violation");
-check("the audit refuses: paths outside, subprocesses, other ports, logins, stream and ledger writes, raw sockets, a module in tools/ that spawns, the environment, eval, '..'", Object.values(results).every(Boolean), JSON.stringify(results));
+check("the audit refuses: paths outside, subprocesses, other ports, logins, stream and history writes, POSTs other than queries, raw sockets, a module in tools/ that spawns, the environment, eval, '..'", Object.values(results).every(Boolean), JSON.stringify(results));
 const okCode = auditScaffold(dir, "scaffold.py", { arenaId: AID, slug: "luna", port: "4100" }).found.filter((x) => x.severity === "violation");
 check("the audit passes the stub scaffold (the runner's garden.py, its own module in tools/)", okCode.length === 0, JSON.stringify(okCode));
 fs.writeFileSync(path.join(dir, "ok_api.py"), `import sys, json, urllib.request\nsys.path.insert(0, "tools")\nimport garden\nURL = garden.API + "/events?after=0"\nprint(json.loads(urllib.request.urlopen("http://localhost:4100/api/rooms/R/games/G/scores").read()))\n`);

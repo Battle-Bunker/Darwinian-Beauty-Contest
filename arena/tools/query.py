@@ -71,17 +71,19 @@ def build(root, expr):
 
 
 def as_dict(r):
-    if dataclasses.is_dataclass(r):
-        return dataclasses.asdict(r)
+    if hasattr(r, "to_dict"):
+        return r.to_dict()
     if hasattr(r, "_asdict"):
         return r._asdict()
+    if dataclasses.is_dataclass(r):
+        return dataclasses.asdict(r)
     if isinstance(r, dict):
         return r
     return dict(vars(r)) if hasattr(r, "__dict__") else {"value": r}
 
 
 def short(v, n=24):
-    s = v if isinstance(v, str) else json.dumps(v, separators=(",", ":"))
+    s = v if isinstance(v, str) else repr(v) if v is None or isinstance(v, bool) else json.dumps(v, separators=(",", ":"))
     if isinstance(v, float):
         s = "%.6g" % v
     return s if len(s) <= n else s[: n - 3] + "..."
@@ -148,14 +150,11 @@ def summary(root, as_json):
 
 def schema():
     h = garden._client()
-    s = getattr(h, "SCHEMA", None)
-    if s is None:
-        print("see README.md, \"Querying history\"")
-        return
-    for name, ent in (s.get("entities") or {}).items():
-        print("%s: %s" % (name, ent.get("doc", "")))
-        for f in ent.get("fields", []):
-            print("    %-18s %-6s %s" % (f.get("python") or f.get("name"), f.get("type"), f.get("doc", "")))
+    for name, cls in h.RECORDS.items():
+        doc = (cls.__doc__ or "").strip().split("\n")[0]
+        print("%s (%s): %s" % (name, cls.__name__, doc))
+        for f, t in cls.__annotations__.items():
+            print("    %-18s %s" % (f, getattr(t, "__name__", None) or str(t).replace("typing.", "")))
 
 
 if __name__ == "__main__":
@@ -185,7 +184,11 @@ if __name__ == "__main__":
                     print(json.dumps([as_dict(r) for r in rows], indent=1, default=str))
                 else:
                     table(rows)
-    except (ValueError, SyntaxError) as e:
+    except (ValueError, SyntaxError, TypeError) as e:
         sys.exit("query error: %s" % e)
     except RuntimeError as e:
         sys.exit("the game refused the query: %s" % e)
+    except Exception as e:  # the client's QueryError: a query the schema doesn't allow
+        if type(e).__name__ != "QueryError":
+            raise
+        sys.exit("query error: %s" % e)

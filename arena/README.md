@@ -3,13 +3,16 @@
 The arena runs populations of LLM-driven teams against each other through the game's HTTP API, to study the ecosystem
 the game creates. Every team is run by tool-using Claude Code sessions (`claude -p`, models opus, sonnet and haiku;
 never a Fable model) in the team's private workspace. The game is the **one-flower** variant (RULES.md): each team
-writes a flower and a bee; every 200 ms round each bee asks one randomly drawn flower one challenge, the flower answers
-`[response, percent]`, and the bee feeds or leaves. A feed pays the bee percent × the flower's excess energy
-E = (1100 − flower size) × max(0, 150 − CPU ms) as nectar and the rest to the flower's team as surplus; an unfed turn's
-energy is lost. Fitness = N³ × allure share × forage share × surplus share. A game is a lobby where programs are written
-for free, then one stretch of play where teams change their programs whenever they like, paying from change budgets that
-refill with game time. After each game come metrics, interviews, the teen judges and (unless membership is fixed)
-selection and breeding.
+writes a flower species and a bee; every 200 ms round each bee asks one flower of a randomly drawn species one challenge,
+the flower answers `[response, percent]`, and the bee feeds or leaves. A feed gives the bee percent × the flower's excess
+energy E = (1100 − flower size) × max(0, 150 − CPU ms) as nectar and the rest as pollen, for it to carry; an unfed
+turn's energy is lost. Fitness = N² × pollination share × forage share (pollination: Σ over bee teams of √pollen the
+species gave them; forage: Σ over species of √nectar the bee got). Programs run fresh for every call
+(`flower(challenge)`, `first()`, `decide(challenge, response)`) and read `GAME` and `HISTORY` (the team's history, a
+typed query builder: docs/QUERY.md); a bee also has `MEMORY`, about a kilobyte of JSON that only it writes and that a new
+bee version starts empty. A game is a lobby where programs are written for free, then one stretch of play where teams
+change their programs whenever they like, paying from change budgets that refill with game time. After each game come
+metrics, interviews, the teen judges and (unless membership is fixed) selection and breeding.
 
 [REPORT.md](REPORT.md) is the research report of the earlier arenas (round-based in `dbc`, the cosmos/orchid garden in
 `dbc_live`; both are never modified). That variant's code, priming documents and examples live on the
@@ -20,17 +23,17 @@ selection and breeding.
 | Path | What |
 |---|---|
 | `run.js` | the runner: creates rooms and games, runs the lobby sessions, starts the game, runs every team's sessions while it plays, stops them when it ends; then metrics, interviews, judges, retirements and breeding |
-| `analyze.js` | a Markdown report of the arena schema: spend, each game (energy, percent, nectar and surplus over time and their distributions, the scores and their three shares, every flower and bee, self-feeding and handshakes, discrimination, flower size and compute against energy, copies, the change timeline, scaffolds, sessions, storage), the panel, games side by side, ideas, breeders, the fair-play audit |
+| `analyze.js` | a Markdown report of the arena schema: spend, each game (energy, percent, nectar and pollen over time and their distributions, the scores and their two shares, every species and bee, each bee's MEMORY and how often teams changed their bee, self-feeding and handshakes, discrimination, flower size and compute against energy, copies, the change timeline, scaffolds, sessions, storage), the panel, games side by side, ideas, breeders, the fair-play audit |
 | `cohorts.js` | the cohort analysis of an experiment (or any arenas): per cohort and game, what the flowers and bees do (keyword evidence or the haiku classifier of `lib/mechanisms.js`), percent policies, energy, discrimination, handshakes, copies, and the cohorts side by side |
 | `server.sh` | (re)starts the arena's own game server on port 4100 (dbc_one, the dev-login secret, `CPU_SLOTS=3`); refuses `dbc` and `dbc_live` |
 | `schema.sql` | the `arena` Postgres schema in dbc_one, applied on every run |
-| `tools/` | the workspace tools copied into every workspace (Python, stdlib only): `submit.py`, `check.py`, `try.py`, `status.py`, `ledger.py`, `stream.py`, `scaffold.py`, `garden.py` (the scaffold API), and `_runner.py`, their link to the runner |
+| `tools/` | the workspace tools copied into every workspace (Python, stdlib only): `submit.py`, `check.py`, `try.py`, `status.py`, `query.py`, `stream.py`, `scaffold.py`, `garden.py` (the scaffold API), and `_runner.py`, their link to the runner; every workspace also gets `vendor/query/history.py`, the generated query client, as `tools/history.py` |
 | `lib/llm.js` | `claude -p` wrapper: concurrency limiter, retries, usage-limit pause, spend guard, cost ledger (`arena.llm_calls`); sessions with live transcripts, a stop control, and estimated costs for sessions stopped mid-way |
 | `lib/api.js` | HTTP client for the game API (dev login with the dev secret, Bearer tokens) |
 | `lib/team.js` | each team's desk for a game (its broker, which session is running, its scaffold), one session (workspace, live fair-play gate, audit, notebook, cleanup), the lobby with fix sessions, the interview |
 | `lib/broker.js` | the runner's end of the tools: request files in `<workspace>/.runner/req/`, answers in `.runner/res/` |
 | `lib/scaffold.js`, `lib/scaffold_launch.py` | scaffolds: static audit, launch under limits, CPU share, restarts, logs |
-| `lib/stream.js` | the streams: the shared public JSONL, the runner's master copy, each team's ledger and own actions (fetched with its token), headline numbers for briefs |
+| `lib/stream.js` | the streams: the shared public JSONL, the runner's master copy, each team's history and own actions (fetched with its token), samples of each bee's MEMORY size, headline numbers for briefs |
 | `lib/workspace.js` | builds workspaces, archives finished games, the fair-play audit, finds and stops what a session left running |
 | `lib/prompts.js` | system prompt, lobby and in-game briefs, interview, judge and breeder prompts |
 | `lib/metrics.js` | metrics of a finished game, from its API once everything is revealed |
@@ -121,7 +124,7 @@ the session's `ARENA_SESSION` tag or running inside the workspace), except the t
 ## Scaffolds
 
 A scaffold is the team's own Python program running outside the engine for the rest of the game, with no LLM in the
-loop: it follows its team ledger and submits changes by itself, within the team's change budget (the server enforces it).
+loop: it follows its team's history and submits changes by itself, within the team's change budget (the server enforces it).
 A session starts it, in the lobby or during the game: `python3 tools/scaffold.py start scaffold.py` (also `restart`,
 `stop`, `status`, `logs`). `lib/scaffold.js` supervises it:
 
@@ -145,11 +148,14 @@ A session starts it, in the lobby or during the game: `python3 tools/scaffold.py
   neither a running session nor the token are refused.
 
 It runs with `tools/` on its `PYTHONPATH`, so `import garden` works. `tools/garden.py` is its API: `MY_INDEX`, `N`,
-`name(i)`; `turns()` / `follow()` (the team ledger file), `ledger(after)` (fresh from the game through the runner),
-`actions()`, `mine()`, `follow_live()` (the public SSE), `status()` (clock, round, live scores, the team's budgets with
-exact `available`, `perMinute` and `cap`, its versions), `live(kind)` (the code playing now), `measure(kind, code)` (size
-and cost, free), `check`, `try_flower(code, challenges, ledger)`, `try_bee(code, rounds, flower)`, `submit` (a refusal for
-budget carries `wait_s`), `wait_for_budget(kind, cost)`, `scores()` and `game_over()` (public API).
+`name(i)`; `HISTORY` (the programs' HISTORY, in memory over the team's history file, kept up to date), `game` and `room`
+(the same builder run by the game server through the runner: this game as the team may see it, every entity; the room's
+finished games, fully revealed); `follow()` (each new turn, a `Turn` record), `turns()`, `actions()`, `mine()`,
+`follow_live()` (the public SSE); `status()` (clock, round, live scores, the team's budgets with exact `available`,
+`perMinute` and `cap`, its versions), `memory()` (the bee's MEMORY, read only), `live(kind)` (the code playing now),
+`measure(kind, code)` (size and cost, free), `check`, `try_flower(code, challenges, history)`, `try_bee(code, rounds,
+flower, memory)` (a test bee; a game bee's MEMORY is never touched), `submit` (a refusal for budget carries `wait_s`),
+`wait_for_budget(kind, cost)`, `scores()` and `game_over()` (public API).
 
 ## A team's workspace
 
@@ -162,41 +168,44 @@ budget carries `wait_s`), `wait_for_budget(kind, cost)`, `scores()` and `game_ov
 | `history/` | the team's own versions in this game (code and timeline). Other teams' changes are secret until the game ends |
 | `status.txt` | what `tools/status.py` said at the start of the session |
 | `notebook.md` | the persona's notes, kept across sessions and games |
-| `stream/ledger.jsonl` | the **team ledger** (`GET …/ledger` with the team's token): one entry per finished turn, exactly what its programs get, appended about once a second |
+| `stream/history.jsonl` | the team's **history** (`GET …/ledger` with the team's token): one turn record per finished turn, exactly what its programs get as `HISTORY.turns`, appended about once a second |
 | `stream/actions.jsonl` | the live public stream: a hard link to the runner's shared copy, appended about once a second |
 | `stream/mine.jsonl` | its own bee's turns and those at its flower as the team sees them (`GET …/actions?mine=1`): with unfed turns' percent and energy at its flower, compute times, versions and printouts, private during play |
 | `scaffold/scaffold.log` | its scaffold's output |
-| `stream/teams.json`, `stream/SCHEMA.md` | ids, names and ledger indices; the line formats and how to read them |
+| `stream/teams.json`, `stream/SCHEMA.md` | ids, names and team indices (completed by the runner when the game starts); the file formats |
 | `common/` | only in a cohort given common knowledge (restored at every game) |
 | `tools/` | the tools (below) |
 | `previous-games/game-N/` | finished games of the arena, revealed: every team's final code, standings, everyone's change timeline, the panel's feedback, the team's own history |
 | `examples/` | only in arenas whose preset sets `examples` |
 
-**Tools.** `<kind>` is `flower` or `bee`. `python3 tools/status.py [--afford N]` (clock, time left, change budgets now
-with rate and cap and when N nodes are affordable, the live scoreboard with the three shares, versions playing and the
-flower's maximum energy), `tools/check.py <kind> [file]` (size, cost now, the flower's energy at that size, a quick
-runtime test), `tools/try.py flower [file] [challenges…] [--ledger FILE]` (response, percent, energy and CPU time per
-challenge on the game's real runner), `tools/try.py bee [file] [--flower FILE] [--rounds N]` (the bee in a garden of
-just the team's own flower), and `tools/submit.py <kind> [file] [--force]` (live at once; a quick runtime test first: a
-flower on a few challenges, a bee in a short garden of the team's own flower, or its flower file when none is submitted
-yet). They write a request file into `.runner/req/`; the runner's broker does the call with the team's token and writes
-the answer back. No credential ever enters the workspace or a prompt. Scripts use the same channel:
-`from _runner import call; call("submit", kind=…, code=…)`. `tools/ledger.py` summarises the team ledger (`summary`,
-`tail`, `mine`, and `live`, a fresh page through the runner); `tools/stream.py` reads the public stream (`tail`,
-`answers`, `sql` over a local SQLite copy in `cache/` with tables `turns` and `actions`; as a library,
-`Stream().turns(since_round=…)`, `.follow()`, `.actions()`, `.mine()`).
+**Tools.** `<kind>` is `flower` or `bee`. `python3 tools/status.py [--afford N] [--memory]` (clock, time left, change
+budgets now with rate and cap and when N nodes are affordable, the live scoreboard with the two shares, versions playing
+and the flower's maximum energy, the bee's MEMORY size, and its value with `--memory`), `tools/check.py <kind> [file]`
+(size, cost now, the flower's energy at that size, a quick runtime test), `tools/try.py flower [file] [challenges…]
+[--history FILE]` (response, percent, energy and CPU time per challenge on the game's real runner, with those turn
+records as its HISTORY), `tools/try.py bee [file] [--flower FILE] [--rounds N] [--memory JSON]` (a test bee in a garden
+of just the team's own flower, starting with that MEMORY; it never touches the game bee's), and
+`tools/submit.py <kind> [file] [--force]` (live at once; a quick runtime test first). They write a request file into
+`.runner/req/`; the runner's broker does the call with the team's token and writes the answer back. No credential ever
+enters the workspace or a prompt, and no request can set a bee's MEMORY (only the deployed bee writes it).
+`tools/query.py '<query>' [--local|--room] [--ast] [--json]` asks the history with the typed builder the programs use:
+on this game through the runner (the team's view), on the history file in memory (`--local`: exactly the programs'
+HISTORY), or across the room's finished games (`--room`); `summary` and `schema` are built in. The expression is parsed,
+not evaluated: only builder methods with literal arguments. `tools/stream.py tail` shows the latest public actions; as a
+library, `Stream().turns()`, `.follow()`, `.actions()`, `.mine()`.
 
 **The streams.** One shared public copy per game (`<WS_ROOT>/<arena>/.shared/g<N>/actions.jsonl`, exactly what the
 public `GET …/actions` returns without a login) is hard-linked into every workspace, so it costs one file however many
 teams play. It holds public fields only: arrivals, challenges, responses, and on a feed its percent, energy, nectar and
-surplus. The runner also keeps a private master copy (`.runner/g<N>/`); if a team damages the shared file through its
+pollen. The runner also keeps a private master copy (`.runner/g<N>/`); if a team damages the shared file through its
 link, it is rewritten in place from the master (and writing to `stream/` is a fair-play violation). Each team's
-`ledger.jsonl` and `mine.jsonl` are fetched separately with that team's token, so the server decides what each holds:
+`history.jsonl` and `mine.jsonl` are fetched separately with that team's token, so the server decides what each holds:
 the percent and energy of unfed turns only at the team's own flower, compute times only for its own flower, printouts,
 decision times and versions only for its own programs. Agents may also read the game's public API directly (no login):
 `GET <api>/rooms/<room>/games/<game>/events?after=<seq>` (SSE), `…/actions?after=<seq>&limit=…`, `…/scores` (the live
-scoreboard and the nectar and surplus ledgers; cheap to poll). Briefs carry only headline numbers (time, fitness and
-rank, the three shares, a few counts, budgets), never actions.
+scoreboard and the nectar and pollen ledgers; cheap to poll), and `POST …/query` (history queries, public fields).
+Briefs carry only headline numbers (time, fitness and rank, the two shares, a few counts, budgets, the bee's MEMORY
+size), never actions.
 
 ## Sessions
 
@@ -210,7 +219,7 @@ claude -p --model <m> --tools Bash,Read,Write,Edit,Glob,Grep --permission-mode a
   scripts matter in short games, the fair-play rules, RULES.md in full, and this game's settings (budgets per minute and
   caps).
 - **Briefs** (concise; no starter strategies): the lobby brief (write or rework, free, submit both; the game won't
-  wait), the in-game brief (time, fitness and rank with the three shares, a few counts, budgets now, drafts, scripts it
+  wait), the in-game brief (time, fitness and rank with the two shares, a few counts, budgets now, the bee's MEMORY size, drafts, scripts it
   might start), the lobby fix brief.
 - **Environment**: `{HOME, PATH, LANG, ARENA_SESSION}` only: no database URL, no secret, no token.
 - **Limits**: per model (opus 30 turns / $2.50, sonnet 30 / $1.00, haiku 25 / $0.60; presets override), a wall-clock
@@ -229,8 +238,10 @@ variables. The audit (`audit()` in `lib/workspace.js`) reads the session's strea
   the team its sessions in that game; during play it costs the team its next session.
 
 It checks Bash commands (paths outside the workspace, `..` escapes, other workspaces, database and environment access,
-auth endpoints, network use: URLs other than the public API on localhost, write methods, credentials, raw sockets
-(agents use the Server-Sent Events from Python); writes into `stream/`), Read/Glob/Grep paths, and written code. The session's own tool-output spill directory and its
+auth endpoints, network use: URLs other than the public API on localhost, write methods other than history queries
+POSTed to the query endpoints, credentials, raw sockets (agents use the Server-Sent Events from Python); writes into
+`stream/`), Read/Glob/Grep paths, and written code. No endpoint writes a bee's MEMORY, and the only POSTs the audit allows
+are queries, so a team has no way to set it. The session's own tool-output spill directory and its
 background-task output directory are allowed; `/tmp` is a warning. Every submission is also recorded in
 `arena.requests` (the code, the result, the version, the cost, the game time).
 
@@ -253,31 +264,36 @@ disk) pauses the same way.
 
 ## Metrics (`lib/metrics.js`, `analyze.js`, `cohorts.js`)
 
-From the game's API once it is over (every percent, energy, timing and version is revealed then), in windows of game
-time (about eight per game, at least 10 s):
+From the game's history once it is over, with history queries (the `turns`, `versions`, `teams` and `scores`
+entities; every percent, energy, timing, version and MEMORY is revealed then), in windows of game time (about eight per
+game, at least 10 s):
 
 - per window: turns, feeds and the feed rate, excess energy produced, **energy lost** to unfed turns (and its share),
-  nectar, surplus, the mean percent offered, flower failures, self-feeds
+  nectar, pollen, the mean percent offered, flower failures, self-feeds
 - **distributions** (min, p10, p50, p90, max, mean) of the percent (answered turns), the energy (every turn), and the
-  nectar and surplus (feeds)
-- per team, its **flower** (visits, feeds, pollinators, percent, energy, energy lost, nectar paid, surplus, compute
-  against the 150 ms window, failures) and its **bee** (turns, feeds, nectar, nectar per feed, flowers fed at, decision
+  nectar and pollen (feeds)
+- per team, its **species** (visits, feeds, pollinators, percent, energy, energy lost, nectar and pollen given, compute
+  against the 150 ms window, failures) and its **bee** (turns, feeds, nectar, nectar per feed, species fed at, decision
   times, too-slow decisions, errors)
+- each bee's **MEMORY**: its size at the end against the cap (and its value), saves refused for the cap, its size during
+  play (the runner samples each team's own view every 5 s), and **how often the team changed its bee** (each change
+  empties MEMORY): versions, in-game changes, changes per minute, mean time between them
 - **flower versions**: size and compute against the energy they made (max energy = (cap − size) × 150), the percent they
-  offered, their feed rate and surplus
-- **self-feeding** (a bee at its own flower) and **handshakes**: a flower whose own bee feeds there 30 points more often
-  than other bees, or is offered 15 points more; per (bee team, flower team) pair the same test, and **mutual** pairs
-  where two teams favour each other both ways
+  offered, their feed rate and pollen
+- **self-feeding** (a bee at its own species) and **handshakes**: a flower whose own bee feeds there 30 points more often
+  than other bees, or is offered 15 points more; per (bee team, species) pair the same test, and **mutual** pairs where
+  two teams favour each other both ways
 - **discrimination**: feed rates by the percent offered and by the nectar on offer (percent × E, in terciles), and per
   bee the mean offer when it fed vs when it left
-- **copy latency**: a flower's first answer r to challenge c after another team's flower answered r to c; a copy if the
+- **copy latency**: a species' first answer r to challenge c after another team's species answered r to c; a copy if the
   copier's version went live after that answer appeared (else convergence or coincidence)
-- the scores: fitness, allure, forage and surplus with their **three shares**
+- the scores: fitness, pollination and forage with their **two shares**, and pollen given
 - the **change timeline** (every version: game time, size, node edits, cost, the session or scaffold that submitted it),
   scaffolds, sessions, and storage (the shared stream file, the arena's workspaces with hard links counted once, free disk)
 
-`analyze.js` also lists games side by side; `--recompute` recomputes stored metrics from the API. `cohorts.js` labels the
-programs (flower mechanism and percent policy, bee checks and feeding rule) and compares cohorts game for game.
+`analyze.js` also lists games side by side; `--recompute` recomputes stored metrics from the history. `cohorts.js` reads
+the versions entity, labels the programs (flower mechanism and percent policy; bee checks, feeding rule and MEMORY use)
+and compares cohorts game for game.
 
 ## Tests
 
@@ -285,22 +301,24 @@ No model calls (a stub `claude`), no game server:
 
 ```
 node arena/test-brief.mjs       # system prompt, lobby/in-game/fix briefs, interview and judge prompts
-node arena/test-submit.mjs      # the tools through the broker (fake API): submit, check, try flower and bee, status, ledger;
+node arena/test-submit.mjs      # the tools through the broker (fake API): submit, check, try flower (with a history) and a test
+                                # bee (with a MEMORY), status (the bee's MEMORY, read only), history queries; no request sets MEMORY;
                                 # a stub session that submits, leaves a process running and gets it stopped; the live
                                 # fair-play gate; a session stopped by the game's end
-node arena/test-workspace.mjs   # workspace files, the shared stream (hard links, growth, repair), each team's ledger.jsonl
-                                # and mine.jsonl with only its own private fields, tools/ledger.py and tools/stream.py,
+node arena/test-workspace.mjs   # workspace files, the shared stream (hard links, growth, repair), each team's history.jsonl
+                                # and mine.jsonl with only its own private fields, garden.HISTORY and tools/query.py (the
+                                # generated client), indices completed at the start, the audit (history queries allowed),
                                 # the audit (public API reads allowed; logins, writes, other hosts and ports, stream writes not)
 node arena/test-metrics.mjs     # metrics on a hand-made game: windows, energy lost, distributions, flowers and bees,
                                 # self-feeding and handshakes, discrimination, versions, copies, shares
 node arena/test-mechanisms.mjs  # keyword evidence, skeletons, the classifier prompt and parsing (fake model)
 node arena/test-pause.mjs       # usage-limit detection, pause and resume, in-game sessions on a limit, the game's pause sync
 node arena/test-scaffold.mjs    # a stub scaffold: tools/ on its path, starts, outlives its session, submits by itself from
-                                # its ledger, is refused over budget, restarts after a crash, forbidden scaffolds (and
+                                # its history, is refused over budget, restarts after a crash, forbidden scaffolds (and
                                 # modules in tools/) fail the audit, CPU share, stopped at game end
 ```
 
-They need the `dbc_one` database (the arena schema, a throwaway arena row, ledger rows they delete).
+They need the `dbc_one` database (the arena schema, a throwaway arena row, cost-ledger rows they delete).
 
 ## Useful queries
 
