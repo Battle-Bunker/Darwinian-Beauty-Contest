@@ -37,6 +37,11 @@ check("innovation: tokens first seen in the cohort, with when (rule was seen bef
   && d.innovations.some((x) => x.token === "family:puzzle" && x.atMs === 120000) && !d.innovations.some((x) => x.token === "mechanism:rule") && d.windows[1].newTokens.includes("family:keyed"), d.innovations);
 check("innovation: the cohort's seen set grows", seen.has("mechanism:hash-pow") && seen.has("check:key-check"));
 check("families: species using each", d.families.keyed === 2 && d.families.puzzle === 1 && d.families.signature === 1, d.families);
+{
+  const u = dynamics({ turns: [{ atMs: 0, flower: "A", flowerVersion: 1, bee: "B", fed: true, nectar: 1 }], ids: ["A", "B"], windowMs: 1000, durationMs: 1000,
+    flowerLabel: () => ({ mechanism: "rule", families: ["keyed?"], level: 0 }), beeLabel: () => ({ checks: "none", level: 0 }) });
+  check("families: uncertain keyword evidence is shown under its own name, but is no innovation", u.families["keyed?"] === 1 && !u.innovations.some((x) => /keyed/.test(x.token ?? x)), u);
+}
 check("levels: mean flower and bee levels in play", d.windows[0].meanFlowerLevel === 0 && d.windows[2].meanFlowerLevel > 1 && d.windows[0].meanBeeLevel === 1, d.windows.map((w) => [w.meanFlowerLevel, w.meanBeeLevel]));
 check("not frozen while things change", !d.frozen);
 const still = dynamics({ turns: turns.slice(0, 30).map((t, i) => ({ ...t, atMs: i * 6000 })), ids: ["A", "B", "C"], flowerLabel: (t) => labels[`${t}:1`], beeLabel: () => bees["A:1"], windowMs: 60000, durationMs: 180000, seen: new Set(["mechanism:rule", "family:signature", "check:shape-stats"]) });

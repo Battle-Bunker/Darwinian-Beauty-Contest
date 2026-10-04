@@ -87,7 +87,8 @@ export function dynamics({ turns, ids, flowerLabel, beeLabel, windowMs, duration
   const families = {};
   for (const id of ids) {
     const used = new Set();
-    for (const t of turns) if (t.flower === id) for (const f of flowerLabel(id, t.flowerVersion)?.families || []) if (!String(f).endsWith("?")) used.add(f);
+    // Uncertain keyword evidence ("keyed?") is counted under its own name, so a keyword-only analysis still shows it.
+    for (const t of turns) if (t.flower === id) for (const f of flowerLabel(id, t.flowerVersion)?.families || []) if (f && f !== "?") used.add(f);
     for (const f of used) families[f] = (families[f] || 0) + 1;
   }
   const last3 = windows.slice(-3);
