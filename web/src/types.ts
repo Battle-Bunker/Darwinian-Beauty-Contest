@@ -18,7 +18,7 @@ export interface GameConfig {
   responseType: string;
   maxLen: number;
   maxNodes: number;         // trees and graphs (challenges only)
-  maxResponseBytes?: number; // the most UTF-8 bytes of a response's JSON text (default 1 MiB)
+  maxResponseBytes?: number; // the most UTF-8 bytes of a response's JSON text (default 64 KiB)
   revealOnFinish: boolean;  // all code and every bee's prints become public when the game ends
   grains?: "feeder" | "public" | "off";            // who sees a feed's pollen grain during play
   pollenGrain?: { exponent: number; scale: number }; // a grain is ⌊scale × pollen^exponent⌋ characters

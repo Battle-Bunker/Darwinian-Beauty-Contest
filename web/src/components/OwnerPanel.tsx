@@ -119,7 +119,7 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
         <label className="field"><span>Response type</span>{typeSelect(draft.responseType, (v) => set("responseType", v), "Response type")}</label>
         <label className="field"><span>Max string/list length</span>{num(draft.maxLen, (v) => set("maxLen", v), 1, 1024, "Max string or list length")}</label>
         <label className="field"><span>Max tree/graph nodes</span>{num(draft.maxNodes, (v) => set("maxNodes", v), 1, 4096, "Max tree or graph nodes")}</label>
-        <label className="field"><span>Max response (bytes)</span>{num(draft.maxResponseBytes ?? 1048576, (v) => set("maxResponseBytes", v), 16, 16777216, "Max response size in bytes")}</label>
+        <label className="field"><span>Max response (bytes)</span>{num(draft.maxResponseBytes ?? 65536, (v) => set("maxResponseBytes", v), 16, 16777216, "Max response size in bytes")}</label>
         <label className="field"><span>Pollen grains</span>
           <select value={draft.grains ?? "feeder"} onChange={(e) => set("grains", e.target.value as GameConfig["grains"])} aria-label="Who sees pollen grains during play">
             <option value="feeder">the feeding bee's team</option>
@@ -138,7 +138,7 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
         Each team's flower is a species; every visit is a bee meeting one of its flowers, which spends its budget on its size and compute and, if the bee feeds, gives it nectar and pollen from what's left: E = ({Number.isFinite(cap) ? cap.toLocaleString() : "?"} − its size) × max(0, {draft.budgets.flower.ms} − its CPU ms), so a {Number.isFinite(cap) ? Math.round(cap / 2).toLocaleString() : "?"}-node flower answering in 10 ms has up to {Number.isFinite(cap) ? (Math.round(cap / 2) * Math.max(0, draft.budgets.flower.ms - 10)).toLocaleString() : "?"} node·ms to give.
         {" "}Bees run fresh for every turn and keep only their MEMORY, a key–value store of at most <b>{(draft.budgets.bee.memory ?? 50).toLocaleString()}</b> bytes (each entry: its key's bytes plus its value's JSON bytes).
         {" "}On every feed, {(draft.grains ?? "feeder") === "off" ? "no pollen grain is given (grains are off)" : <>the bee's team gets a pollen grain: ⌊{grain.scale} × pollen^{+grain.exponent.toFixed(3)}⌋ characters of the flower's minified code from a random start ({Number.isFinite(grainLen(27000)) ? `27,000 pollen gives ${grainLen(27000)}, 100,000 gives ${grainLen(100000)}` : "?"}), seen {(draft.grains ?? "feeder") === "public" ? "by everyone as it happens" : "by that team only until the game ends"}</>}.
-        {" "}String and list lengths and tree and graph sizes limit challenges; a response may be up to <b>{fmtBytes(draft.maxResponseBytes ?? 1048576)}</b> of JSON (over that it counts as no answer), and one over 4 KB is shown on the page as its first 4 KB.
+        {" "}String and list lengths and tree and graph sizes limit challenges; a response may be up to <b>{fmtBytes(draft.maxResponseBytes ?? 65536)}</b> of JSON (over that it counts as no answer), and one over 4 KB is shown on the page as its first 4 KB.
       </p>
       <div className="settings-checks">
         <label className="check"><input type="checkbox" checked={draft.revealOnFinish} onChange={(e) => set("revealOnFinish", e.target.checked)} /> Reveal all code and every bee's prints when the game ends</label>
@@ -189,7 +189,7 @@ export function SettingsSummary({ cfg }: { cfg: GameConfig }) {
         <span className="chip mono">{cfg.challengeType} → {cfg.responseType}</span>
         {[cfg.challengeType, cfg.responseType].some((t) => /str|list|any/i.test(t)) && <span className="chip">max length {cfg.maxLen}</span>}
         {[cfg.challengeType, cfg.responseType].some((t) => /tree|graph/i.test(t)) && <span className="chip">max {cfg.maxNodes} nodes</span>}
-        <span className="chip" title="The most bytes of a response's JSON; over it, no answer">responses up to {fmtBytes(cfg.maxResponseBytes ?? 1048576)}</span>
+        <span className="chip" title="The most bytes of a response's JSON; over it, no answer">responses up to {fmtBytes(cfg.maxResponseBytes ?? 65536)}</span>
         <span className="chip" title="A bee's MEMORY: a flat key–value store">bee MEMORY {(cfg.budgets.bee.memory ?? 50).toLocaleString()} bytes</span>
         <span className="chip" title={`A feed's pollen grain: ⌊${cfg.pollenGrain?.scale ?? 1} × pollen^${+(cfg.pollenGrain?.exponent ?? 1 / 3).toFixed(3)}⌋ characters of the flower's minified code`}>
           pollen grains: {{ feeder: "the feeding team's", public: "public", off: "off" }[cfg.grains ?? "feeder"]}
