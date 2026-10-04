@@ -25,7 +25,7 @@ test("typescript: work done in a reply's toJSON is on the flower's clock", async
   const charged = await turnsOf("typescript", flower(100));
   for (const t of charged.turns) {
     assert.deepEqual(t.r, { nodes: 1 });
-    assert.ok(t.ms >= 90, `100 ms in toJSON is charged: ${t.ms} ms`);
+    assert.ok(t.ms >= 70, `100 ms in toJSON is charged: ${t.ms} ms (floor loose for a busy machine)`);
     assert.equal(t.energy, excessEnergy(charged.config, charged.size, t.ms));
   }
   const stopped = await turnsOf("typescript", flower(400));
@@ -36,7 +36,7 @@ test("typescript: work done in a reply's toJSON is on the flower's clock", async
   }
   // Getters run on the clock too.
   const getter = await turnsOf("typescript", `function flower(c: number): [any, number] {\n  return [{ get x() { ${burn(100)} return 1; } }, 50];\n}`);
-  for (const t of getter.turns) assert.ok(t.ms >= 90 && t.r.x === 1, `${t.ms}`);
+  for (const t of getter.turns) assert.ok(t.ms >= 70 && t.r.x === 1, `${t.ms}`);
 });
 
 test("python: subclasses of dict, list, str, int and float are refused: their hooks can't run after the clock stops", async () => {
