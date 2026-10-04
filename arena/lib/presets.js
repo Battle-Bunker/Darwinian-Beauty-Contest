@@ -51,6 +51,28 @@ export const PRESETS = {
     scaffold: { cpuShare: 0.1 }, // six scaffolds share the machine with the garden: keep them light
     reserveUsd: 3,
   },
+  // The new-ideas experiment (EXPERIMENTS.ideas): every cohort plays this preset; only `common` differs. 10-minute games, so
+  // cycles of innovation and imitation have time to happen; the csig founders.
+  cohort10: {
+    description: "python, int→graph[any], 6 teams (3 opus, 3 sonnet), 10-minute games, scaffolds, retirement and breeding",
+    config: { language: "python", challengeType: "int", responseType: "graph[any]" },
+    minutesByGame: [10],
+    lineup: [["mallory", "opus"], ["kenji", "opus"], ["ada", "opus"], ["rosalind", "sonnet"], ["priya", "sonnet"], ["theo", "sonnet"]],
+    session: { warmupSeconds: 10, gapSeconds: 15, maxIdleGapSeconds: 120, endMarginSeconds: 20, maxMinutes: 6 },
+    limits: { lobby: { opus: { turns: 40, usd: 2.0 }, sonnet: { turns: 40, usd: 1.0 } }, game: { opus: { turns: 20, usd: 0.5 }, sonnet: { turns: 20, usd: 0.3 } } },
+    scaffold: { cpuShare: 0.1 }, // six scaffolds share the machine with the garden: keep them light
+    reserveUsd: 3,
+  },
+  // The same shape for dry runs with the stub `claude` (no model calls): graph responses, 30-second games.
+  "dry-cohort": {
+    description: "dry run of the cohort experiment: python, int→graph[any], 6 teams, 30-second games, retirement and breeding",
+    config: { language: "python", challengeType: "int", responseType: "graph[any]" },
+    minutesByGame: [0.5],
+    lineup: [["mallory", "sonnet"], ["kenji", "sonnet"], ["ada", "sonnet"], ["rosalind", "haiku"], ["priya", "haiku"], ["theo", "haiku"]],
+    session: { warmupSeconds: 3, gapSeconds: 2, maxIdleGapSeconds: 4, endMarginSeconds: 3, maxMinutes: 2 },
+    scaffold: { cpuShare: 0.1 },
+    reserveUsd: 0,
+  },
   // For dry runs with the stub `claude` (no model calls): int→int, 20-second games, evolution on.
   dry: {
     description: "dry run: one flower per team, python, int→int, 4 teams, 20-second games, retirement and breeding",
@@ -69,5 +91,36 @@ export const PRESETS = {
 // game at a time, interleaved (game 1 of each, then game 2 of each, ...; the order rotates every game), so one garden has
 // the machine at a time. Each cohort's judges and breeders see only its own ideas, spawns and outcomes (plus arenas outside
 // the experiment); breeders never see the documents. Arena ids are neutral: breeders see them.
-//   { description, preset, games, gameUsd (a game starts only if every cohort can afford this), cohorts: [{ id, arm, common? }] }
-export const EXPERIMENTS = {};
+//   { description, preset, games, gameUsd (a game starts only if every cohort can afford this), cohorts: [{ id, arm, label?, common? }] }
+// The runner refuses to start an experiment whose common-knowledge folder is missing or empty.
+const IDEAS_DIR = "arena/priming/one-flower-ideas";
+export const EXPERIMENTS = {
+  // Do new costly-signalling ideas make the ecosystem more sophisticated while it stays interestingly complex? Two arms ×
+  // two seeds (replicate cohorts), interleaved one game at a time; cohort ids are neutral (teams see them in their paths,
+  // breeders in their prompts), the arm and label stay with the runner and the analysis.
+  ideas: {
+    description: "new costly-signalling ideas: control and ideas arms, two cohorts each; the ideas cohorts get one-flower-ideas as common knowledge",
+    preset: "cohort10",
+    games: 3,
+    gameUsd: 12, // a game starts only if every cohort can afford this much more (an estimate of one 10-minute cohort-game)
+    cohorts: [
+      { id: "nova-a", arm: "control", label: "control-a" },
+      { id: "nova-b", arm: "ideas", label: "ideas-a", common: { dir: IDEAS_DIR } },
+      { id: "nova-c", arm: "control", label: "control-b" },
+      { id: "nova-d", arm: "ideas", label: "ideas-b", common: { dir: IDEAS_DIR } },
+    ],
+  },
+  // The same experiment with the stub `claude` and short games (ARENA_DRY_COMMON: another folder for the ideas arm).
+  "ideas-dry": {
+    description: "dry run of the ideas experiment with the stub claude",
+    preset: "dry-cohort",
+    games: 2,
+    gameUsd: 0,
+    cohorts: [
+      { id: "dry-a", arm: "control", label: "control-a" },
+      { id: "dry-b", arm: "ideas", label: "ideas-a", common: { dir: process.env.ARENA_DRY_COMMON || IDEAS_DIR } },
+      { id: "dry-c", arm: "control", label: "control-b" },
+      { id: "dry-d", arm: "ideas", label: "ideas-b", common: { dir: process.env.ARENA_DRY_COMMON || IDEAS_DIR } },
+    ],
+  },
+};

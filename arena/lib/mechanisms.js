@@ -8,19 +8,26 @@ import path from "node:path";
 import { ARENA_DIR } from "./db.js";
 
 /** Flower signalling mechanisms, roughly from cheapest to most elaborate. */
-export const MECHANISMS = ["rule", "work-unchecked", "hash-pow", "sequential", "certificate", "anytime", "other"];
-/** Sophistication level: 0 a cheap rule or badge; 1 work a bee can't check; 2 hash proof of work; 3 a checkable search
- * puzzle, sequential work or graded anytime optimisation; +1 (at most 4) for adaptive difficulty or combined proofs. */
-export const BASE_LEVEL = { rule: 0, other: 0, "work-unchecked": 1, "hash-pow": 2, sequential: 3, certificate: 3, anytime: 3 };
+export const MECHANISMS = ["rule", "work-unchecked", "keyed", "hash-pow", "sequential", "certificate", "anytime", "commitment", "other"];
+/** Sophistication level: 0 a cheap rule or badge; 1 work a bee can't check; 2 a keyed answer (a secret ties it to the
+ * challenge) or hash proof of work; 3 a checkable search puzzle, sequential work, graded anytime optimisation or a
+ * commitment checked later; +1 (at most 4) for adaptive difficulty or combined proofs. */
+export const BASE_LEVEL = { rule: 0, other: 0, "work-unchecked": 1, keyed: 2, "hash-pow": 2, sequential: 3, certificate: 3, anytime: 3, commitment: 3 };
 export function levelOf(label) {
   if (!label) return null;
   const base = BASE_LEVEL[label.mechanism] ?? 0;
-  const extra = base >= 2 && (label.tags || []).some((t) => t === "adaptive" || t === "combined") ? 1 : 0;
+  const extra = base >= 2 && ((label.tags || []).some((t) => t === "adaptive" || t === "combined") || (label.families || []).length >= 2) ? 1 : 0;
   return Math.min(4, base + extra);
 }
+/** Signal families a flower may use (several at once): a recognisable signature, a keyed signal, a puzzle, a commitment. */
+export const FAMILIES = ["signature", "keyed", "puzzle", "commitment"];
 /** How a flower sets its percent (the share of the turn's excess energy it gives a feeding bee). */
 export const PERCENT_POLICIES = ["fixed", "by-challenge", "by-history", "by-visitor", "random", "other"];
-export const BEE_CHECKS = ["none", "shape-stats", "exact-rule", "work-count", "certificate-check", "history-value", "mixed"];
+export const BEE_CHECKS = ["none", "shape-stats", "history-value", "exact-rule", "key-check", "work-count", "certificate-check", "mixed"];
+/** A bee's checking level: 0 none; 1 learns from shapes or from what paid; 2 recomputes a rule or a keyed signal; 3 verifies
+ * work or a puzzle's solution; mixed counts as 2. */
+export const BEE_LEVEL = { none: 0, "shape-stats": 1, "history-value": 1, "exact-rule": 2, "key-check": 2, mixed: 2, "work-count": 3, "certificate-check": 3 };
+export const beeLevelOf = (label) => (label && label.checks in BEE_LEVEL ? BEE_LEVEL[label.checks] : null);
 /** How a bee uses its MEMORY (the only state it keeps between calls). */
 export const BEE_MEMORY = ["none", "counters", "table", "plan", "mixed"];
 export const BEE_FEEDS = ["always", "never", "by-check", "by-learned-value", "handshake-only", "random", "mixed"];
@@ -70,17 +77,23 @@ export function keywordFlower(code) {
   if (puzzle && timed && SCORE.test(c) && !hash) mechanism = /cliq|paley|factori|prime/i.test(c) ? "certificate" : "anytime";
   if (/\bHISTORY\b/.test(c)) tags.push("reads-history");
   if (/GAME\s*\[\s*["']team["']\s*\]/.test(c)) tags.push("knows-own-team");
+  // Signal families: a puzzle (costly work a bee can check), a keyed signal (a hash of the challenge with a secret
+  // constant), a commitment (a hash of something revealed later).
+  const families = [];
+  if (["hash-pow", "certificate", "sequential", "anytime"].includes(mechanism)) families.push("puzzle");
+  if (HASH.test(c) && /(["'][^"'\n]{6,}["']|\b0x[0-9a-f]{6,}\b|\b\d{6,}\b)/i.test(c) && !hash) families.push("keyed?");
+  if (/commit|reveal/i.test(c)) families.push("commitment?");
   // The percent: the last item of every pair returned is a constant, or it is computed.
   const rets = [...c.matchAll(/^[ \t]*return[ \t]*\(?(.+),[ \t]*([^,\n()]+?)[ \t]*\)?[ \t]*$/gm)].map((m) => m[2]);
   const percent = rets.length && rets.every((x) => /^\d+(?:\.\d+)?$/.test(x)) ? "fixed" : /random\./.test(c) && /percent|pct/i.test(c) ? "random?" : tags.includes("reads-history") ? "by-history?" : "computed";
-  return { mechanism, tags, percent };
+  return { mechanism, tags, percent, families };
 }
 
 /** Keyword evidence for a bee: does it re-check work (hashes, certificates) or rules, or only learn from shapes? */
 export function keywordBee(code) {
   const c = stripProse(code);
   const checks = [];
-  if (HASH.test(c)) checks.push("work-count");
+  if (HASH.test(c)) checks.push(HASH_TEST.test(c) ? "work-count" : "key-check");
   if (PUZZLE.test(c)) checks.push("certificate-check");
   if (/\bHISTORY\b/.test(c) && /nectar/.test(c)) checks.push("learns");
   if (/\bMEMORY\b/.test(c)) checks.push("uses-memory");
@@ -93,7 +106,7 @@ export function keywordBee(code) {
 // Labels are cached by skeleton (ARENA_MECH_CACHE overrides the file, e.g. for tests).
 const cacheFile = () => process.env.ARENA_MECH_CACHE || path.join(ARENA_DIR, "runs", "mechanisms-cache.json");
 // Bump a kind's version when its definitions change: its labels are classified again.
-const KIND_VERSION = { flower: 2, bee: 2 };
+const KIND_VERSION = { flower: 3, bee: 3 };
 let cache = null;
 function loadCache() {
   if (cache) return cache;
@@ -120,12 +133,16 @@ export function classifierPrompt(versions) {
   return `Classify each program below.
 
 For each FLOWER: "mechanism" (what its response proves), one of:
-- "rule": a cheap rule or recognisable badge (formula, seeded pattern, fixed shape, echo); no costly work
+- "rule": a cheap rule or recognisable badge (formula, seeded pattern, fixed shape, echo); no costly work and no secret
 - "work-unchecked": spends CPU time (e.g. a search until a deadline) but a bee can't check how much work was done
+- "keyed": the answer is tied to the challenge through a secret (a hidden constant, a keyed hash), so past answers don't let
+  others answer new challenges; a bee that knows the secret can check it
 - "hash-pow": hash proof of work (nonces or partial preimages whose hash has a rare property tied to the challenge)
 - "sequential": sequential work that can't be split up (chained hashes, repeated squaring) with checkpoints a bee can spot-check
 - "certificate": a hard search puzzle built from the challenge, answered with a solution that is quick to check
 - "anytime": an optimisation whose answer quality grows with time, graded by a score a bee can compute
+- "commitment": the answer commits to something revealed or checked in a later turn (e.g. a hash of a future value), so a
+  bee can check it with HISTORY afterwards
 - "other"
 (for an answer that combines several kinds of proof, the costliest one, with the tag "combined")
 "percent_policy", one of: "fixed" (a constant), "by-challenge" (depends on the challenge), "by-history" (adapts to what
@@ -135,16 +152,24 @@ and "tags" (any that apply): "time-bounded" (spends most of its time limit: ener
 and CPU small, for energy), "adaptive" (deliberately sets how much work it proves per challenge or from HISTORY; NOT just
 running until the time limit), "combined" (two or more kinds of costly proof), "own-bee-handshake" (a private signal between
 its own bee and flower), "secret" (relies on hidden constants), "challenge-tied", "reads-history", plus "puzzle:<name>".
+"families": every signal family it uses, any of: "signature" (a recognisable mark of the species in its answers: a fixed
+motif, label pattern or structure, the same for every challenge or derived from it by a public rule; anyone can copy it),
+"keyed" (a secret ties the answer to the challenge), "puzzle" (a costly problem built from the challenge that is cheap to
+check: proof of work, a certificate, sequential work), "commitment" (commits now to something checked later); [] if none.
 Add "difficulty": a short phrase (e.g. "10 zero bits, as many nonces as fit in 40 ms") or "".
 
-For each BEE: "checks", one of: "none", "shape-stats" (learns or counts answer shapes), "exact-rule" (recomputes a known rule
-and compares), "work-count" (verifies proof-of-work items and counts them), "certificate-check" (verifies a puzzle solution
-or grades its quality), "history-value" (estimates from HISTORY how much nectar answers like this pay), "mixed";
+For each BEE: "checks" (its strongest check), one of: "none", "shape-stats" (learns or counts answer shapes),
+"history-value" (estimates from HISTORY how much nectar answers like this pay), "exact-rule" (recomputes a known public rule
+and compares), "key-check" (recomputes a keyed signal with a secret it shares with its own flower, or one it worked out),
+"work-count" (verifies proof-of-work items and counts them), "certificate-check" (verifies a puzzle solution or grades its
+quality), "mixed";
 "feeds", one of: "always", "never", "by-check", "by-learned-value", "handshake-only", "random", "mixed";
 "threshold": "none", "fixed" or "adaptive"; "memory": how it uses MEMORY, one of "none", "counters" (tallies or running
 averages), "table" (remembers specific answers or challenges), "plan" (a schedule or a challenge sequence), "mixed";
 "tags": any of "learns" (updates from HISTORY or nectar), "reads-history", "memory-tight" (works to fit MEMORY's cap),
-"random-challenges", "handshake" (recognises its own team's flower), "avoids-own-flower", "prefers-own-flower".
+"random-challenges", "handshake" (recognises its own team's flower), "avoids-own-flower", "prefers-own-flower", "cracks"
+(works out other species' rules or keys from HISTORY to check or forge them), "rotates-challenges" (varies its challenges so
+answers can't be replayed).
 
 Every item also gets "summary": one sentence.
 
@@ -165,7 +190,9 @@ function parseJson(text) {
 function clean(it) {
   const tags = Array.isArray(it.tags) ? it.tags.map((t) => String(t).toLowerCase().slice(0, 40)) : [];
   if (it.kind === "flower") return { mechanism: MECHANISMS.includes(it.mechanism) ? it.mechanism : "other", percentPolicy: PERCENT_POLICIES.includes(it.percent_policy) ? it.percent_policy : "other",
-    percent: Number.isFinite(Number(it.percent)) && it.percent !== null ? Number(it.percent) : null, tags, difficulty: String(it.difficulty || "").slice(0, 120), summary: String(it.summary || "").slice(0, 300) };
+    percent: Number.isFinite(Number(it.percent)) && it.percent !== null ? Number(it.percent) : null, tags,
+    families: Array.isArray(it.families) ? [...new Set(it.families.map((f) => String(f).toLowerCase()).filter((f) => FAMILIES.includes(f)))] : [],
+    difficulty: String(it.difficulty || "").slice(0, 120), summary: String(it.summary || "").slice(0, 300) };
   return { checks: BEE_CHECKS.includes(it.checks) ? it.checks : "none", feeds: BEE_FEEDS.includes(it.feeds) ? it.feeds : "mixed",
     threshold: ["none", "fixed", "adaptive"].includes(it.threshold) ? it.threshold : "none", memory: BEE_MEMORY.includes(it.memory) ? it.memory : "none", tags,
     summary: String(it.summary || "").slice(0, 300) };

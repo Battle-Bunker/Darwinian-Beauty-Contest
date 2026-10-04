@@ -20,9 +20,13 @@
 //                  team's flower answered r to c, and whether the copier's version went live after that answer appeared
 //   changes        every program version (who, which, when, size, node edits, cost, and who submitted it)
 //   final          the scores: fitness, pollination and forage with their two shares, and pollen
+//   ecology        lib/ecology.js: each species' energy split (size, compute, nectar, pollen, lost), its percent over
+//                  time, imitation (signals and their first close copies, the lag, detection windows), key rotation,
+//                  cracking (answers predicted before the other species gave them), autarky
 //   memory         per bee: its MEMORY at the end (bytes of the cap, and the value), saves refused for the cap, its size
 //                  over the game (the runner's samples), and how often the team changed its bee (each change empties it)
 import { Api } from "./api.js";
+import { autarky, energySplit, imitation, percentOverTime, predictions, rotation } from "./ecology.js";
 
 const r3 = (x) => (x == null || !Number.isFinite(x) ? null : Math.round(x * 1000) / 1000);
 const quantile = (xs, p) => { if (!xs.length) return null; const s = [...xs].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; };
@@ -33,10 +37,11 @@ const q5 = (xs) => (xs.length ? { n: xs.length, min: r3(Math.min(...xs)), p10: r
 const key = (v) => JSON.stringify(v ?? null);
 const TOO_SLOW = /too slow/i;
 
-/** A sensible window for a game of `durationMs`: about 8 windows, at least 10 s, in round numbers. */
+/** A sensible window for a game of `durationMs`: at most 10 windows, at least 10 s, in round numbers (a minute for a
+ * 10-minute game). */
 export function windowFor(durationMs) {
   const nice = [10, 15, 30, 60, 120, 300, 600].map((s) => s * 1000);
-  return nice.find((w) => durationMs / w <= 8) || 600000;
+  return nice.find((w) => durationMs / w <= 10) || 600000;
 }
 
 const potential = (t) => (t.percent != null && t.energy != null ? (t.percent / 100) * t.energy : null); // nectar on offer
@@ -226,6 +231,19 @@ export function computeMetrics({ game, teams: teamRows, turns: turnRows, version
       sampledMaxBytes: bytes.length ? Math.max(...bytes) : null, sampledMeanBytes: r3(mean(bytes)), samples };
   }) };
 
+  const im = imitation(turns, ids, { liveAt });
+  const named = (x) => ({ ...x, team: name[x.teamId] ?? x.teamId });
+  const ecology = {
+    energySplit: Object.fromEntries(Object.entries(energySplit(turns, ids, { sizeOf, cap, windowMs: flowerMs })).map(([id, x]) => [id, { team: name[id], ...x }])),
+    percentOverTime: percentOverTime(turns, ids, W).map(named),
+    imitation: { signalsCopied: im.signalsCopied, medianLagMs: im.medianLagMs, lags: im.lags.map((x) => ({ ...x, model: name[x.model] ?? x.model, by: name[x.by] ?? x.by })),
+      copies: im.copies.map((e) => ({ copier: name[e.copier] ?? e.copier, copierVersion: e.copierVersion, model: name[e.model] ?? e.model, modelVersion: e.modelVersion, exact: e.exact,
+        atMs: e.atMs, lagMs: e.lagMs, detected: e.detection.detected, detectedAfterMs: e.detection.afterMs, rivalFeedsBeforeDetection: e.detection.rivalFeedsBefore })) },
+    rotations: rotation(turns, ids).map((x) => named(x)),
+    predictions: predictions(turns, { liveAt }).map((p) => ({ ...p, predictor: name[p.predictor] ?? p.predictor, target: name[p.target] ?? p.target })),
+    autarky: (() => { const a = autarky(turns, ids); return { ...a, teams: a.teams.map(named) }; })(),
+  };
+
   const fedTurns = turns.filter((t) => t.action === "feed");
   return {
     windowMs: W, durationMs, turns: turns.length, rounds: Number(game.round) || Math.max(0, ...turns.map((t) => t.round || 0)),
@@ -237,7 +255,7 @@ export function computeMetrics({ game, teams: teamRows, turns: turnRows, version
     distributions: { percent: q5(answered.map((t) => t.percent)), energy: q5(turns.map((t) => t.energy || 0)), nectar: q5(fedTurns.map((t) => t.nectar || 0)), pollen: q5(fedTurns.map((t) => t.pollen || 0)) },
     teams, handshakes: { pairs, mutual }, versions, discrimination,
     copies: { matches: copies.length, copies: att.length, medianLatencyMs: median(att.map((x) => x.latencyMs)), byCopier },
-    changes, final, memory,
+    changes, final, memory, ecology,
     config: { minutes: config.minutes, feedCost: config.feedCost, challengeType: config.challengeType, responseType: config.responseType, budgets: config.budgets },
     clockMs: Number(game.clockMs) || 0, round: Number(game.round) || 0,
   };

@@ -126,7 +126,8 @@ async function setupGame(arena, generation, log) {
   if (!entries.length) {
     const active = await all("SELECT * FROM arena.personas WHERE arena_id = $1 AND status = 'active' ORDER BY generation_born, id", [arena.id]);
     for (const p of active) {
-      const loginName = `${p.name} · ${arena.id}`;
+      // One login per persona (its id is unique): two personas with the same name must never share a team.
+      const loginName = `${p.name} · ${p.id}`;
       const tok = await login(loginName);
       let team;
       try { team = await Api.createTeam(tok, gPath, p.team_name); }
@@ -487,15 +488,26 @@ async function runExperiment(name) {
   if (!exp) throw new Error(`unknown experiment ${name} (${Object.keys(EXPERIMENTS).join(", ")})`);
   const games = Number(args.games || exp.games);
   const ids = exp.cohorts.map((c) => c.id);
+  // Every cohort's common knowledge must be there before anything starts (a missing folder would stop the experiment
+  // in the middle of a game).
+  for (const c of exp.cohorts) {
+    if (!c.common) continue;
+    const dir = path.resolve(ARENA_DIR, "..", c.common.dir);
+    const files = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => !f.startsWith(".") && fs.statSync(path.join(dir, f)).isFile()) : [];
+    if (!files.length) throw new Error(`${c.id}: its common knowledge ${c.common.dir} is missing or empty`);
+  }
   const started = [];
   for (const c of exp.cohorts) {
     started.push(await startArena(c.id, exp.preset, games, {
       common: c.common || null, ledgerExclude: ids.filter((x) => x !== c.id),
-      experiment: { name, arm: c.arm, cohorts: ids, description: exp.description },
+      experiment: { name, arm: c.arm, label: c.label || null, cohorts: ids, description: exp.description },
     }));
   }
   const elog = logger(name);
-  elog(`experiment ${name}: ${ids.join(", ")}; ${games} games each, interleaved`);
+  const labelOf = (id) => exp.cohorts.find((c) => c.id === id)?.label || exp.cohorts.find((c) => c.id === id)?.arm || id;
+  elog(`experiment ${name}: ${exp.cohorts.map((c) => `${c.id} (${c.label || c.arm}${c.common ? `, common knowledge ${c.common.dir}` : ""})`).join(", ")}; ${games} games each, interleaved; ` +
+    `preset ${exp.preset}; spend cap $${GLOBAL_CAP}`);
+  let doneCount = (await one("SELECT count(*)::int AS n FROM arena.games WHERE arena_id = ANY($1) AND stage = 'done'", [ids]))?.n || 0;
   try {
     for (let gen = 1; gen <= games; gen++) {
       // Matched cohorts: a game starts only if every cohort can afford all of it (exp.gameUsd: a generous estimate).
@@ -508,8 +520,18 @@ async function runExperiment(name) {
         }
       }
       const order = started.map((_, i) => started[(i + gen - 1) % started.length]);
-      elog(`game ${gen}: ${order.map((x) => x.arena.id).join(" → ")}`);
-      for (const { arena, log } of order) await runGeneration(arena, gen, games, log);
+      elog(`game ${gen}: ${order.map((x) => `${x.arena.id} (${labelOf(x.arena.id)})`).join(" → ")}`);
+      for (const { arena, log } of order) {
+        const already = await one("SELECT 1 FROM arena.games WHERE arena_id = $1 AND generation = $2 AND stage = 'done'", [arena.id, gen]);
+        if (!already) elog(`stage: game ${gen} of ${games} in ${arena.id} (${labelOf(arena.id)}) starting; ${doneCount} of ${games * started.length} cohort-games done`);
+        await runGeneration(arena, gen, games, log);
+        if (!already) {
+          doneCount++;
+          const sp = await spend(arena.id);
+          elog(`progress: game ${gen} of ${games} in ${arena.id} (${labelOf(arena.id)}) done; ${doneCount} of ${games * started.length} cohort-games done; ` +
+            `spend: this cohort $${sp.arena.toFixed(2)}, all $${sp.global.toFixed(2)} of $${GLOBAL_CAP}`);
+        }
+      }
     }
     await q("UPDATE arena.arenas SET status = 'done' WHERE id = ANY($1)", [ids]);
     elog(`experiment ${name} finished`);

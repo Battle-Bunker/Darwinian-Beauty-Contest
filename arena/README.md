@@ -24,7 +24,7 @@ metrics, interviews, the teen judges and (unless membership is fixed) selection 
 |---|---|
 | `run.js` | the runner: creates rooms and games, runs the lobby sessions, starts the game, runs every team's sessions while it plays, stops them when it ends; then metrics, interviews, judges, retirements and breeding |
 | `analyze.js` | a Markdown report of the arena schema: spend, each game (energy, percent, nectar and pollen over time and their distributions, the scores and their two shares, every species and bee, each bee's MEMORY and how often teams changed their bee, self-feeding and handshakes, discrimination, flower size and compute against energy, copies, the change timeline, scaffolds, sessions, storage), the panel, games side by side, ideas, breeders, the fair-play audit |
-| `cohorts.js` | the cohort analysis of an experiment (or any arenas): per cohort and game, what the flowers and bees do (keyword evidence or the haiku classifier of `lib/mechanisms.js`), percent policies, energy, discrimination, handshakes, copies, and the cohorts side by side |
+| `cohorts.js` | the cohort analysis of an experiment (or any arenas): per cohort and game, what the flowers and bees do (keyword evidence or the haiku classifier of `lib/mechanisms.js`), sophistication, signal families, innovation, diversity, dominance turnover, imitation and detection, the energy split, the arms race (rotations, cracks, percent over time), collapse, minute by minute (`lib/dynamics.js`), and the cohorts side by side |
 | `server.sh` | (re)starts the arena's own game server on port 4100 (dbc_one, the dev-login secret, `CPU_SLOTS=3`); refuses `dbc` and `dbc_live` |
 | `schema.sql` | the `arena` Postgres schema in dbc_one, applied on every run |
 | `tools/` | the workspace tools copied into every workspace (Python, stdlib only): `submit.py`, `check.py`, `try.py`, `status.py`, `query.py`, `stream.py`, `scaffold.py`, `garden.py` (the scaffold API), and `_runner.py`, their link to the runner; every workspace also gets `vendor/query/history.py`, the generated query client, as `tools/history.py` |
@@ -36,7 +36,8 @@ metrics, interviews, the teen judges and (unless membership is fixed) selection 
 | `lib/stream.js` | the streams: the shared public JSONL, the runner's master copy, each team's history and own actions (fetched with its token), samples of each bee's MEMORY size, headline numbers for briefs |
 | `lib/workspace.js` | builds workspaces, archives finished games, the fair-play audit, finds and stops what a session left running |
 | `lib/prompts.js` | system prompt, lobby and in-game briefs, interview, judge and breeder prompts |
-| `lib/metrics.js` | metrics of a finished game, from its API once everything is revealed |
+| `lib/metrics.js`, `lib/ecology.js` | metrics of a finished game, from its history once everything is revealed; the ecology part (energy split, imitation and detection, rotations, cracks, autarky) |
+| `lib/dynamics.js` | how the ecosystem moves within a game, given program labels: mechanisms in use and their entropy, dominance, innovation, families, freezing |
 | `lib/mechanisms.js` | what a program does: keyword evidence and a haiku classifier cached by program skeleton (never a Fable model) |
 | `lib/gamecontrol.js` | the game follows the arena's pause file |
 | `lib/social.js`, `lib/population.js`, `lib/personas.js` | interviews → judges → idea ledger → social scores; retirement and breeders; founders, judges, breeders |
@@ -89,11 +90,40 @@ node arena/analyze.js --arenas one-pilot > arena/runs/analysis-one-pilot.md
 | `pilot` | int→int, games of 0.5, 1 and 2 minutes; opus calls (judges, breeders) run on sonnet | 3 teams, sonnet/haiku |
 | `graphs` | int→graph[any], games of 2, 5 and 10 minutes, scaffolds | 4 teams, opus/sonnet |
 | `cohort6` | int→graph[any], 5-minute games, scaffolds, retirement and breeding (for cohort experiments) | 6 teams, opus/sonnet |
+| `cohort10` | as `cohort6` with 10-minute games (the `ideas` experiment) | 3 opus (Mallory, Kenji, Ada), 3 sonnet (Rosalind, Priya, Theo) |
+| `dry-cohort` | int→graph[any], 30-second games, no spend reserve (stub dry runs of the experiment) | 6 teams |
 | `dry` | int→int, 20-second games, no spend reserve (for stub dry runs) | 4 teams |
 
 A preset sets `config` (server defaults otherwise: 2-minute games, a feeding bee sits out 10 rounds, change budgets of
 one minute's worth: flower 220 and bee 2,200 nodes), `minutesByGame`, `session` pacing, `limits`, `maxModel`,
 `reserveUsd`, `noEvolution`, `scaffold` and `examples`.
+
+### The `ideas` experiment
+
+Do new costly-signalling ideas make the ecosystem more sophisticated while it stays interestingly complex? Four matched
+cohorts on `cohort10` (10-minute games, 3 games each, evolution on), interleaved one game at a time in a rotating order:
+
+| arena | cohort | common knowledge |
+|---|---|---|
+| `nova-a` | control-a | none |
+| `nova-b` | ideas-a | `arena/priming/one-flower-ideas/` |
+| `nova-c` | control-b | none |
+| `nova-d` | ideas-b | `arena/priming/one-flower-ideas/` |
+
+Arena ids are neutral, since teams see them in their workspace paths and breeders in their prompts; the arm and label
+stay with the runner (`arena.settings.experiment`) and the analysis. Each cohort's judges and breeders see only its own
+ideas, spawns and outcomes, and breeders never see the documents. The runner refuses to start if a cohort's common
+folder is missing or empty, writes a `stage:` line as each cohort-game starts and a `progress:` line (with the spend)
+as it ends to `arena/runs/ideas.log`, and pauses on usage limits as always (`arena/runs/PAUSED`).
+
+```
+arena/server.sh
+ARENA_BUDGET_USD=150 nohup node arena/run.js --experiment ideas >> arena/runs/ideas.out 2>&1 &
+node arena/cohorts.js --experiment ideas > arena/runs/analysis-ideas.md          # keyword labels, no spend
+node arena/cohorts.js --experiment ideas --count                                 # what --classify would label
+```
+
+`ideas-dry` is the same experiment with the stub `claude` (`ARENA_CLAUDE_BIN`), 30-second games and the `dry-` arenas.
 
 ## How a game runs
 
@@ -291,9 +321,20 @@ game, at least 10 s):
 - the **change timeline** (every version: game time, size, node edits, cost, the session or scaffold that submitted it),
   scaffolds, sessions, and storage (the shared stream file, the arena's workspaces with hard links counted once, free disk)
 
+- the **ecology** (`lib/ecology.js`): each species' energy split (size, compute, nectar, pollen, lost, as shares of
+  cap × window per turn), its percent minute by minute, **imitation** (a signal is a species' flower version; a close
+  copy is another species' later version answering one of its challenges exactly as it did, or in a shape new to the
+  copier; the lag from the signal's first appearance), **detection windows** (the feeds a copy gets from rival bees until
+  their feed rate there falls below half their rate at the model), **key rotation** (a new version answering most of the
+  old challenges differently), **cracks** (answers given before the other species gave them, by a version written after
+  its rule appeared) and **autarky** (species living mostly off their own bee)
+
 `analyze.js` also lists games side by side; `--recompute` recomputes stored metrics from the history. `cohorts.js` reads
-the versions entity, labels the programs (flower mechanism and percent policy; bee checks, feeding rule and MEMORY use)
-and compares cohorts game for game.
+the versions and turns entities, labels the programs (flower mechanism, signal families and percent policy; bee checks,
+feeding rule and MEMORY use) and adds, per game and minute by minute: sophistication (flower levels 0-4, bee levels
+0-3), signal families (signature, keyed, puzzle, commitment), innovations (mechanisms, families and checks first seen in
+the cohort), the entropy of the mechanisms in use, dominance turnover (the mechanism and species whose flowers gave rival
+bees the most nectar), and collapse (autarky, or one frozen mechanism); then the cohorts side by side.
 
 ## Tests
 
@@ -311,7 +352,8 @@ node arena/test-workspace.mjs   # workspace files, the shared stream (hard links
                                 # the audit (public API reads allowed; logins, writes, other hosts and ports, stream writes not)
 node arena/test-metrics.mjs     # metrics on a hand-made game: windows, energy lost, distributions, flowers and bees,
                                 # self-feeding and handshakes, discrimination, versions, copies, shares
-node arena/test-mechanisms.mjs  # keyword evidence, skeletons, the classifier prompt and parsing (fake model)
+node arena/test-mechanisms.mjs  # keyword evidence (families, keyed checks), levels, the classifier prompt and parsing (fake model)
+node arena/test-dynamics.mjs    # within-game dynamics: mechanisms in use, entropy, dominance and turnover, innovation, freezing
 node arena/test-pause.mjs       # usage-limit detection, pause and resume, in-game sessions on a limit, the game's pause sync
 node arena/test-scaffold.mjs    # a stub scaffold: tools/ on its path, starts, outlives its session, submits by itself from
                                 # its history, is refused over budget, restarts after a crash, forbidden scaffolds (and

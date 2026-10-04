@@ -6,13 +6,15 @@
 //   node arena/cohorts.js --experiment NAME [--classify] [--upto N] > arena/runs/analysis-NAME.md
 //   node arena/cohorts.js --arenas a,b [--classify]
 //   node arena/cohorts.js --experiment NAME --count    how many programs --classify would label (no model calls)
+//   --window S   the within-game windows, in seconds (default 60)
 // --classify  label every distinct program skeleton with haiku (cached in runs/mechanisms-cache.json; a few cents per team
 //             and game). It spends money: run it only with the go-ahead. Without it: cached labels, else keyword evidence.
 // Env: ARENA_BUDGET_USD caps the classifier's spend together with the whole ledger, as for the runner. Never a Fable model.
 import { all, one, pool } from "./lib/db.js";
 import { Api, gamePath } from "./lib/api.js";
 import { callModel } from "./lib/llm.js";
-import { BASE_LEVEL, classifyPrograms, keywordBee, keywordFlower, levelOf, unlabelled } from "./lib/mechanisms.js";
+import { BASE_LEVEL, beeLevelOf, classifyPrograms, keywordBee, keywordFlower, levelOf, unlabelled } from "./lib/mechanisms.js";
+import { dynamics } from "./lib/dynamics.js";
 import { computeGameMetrics, queryAll } from "./lib/metrics.js";
 import { EXPERIMENTS } from "./lib/presets.js";
 
@@ -27,6 +29,7 @@ const cell = (x) => String(x ?? "-").replace(/\|/g, "/").replace(/\n/g, " ");
 const table = (head, rows) => { if (!rows.length) { p("(none)"); p(); return; } p(`| ${head.join(" | ")} |`); p(`|${head.map(() => "---").join("|")}|`); for (const r of rows) p(`| ${r.map(cell).join(" | ")} |`); p(); };
 const pct = (x) => (x == null || Number.isNaN(x) ? "-" : `${Math.round(100 * x)}%`);
 const f2 = (x) => (x == null || Number.isNaN(x) ? "-" : Number(x).toFixed(2));
+const mmss = (ms) => { const t = Math.max(0, Math.round((ms || 0) / 1000)); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`; };
 const big = (x) => { if (x == null || Number.isNaN(x)) return "-"; const a = Math.abs(x); return a >= 1e6 ? `${(x / 1e6).toFixed(2)}M` : a >= 1e4 ? `${(x / 1e3).toFixed(1)}k` : Number(x).toFixed(a < 10 ? 2 : 0); };
 const median = (xs) => { const a = xs.filter((x) => x != null && !Number.isNaN(x)).sort((x, y) => x - y); return a.length ? (a.length % 2 ? a[(a.length - 1) / 2] : (a[a.length / 2 - 1] + a[a.length / 2]) / 2) : null; };
 const sum = (xs) => xs.reduce((s, x) => s + (x || 0), 0);
@@ -40,9 +43,12 @@ const PLAYED = ["played", "interviewed", "judged", "done"];
 async function loadGame(arena, row) {
   const gPath = gamePath(arena.room_short_id, row.game_short_id);
   // After the finish every team's versions are visible (with code when the game is revealed): the versions entity.
-  const [view, teamRows, versionRows] = await Promise.all([Api.view(null, gPath), queryAll(Api, gPath, { from: "teams" }), queryAll(Api, gPath, { from: "versions" })]);
+  const [view, teamRows, versionRows, turnRows] = await Promise.all([Api.view(null, gPath), queryAll(Api, gPath, { from: "teams" }), queryAll(Api, gPath, { from: "versions" }),
+    queryAll(Api, gPath, { from: "turns" })]);
   const idOf = Object.fromEntries(teamRows.map((t) => [t.index, t.id]));
-  const m = row.metrics || await computeGameMetrics(gPath); // in memory only: this script doesn't write to the games
+  // Stored metrics, or (from before the ecology metrics) recomputed in memory: this script doesn't write to the games.
+  const m = row.metrics?.ecology ? row.metrics : await computeGameMetrics(gPath);
+  const turns = turnRows.map((t) => ({ atMs: Number(t.atMs) || 0, bee: idOf[t.bee], flower: idOf[t.flower], action: t.fed ? "feed" : "leave", nectar: t.nectar, flowerVersion: t.flowerVersion, beeVersion: t.beeVersion }));
   const ents = await all(`SELECT e.*, p.name AS persona_name, p.model, p.breeder_id FROM arena.entries e JOIN arena.personas p ON p.id = e.persona_id WHERE e.game_id = $1`, [row.id]);
   const ids = teamRows.map((t) => t.id);
   const teams = ents.filter((e) => !e.sat_out && ids.includes(e.team_id)).map((e) => ({ teamId: e.team_id, name: e.team_name, persona: e.persona_id, model: e.model,
@@ -50,7 +56,7 @@ async function loadGame(arena, row) {
   const programs = versionRows.filter((v) => teams.some((x) => x.teamId === idOf[v.team]))
     .map((v) => ({ team: idOf[v.team], kind: v.kind, version: v.version, code: v.code ?? null, size: v.size, atMs: Number(v.atMs) || 0 }));
   const ideas = await one("SELECT count(DISTINCT idea_id) FILTER (WHERE new_in_game)::int AS new FROM arena.idea_sightings WHERE game_id = $1", [row.id]);
-  return { arena, row, gen: row.generation, config: view.game.config, teams, programs, metrics: m, newIdeas: ideas?.new || 0 };
+  return { arena, row, gen: row.generation, config: view.game.config, clockMs: Number(view.game.clockMs) || 0, teams, programs, turns, metrics: m, newIdeas: ideas?.new || 0 };
 }
 
 // ---------------------------------------------------------------- labels
@@ -69,7 +75,7 @@ async function labelGame(G) {
         feeds: l.feeds ?? "?", threshold: l.threshold ?? (l.kw.threshold ? "fixed" : "none"), memory: l.memory ?? (l.kw.checks.includes("uses-memory") ? "?" : "none"),
         tags: l.tags ?? l.kw.checks, summary: l.summary || "", llm: l.llm }
       : { mechanism: l.mechanism ?? l.kw.mechanism, percentPolicy: l.percentPolicy ?? l.kw.percent, percent: l.percent ?? null, tags: l.tags ?? l.kw.tags,
-        difficulty: l.difficulty || "", summary: l.summary || "", llm: l.llm });
+        families: l.families ?? l.kw.families ?? [], difficulty: l.difficulty || "", summary: l.summary || "", llm: l.llm });
   }
   for (const v of G.programs.filter((x) => !x.code)) G.labels.set(`${v.team}:${v.kind}:${v.version}`, v.kind === "bee" ? { checks: "?", feeds: "?", tags: [] } : { mechanism: "?", percentPolicy: "?", tags: [] });
 }
@@ -78,6 +84,10 @@ async function labelGame(G) {
 
 function gameSummary(G, seen) {
   const m = G.metrics;
+  // Within the game: the mechanisms in use, their entropy, who dominates, what's new (one-minute windows by default).
+  const flowerLabel = (team, v) => { const l = G.labels.get(`${team}:flower:${v}`); return l ? { ...l, level: levelOf(l) } : null; };
+  const beeLabel = (team, v) => { const l = G.labels.get(`${team}:bee:${v}`); return l ? { ...l, level: beeLevelOf(l) } : null; };
+  const dyn = dynamics({ turns: G.turns, ids: G.teams.map((t) => t.teamId), flowerLabel, beeLabel, windowMs: Number(args.window || 60) * 1000, durationMs: G.clockMs, seen: seen.tokens });
   const lastVersion = (teamId, kind) => Math.max(0, ...G.programs.filter((x) => x.team === teamId && x.kind === kind).map((x) => x.version));
   const vm = new Map((m.versions || []).map((v) => [`${v.teamId}:${v.version}`, v]));
   const flowers = G.programs.filter((x) => x.kind === "flower").map((pr) => {
@@ -91,6 +101,7 @@ function gameSummary(G, seen) {
     const v = lastVersion(t.teamId, "bee");
     const code = G.programs.find((x) => x.team === t.teamId && x.kind === "bee" && x.version === v)?.code;
     const l = G.labels.get(`${t.teamId}:bee:${v}`) || { checks: code ? keywordBee(code).checks[0] || "none" : "?", feeds: "?" };
+    l.level = beeLevelOf(l);
     const mt = m.teams?.[t.teamId] || {}, d = m.discrimination?.perBee?.[t.teamId] || {};
     const mem = (m.memory?.teams || []).find((x) => x.teamId === t.teamId) || {};
     return { team: t, version: v, label: l, p90: mt.bee?.decisionMs?.p90, feedRate: mt.bee?.feedRate, nectar: mt.bee?.nectar, tooSlow: mt.bee?.tooSlow, offerFed: d.offerWhenFed, offerLeft: d.offerWhenLeft,
@@ -116,8 +127,16 @@ function gameSummary(G, seen) {
   const fitness = G.teams.map((t) => t.fitness).filter((x) => x != null);
   const teams = Object.values(m.teams || {});
   const D = m.discrimination || {};
+  const E = m.ecology || {};
+  const copies = E.imitation?.copies || [];
   return {
-    G, flowers, bees, byMech, winner, winnerLabel: winnerFlower?.label,
+    G, flowers, bees, byMech, winner, winnerLabel: winnerFlower?.label, dyn, ecology: E,
+    beeLevel: (() => { const xs = bees.map((b) => b.label.level).filter((x) => x != null); return xs.length ? sum(xs) / xs.length : null; })(),
+    families: dyn.families, innovationsPerMinute: dyn.newTokens / Math.max(1 / 60, (G.clockMs || 1) / 60000),
+    signalsCopied: E.imitation?.signalsCopied ?? 0, imitationLag: E.imitation?.medianLagMs ?? null,
+    detected: copies.filter((c) => c.detected).length, copiesN: copies.length, feedsBeforeDetection: median(copies.map((c) => c.rivalFeedsBeforeDetection)),
+    rotations: (E.rotations || []).length, predictions: sum((E.predictions || []).map((p) => p.n)), autarkic: E.autarky?.autarkic ?? null,
+    collapse: [E.autarky?.collapse ? "autarky" : null, dyn.frozen ? "frozen" : null].filter(Boolean).join(", ") || "-",
     dominant: dominant ? { mechanism: dominant[0], share: feeds ? dominant[1].feeds / feeds : null } : null,
     mechMix: mix(finals.map((f) => f.label.mechanism)), percentMix: mix(finals.map((f) => f.label.percentPolicy)),
     meanLevel: finals.length ? sum(finals.map((f) => f.level)) / finals.length : null,
@@ -163,10 +182,10 @@ async function cohortReport(arenaId) {
   if (!arena) { p(`(no arena ${arenaId})`); return null; }
   const rows = await gamesOf(arenaId);
   const s = arena.settings || {};
-  p(`## ${arenaId}${s.experiment ? ` (arm: ${s.experiment.arm})` : ""}`);
+  p(`## ${arenaId}${s.experiment ? ` (${s.experiment.label ? `${s.experiment.label}, ` : ""}arm: ${s.experiment.arm})` : ""}`);
   p(`${s.description || arena.preset}. Common knowledge: ${s.common ? `\`${s.common.dir}\`` : "none"}. ${rows.length} game(s) played.`);
   p();
-  const seen = { marks: new Set() };
+  const seen = { marks: new Set(), tokens: new Set() };
   const sums = [];
   for (const row of rows) {
     const G = await loadGame(arena, row);
@@ -182,6 +201,44 @@ async function cohortReport(arenaId) {
     `${x.verifying}/${x.G.teams.length}`, f2(x.beeP90), pct(x.selfShare), x.handshakes, x.mutual.join(", ") || "-", `${x.copies} (${x.copyLatency != null ? `${(x.copyLatency / 1000).toFixed(1)} s` : "-"})`,
     f2(x.spread), `${x.sessionChanges} / ${x.scaffoldChanges}`, x.dominant ? `${x.dominant.mechanism} (${pct(x.dominant.share)})` : "-",
     x.winnerLabel ? `${x.winner.name}: ${x.winnerLabel.mechanism}, ${x.winnerLabel.percentPolicy}` : "-", x.fresh.join(", ") || "-", x.newIdeas, `${x.tooSlow} / ${pct(x.noResponse)}`]));
+  p("Sophistication and complexity (level: flowers 0-4, bees 0-3; families: species using each signal family; innovations: mechanisms, families " +
+    "and bee checks first seen in this cohort; entropy: of the mechanisms in use across species, per minute; turnover: changes of the dominant mechanism / species " +
+    "(the most nectar given to rival bees) from one minute to the next; imitation: signals copied and the median lag to the first close copy; detection: copies rival bees told " +
+    "apart from their model, and the median rival feeds a copy got before that; rotations: new versions answering old challenges differently; cracks: answers " +
+    "given before the copied species gave them; autarkic: species living mostly off their own bee):");
+  table(["game", "flower level (mean / feed-weighted / max)", "bee level (mean)", "families", "innovations (per minute)", "entropy mean / end (bits)", "turnover: mechanism / species",
+    "signals copied (median lag)", "copies detected (median rival feeds before)", "rotations", "cracks", "self-feeds of feeds", "autarkic species", "collapse"],
+    sums.map((x) => [x.G.gen, `${f2(x.meanLevel)} / ${f2(x.feedLevel)} / ${x.maxLevel}`, f2(x.beeLevel), Object.entries(x.families).map(([k, n]) => `${k} ${n}`).join(", ") || "none",
+      `${x.dyn.newTokens} (${f2(x.innovationsPerMinute)})${x.dyn.innovations.length ? `: ${x.dyn.innovations.map((i) => `${i.token} at ${mmss(i.atMs)}`).join(", ")}` : ""}`,
+      `${f2(x.dyn.entropyMean)} / ${f2(x.dyn.entropyEnd)}`, `${x.dyn.turnover.mechanism} / ${x.dyn.turnover.species}`,
+      `${x.signalsCopied} (${x.imitationLag != null ? `${(x.imitationLag / 1000).toFixed(1)} s` : "-"})`, `${x.detected}/${x.copiesN} (${x.feedsBeforeDetection ?? "-"})`,
+      x.rotations, x.predictions, pct(x.selfShare), x.autarkic ?? "-", x.collapse]));
+
+  for (const x of sums) {
+    const names = Object.fromEntries(x.G.teams.map((t) => [t.teamId, t.name]));
+    p(`Game ${x.G.gen}, minute by minute (mechanisms: species per mechanism; dominant: the most nectar given to rival bees, with its share):`);
+    table(["minute", "turns", "mechanisms in use", "entropy", "dominant mechanism", "dominant species", "flower level", "bee level", "new"],
+      x.dyn.windows.map((w) => [`${mmss(w.from)}-${mmss(w.from + x.dyn.windowMs)}`, w.turns, Object.entries(w.mechanisms).map(([k, n]) => `${k} ${n}`).join(", ") || "-", f2(w.entropy),
+        w.dominantMechanism ? `${w.dominantMechanism.key} (${pct(w.dominantMechanism.share)})` : "-", w.dominantSpecies ? `${names[w.dominantSpecies.key] ?? w.dominantSpecies.key} (${pct(w.dominantSpecies.share)})` : "-",
+        f2(w.meanFlowerLevel), f2(w.meanBeeLevel), w.newTokens.join(", ") || ""]));
+    const E = x.ecology;
+    if (E.energySplit) {
+      p(`Game ${x.G.gen}: where each species' energy went (shares of its budget, size cap × the flower window per turn), and its mean percent minute by minute:`);
+      table(["species of", "turns", "size", "compute", "nectar", "pollen", "lost", "percent by minute"],
+        Object.entries(E.energySplit).map(([id, e]) => [e.team ?? names[id], e.turns, pct(e.size), pct(e.compute), pct(e.nectar), pct(e.pollen), pct(e.lost),
+          ((E.percentOverTime || []).find((y) => y.teamId === id)?.byWindow || []).map((v) => (v == null ? "-" : Math.round(v))).join(" ")]));
+    }
+    if ((E.imitation?.copies || []).length || (E.rotations || []).length || (E.predictions || []).length) {
+      p(`Game ${x.G.gen}: the arms race (copies of a signal by a later version of another species; rotations; cracks):`);
+      table(["what", "who", "of / from", "when", "detail"], [
+        ...(E.imitation?.copies || []).map((c) => ["copy", `${c.copier} v${c.copierVersion}`, `${c.model} v${c.modelVersion}`, mmss(c.atMs),
+          `${c.exact ? "exact" : "same shape"}, ${(c.lagMs / 1000).toFixed(1)} s after the signal appeared; ${c.detected ? `told apart ${(c.detectedAfterMs / 1000).toFixed(1)} s later` : "never told apart"}, ${c.rivalFeedsBeforeDetection} rival feeds before`]),
+        ...(E.rotations || []).map((r) => ["rotation", `${r.team} v${r.version}`, "", mmss(r.atMs), `${r.changed} of ${r.shared} earlier challenges answered differently`]),
+        ...(E.predictions || []).map((q) => ["crack", q.predictor, q.target, mmss(q.firstMs), `${q.n} answers given before ${q.target} gave them`]),
+      ]);
+    }
+  }
+
   const hidden = sum(sums.map((x) => x.G.hidden));
   if (hidden) p(`(${hidden} program versions had no code to read: the games didn't reveal it.)\n`);
 
@@ -237,8 +294,10 @@ async function main() {
   }
   p(`# Cohort analysis: ${ids.join(", ")}`);
   p();
-  p("Flower levels: 0 a cheap rule or badge, 1 work a bee can't check, 2 hash proof of work, 3 a checkable puzzle, sequential work or graded anytime optimisation, " +
-    `+1 for adaptive difficulty or combined proofs (at most 4). Labels: ${args.classify ? "haiku classifier (cached), keyword evidence where it had no reply" : "cached classifier labels where present, else keyword evidence"}.`);
+  p("Flower levels: 0 a cheap rule or badge, 1 work a bee can't check, 2 a keyed signal or hash proof of work, 3 a checkable puzzle, sequential work, graded anytime " +
+    "optimisation or a commitment, +1 for adaptive difficulty, combined proofs or two signal families (at most 4). Bee levels: 0 no check, 1 learns from shapes or " +
+    "what paid, 2 recomputes a rule or a keyed signal, 3 verifies work or a puzzle. " +
+    `Labels: Labels: ${args.classify ? "haiku classifier (cached), keyword evidence where it had no reply" : "cached classifier labels where present, else keyword evidence"}.`);
   p();
   const reports = [];
   for (const id of ids) reports.push(await cohortReport(id));
@@ -246,7 +305,7 @@ async function main() {
   if (ok.length > 1) {
     p("## Cohorts side by side");
     const per = (fn) => ok.map((r) => r.sums.map(fn).join(", "));
-    table(["measure", ...ok.map((r) => `${r.arenaId}${r.arena.settings?.experiment ? ` (${r.arena.settings.experiment.arm})` : ""}`)], [
+    table(["measure", ...ok.map((r) => `${r.arenaId}${r.arena.settings?.experiment ? ` (${r.arena.settings.experiment.label || r.arena.settings.experiment.arm})` : ""}`)], [
       ["feed-weighted level by game", ...per((x) => f2(x.feedLevel))],
       ["max level by game", ...per((x) => x.maxLevel)],
       ["costly flowers by game", ...per((x) => `${x.costly}/${x.G.teams.length}`)],
@@ -259,6 +318,16 @@ async function main() {
       ["feed rate at low / high offers by game", ...per((x) => `${pct(x.lowHigh[0])}/${pct(x.lowHigh[1])}`)],
       ["bees that verify by game", ...per((x) => `${x.verifying}/${x.G.teams.length}`)],
       ["self-feeds of feeds by game", ...per((x) => pct(x.selfShare))],
+      ["bee level by game", ...per((x) => f2(x.beeLevel))],
+      ["signal families by game", ...per((x) => Object.entries(x.families).map(([k, n]) => `${k} ${n}`).join("+") || "none")],
+      ["innovations by game (per minute)", ...per((x) => `${x.dyn.newTokens} (${f2(x.innovationsPerMinute)})`)],
+      ["mechanism entropy, mean by game (bits)", ...per((x) => f2(x.dyn.entropyMean))],
+      ["dominance turnover by game (mechanism/species)", ...per((x) => `${x.dyn.turnover.mechanism}/${x.dyn.turnover.species}`)],
+      ["signals copied by game (median lag s)", ...per((x) => `${x.signalsCopied} (${x.imitationLag != null ? (x.imitationLag / 1000).toFixed(0) : "-"})`)],
+      ["copies detected by game (median rival feeds before)", ...per((x) => `${x.detected}/${x.copiesN} (${x.feedsBeforeDetection ?? "-"})`)],
+      ["rotations / cracks by game", ...per((x) => `${x.rotations}/${x.predictions}`)],
+      ["autarkic species by game", ...per((x) => x.autarkic ?? "-")],
+      ["collapse by game", ...per((x) => x.collapse)],
       ["bee MEMORY used at the end (median share) by game", ...per((x) => pct(median(x.bees.map((b) => b.memShare))))],
       ["bee changes per team by game", ...per((x) => f2(sum(x.bees.map((b) => b.beeChanges)) / Math.max(1, x.bees.length)))],
       ["own-bee handshakes by game", ...per((x) => x.handshakes)],

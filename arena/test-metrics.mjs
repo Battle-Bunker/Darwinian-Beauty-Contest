@@ -102,7 +102,51 @@ const ab = h.handshakes.pairs.find((x) => x.beeId === "A" && x.flowerId === "B")
 check("handshakes: a bee that feeds at one flower far more than elsewhere is flagged", ab?.flag && ab.feedRate === 1 && ab.percent === 60 && ab.percentToOtherBees === 10, ab);
 check("handshakes: two teams favouring each other both ways are mutual", h.handshakes.mutual.length === 1 && h.handshakes.mutual[0].join() === "Alpha,Beta", h.handshakes.mutual);
 
-check("windowFor: about 8 windows in round numbers", windowFor(30000) === 10000 && windowFor(120000) === 15000 && windowFor(1800000) === 300000);
+// Ecology: energy split, imitation and detection, key rotation, cracking, autarky, percent over time.
+{
+  const rowsE = [];
+  const G = (n, tag) => ({ nodes: n, edges: Array.from({ length: n - 1 }, (_, i) => [i, i + 1]), labels: Array.from({ length: n }, (_, i) => `${tag}${i}`) });
+  const add = (atMs, bee, flower, c, r, fed, v, percent = 50, ms = 10, size = 100) => {
+    const energy = r === null ? 0 : (1100 - size) * (150 - ms);
+    rowsE.push({ game: "E", round: Math.floor(atMs / 200) + 1, atMs, turn: 1, bee: IDX[bee], flower: IDX[flower], challenge: c, response: r, fed, percent: r === null ? null : percent, energy,
+      nectar: fed ? (percent / 100) * energy : null, pollen: fed ? (1 - percent / 100) * energy : 0, ms, flowerVersion: v, flowerError: null, beeMs: 1, beeVersion: 1, beeError: null });
+  };
+  // A v1 answers 5, 6, 7 with its signal (graphs); C answers 9 with "q" before A ever does (a prediction).
+  add(0, "B", "A", 5, G(4, "a"), true, 1); add(200, "C", "A", 6, G(5, "a"), true, 1); add(400, "C", "A", 7, G(6, "a"), true, 1);
+  add(600, "B", "C", 9, G(3, "q"), false, 2); add(800, "B", "A", 9, G(3, "q"), true, 1); // C v2 went live at 0.5 s, after A v1 appeared
+  add(1000, "A", "B", 5, G(2, "b"), false, 1); // B v1 (lobby) answers 5 its own way
+  // B v2 (live at 30 s) answers 5 exactly as A v1 did: a copy, 31 s after A's signal appeared. Rival bee C first feeds at
+  // B's copy as often as at A, then stops: detected.
+  let t = 31000;
+  add(t, "A", "B", 5, G(4, "a"), true, 2);
+  for (let i = 0; i < 12; i++) { add(t += 200, "C", "B", 5, G(4, "a"), true, 2); add(t += 200, "C", "A", 5, G(4, "a"), true, 1); }
+  for (let i = 0; i < 12; i++) { add(t += 200, "C", "B", 5, G(4, "a"), false, 2); add(t += 200, "C", "A", 5, G(4, "a"), true, 1); }
+  // A v2 (live at 60 s) answers 5, 6 and 7 differently: a key rotation. Its compute is heavier.
+  add(61000, "B", "A", 5, G(4, "z"), false, 2, 50, 100); add(61200, "B", "A", 6, G(5, "z"), false, 2, 50, 100); add(61400, "B", "A", 7, G(6, "z"), false, 2, 50, 100);
+  // B's bee lives off its own species.
+  for (let i = 0; i < 20; i++) add(62000 + i * 200, "B", "B", 11 + i, G(2, "b"), true, 2, 10);
+  const versionsE = [ver("A", "flower", 1, 100, 0), ver("A", "flower", 2, 100, 60000), ver("B", "flower", 1, 100, 0), ver("B", "flower", 2, 100, 30000), ver("C", "flower", 1, 100, 0), ver("C", "flower", 2, 100, 500)];
+  const e = computeMetrics({ game: { config, clockMs: 70000, round: 350 }, teams, turns: rowsE, versions: versionsE, scores: [], windowMs: 10000 }).ecology;
+  const cp = e.imitation.copies.find((x) => x.copier === "Beta" && x.model === "Alpha");
+  check("imitation: a copy by a version that went live after the signal appeared, with its lag", cp && cp.exact && cp.copierVersion === 2 && cp.modelVersion === 1 && cp.lagMs === 31000
+    && e.imitation.signalsCopied >= 1 && !e.imitation.copies.some((x) => x.copier === "Beta" && x.copierVersion === 1), e.imitation);
+  check("detection: rival bees' feeds at the imitator before they told it from its model", cp && cp.detected && cp.rivalFeedsBeforeDetection === 12 && cp.detectedAfterMs > 0, cp);
+  check("rotation: a new version answering earlier challenges differently", e.rotations.length === 1 && e.rotations[0].teamId === "A" && e.rotations[0].version === 2 && e.rotations[0].changed === 3, e.rotations);
+  check("cracking: an answer given before the other species gave it, by a version written after its rule appeared", e.predictions.some((p) => p.predictor === "Gamma" && p.target === "Alpha" && p.n === 1), e.predictions);
+  // Two rules written in the lobby that agree aren't a crack; nor is a shape every species uses a copy.
+  const conv = computeMetrics({ game: { config, clockMs: 2000, round: 10 }, teams, versions: [ver("A", "flower", 1, 100, 0), ver("B", "flower", 1, 100, 0), ver("B", "flower", 2, 100, 500)], scores: [], windowMs: 10000,
+    turns: [{ ...rowsE[0], atMs: 0, round: 1, flower: 1, flowerVersion: 1, challenge: 3, response: G(3, "x") }, { ...rowsE[0], atMs: 200, round: 2, flower: 0, flowerVersion: 1, challenge: 3, response: G(3, "x") },
+      { ...rowsE[0], atMs: 1000, round: 6, flower: 1, flowerVersion: 2, challenge: 4, response: G(3, "y") }, { ...rowsE[0], atMs: 1200, round: 7, flower: 0, flowerVersion: 1, challenge: 4, response: G(3, "z") },
+      { ...rowsE[0], atMs: 1400, round: 8, flower: 1, flowerVersion: 2, challenge: 4, response: G(3, "w") }] }).ecology;
+  check("convergence isn't cracking or copying: lobby rules that agree, a shape the copier already used", conv.predictions.length === 0 && conv.imitation.copies.length === 0, conv);
+  const eA = e.energySplit.A;
+  check("energy split: size, compute, nectar, pollen and lost add up to the budget", Math.abs(eA.size + eA.compute + eA.nectar + eA.pollen + eA.lost - 1) < 0.01 && eA.compute > 0 && eA.pollen > 0, eA);
+  const auB = e.autarky.teams.find((x) => x.teamId === "B");
+  check("autarky: how much a species lives off its own bee", auB.ownPollenShare > 0.5 && e.autarky.autarkic >= 1 && e.autarky.collapse === false, e.autarky);
+  check("percent over time, per species and window", e.percentOverTime.find((x) => x.teamId === "B").byWindow[3] === 50 && e.percentOverTime.find((x) => x.teamId === "B").byWindow[6] === 10, e.percentOverTime);
+}
+
+check("windowFor: at most 10 windows in round numbers (a minute for a 10-minute game)", windowFor(30000) === 10000 && windowFor(120000) === 15000 && windowFor(600000) === 60000 && windowFor(1800000) === 300000);
 
 console.log(failed ? `${failed} check(s) failed` : "all metrics checks passed");
 process.exit(failed ? 1 : 0);

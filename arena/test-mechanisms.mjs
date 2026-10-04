@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { CLASSIFIER_SYSTEM, classifierPrompt, classifyTeamGame, keywordBee, keywordFlower, levelOf, skeleton, skeletonHash, stripProse } from "./lib/mechanisms.js";
+import { CLASSIFIER_SYSTEM, beeLevelOf, classifierPrompt, classifyTeamGame, keywordBee, keywordFlower, levelOf, skeleton, skeletonHash, stripProse } from "./lib/mechanisms.js";
 
 let failed = 0;
 const check = (name, ok, extra) => { console.log(`${ok ? "ok  " : "FAIL"} ${name}${ok || extra === undefined ? "" : " " + JSON.stringify(extra)}`); if (!ok) failed++; };
@@ -89,7 +89,13 @@ def decide(challenge, response):
 const bee2 = bee1.replace("[1, 2]", "[9, 9]").replace("T = 120", "T = 133");
 check("skeleton: a scaffold's retuned tables and thresholds don't change it", skeletonHash(bee1) === skeletonHash(bee2) && skeleton(bee1).includes("{T}"));
 check("skeleton: different logic does", skeletonHash(bee1) !== skeletonHash(bee1.replace('return "leave", 1', 'return "feed", 1')));
-check("keywords: a bee that hashes counts work", keywordBee("import hashlib\nT = 5\ndef decide(c, r):\n    return hashlib.sha256(b'x').digest(), 1").checks.includes("work-count"));
+check("keywords: a bee that tests hashes for proof of work counts work", keywordBee("import hashlib\nT = 5\ndef decide(c, r):\n    ok = hashlib.sha256(b'x').digest()[0] == 0\n    return 'feed', 1").checks.includes("work-count"));
+check("keywords: a bee that recomputes a hash without a difficulty test checks a key", keywordBee("import hashlib\nK = 'k3y'\ndef decide(c, r):\n    ok = r == hashlib.sha256((K + str(c)).encode()).hexdigest()\n    return 'feed', 1").checks.includes("key-check"));
+const keyed = `import hashlib\nSECRET = "m00nfl0wer"\ndef flower(c):\n    h = hashlib.sha256((SECRET + str(c)).encode()).digest()\n    return {"nodes": 3, "edges": [[0, 1]], "labels": list(h[:3])}, 20\n`;
+check("keywords: signal families: a keyed signal, a puzzle", keywordFlower(keyed).families.includes("keyed?") && keywordFlower(pow).families.includes("puzzle") && !keywordFlower(rule).families.length,
+  [keywordFlower(keyed), keywordFlower(pow).families, keywordFlower(rule).families]);
+check("levels: keyed 2, commitment 3, a flower with two families +1; bee levels", levelOf({ mechanism: "keyed", tags: [] }) === 2 && levelOf({ mechanism: "commitment", tags: [] }) === 3
+  && levelOf({ mechanism: "keyed", tags: [], families: ["keyed", "puzzle"] }) === 3 && beeLevelOf({ checks: "key-check" }) === 2 && beeLevelOf({ checks: "certificate-check" }) === 3 && beeLevelOf({ checks: "none" }) === 0);
 const learner = "def decide(c, r):\n    paid = HISTORY.turns.my_bee().eq('fed', True).group_by('flower').avg('nectar').rows()\n    MEMORY['n'] = MEMORY.get('n', 0) + 1\n    return 'feed', 1";
 check("keywords: a bee that learns from HISTORY's nectar and keeps MEMORY", keywordBee(learner).checks.includes("learns") && keywordBee(learner).checks.includes("uses-memory"), keywordBee(learner));
 
@@ -99,7 +105,8 @@ const versions = [{ kind: "flower", version: 1, code: pow }, { kind: "flower", v
 const prompt = classifierPrompt(versions);
 check("prompt: every program, numbered, in order", /## \[1\] FLOWER v1/.test(prompt) && /## \[2\] FLOWER v2/.test(prompt) && /## \[4\] BEE v2/.test(prompt) && prompt.indexOf("FLOWER v1") < prompt.indexOf("FLOWER v2"));
 check("prompt: the percent policy, energy-aware tags, handshakes, how a bee uses MEMORY", /"percent_policy"/.test(prompt) && /"by-history"/.test(prompt) && /"by-visitor"/.test(prompt) && /"lean"/.test(prompt)
-  && /"own-bee-handshake"/.test(prompt) && /"handshake-only"/.test(prompt) && /"memory": how it uses MEMORY/.test(prompt));
+  && /"own-bee-handshake"/.test(prompt) && /"handshake-only"/.test(prompt) && /"memory": how it uses MEMORY/.test(prompt)
+  && /"families": every signal family/.test(prompt) && /"keyed"/.test(prompt) && /"commitment"/.test(prompt) && /"key-check"/.test(prompt) && /"cracks"/.test(prompt));
 check("system: species, nectar and pollen given, HISTORY, fresh calls, MEMORY", /species/.test(CLASSIFIER_SYSTEM) && /gives it percent% of E as nectar and the rest as pollen/.test(CLASSIFIER_SYSTEM)
   && /HISTORY/.test(CLASSIFIER_SYSTEM) && /MEMORY/.test(CLASSIFIER_SYSTEM) && !/ledger|surplus/.test(CLASSIFIER_SYSTEM + prompt));
 check("prompt: a search that runs until its time limit is time-bounded, not adaptive", /NOT just\s+running until the time limit/.test(prompt));
@@ -111,7 +118,7 @@ const fake = async ({ model, prompt }) => {
   calls++;
   if (/fable/i.test(model)) throw new Error("fable");
   const items = [...prompt.matchAll(/## \[(\d+)\] (FLOWER|BEE) v(\d+)/g)].reverse().map(([, n, k, v]) => ({ n: Number(n), kind: k.toLowerCase(), version: Number(v),
-    ...(k === "FLOWER" ? { mechanism: Number(v) === 1 ? "hash-pow" : "rule", percent_policy: "fixed", percent: 30, tags: ["time-bounded", "challenge-tied"], difficulty: "10 bits" }
+    ...(k === "FLOWER" ? { mechanism: Number(v) === 1 ? "hash-pow" : "rule", percent_policy: "fixed", percent: 30, tags: ["time-bounded", "challenge-tied"], families: ["puzzle", "Keyed", "nonsense"], difficulty: "10 bits" }
       : { checks: "work-count", feeds: "by-check", threshold: "adaptive", memory: "counters", tags: ["learns"] }), summary: "x" }));
   return { text: "Here you go: " + JSON.stringify({ items }) };
 };
@@ -122,6 +129,7 @@ check("classifier: one call; labels for every version, the retuned bee shares on
   && labels.get("flower:2").mechanism === "rule" && labels.get("bee:1").checks === "work-count" && labels.get("bee:1").feeds === "by-check" && labels.get("bee:1").memory === "counters"
   && labels.get("bee:2").skeleton === labels.get("bee:1").skeleton,
   { calls, l: [...labels.entries()] });
+check("classifier: families kept (known ones only)", f1.families.join() === "puzzle,keyed", f1.families);
 check("classifier: keyword evidence attached", f1.kw.mechanism === "hash-pow" && labels.get("flower:2").kw.mechanism === "rule");
 let refused = false;
 try { await classifyTeamGame(versions, { callModel: fake, model: "fable-1" }); } catch { refused = true; }
