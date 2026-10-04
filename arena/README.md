@@ -398,6 +398,7 @@ node arena/test-workspace.mjs   # workspace files, the shared stream (hard links
 node arena/test-metrics.mjs     # metrics on a hand-made game: windows, energy lost, distributions, flowers and bees,
                                 # self-feeding and handshakes, discrimination, versions, copies, shares
 node arena/test-mechanisms.mjs  # keyword evidence (families, keyed checks), levels, the classifier prompt and parsing (fake model)
+node arena/test-wealth.mjs      # honest wealth signalling: visible work against the hidden budget R, bees feeding at rich instances
 node arena/test-dynamics.mjs    # within-game dynamics: mechanisms in use, entropy, dominance and turnover, innovation, freezing
 node arena/test-pause.mjs       # usage-limit detection, pause and resume, in-game sessions on a limit, the game's pause sync
 node arena/test-scaffold.mjs    # a stub scaffold: tools/ on its path, starts, outlives its session, submits by itself from
