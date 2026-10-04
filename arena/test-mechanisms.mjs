@@ -90,6 +90,9 @@ check("skeleton: a scaffold's retuned tables and thresholds don't change it", sk
 check("skeleton: different logic does", skeletonHash(bee1) !== skeletonHash(bee1.replace('return "leave", 1', 'return "feed", 1')));
 check("keywords: a bee that tests hashes for proof of work counts work", keywordBee("import hashlib\nT = 5\ndef decide(c, r):\n    ok = hashlib.sha256(b'x').digest()[0] == 0\n    return 'feed', 1").checks.includes("work-count"));
 check("keywords: a bee that recomputes a hash without a difficulty test checks a key", keywordBee("import hashlib\nK = 'k3y'\ndef decide(c, r):\n    ok = r == hashlib.sha256((K + str(c)).encode()).hexdigest()\n    return 'feed', 1").checks.includes("key-check"));
+const fp = "import hashlib, json\ndef decide(challenge, response):\n    f = hashlib.sha256(json.dumps(response).encode()).hexdigest()[:6]\n    MEMORY['f'] = f\n    return 'feed', 1";
+check("keywords: a bee that fingerprints responses (a sliced digest kept in MEMORY) neither counts work nor checks a key", keywordBee(fp).checks.includes("fingerprints")
+  && !keywordBee(fp).checks.includes("work-count") && !keywordBee(fp).checks.includes("key-check"), keywordBee(fp));
 const keyed = `import hashlib\nSECRET = "m00nfl0wer"\ndef flower(c):\n    h = hashlib.sha256((SECRET + str(c)).encode()).digest()\n    return {"nodes": 3, "edges": [[0, 1]], "labels": list(h[:3])}, 20\n`;
 check("keywords: signal families: a keyed signal, a puzzle", keywordFlower(keyed).families.includes("keyed?") && keywordFlower(pow).families.includes("puzzle") && !keywordFlower(rule).families.length,
   [keywordFlower(keyed), keywordFlower(pow).families, keywordFlower(rule).families]);

@@ -71,7 +71,7 @@ async function labelGame(G) {
   for (const v of versions) {
     const l = label(v);
     G.labels.set(`${v.team}:${v.kind}:${v.version}`, v.kind === "bee"
-      ? { checks: l.checks ?? (l.kw.checks.find((c) => !["learns", "random-challenges", "uses-memory", "uses-fed"].includes(c)) || (l.kw.checks.includes("learns") ? "learned-value" : "none")),
+      ? { checks: l.checks ?? (l.kw.checks.find((c) => !["learns", "random-challenges", "uses-memory", "uses-fed", "fingerprints"].includes(c)) || (l.kw.checks.includes("learns") ? "learned-value" : "none")),
         feeds: l.feeds ?? "?", threshold: l.threshold ?? (l.kw.threshold ? "fixed" : "none"), memory: l.memory ?? (l.kw.checks.includes("uses-memory") ? "?" : "none"),
         tags: l.tags ?? l.kw.checks, summary: l.summary || "", llm: l.llm }
       : { mechanism: l.mechanism ?? l.kw.mechanism, percentPolicy: l.percentPolicy ?? l.kw.percent, percent: l.percent ?? null, tags: l.tags ?? l.kw.tags,

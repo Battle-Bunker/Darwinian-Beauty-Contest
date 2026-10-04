@@ -53,7 +53,9 @@ export function skeleton(code) {
 export const skeletonHash = (code) => crypto.createHash("sha1").update(skeleton(code)).digest("hex").slice(0, 16);
 
 const HASH = /\bhashlib\b|\bsha(?:1|224|256|384|512)\b|\bmd5\b|\bblake2[bs]?\b|\bsha3_\d+\b/;
-const HASH_TEST = /digest\(\)\s*\[|digest\(\)\s*[<>]|hexdigest\(\)\s*(?:\[|\.startswith|[<>])|int\.from_bytes\([^)]*digest|int\([^)]*hexdigest\(\)[^)]*16\)|bit_length\(\)|leading|zero.?bits|difficulty|target|\[\s*\d\s*\]\s*(?:==\s*0\b|<\s*\d+)|\[\s*:\s*\d+\s*\]\s*(?:<|==)/i;
+// A difficulty test on a hash (proof of work): an indexed or sliced digest compared with something, a prefix test, ...
+// (a digest sliced for a fingerprint, e.g. hexdigest()[:6] kept in MEMORY, is not one).
+const HASH_TEST = /digest\(\)\s*\[[^\]\n]*\]\s*(?:==|!=|<|>)|digest\(\)\s*[<>]|hexdigest\(\)\s*(?:\.startswith|[<>])|int\.from_bytes\([^)]*digest|int\([^)]*hexdigest\(\)[^)]*16\)|bit_length\(\)|leading|zero.?bits|difficulty|target|\[\s*\d\s*\]\s*(?:==\s*0\b|<\s*\d+)|\[\s*:\s*\d+\s*\]\s*(?:<|==)/i;
 const TIME = /\btime\.(?:time|perf_counter|monotonic|process_time)\s*\(/;
 const BUDGET = /GAME\s*\[\s*["']ms["']\s*\]|deadline|stop\s*=|budget/i;
 const PUZZLE = /cliq|paley|graceful|colou?r|chromatic|factori|is_prime|miller|rabin|hamilton|sudoku|queens|knapsack|subset.?sum|vertex.?cover|independent.?set|matching|tsp|tour|latin|magic.?square|sat\b|pow\([^()]*\(\s*\w+\s*-\s*1\s*\)\s*\/\/\s*2/i;
@@ -91,12 +93,26 @@ export function keywordFlower(code) {
 /** Does a bee's code define fed(nectar), the optional call after a feed? (Python or TypeScript, at the top level.) */
 export const definesFed = (code) => /^(?:def\s+fed\s*\(|(?:export\s+)?(?:async\s+)?function\s+fed\s*\(|(?:const|let|var)\s+fed\s*=)/m.test(stripProse(code));
 
+/** The argument texts of every hash call in the code (sha256(...), md5(...), hashlib.new(...)), nested calls included. */
+function hashArgs(code) {
+  const out = [];
+  for (const m of code.matchAll(/(?:\bsha\w*|\bmd5|\bblake2\w*|hashlib\.new)\s*\(/g)) {
+    let i = m.index + m[0].length, depth = 1;
+    const start = i;
+    for (; i < code.length && depth; i++) { if (code[i] === "(") depth++; else if (code[i] === ")") depth--; }
+    out.push(code.slice(start, i - 1));
+  }
+  return out;
+}
+
 /** Keyword evidence for a bee: does it re-check work (hashes, certificates) or rules, or only learn from what paid (fed and
  * MEMORY)? */
 export function keywordBee(code) {
   const c = stripProse(code);
   const checks = [];
-  if (HASH.test(c)) checks.push(HASH_TEST.test(c) ? "work-count" : "key-check");
+  // A hash of the challenge recomputes a keyed signal; a hash of the response only is a fingerprint (to remember it).
+  const ofChallenge = hashArgs(c).some((a) => /\b(?:challenge|c)\b/.test(a));
+  if (HASH.test(c)) checks.push(HASH_TEST.test(c) ? "work-count" : ofChallenge ? "key-check" : "fingerprints");
   if (PUZZLE.test(c)) checks.push("certificate-check");
   const fed = definesFed(c);
   if (fed && /\bMEMORY\b/.test(c)) checks.push("learns"); // fed(nectar) can save what paid
