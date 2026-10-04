@@ -107,7 +107,7 @@ function chain(ast: QueryAst, lang: "py" | "ts"): string[] {
     const custom = canon !== defaultAs(a);
     const field = a.field ? JSON.stringify(name(a.field)) : null;
     if (py) out.push(`${a.fn}(${[field, custom ? `as_=${JSON.stringify(canon)}` : null].filter(Boolean).join(", ")})`);
-    else out.push(`${a.fn}(${[field ?? (custom ? "undefined" : null), custom ? JSON.stringify(canon) : null].filter(Boolean).join(", ")})`);
+    else out.push(`${a.fn}(${[field ?? (custom ? "null" : null), custom ? JSON.stringify(canon) : null].filter(Boolean).join(", ")})`);
   }
   for (const o of ast.orderBy ?? []) {
     const f = JSON.stringify(aggName.get(o.field) ?? name(o.field));

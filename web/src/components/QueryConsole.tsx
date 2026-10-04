@@ -230,7 +230,12 @@ function Console({ target }: { target: QueryTarget }) {
           <div className="qc-list">
             {draft.aggs.map((a) => (
               <AggRow key={a.id} a={a} ent={ent} schema={schema} error={errors[a.id]}
-                onChange={(n) => setDraft((d) => ({ ...d, aggs: d.aggs.map((x) => (x.id === a.id ? n : x)) }))}
+                onChange={(n) => setDraft((d) => {
+                  // A sort on this aggregate follows it when it's renamed (or its function or field changes).
+                  const name = (x: DAgg) => x.as.trim() || defaultAs({ fn: x.fn, ...(x.field ? { field: x.field } : {}) });
+                  const before = name(a), after = name(n);
+                  return { ...d, aggs: d.aggs.map((x) => (x.id === a.id ? n : x)), order: d.order.map((y) => (y.field === before ? { ...y, field: after } : y)) };
+                })}
                 onRemove={() => setDraft((d) => ({ ...d, aggs: d.aggs.filter((x) => x.id !== a.id) }))} />
             ))}
             <button className="btn btn-small btn-ghost qc-add" onClick={() => setDraft((d) => ({ ...d, aggs: [...d.aggs, { id: id(), fn: "count", field: "", as: "" }] }))}>+ aggregate</button>
