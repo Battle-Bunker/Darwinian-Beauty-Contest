@@ -5,17 +5,20 @@
 // and my team over time.
 import { useMemo, useState } from "react";
 import type { GameView, LedgerEntry, Team } from "../types";
+import { gameBase } from "../api";
 import type { LedgerStore } from "../lib/history";
 import { useLiveTick } from "../lib/live";
 import { binTurns, binWidth, recFromEntry, sizeLookup, totalsOf, type MetricKey } from "../lib/stats";
 import { fmtClock, fmtE, fmtEExact, fmtMs, plural } from "../lib/format";
 import { EnergySplit, MetricPicker, TeamSeriesChart } from "./Charts";
 import { Value } from "./Value";
+import { ResponseView, responseUrl } from "./ResponseView";
 import { Alert, Spinner } from "./ui";
 
 const PAGE = 100;
 
 export function LedgerPanel({ view, ledger }: { view: GameView; ledger: LedgerStore }) {
+  const base = gameBase(view.room.shortId, view.game.shortId);
   const rev = useLiveTick(ledger, 1000);
   const g = view.game;
   const cfg = g.config;
@@ -132,7 +135,7 @@ export function LedgerPanel({ view, ledger }: { view: GameView; ledger: LedgerSt
                   <td className="left nowrap"><IndexChip i={e.bee} teams={teams} /></td>
                   <td className="left nowrap"><IndexChip i={e.flower} teams={teams} /></td>
                   <td className="left"><Value v={e.challenge} role="challenge" max={18} /></td>
-                  <td className="left">{e.response === null ? <span className="mono bad-text">None</span> : <Value v={e.response} role="response" max={18} />}</td>
+                  <td className="left"><ResponseView p={{ r: e.response, bytes: e.responseBytes ?? null, hash: e.responseHash ?? null, preview: e.responseHash ? "" : null }} url={responseUrl(base, e.seq)} max={18} /></td>
                   <td className="left">{e.fed ? <span className="ok-text">True</span> : <span className="muted">False</span>}</td>
                   <td className={e.percent === null ? "null" : ""}>{e.percent ?? "None"}</td>
                   <Num v={e.energy} />

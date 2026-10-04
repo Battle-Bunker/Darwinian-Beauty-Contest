@@ -9,6 +9,7 @@ import { loadEarlier, useLiveTick, type ActionSource, type LiveStore } from "../
 import { errorText } from "../api";
 import { fmtClock, fmtE, fmtEExact, fmtMs } from "../lib/format";
 import { Value } from "./Value";
+import { noResponse, partsOfAction, ResponseView, responseUrl } from "./ResponseView";
 import { DropIcon, PauseIcon, PlayIcon } from "./Icons";
 import { Alert } from "./ui";
 
@@ -99,7 +100,7 @@ export function Feed({ view, source, base }: { view: GameView; source: ActionSou
         <p className="muted feed-empty">{g.status === "lobby" ? "Nothing yet: the bees fly once the game starts." : list.length ? "Nothing matches these filters." : "No turns yet."}</p>
       ) : (
         <ol className="feed-list" aria-label="Turns, newest first">
-          {rows.out.map((a) => <FeedRow key={a.seq} a={a} teams={teams} myTeamId={myTeamId} budgets={g.config.budgets} />)}
+          {rows.out.map((a) => <FeedRow key={a.seq} a={a} teams={teams} myTeamId={myTeamId} budgets={g.config.budgets} base={base} />)}
         </ol>
       )}
       <div className="row">
@@ -129,12 +130,17 @@ export function Took({ ms, limit, what }: { ms: number; limit: number; what: str
   );
 }
 
-export const FeedRow = memo(function FeedRow({ a, teams, myTeamId, tenths = true, own = false, budgets }: {
+export const FeedRow = memo(function FeedRow({ a, teams, myTeamId, tenths = true, own = false, budgets, base, fedRuns = false }: {
   a: Action; teams: Record<string, Team>; myTeamId: string | null; tenths?: boolean; own?: boolean; budgets?: Record<Kind, Budget>;
+  /** The game's API base, for a big response's "load the full response" (none in the try panel). */
+  base?: string;
+  /** The bee defines fed(): after a feed it runs, in the same instance (shown on feed rows; try panel). */
+  fedRuns?: boolean;
 }) {
   const slow = isTooSlow(a);
   const isFed = a.action === "feed";
-  const failed = a.action !== "arrive" && (a.r === null || !!a.flowerError);
+  const resp = partsOfAction(a);
+  const failed = a.action !== "arrive" && (noResponse(resp) || !!a.flowerError);
   const hasE = typeof a.energy === "number";
   return (
     <li className={`feed-row feed-${a.action} ${failed ? "feed-failed" : ""} ${slow ? "feed-slow" : ""}`}>
@@ -152,11 +158,12 @@ export const FeedRow = memo(function FeedRow({ a, teams, myTeamId, tenths = true
         {a.action === "arrive" ? <span className="arrive-text" title="The engine drew this flower for the bee's turn: it flies there and asks">arrives</span> : (
           <span className="step">
             <Value v={a.c} role="challenge" max={24} /><span className="arrow">→</span>
-            {failed ? <span className="bad-text mono" title={a.flowerError ?? "no response"}>None</span> : <Value v={a.r} role="response" max={24} />}
+            <ResponseView p={resp} url={base ? responseUrl(base, a.seq) : null} failedText={a.flowerError ?? undefined} />
           </span>
         )}
         {isFed && <span className="ok-text nowrap"><DropIcon size={15} /> fed{typeof a.nectar === "number" && <>: <b title={fmtEExact(a.nectar)}>{fmtE(a.nectar)}</b> nectar</>}</span>}
         {a.action === "leave" && <span className="muted">left</span>}
+        {isFed && fedRuns && <span className="fed-ran" title="The bee defines fed(): it ran after this feed, in the same program instance as the decision, and MEMORY was saved after it. What it printed shows with the next turn.">then fed({typeof a.nectar === "number" ? fmtE(a.nectar) : "nectar"})</span>}
         {a.action !== "arrive" && hasE && (
           <span className="feed-energy" title={`E = ${fmtEExact(a.energy)}: what was left after size and compute. ${a.percent ?? "?"}% offered as nectar; on a feed the rest is given as pollen.`}>
             {a.percent ?? "?"}% of {fmtE(a.energy)}
@@ -174,7 +181,7 @@ export const FeedRow = memo(function FeedRow({ a, teams, myTeamId, tenths = true
           </span>
         )}
       </span>
-      {a.log && <pre className="bee-log feed-log" aria-label="What the bee printed">{a.log}</pre>}
+      {a.log && <pre className="bee-log feed-log" aria-label="What the bee printed" title="What the bee printed in this turn's decide, and in first and fed since its last turn">{a.log}</pre>}
     </li>
   );
 });

@@ -17,7 +17,8 @@ export interface GameConfig {
   challengeType: string;
   responseType: string;
   maxLen: number;
-  maxNodes: number;         // trees and graphs
+  maxNodes: number;         // trees and graphs (challenges only)
+  maxResponseBytes?: number; // the most UTF-8 bytes of a response's JSON text (default 1 MiB)
   revealOnFinish: boolean;  // all code and every bee's prints become public when the game ends
   budgets: Record<Kind, Budget>;
 }
@@ -70,10 +71,13 @@ export interface Team {
   memory?: BeeMemory | null;                            // the bee's MEMORY: own team during play, everyone's after
 }
 
+/** A bee's MEMORY values: a flat key–value store. */
+export type MemoryValue = string | number | boolean | null;
+
 /** A bee's MEMORY: only the bee writes it; a new bee version starts with {}. Read only, everywhere. */
 export interface BeeMemory {
-  value: unknown;     // a JSON value
-  bytes: number;      // its size as canonical JSON (sorted keys, no spaces, UTF-8)
+  value: Record<string, MemoryValue> | unknown;   // string keys to strings, numbers, booleans or null
+  bytes: number;      // Σ over entries of (UTF-8 bytes of the key + UTF-8 bytes of the value's JSON)
   cap: number;        // budgets.bee.memory
   version: number;    // the bee version it belongs to (it was cleared when that version went live)
   error?: string | null;  // why the latest save was refused (over the cap, not plain JSON): the old memory was kept
@@ -97,7 +101,10 @@ export interface Action {
   action: ActionKind;
   // feed and leave, public:
   c?: unknown;
-  r?: unknown;              // null if the flower failed
+  r?: unknown;              // null if the flower failed, or if the response is over 4 KB (then rHash and rPreview)
+  rBytes?: number | null;   // the response's size: UTF-8 bytes of its JSON text (null if none)
+  rHash?: string | null;    // over 4 KB only: SHA-256 (hex) of its JSON text; the whole thing at GET base/responses/:seq
+  rPreview?: string | null; // over 4 KB only: the first 4 KB of its JSON text
   pollen?: number | null;   // what the flower kept: (1 − percent/100) × E on a feed, 0 on a leave
   nectar?: number | null;   // feed only: percent/100 × E
   // public on a feed; on a leave the flower's team only (everyone after finish):
@@ -117,12 +124,13 @@ export interface Action {
 export interface ActionsPage { actions: Action[]; lastSeq: number; clockMs: number; round: number; status: GameStatus }
 
 /**
- * One turn record of the team ledger: what the team's programs see in HISTORY.turns (plus seq for paging).
- * Teams are indices. A field the viewer may not see is null.
+ * One turn record of the team ledger (the `turns` entity of docs/QUERY.md), as the viewer's team may see it,
+ * plus seq for paging. Teams are indices. A field the viewer may not see is null.
  */
 export interface LedgerEntry {
   seq: number; game?: string; round: number; atMs?: number; turn?: number; bee: number; flower: number;
   challenge: unknown; response: unknown; fed: boolean;
+  responseBytes?: number | null; responseHash?: string | null;   // a response over 4 KB: response null, its size and hash
   percent: number | null; energy: number | null;   // public on a feed, else the flower's team's
   nectar: number | null; pollen: number | null;    // nectar null and pollen 0 on a leave
   ms: number | null; flowerVersion?: number | null; flowerError?: string | null;  // the flower's team's
@@ -193,11 +201,14 @@ export interface ProgramInterface {
   types: { challenge: string; response: string; challengeMeans: string; responseMeans: string; rules: string[] };
 }
 
-export interface TryFlowerRow { c: unknown; r: unknown; percent: number | null; energy: number | null; ms: number | null; error?: string }
+export interface TryFlowerRow {
+  c: unknown; r: unknown; rBytes?: number | null; rHash?: string | null; rPreview?: string | null;
+  percent: number | null; energy: number | null; ms: number | null; error?: string;
+}
 export interface TryFlowerResult { size?: number; results: TryFlowerRow[]; error?: string }
 export interface TryBeeResult {
   actions: Action[];
   problems: { kind?: Kind | string; version?: number; error: string; team?: number }[];
   feeds: number; nectar: number; pollen: number; rounds: number;
-  memory?: unknown;   // what the test bee's MEMORY ended with
+  memory?: { value: unknown; bytes: number; cap: number; error: string | null } | unknown;   // what the test bee's MEMORY ended with
 }

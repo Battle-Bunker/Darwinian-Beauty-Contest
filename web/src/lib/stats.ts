@@ -21,7 +21,7 @@ export function recFromTurn(t: Turn): TurnRec | null {
   const e = t.end;
   if (!e) return null;
   return {
-    t: t.t0, bee: t.bee, flower: t.flower, fed: e.action === "feed", failed: e.r === null || !!e.flowerError,
+    t: t.t0, bee: t.bee, flower: t.flower, fed: e.action === "feed", failed: (e.r === null && !e.rHash) || !!e.flowerError,
     percent: num(e.percent), energy: num(e.energy), ms: num(e.ms), pollen: num(e.pollen), nectar: num(e.nectar),
     flowerVersion: num(e.flowerVersion),
   };
@@ -29,7 +29,7 @@ export function recFromTurn(t: Turn): TurnRec | null {
 
 export function recFromEntry(e: LedgerEntry, roundMs: number): TurnRec {
   return {
-    t: e.atMs ?? (e.round - 1) * roundMs, bee: e.bee, flower: e.flower, fed: !!e.fed, failed: e.response === null || !!e.flowerError,
+    t: e.atMs ?? (e.round - 1) * roundMs, bee: e.bee, flower: e.flower, fed: !!e.fed, failed: (e.response === null && !e.responseHash) || !!e.flowerError,
     percent: num(e.percent), energy: num(e.energy), ms: num(e.ms), pollen: num(e.pollen), nectar: num(e.nectar),
     flowerVersion: num(e.flowerVersion),
   };

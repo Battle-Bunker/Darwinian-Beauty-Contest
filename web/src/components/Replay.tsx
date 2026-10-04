@@ -3,6 +3,7 @@
 // every field of every turn in the round on screen, and the charts show each team over the game.
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { GameView, Team } from "../types";
+import { gameBase } from "../api";
 import type { HistoryStore } from "../lib/history";
 import { useLiveTick, type Ticking } from "../lib/live";
 import { fed, type Turn, type TurnIndex } from "../lib/turns";
@@ -13,6 +14,7 @@ import { EnergySplit, MetricPicker, TeamSeriesChart } from "./Charts";
 import { PauseIcon, PlayIcon, ReplayIcon } from "./Icons";
 import { Progress } from "./ui";
 import { Value } from "./Value";
+import { partsOfAction, ResponseView, responseUrl } from "./ResponseView";
 import { MemoryTable } from "./Memory";
 
 const SPEEDS = [0.1, 0.25, 0.5, 1, 2, 5, 10];
@@ -54,6 +56,7 @@ class ReplayDriver implements GardenDriver, Ticking {
 
 export function Replay({ view, history }: { view: GameView; history: HistoryStore }) {
   const g = view.game;
+  const base = gameBase(view.room.shortId, g.shortId);
   const cfg = g.config;
   const roundMs = cfg.budgets.flower.ms + cfg.budgets.bee.ms;
   const endMs = Math.max(roundMs, g.clockMs);
@@ -94,7 +97,7 @@ export function Replay({ view, history }: { view: GameView; history: HistoryStor
         <Transport driver={driver} roundMs={roundMs} endMs={endMs} loadedT={loadedT} round={round} />
         <GardenLegend own={false} />
       </div>
-      <RoundInspector index={history.turns} round={round} roundMs={roundMs} teams={teams} mine={mine} focus={focus} rev={hrev} />
+      <RoundInspector index={history.turns} round={round} roundMs={roundMs} teams={teams} mine={mine} focus={focus} rev={hrev} base={base} />
       <ReplayCharts view={view} history={history} teams={teams} mine={mine} focus={focus} setFocus={setFocus} cursor={t} onSeek={(x) => driver.seek(x)} hrev={hrev} />
       {teams.some((x) => x.memory) && (
         <section>
@@ -161,8 +164,8 @@ function Transport({ driver, roundMs, endMs, loadedT, round }: { driver: ReplayD
 }
 
 /** Every turn of the round on screen, every field (all revealed now). */
-function RoundInspector({ index, round, roundMs, teams, mine, focus, rev }: {
-  index: TurnIndex; round: number; roundMs: number; teams: Team[]; mine: number; focus: number | null; rev: number;
+function RoundInspector({ index, round, roundMs, teams, mine, focus, rev, base }: {
+  index: TurnIndex; round: number; roundMs: number; teams: Team[]; mine: number; focus: number | null; rev: number; base: string;
 }) {
   const turns = useMemo(() => index.between((round - 1) * roundMs, round * roundMs), [index, round, roundMs, rev]); // eslint-disable-line react-hooks/exhaustive-deps
   const [onlyFocus, setOnlyFocus] = useState(false);
@@ -182,7 +185,7 @@ function RoundInspector({ index, round, roundMs, teams, mine, focus, rev }: {
               </tr>
             </thead>
             <tbody>
-              {shown.map((t) => <InspectorRow key={`${t.bee}:${t.turn}`} t={t} teams={teams} mine={mine} focus={focus} />)}
+              {shown.map((t) => <InspectorRow key={`${t.bee}:${t.turn}`} t={t} teams={teams} mine={mine} focus={focus} base={base} />)}
             </tbody>
           </table>
         </div>
@@ -191,7 +194,7 @@ function RoundInspector({ index, round, roundMs, teams, mine, focus, rev }: {
   );
 }
 
-function InspectorRow({ t, teams, mine, focus }: { t: Turn; teams: Team[]; mine: number; focus: number | null }) {
+function InspectorRow({ t, teams, mine, focus, base }: { t: Turn; teams: Team[]; mine: number; focus: number | null; base: string }) {
   const e = t.end;
   const isFed = fed(t);
   const chip = (i: number) => (
@@ -201,7 +204,7 @@ function InspectorRow({ t, teams, mine, focus }: { t: Turn; teams: Team[]; mine:
   return (
     <tr className={`${hl ? "mine" : ""}`}>
       <td className="left nowrap">{chip(t.bee)} → {chip(t.flower)}</td>
-      <td className="left">{e ? <span className="step"><Value v={e.c} role="challenge" max={20} /><span className="arrow">→</span>{e.r === null || e.flowerError ? <span className="bad-text mono" title={e.flowerError ?? undefined}>None</span> : <Value v={e.r} role="response" max={20} />}</span> : <span className="muted">…</span>}</td>
+      <td className="left">{e ? <span className="step"><Value v={e.c} role="challenge" max={20} /><span className="arrow">→</span><ResponseView p={partsOfAction(e)} url={responseUrl(base, e.seq)} max={20} failedText={e.flowerError ?? undefined} /></span> : <span className="muted">…</span>}</td>
       <td className="left">{!e ? "" : isFed ? <span className="ok-text">fed</span> : <span className="muted">left</span>}{e?.beeError && <span className="err-detail mono">{e.beeError}</span>}{e?.flowerError && <span className="err-detail mono">flower: {e.flowerError}</span>}</td>
       <td>{e?.percent ?? "–"}</td>
       <td title={fmtEExact(e?.energy)}>{fmtE(e?.energy)}</td>
