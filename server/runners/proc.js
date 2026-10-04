@@ -14,8 +14,8 @@ function command(language, role) {
 
 export class ProgramProcess {
   /**
-   * role: "flower" | "bee". setup: {code, ms, limitMs?, game, maxChars, ledger}: limitMs is a bee call's hard
-   * stop; ledger is the team ledger so far (later entries come with sync()).
+   * role: "flower" | "bee". setup: {code, ms, limitMs?, game, maxChars, maxResponseBytes?}: limitMs is a bee
+   * call's hard stop.
    */
   constructor(language, role, setup) {
     const [cmd, args] = command(language, role);
@@ -35,7 +35,6 @@ export class ProgramProcess {
     this.child.stdin.on("error", () => {});
     // Setup gets a longer leash (bee module code may precompute; python startup is ~50ms).
     this.ready = this.#request(setup, setup.ms * 10 + 15000);
-    this.synced = this.ready; // settles once every ledger entry sent so far is in the program's ledger
   }
 
   #onData(d) {
@@ -67,7 +66,7 @@ export class ProgramProcess {
     const p = (this.inflight = this.queue.shift());
     // Hard stop if the runner itself stops answering (e.g. a program swallowed its timeout).
     p.timer = setTimeout(() => { this.#fail("Timeout: program stopped responding"); this.kill(); }, p.timeoutMs);
-    this.child.stdin.write(JSON.stringify(p.obj) + "\n");
+    this.child.stdin.write((typeof p.obj === "string" ? p.obj : JSON.stringify(p.obj)) + "\n");
   }
 
   #request(obj, timeoutMs) {
@@ -78,18 +77,12 @@ export class ProgramProcess {
     });
   }
 
-  /** One request; killed (and answered {e, dead}) if the runner hasn't replied by the backstop. */
+  /**
+   * One request (an object, or its JSON text already made); killed (and answered {e, dead}) if the runner
+   * hasn't replied by the backstop.
+   */
   call(obj, timeoutMs = this.backstopMs) {
     return this.#request(obj, timeoutMs);
-  }
-
-  /**
-   * Append entries to the program's ledger, between calls. Requests run in order, so a call sent after this
-   * sees them; a caller that times a call awaits `synced` first, so the delivery is never on its clock.
-   */
-  sync(entries) {
-    if (!entries.length || this.dead) return this.synced;
-    return (this.synced = this.#request({ op: "ledger", entries }, 15000));
   }
 
   kill() {
