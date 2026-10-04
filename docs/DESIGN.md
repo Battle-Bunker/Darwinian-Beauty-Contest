@@ -173,9 +173,10 @@ it into the next call's fresh context. Both happen before the bee's 50 ms start.
 action keeps `r = null`, its size, its SHA-256 and its first 4 KB, which is what pages, the ledger, the
 query endpoints and the live feeds (SSE, WebSocket) carry. `GET …/responses/:seq` serves the whole text.
 
-**Measured** on this machine (4 cores, Postgres 16), a live game of 6 teams whose flowers all answer every
-turn with about 1 MB and whose bees never feed (30 turns a second, the most 6 bees can take), 20 s of game
-time each:
+**Measured** at a 1 MB cap (the default is now 65,536 bytes, so these are 16× the worst case a default game
+allows), on this machine (4 cores, Postgres 16), a live game of 6 teams whose flowers all answer every turn
+with about 1 MB and whose bees never feed (30 turns a second, the most 6 bees can take), 20 s of game time
+each:
 
 | response | flower CPU per answer (Python) | stored per response (lz4) | stored per game-second | live feed per viewer | server CPU (node) |
 |---|---|---|---|---|---|
@@ -185,9 +186,10 @@ time each:
 
 Rounds ran 15% long in wall time (23 s for 20 s of game time: the machine's 4 cores were busy), the bees'
 decisions took 4 ms, and nothing failed. Without previews each viewer would have needed 30 MB/s. The cost
-that remains is storage: up to about 30 MB per game-second of incompressible responses (3.6 GB for a
-2-minute game at that worst rate; Postgres writes about as much again to its WAL). The TypeScript runner
-writes 0.94 MB of ints in 13 ms of CPU.
+that remains is storage: up to about 30 MB per game-second of incompressible 1 MB responses (3.6 GB for a
+2-minute game at that worst rate; Postgres writes about as much again to its WAL). At the 64 KiB default
+that worst case is about 2 MB per game-second. The TypeScript runner writes 0.94 MB of ints in 13 ms of
+CPU.
 
 
 ## Pollen carries genes

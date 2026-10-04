@@ -46,8 +46,14 @@ check("timing: species; energy goes to compute, nectar and pollen; the flower gi
   && /energy goes to compute, nectar and pollen/.test(tt) && /E = \(1,100 − flower size\) × max\(0, 150 − the flower's CPU ms\)/.test(tt)
   && /the flower gives it\s+percent\/100 × E as nectar and the rest as pollen/.test(tt) && /If it doesn't feed, that energy is lost/.test(tt), tt);
 check("timing: the interface: fresh calls, fed, GAME, no history, the bee's 50-byte key-value MEMORY", /flower\(challenge\), first\(\), decide\(challenge, response\), and the bee's optional\s+fed\(nectar\)/.test(tt)
-  && /in the same instance as that decide/.test(tt) && /no history/.test(tt) && !/HISTORY/.test(tt) && /MEMORY: a flat key-value store/.test(tt) && /of at most 50 bytes \(each key's bytes plus\s+its value's JSON bytes\)/.test(tt)
-  && /a new bee version starts\s+with \{\}/.test(tt), tt);
+  && /in the same instance as that decide/.test(tt) && /no history/.test(tt) && !/HISTORY/.test(tt) && /MEMORY: a flat key-value store/.test(tt) && /of at most\s+50 bytes \(each key's bytes plus its value's JSON bytes\)/.test(tt)
+  && /a new bee version starts with \{\}/.test(tt), tt);
+check("timing: the clock starts at 0 every call; no round or game time", /no round or game time/.test(tt) && /clock reads 0\s+when each call starts \(as if it were 1970-01-01, then at real speed\)/.test(tt), tt);
+check("timing: pollen grains, as the game sets them (feeder, public, off), interface only", /Pollen carries genes/.test(tt) && /floor\(pollen\^\(1\/3\)\) characters of the\s+minified code/.test(tt)
+  && /only the feeding bee's team sees it/.test(tt) && /Programs never get grains/.test(tt)
+  && /everyone sees every grain as\s+it happens/.test(timingText({ ...config, grains: "public" })) && /Pollen grains are off/.test(timingText({ ...config, grains: "off" })), tt);
+check("system: the grain tools and check.py's refusals", /tools\/grains\.py/.test(sys) && /garden\.grains\(\), garden\.assemble\(flower\)/.test(sys) && /`grains\(\)` and `assemble\(flower\)`/.test(sys)
+  && /what the game's Python refuses \(e\.g\. dunder names such as\s+__class__/.test(sys) && /pollen grain with the feeding bee's team/.test(sys), head0);
 check("timing and system: a feed is public with its percent, energy, nectar and pollen; unfed percent and energy and compute time are the flower team's",
   /a feed's percent, energy, nectar and\s+pollen/.test(tt) && /percent and energy of turns without a feed, and every compute time, stay with the flower's team/.test(tt)
   && /on a\s+feed, its percent, energy, nectar and pollen/.test(sys) && /Private to the\s+flower's team during play: the percent and energy of turns without a feed, and the flower's compute time/.test(sys)

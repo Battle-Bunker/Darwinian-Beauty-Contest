@@ -1,4 +1,4 @@
-// Responses up to maxResponseBytes (1 MB by default) of JSON: the cap is checked by the runner inside the
+// Responses up to maxResponseBytes (64 KiB by default) of JSON: the cap is checked by the runner inside the
 // flower's time (writing the JSON is its compute), maxLen/maxNodes are for challenges only, a response over
 // INLINE_BYTES (4 KB) is shown as its size, hash and preview, and a big response reaches the bee before its
 // 50 ms start, so reading it in costs the bee nothing.
@@ -77,8 +77,8 @@ for (const language of ["python", "typescript"]) {
   });
 
   test(`${language}: a 1 MB response reaches the bee before its 50 ms start: reading it in costs the bee nothing`, async () => {
-    const config = normalizeConfig({ language, responseType: "list[int]", feedCost: 0 });
-    const n = 150000; // about 0.94 MB of JSON
+    const config = normalizeConfig({ language, responseType: "list[int]", maxResponseBytes: 1 << 20, feedCost: 0 });
+    const n = 150000; // about 0.94 MB of JSON (so a 1 MB cap, not the 64 KiB default)
     const list = language === "python" ? `list(range(${n}))` : `Array.from({ length: ${n} }, (_, i) => i)`;
     const out = await play(config, [{ flower: P.flower(list), bee: P.bee }], 4, null, { paced: true });
     const turns = ends(out.actions);

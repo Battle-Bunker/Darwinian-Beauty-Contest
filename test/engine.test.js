@@ -31,11 +31,11 @@ const stopWhen = (done) => async (garden) => {
   await garden.stop();
 };
 
-test("defaults: a 1,100-node flower with 150 ms, an 11,000-node bee with 50 ms and 50 bytes of memory, 200 ms rounds, feedCost 10, 1 MB responses", () => {
+test("defaults: a 1,100-node flower with 150 ms, an 11,000-node bee with 50 ms and 50 bytes of memory, 200 ms rounds, feedCost 10, 64 KiB responses", () => {
   const { flower: f, bee } = DEFAULT_CONFIG.budgets;
   assert.deepEqual(f, { size: 1100, perMinute: 220, cap: 220, ms: 150 });
   assert.deepEqual(bee, { size: 11000, perMinute: 2200, cap: 2200, ms: 50, memory: 50 });
-  assert.equal(DEFAULT_CONFIG.maxResponseBytes, 1048576);
+  assert.equal(DEFAULT_CONFIG.maxResponseBytes, 65536);
   assert.equal(normalizeConfig({ maxResponseBytes: 5000 }).maxResponseBytes, 5000);
   assert.equal(normalizeConfig({ maxResponseBytes: 1e9 }).maxResponseBytes, 16777216);
   assert.equal(normalizeConfig({ budgets: { bee: { memory: 0 } } }).budgets.bee.memory, 0);

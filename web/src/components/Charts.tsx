@@ -191,6 +191,7 @@ const PARTS = [
   { key: "pollen", cls: "e-pollen", label: "pollen given", long: "pollen given to bees that fed, to carry to other flowers" },
   { key: "nectar", cls: "e-nectar", label: "nectar given", long: "nectar given to bees that fed" },
   { key: "lost", cls: "e-lost", label: "lost", long: "lost: the bee didn't feed" },
+  { key: "reserve", cls: "e-reserve", label: "not given", long: "not given: each call's hidden time budget R fell short of the most it could be" },
 ] as const;
 
 /**

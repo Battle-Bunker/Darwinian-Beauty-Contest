@@ -114,6 +114,7 @@ export interface Action {
   energy?: number | null;   // E, node·ms
   // the flower's team (everyone after finish):
   ms?: number | null;       // the flower's CPU time
+  budgetMs?: number | null; // the call's hidden time budget R (its hard limit; E counts from it)
   flowerError?: string | null;
   flowerVersion?: number | null;
   // the bee's team:
@@ -141,6 +142,7 @@ export interface LedgerEntry {
   percent: number | null; energy: number | null;   // public on a feed, else the flower's team's
   nectar: number | null; pollen: number | null;    // nectar null and pollen 0 on a leave
   ms: number | null; flowerVersion?: number | null; flowerError?: string | null;  // the flower's team's
+  budgetMs?: number | null;                                                        // the call's time budget R: the flower's team's
   beeMs?: number | null; beeVersion?: number | null; beeError?: string | null;     // the bee's team's
   grain?: string | null; grainVersion?: number | null; grainCodeLength?: number | null;   // the bee's team's (feeds)
 }

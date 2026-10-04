@@ -898,6 +898,7 @@ input[type="range"] { accent-color: var(--honey); }
 .e-pollen { background: var(--e-pollen); }
 .e-nectar { background: var(--e-nectar); }
 .e-lost { background: var(--e-lost); }
+.e-reserve { background: repeating-linear-gradient(135deg, var(--surface-2) 0 3px, var(--line) 3px 5px); box-shadow: inset 0 0 0 1px var(--line); }
 .split-row { display: grid; grid-template-columns: minmax(90px, 160px) minmax(0, 1fr); gap: 10px; align-items: center; }
 .split-name { font-size: 14px; }
 .split-track { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -972,6 +973,17 @@ input[type="range"] { accent-color: var(--honey); }
 .pollen-grains { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 2px; max-height: 240px; overflow: auto; font-size: 12px; }
 .pollen-grains code { word-break: break-all; }
 .pollen-raw > summary { cursor: pointer; color: var(--ink-soft); font-weight: 700; }
+.budget-charts { display: grid; gap: 8px; min-width: 0; }
+.budget-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); gap: 10px; }
+.budget-cell { margin: 0; display: grid; gap: 2px; justify-items: start; transition: opacity .15s; }
+.budget-cell.dim { opacity: .45; }
+.budget-cell figcaption { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.budget-plot { fill: var(--surface); stroke: var(--line); }
+.budget-never { fill: var(--surface-2); }
+.budget-diag { stroke: var(--ink-soft); stroke-width: 1; stroke-dasharray: 4 3; }
+.budget-dot { opacity: .7; }
+.budget-x { stroke: var(--danger); stroke-width: 1.4; }
+.budget-stats { max-width: 176px; }
 .fed-ran { font-size: 12px; font-weight: 800; padding: 0 7px; border-radius: 999px; background: var(--ok-soft); color: var(--ok); white-space: nowrap; }
 .memory-grid { display: grid; gap: 8px; }
 .memory-card { border: 1px solid var(--line); border-left: 4px solid var(--team); border-radius: 10px; padding: 6px 12px; background: var(--surface); }

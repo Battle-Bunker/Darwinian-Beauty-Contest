@@ -127,7 +127,7 @@ export function LedgerPanel({ view, ledger }: { view: GameView; ledger: LedgerSt
             <thead>
               <tr>
                 <th>round</th><th className="left">bee</th><th className="left">flower</th><th className="left">challenge</th><th className="left">response</th><th className="left">fed</th>
-                <th>percent</th><th>energy</th><th>nectar</th><th>pollen</th><th title="the flower's CPU time">ms</th><th title="the bee's decision time">beeMs</th><th className="left" title="the pollen grain your bee got on a feed">grain</th>
+                <th>percent</th><th>energy</th><th>nectar</th><th>pollen</th><th title="the flower call's hidden time budget R (its hard limit; E counts from it)">R</th><th title="the flower's CPU time">ms</th><th title="the bee's decision time">beeMs</th><th className="left" title="the pollen grain your bee got on a feed">grain</th>
               </tr>
             </thead>
             <tbody>
@@ -143,6 +143,7 @@ export function LedgerPanel({ view, ledger }: { view: GameView; ledger: LedgerSt
                   <Num v={e.energy} />
                   <Num v={e.nectar} />
                   <Num v={e.pollen} />
+                  <td className={e.budgetMs == null ? "null" : ""}>{e.budgetMs == null ? "None" : fmtMs(e.budgetMs)}</td>
                   <td className={e.ms === null ? "null" : ""} title={e.flowerError ?? undefined}>{e.ms === null ? "None" : fmtMs(e.ms)}{e.flowerError ? " !" : ""}</td>
                   <td className={e.beeMs == null ? "null" : ""} title={e.beeError ?? undefined}>{e.beeMs == null ? "None" : fmtMs(e.beeMs)}{e.beeError ? " !" : ""}</td>
                   <td className={`left ${e.grain == null ? "null" : ""}`} title={e.grain != null ? `flower v${e.grainVersion} (${e.grainCodeLength} characters):\n${e.grain}` : undefined}>{e.grain == null ? "None" : <code className="grain-text">{showGrain(e.grain, 16)}</code>}</td>

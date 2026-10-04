@@ -57,7 +57,7 @@ assert.match(view0.interface.bee, /def fed\(nectar\)/);
 assert.match(view0.interface.bee, /MEMORY/);
 assert.doesNotMatch(view0.interface.bee + view0.interface.flower, /HISTORY\./, "programs get no history");
 assert.equal(view0.game.config.budgets.bee.memory, 50);
-assert.equal(view0.game.config.maxResponseBytes, 1048576);
+assert.equal(view0.game.config.maxResponseBytes, 65536);
 assert.deepEqual(["flower", "bee"].map((k) => view0.game.config.budgets[k].ms), [150, 50], "every time limit is public");
 assert.deepEqual(view0.teams.map((t) => t.ready), view0.teams.map(() => ({ flower: false, bee: false })));
 

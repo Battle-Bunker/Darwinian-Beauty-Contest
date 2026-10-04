@@ -45,7 +45,10 @@ const fakeApi = {
     scores: [{ teamId: "T1", fitness: 1.2, pollination: 600, forage: 150, pollinationShare: 0.5, forageShare: 0.6, pollen: 300000, pollinators: 2, nectarSources: 2, feedsReceived: 5, feedsGiven: 4 },
       { teamId: "T2", fitness: 0.8, pollination: 600, forage: 100, pollinationShare: 0.5, forageShare: 0.4, pollen: 300000, pollinators: 2, nectarSources: 1, feedsReceived: 4, feedsGiven: 5 }],
   }; },
-  check: async (tok, g, kind, code) => { calls.push(["check", tok, kind, code]); return { ok: true, size: 42, budget: config.budgets[kind], distance: 3, cost: 3, available: 120, minified: code, errors: [] }; },
+  check: async (tok, g, kind, code) => { calls.push(["check", tok, kind, code]);
+    // The game's Python refuses introspection (dunder names): the check reports it.
+    if (code.includes("__class__")) return { ok: false, size: 50, budget: config.budgets[kind], distance: 3, cost: 3, available: 120, minified: code, errors: ["line 2: '__class__' is not allowed (no dunder names)"] };
+    return { ok: true, size: 42, budget: config.budgets[kind], distance: 3, cost: 3, available: 120, minified: code, errors: [] }; },
   tryFlower: async (tok, g, code, challenges, ...rest) => { calls.push(["try", tok, "flower", code, rest.length]);
     if (code.includes("CRASH")) return { results: (challenges || [1]).map((c) => ({ c, r: null, percent: null, energy: 0, error: "ZeroDivisionError: division by zero", ms: 1 })) };
     // A response over 4 KB comes back as its size, hash and first 4 KB, with r null.
@@ -98,6 +101,9 @@ r = await tool("tools/submit.py", "flower", "crash.py");
 check("submit: a program that crashes in the runtime test is not submitted (exit 1)", r.status === 1 && /runtime test failed/.test(r.stdout) && !calls.some((c) => c[0] === "submit" && c[3].includes("CRASH")), r.stdout);
 r = await tool("tools/submit.py", "flower", "crash.py", "--force");
 check("submit --force skips the runtime test", r.status === 0 && calls.some((c) => c[0] === "submit" && c[3].includes("CRASH")));
+fs.writeFileSync(path.join(ws, "dunder.py"), "def flower(c):\n    return ().__class__, 40\n");
+r = await tool("tools/check.py", "flower", "dunder.py");
+check("check: a refused introspection is shown with what the game's Python refuses", r.status === 1 && /'__class__' is not allowed/.test(r.stdout) && /The game.s Python refuses introspection: dunder attributes/.test(r.stdout), r.stdout);
 r = await tool("tools/check.py", "flower");
 check("check: size, cost now and what's available, and the flower's energy", r.status === 0 && /42 of 1,100 nodes\. Submitting now would cost 3 of the 120 you have/.test(r.stdout)
   && /\(1,100 − 42\) × 150 = 158,700 node·ms/.test(r.stdout), r.stdout);

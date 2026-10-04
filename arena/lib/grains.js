@@ -10,7 +10,7 @@
 //   uses        whether teams acted on leaked code: a later version of theirs (flower or bee) that contains a secret of
 //               the leaked code (a string of 6+ characters or a number of 6+ digits) they hadn't used before, or runs
 //               of 24+ characters of the leaked code they held then (a copy; "whole-version" when it is identical and they
-//               held all of it)
+//               held all of it); runs that two or more other teams' lobby programs already shared are boilerplate
 // A grain is placed where it first occurs in the (wrapped) code: a short grain that occurs twice may be misplaced.
 
 const r3 = (x) => (x == null || !Number.isFinite(x) ? null : Math.round(x * 1000) / 1000);
@@ -105,6 +105,11 @@ export function grainMetrics({ turns, ids, name = {}, minified, liveAt, duration
   const codeOf = (team, kind, v) => minified.get(`${team}:${kind}:${v}`);
   const versionsOf = (team) => [...minified.keys()].filter((k) => k.startsWith(`${team}:`)).map((k) => { const [, kind, v] = k.slice(team.length).split(":"); return { kind, version: Number(v), atMs: liveAt.get(k) ?? 0, code: minified.get(k) }; })
     .sort((a, b) => a.atMs - b.atMs || a.version - b.version);
+  // Boilerplate: runs of COPY_RUN characters that two or more teams' lobby programs (written before any grain) already
+  // shared. Finding one in a later version is no evidence of a leak.
+  const lobbyRuns = new Map(); // k-gram -> Set(team)
+  for (const id of ids) for (const v of versionsOf(id)) if (!(v.atMs > 0) && v.code) for (const g of kgrams(v.code)) { if (!lobbyRuns.has(g)) lobbyRuns.set(g, new Set()); lobbyRuns.get(g).add(id); }
+  const common = (g, T) => { const s = lobbyRuns.get(g); if (!s) return false; let n = 0; for (const x of s) if (x !== T) n++; return n >= 2; };
   for (const T of ids) {
     const mine = versionsOf(T);
     // What T received, per source version, in time order: the moments its coverage grew.
@@ -146,7 +151,7 @@ export function grainMetrics({ turns, ids, name = {}, minified, liveAt, duration
         let copied = 0, last = -1;
         for (let p = 0; p + COPY_RUN <= v.code.length; p++) {
           const g = v.code.slice(p, p + COPY_RUN);
-          if (leaked.has(g) && !old.has(g)) { copied += Math.min(COPY_RUN, p + COPY_RUN - Math.max(p, last)); last = p + COPY_RUN; }
+          if (leaked.has(g) && !old.has(g) && !common(g, T)) { copied += Math.min(COPY_RUN, p + COPY_RUN - Math.max(p, last)); last = p + COPY_RUN; }
         }
         if (copied >= COPY_RUN) {
           const firstHeld = src.gs[0].atMs;

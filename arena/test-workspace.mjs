@@ -59,27 +59,36 @@ const turns = [];
 const acts = [];
 // Every 10th turn's response is a graph of about 10 KB: over 4 KB, the API gives it as its size, hash and first 4 KB.
 const bigGraph = (k) => ({ nodes: 400, edges: Array.from({ length: 399 }, (_, i) => [i, i + 1]), labels: Array.from({ length: 400 }, (_, i) => `label-${k}-${i}`) });
+// Pollen grains: on every feed, the feeding bee's team gets 20 characters of the flower's minified code (wrapping).
+const CODES = { T1: 'import hashlib as d\nb="moonpetal-secret"\ndef flower(c):\n return(c*7+1)%1000,40', T2: 'def flower(a):\n return(a*3+1)%1000,25' };
+const grainFor = (team, k) => { const code = CODES[team], st = (k * 37) % code.length; return Array.from({ length: 20 }, (_, i) => code[(st + i) % code.length]).join(""); };
 const addTurns = (n) => {
   for (let i = 0; i < n; i++) {
     const k = turns.length + 1, bee = IDS[k % 2], flower = IDS[Math.floor(k / 2) % 2], fed = k % 3 === 0, percent = 10 * (k % 7), energy = 1000 * k;
     const r = k % 10 === 0 ? bigGraph(k) : (k % 5) * 3, text = JSON.stringify(r);
     const t = { k, round: k, bee, flower, c: k % 5, r, text, bytes: Buffer.byteLength(text), big: text.length > 4096, hash: crypto.createHash("sha256").update(text).digest("hex"),
-      fed, percent, energy, ms: 1.5, beeMs: 3, log: `hi ${k}` };
+      fed, percent, energy, ms: 1.5, beeMs: 3, log: `hi ${k}`, ...(fed ? { grain: grainFor(flower, k), grainVersion: 1, grainCodeLength: CODES[flower].length } : {}) };
     turns.push(t);
     acts.push({ seq: acts.length + 1, atMs: (k - 1) * 200, round: k, turn: k, bee, flower, action: "arrive", _t: t });
     acts.push({ seq: acts.length + 1, atMs: (k - 1) * 200 + 150, round: k, turn: k, bee, flower, action: fed ? "feed" : "leave", _t: t });
     t.seq = acts.length;
   }
 };
+let publicGrains = true;
 const publicOf = (a) => {
   const { _t: t, ...x } = a;
   if (a.action === "arrive") return x;
-  return { ...x, c: t.c, r: t.big ? null : t.r, rBytes: t.bytes, ...(t.big ? { rHash: t.hash, rPreview: t.text.slice(0, 4096) } : {}), pollen: t.fed ? (1 - t.percent / 100) * t.energy : 0, ...(t.fed ? { nectar: (t.percent / 100) * t.energy, percent: t.percent, energy: t.energy } : {}) };
+  return { ...x, c: t.c, r: t.big ? null : t.r, rBytes: t.bytes, ...(t.big ? { rHash: t.hash, rPreview: t.text.slice(0, 4096) } : {}), pollen: t.fed ? (1 - t.percent / 100) * t.energy : 0,
+    ...(t.fed ? { nectar: (t.percent / 100) * t.energy, percent: t.percent, energy: t.energy } : {}),
+    // (as the public API gives grains once the game is over: the shared file must drop them all the same)
+    ...(t.fed && publicGrains ? { grain: t.grain, grainVersion: t.grainVersion, grainCodeLength: t.grainCodeLength } : {}) };
 };
 const mineOf = (a, me) => {
   const x = publicOf(a), t = a._t;
   if (t.flower === me && a.action !== "arrive") Object.assign(x, { percent: t.percent, energy: t.energy, ms: t.ms, flowerVersion: 1 });
   if (t.bee === me && a.action !== "arrive") Object.assign(x, { beeMs: t.beeMs, log: t.log, beeVersion: 1 });
+  for (const f of ["grain", "grainVersion", "grainCodeLength"]) delete x[f];
+  if (t.bee === me && t.fed) Object.assign(x, { grain: t.grain, grainVersion: t.grainVersion, grainCodeLength: t.grainCodeLength });
   return x;
 };
 /** A turn record as GET .../ledger gives it to a team (the turns entity, masked for that team). */
@@ -88,7 +97,8 @@ const entryOf = (t, me) => ({ seq: t.seq, game: "G", round: t.round, atMs: (t.ro
   percent: t.fed || t.flower === me ? t.percent : null, energy: t.fed || t.flower === me ? t.energy : null,
   nectar: t.fed ? (t.percent / 100) * t.energy : null, pollen: t.fed ? (1 - t.percent / 100) * t.energy : 0,
   ms: t.flower === me ? t.ms : null, flowerVersion: t.flower === me ? 1 : null, flowerError: null,
-  beeMs: t.bee === me ? t.beeMs : null, beeVersion: t.bee === me ? 1 : null, beeError: null });
+  beeMs: t.bee === me ? t.beeMs : null, beeVersion: t.bee === me ? 1 : null, beeError: null,
+  grain: t.fed && t.bee === me ? t.grain : null, grainVersion: t.fed && t.bee === me ? 1 : null, grainCodeLength: t.fed && t.bee === me ? t.grainCodeLength : null });
 addTurns(25);
 const meOf = (tok) => tok.replace("tok-", "");
 const stream = new GameStream({ root: path.join(root, AID), gen: 1, gPath: "/x", gameUuid: null, teams: [{ id: "T1", name: "Moonpetal" }, { id: "T2", name: "Show Your Work" }],
@@ -158,7 +168,7 @@ const pyc = (code) => spawnSync("python3", ["-c", code], { cwd: dir, encoding: "
 let r = py("stream", "tail", "-n", "4");
 check("stream.py tail: the latest public actions", r.status === 0 && r.stdout.trim().split("\n").length === 4 && /arrive|feed|leave/.test(r.stdout), r.stdout + r.stderr);
 r = pyc("from stream import Stream; s=Stream(); t=list(s.turns(since_round=40)); print(len(t), s.last()['seq'], s.name(1), s.my_index, s.n, sorted(k for k in t[0] if '_' in k))");
-check("stream.py as a library: turns(since_round) with the Python field names, last(), names, your index", r.stdout.trim() === "6 90 Show Your Work 0 2 ['at_ms', 'bee_error', 'bee_ms', 'bee_version', 'flower_error', 'flower_version', 'response_bytes', 'response_hash']", r.stdout + r.stderr);
+check("stream.py as a library: turns(since_round) with the Python field names, last(), names, your index", r.stdout.trim() === "6 90 Show Your Work 0 2 ['at_ms', 'bee_error', 'bee_ms', 'bee_version', 'flower_error', 'flower_version', 'grain_code_length', 'grain_version', 'response_bytes', 'response_hash']", r.stdout + r.stderr);
 
 // Big responses: in the files only their size, hash and a short preview; the counts don't take them for failures.
 const bigLines = shared.filter((a) => a.rHash);
@@ -169,6 +179,24 @@ check("big responses: history.jsonl has their size and hash; mine.jsonl their sh
 check("big responses are answers, not failures, in the headline counts", stream.headline("T1").flower.noResponse === 0 && stream.headline("T2").flower.noResponse === 0, JSON.stringify(stream.headline("T1")));
 r = py("stream", "tail", "-n", "90");
 check("stream.py tail: a big response as its size and how to fetch it", r.status === 0 && /r=<\d+ bytes: tools\/stream\.py response \d+>/.test(r.stdout), r.stdout.slice(-600) + r.stderr);
+// Pollen grains: each team's own in its own files only; never in the shared public file.
+check("grains: the shared public file never carries a grain (even when the public API reveals them, after the game)", shared.every((a) => !("grain" in a) && !("grainVersion" in a))
+  && acts.some((a) => a._t?.grain));
+check("grains: history.jsonl and mine.jsonl carry the team's own bee's grains, nobody else's", led1.filter((e) => e.grain).length > 0 && led1.every((e) => (e.grain != null) === (e.fed && e.bee === 0))
+  && led2.every((e) => (e.grain != null) === (e.fed && e.bee === 1)) && mine1.every((a) => !a.grain || a.bee === "T1"), led1.filter((e) => e.grain).length);
+r = pyc("import garden, json; g = garden.grains(); print(len(g), sorted(set(x['flower'] for x in g)), g[0]['code_length'] in (" + Object.values(CODES).map((c) => c.length).join(",") + "), all(len(x['grain']) == 20 for x in g))");
+check("garden.grains(): your grains, per species and version", r.status === 0 && r.stdout.trim() === `${led1.filter((e) => e.grain).length} [${[...new Set(led1.filter((e) => e.grain).map((e) => e.flower))].sort().join(", ")}] True True`, r.stdout + r.stderr);
+r = py("grains");
+check("grains.py: per species and version, how much is pieced together", r.status === 0 && /species of\s+version\s+grains/.test(r.stdout) && /v1/.test(r.stdout) && /(complete|% in \d+ piece)/.test(r.stdout), r.stdout + r.stderr);
+r = py("grains", "--json");
+const gj = JSON.parse(r.stdout || "[]");
+check("grains.py --json: the assembly per version", r.status === 0 && gj.length && gj.every((x) => x.grains > 0 && x.code_length && Array.isArray(x.pieces)), r.stdout.slice(0, 300) + r.stderr);
+// The assembler on enough grains: the whole minified code, rotated to where it starts (it compiles).
+r = pyc(`import grains\ncode = ${JSON.stringify(CODES.T1)}\nL = len(code)\ng = [''.join(code[(s + i) % L] for i in range(24)) for s in range(0, L, 11)]\na = grains.assemble(g, L)\nprint(a['complete'], a['compiles'], a['code'] == code)\nb = grains.assemble(g[:2], L)\nprint(b['complete'], len(b['pieces']), b['share'] < 1)`);
+check("grains: pieced together, the whole code where it starts; too few grains stay pieces", r.status === 0 && r.stdout.trim() === "True True True\nFalse 1 True", r.stdout + r.stderr);
+r = py("grains", "--save");
+check("grains.py --save: complete versions into grains/ in the workspace", r.status === 0 && (!/saved/.test(r.stdout) || fs.readdirSync(path.join(dir, "grains")).length > 0), r.stdout + r.stderr);
+
 // The whole response, fetched on request from the game's public API (a fake one here).
 const respServer = http.createServer((req, res) => {
   const m = req.url.match(/\/responses\/(\d+)$/), t = m && turns.find((x) => x.seq === Number(m[1]));

@@ -22,11 +22,12 @@ const n0 = (x) => Math.floor(x).toLocaleString("en-US");
 export const memorySize = (m) => (m && typeof m === "object" && !Array.isArray(m) ? Object.entries(m).reduce((a, [k, v]) => a + Buffer.byteLength(k) + Buffer.byteLength(JSON.stringify(v) ?? "null"), 0) : null);
 /** What the game's Python refuses (introspection: dunder names, a module's private names, modules it doesn't allow), as
  * the runner reports it: a hint for check.py's output when an error looks like one of those. */
-const REFUSED = /__\w+__|\bdunder\b|introspection|private name|not allowed in this game|has no attribute '_|is not allowed/i;
+const REFUSED = /__\w+__|\bdunder\b|introspection|private name|not allowed|isn't available|not available|has no attribute '_|\bf_(?:back|globals|locals|code)\b|\bgi_frame\b/i;
 export function refusalHint(errors) {
   if (!errors.some((e) => REFUSED.test(String(e)))) return null;
-  return "The game's Python refuses introspection: names with double underscores (such as __class__, __dict__, __globals__), " +
-    "modules' private names (random._os) and modules outside the allowed list (RULES.md, \"The programs\"). Use plain public names instead.";
+  return "The game's Python refuses introspection: dunder attributes (such as x.__class__, f.__globals__, .__dict__; defining dunder " +
+    "methods on your own classes is fine), frame and generator internals, eval/exec/compile/globals/locals/vars/open, modules' private " +
+    "names (random._os) and modules outside the allowed list (RULES.md, \"What programs can use\"). Use plain public names instead.";
 }
 
 /** A response as a short text: a big one (over 4 KB, r null with rBytes and rHash) as its size, hash and first characters. */

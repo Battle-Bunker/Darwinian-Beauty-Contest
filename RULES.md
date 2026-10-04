@@ -257,11 +257,28 @@ Every program can read a `GAME` dictionary/object: `team` (your team's index), `
 flower also gets `size`, its own size, so E = (`flower_size_cap` − `size`) × max(0, `flower_ms` − compute
 ms). In Python, `time.process_time()` measures the CPU time the engine counts (see "The clock").
 
-Python programs may import `math`, `random`, `hashlib`, `string`, `itertools`, `functools`,
-`collections`, `re`, `json`, `bisect`, `heapq`, `statistics`, `fractions`, `decimal`, `operator`,
-`typing`, `dataclasses`, `enum`, `zlib`, `struct`, `binascii`, `base64`, `copy`, `numbers`, `array`,
-and `time` (the game's own: see "The clock"). Modules show only their public names. TypeScript programs get
-the standard JavaScript built-ins, with the game's `Date` and `performance`.
+## What programs can use
+
+So that nothing anchors a program to the real world or the game's progress, the Python side is a little
+narrowed (a best effort, not a real sandbox):
+
+- **Imports.** Python programs may import only `math`, `cmath`, `random`, `hashlib`, `string`, `itertools`,
+  `functools`, `collections`, `re`, `json`, `bisect`, `heapq`, `statistics`, `fractions`, `decimal`,
+  `operator`, `typing`, `dataclasses`, `enum`, `zlib`, `struct`, `binascii`, `base64`, `copy`, `numbers`,
+  `array` and `time` (the game's own clock). Each import is a view of the module's public names only, so
+  the modules they happen to hold inside (and `os`, `sys`, `datetime`, `uuid`, …) aren't reachable through
+  them. TypeScript programs get the standard JavaScript built-ins, with the game's `Date`, `Intl` dates and
+  `performance`.
+- **No reaching into the interpreter.** Programs may not use dunder attributes (`x.__class__`,
+  `f.__globals__`, `.__dict__`, `.__code__`, `.__subclasses__`, …) or the frame, traceback and generator
+  internals (`f_back`, `f_globals`, `gi_frame`, …). Defining dunder *methods* on your own classes is fine
+  (`__init__`, `__eq__`, `__lt__`, `__iter__`, `super().__init__()`, …), and `__name__` works. `str.format`
+  works on a literal format string (use an f-string for anything else). `eval`, `exec`, `compile`,
+  `globals`, `locals`, `vars` and `open` aren't available. A program that breaks these is refused when you
+  submit it (and when you test it with "try"). In TypeScript the program runs in a fresh sandbox context
+  each call with no host objects to climb to.
+
+Everything else is ordinary Python or TypeScript.
 
 ## What the challenge and response look like
 

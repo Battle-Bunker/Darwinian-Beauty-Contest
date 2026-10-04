@@ -40,7 +40,8 @@ metrics, interviews, the teen judges and (unless membership is fixed) selection 
 | `lib/workspace.js` | builds workspaces, archives finished games, the fair-play audit, finds and stops what a session left running |
 | `lib/prompts.js` | system prompt, lobby and in-game briefs, interview, judge and breeder prompts |
 | `lib/metrics.js`, `lib/ecology.js` | metrics of a finished game, from its history once everything is revealed; the ecology part (energy split, imitation and detection, rotations, cracks, autarky) |
-| `lib/dynamics.js` | how the ecosystem moves within a game, given program labels: mechanisms in use and their entropy, dominance, innovation, families, freezing |
+| `lib/dynamics.js` | how the ecosystem moves within a game, given program labels: mechanisms and specific signals in use and their entropy, dominance, innovation, families, signature-plus-work species, freezing |
+| `lib/grains.js` | pollen grains in a finished game: leak rates per species, how much of each flower version other teams held and when, teams acting on leaked code (secrets, copies) |
 | `lib/mechanisms.js` | what a program does: keyword evidence and a haiku classifier cached by program skeleton (never a Fable model) |
 | `lib/gamecontrol.js` | the game follows the arena's pause file |
 | `lib/social.js`, `lib/population.js`, `lib/personas.js` | interviews → judges → idea ledger → social scores; retirement and breeders; founders, judges, breeders |
@@ -93,7 +94,7 @@ node arena/analyze.js --arenas one-pilot > arena/runs/analysis-one-pilot.md
 | `pilot` | int→int, games of 0.5, 1 and 2 minutes; opus calls (judges, breeders) run on sonnet | 3 teams, sonnet/haiku |
 | `graphs` | int→graph[any], games of 2, 5 and 10 minutes, scaffolds | 4 teams, opus/sonnet |
 | `cohort6` | int→graph[any], 5-minute games, scaffolds, retirement and breeding (for cohort experiments) | 6 teams, opus/sonnet |
-| `cohort10` | as `cohort6` with 10-minute games (the `ideas` experiment) | 3 opus (Mallory, Kenji, Ada), 3 sonnet (Rosalind, Priya, Theo) |
+| `cohort10` | as `cohort6` with 10-minute games (the `pilot` and `signals` experiments) | 3 opus (Mallory, Kenji, Ada), 3 sonnet (Rosalind, Priya, Theo) |
 | `dry-cohort` | int→graph[any], 30-second games, no spend reserve (stub dry runs of the experiment) | 6 teams |
 | `dry` | int→int, 20-second games, no spend reserve (for stub dry runs) | 4 teams |
 
@@ -101,32 +102,47 @@ A preset sets `config` (server defaults otherwise: 2-minute games, a feeding bee
 one minute's worth: flower 220 and bee 2,200 nodes), `minutesByGame`, `session` pacing, `limits`, `maxModel`,
 `reserveUsd`, `noEvolution`, `scaffold` and `examples`.
 
-### The `ideas` experiment
+### The `pilot` and the `signals` experiment
 
-Do new costly-signalling ideas make the ecosystem more sophisticated while it stays interestingly complex? Four matched
-cohorts on `cohort10` (10-minute games, 3 games each, evolution on), interleaved one game at a time in a rotating order:
+Does exploring a wide range of type-specific signals produce sustained dynamism? Both run on `cohort10` (python,
+int → graph[any], 10-minute games, the csig founders: 3 opus, 3 sonnet; evolution on; default scoring; `grains:
+"feeder"`; `maxResponseBytes` 64 KiB: `MAX_RESPONSE_BYTES`, `GRAINS` and `POLLEN_GRAIN` in lib/presets.js, set
+in every preset).
+
+1. **`pilot`**: one unprimed cohort (`kiln-a`), 2 games, to shake out the new mechanics (no history for programs, a
+   50-byte MEMORY with `fed`, pollen grains, the clock that starts at zero) before spending more. Capped at $35
+   (`capUsd`); expect about $25.
+2. **`signals`**: two unprimed and two primed cohorts, 3 games each, interleaved one game at a time in a rotating
+   order, capped at $150 in all ($37.50 a cohort):
 
 | arena | cohort | common knowledge |
 |---|---|---|
-| `nova-a` | control-a | none |
-| `nova-b` | ideas-a | `arena/priming/one-flower-ideas/` |
-| `nova-c` | control-b | none |
-| `nova-d` | ideas-b | `arena/priming/one-flower-ideas/` |
+| `fen-a` | control-a | none |
+| `fen-b` | ideas-a | `arena/priming/one-flower-ideas/` |
+| `fen-c` | control-b | none |
+| `fen-d` | ideas-b | `arena/priming/one-flower-ideas/` |
 
 Arena ids are neutral, since teams see them in their workspace paths and breeders in their prompts; the arm and label
 stay with the runner (`arena.settings.experiment`) and the analysis. Each cohort's judges and breeders see only its own
-ideas, spawns and outcomes, and breeders never see the documents. The runner refuses to start if a cohort's common
-folder is missing or empty, writes a `stage:` line as each cohort-game starts and a `progress:` line (with the spend)
-as it ends to `arena/runs/ideas.log`, and pauses on usage limits as always (`arena/runs/PAUSED`).
+ideas, spawns and outcomes, and breeders never see the documents. An experiment's `capUsd` is split evenly over its
+cohorts (each cohort's arena cap; `--budget` overrides it per cohort), and a game starts only if every cohort can
+afford `gameUsd` more. The runner refuses to start if a cohort's common folder is missing or empty, writes a `stage:`
+line as each cohort-game starts and a `progress:` line (with the spend of the cohort, the experiment and the ledger) as
+it ends to `arena/runs/<experiment>.log`, and pauses on usage limits as always (`arena/runs/PAUSED`).
 
 ```
 arena/server.sh
-ARENA_BUDGET_USD=150 nohup node arena/run.js --experiment ideas >> arena/runs/ideas.out 2>&1 &
-node arena/cohorts.js --experiment ideas > arena/runs/analysis-ideas.md          # keyword labels, no spend
-node arena/cohorts.js --experiment ideas --count                                 # what --classify would label
+nohup node arena/run.js --experiment pilot >> arena/runs/pilot.out 2>&1 &
+nohup node arena/run.js --experiment signals >> arena/runs/signals.out 2>&1 &
+node arena/cohorts.js --experiment signals > arena/runs/analysis-signals.md     # keyword labels, no spend
+node arena/cohorts.js --experiment signals --count                              # what --classify would label
 ```
 
-`ideas-dry` is the same experiment with the stub `claude` (`ARENA_CLAUDE_BIN`), 30-second games and the `dry-` arenas.
+The analysis for the question: per game and cohort, the distinct signals (the classifier's specific names) and
+signal families with their entropy, the innovation rate, dominance turnover, imitation lag (also through leaked
+pollen grains: secrets and copies, with the lag from leak to use), and species that combine a signature with work
+(the classifier's `signature-plus-work` tag). `pilot-dry` and `signals-dry` are the same with the stub `claude`
+(`ARENA_CLAUDE_BIN`), 30-second games and the `dry-` arenas.
 
 ## How a game runs
 
@@ -184,7 +200,8 @@ It runs with `tools/` on its `PYTHONPATH`, so `import garden` works. `tools/gard
 `name(i)`; `local` (the team's history file in memory as a query builder, kept up to date), `game` and `room`
 (the same builder run by the game server through the runner: this game as the team may see it, every entity; the room's
 finished games, fully revealed); `follow()` (each new turn, a `Turn` record), `turns()`, `actions()`, `mine()`,
-`response(turn or seq)` (a whole response, fetched from the public API when it is over 4 KB),
+`response(turn or seq)` (a whole response, fetched from the public API when it is over 4 KB), `grains()` and
+`assemble(flower)` (the team's pollen grains, pieced together),
 `follow_live()` (the public SSE); `status()` (clock, round, live scores, the team's budgets with exact `available`,
 `perMinute` and `cap`, its versions), `memory()` (the bee's MEMORY with its last save error, read only), `live(kind)`
 (the code playing now), `measure(kind, code)` (size and cost, free), `check`, `try_flower(code, challenges)`,
@@ -229,7 +246,10 @@ through the runner (the team's view), on the history file in memory (`--local`),
 (`--room`); `summary` and `schema` are built in. The expression is parsed, not evaluated: only builder methods with
 literal arguments. `tools/stream.py tail` shows the latest public actions and `tools/stream.py response SEQ [--out FILE]`
 a whole response (its size, hash, shape and first characters; `--out` saves it in the workspace); as a library,
-`Stream().turns()`, `.follow()`, `.actions()`, `.mine()`, and `response(seq)`.
+`Stream().turns()`, `.follow()`, `.actions()`, `.mine()`, and `response(seq)`. `tools/grains.py [--flower I] [--version V]
+[--show] [--save] [--json]` lists the team's pollen grains per species and version and pieces them together where they
+overlap (best effort: the whole minified code once complete, rotated to where it starts; `--save` writes it to
+`grains/`); `garden.grains()` and `garden.assemble(flower, version)` do the same from a script.
 
 **The streams.** One shared public copy per game (`<WS_ROOT>/<arena>/.shared/g<N>/actions.jsonl`, exactly what the
 public `GET …/actions` returns without a login) is hard-linked into every workspace, so it costs one file however many
@@ -238,7 +258,8 @@ pollen. The runner also keeps a private master copy (`.runner/g<N>/`); if a team
 link, it is rewritten in place from the master (and writing to `stream/` is a fair-play violation). Each team's
 `history.jsonl` and `mine.jsonl` are fetched separately with that team's token, so the server decides what each holds:
 the percent and energy of unfed turns only at the team's own flower, compute times only for its own flower, printouts,
-decision times and versions only for its own programs. Responses can be big (`maxResponseBytes`): the server gives one over
+decision times and versions only for its own programs, and a feed's pollen grain only for the feeding bee's team (the
+shared public file never carries a grain, unless the game makes grains public). Responses can be big (`maxResponseBytes`): the server gives one over
 4 KB as its size, hash and first 4 KB, and the files keep only the first 256 characters of that preview
 (`STREAM_PREVIEW`), so a turn costs at most about 4 KB of file; the whole response is fetched only when asked for
 (`GET …/responses/<seq>`: `tools/stream.py response`, `garden.response`, and the metrics, which fetch distinct big
@@ -321,6 +342,12 @@ game, at least 10 s):
   cap or of the wrong shape), failed `fed()` calls and the last save error (`teams.memoryError` and the samples), its
   size during play (the runner samples each team's own view every 5 s), and **how often the team changed its bee**
   (each change empties MEMORY): versions, in-game changes, changes per minute, mean time between them
+- **pollen grains** (`lib/grains.js`; the versions' minified code comes from the game's own minifier): per species the
+  grains it gave and the characters leaked to other teams' bees, per minute; per flower version the share of its code
+  one other team (and all of them together) held at the end, and when one (or all together) first held every character,
+  timed from when the version went live; and **acting on leaked code**: a later version (flower or bee) of the team that
+  got the grains with a secret of the leaked code (a string of 6+ characters or a number of 6+ digits) it hadn't used
+  before, or 24+ characters in a row of the code it held ("whole-version" when identical and fully held), with the lag
 - **big responses** (over 4 KB, which the history gives as size and hash): equal hashes are equal answers; the metrics
   fetch distinct ones for their shapes (`GET …/responses/:seq`, up to 64 MB a game, `BIG_FETCH_BYTES`), and past that a
   big response's shape is its hash

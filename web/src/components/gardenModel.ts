@@ -271,7 +271,8 @@ export function computeFrame(idx: TurnIndex, layout: Layout, p: FrameParams, now
     } else {
       const E = e.energy ?? 0;
       // Compute first (it shrinks what's left), then E, then how E went: nectar and pollen, or lost.
-      const line1 = `${typeof e.ms === "number" ? `${e.ms < 10 ? e.ms.toFixed(1) : Math.round(e.ms)} ms CPU → ` : ""}E ${fmtE(E)}, offers ${e.percent ?? "?"}%`;
+      const R = typeof e.budgetMs === "number" ? `R ${Math.round(e.budgetMs)} ms · ` : "";
+      const line1 = `${R}${typeof e.ms === "number" ? `${e.ms < 10 ? e.ms.toFixed(1) : Math.round(e.ms)} ms CPU → ` : ""}E ${fmtE(E)}, offers ${e.percent ?? "?"}%`;
       readout = fed(readT)
         ? { flower: readT.flower, line1, line2: `fed: nectar ${fmtE(e.nectar ?? 0)} · pollen ${fmtE(e.pollen ?? 0)}`, kind: "fed", age, big }
         : { flower: readT.flower, line1, line2: `left: ${fmtE(E)} lost`, kind: "left", age, big };

@@ -5,7 +5,7 @@
 // (everything revealed) or from the team ledger during play (every feed is public; a flower's unfed
 // visits and compute time only to its own team), plus the score components over time: pollination,
 // forage and fitness, from the pollen and nectar per (bee, flower) pair.
-import type { LedgerEntry } from "../types";
+import type { GameConfig, LedgerEntry } from "../types";
 import type { Turn } from "./turns";
 
 /** One finished turn, as far as the viewer can see it. bee and flower are participant indices. */
@@ -13,6 +13,8 @@ export interface TurnRec {
   t: number; bee: number; flower: number; fed: boolean; failed: boolean;
   percent: number | null; energy: number | null; ms: number | null; pollen: number | null; nectar: number | null;
   flowerVersion: number | null;
+  /** The call's hidden time budget R (ms), where the viewer may see it. */
+  budgetMs: number | null;
 }
 
 const num = (x: unknown): number | null => (typeof x === "number" && Number.isFinite(x) ? x : null);
@@ -23,7 +25,7 @@ export function recFromTurn(t: Turn): TurnRec | null {
   return {
     t: t.t0, bee: t.bee, flower: t.flower, fed: e.action === "feed", failed: (e.r === null && !e.rHash) || !!e.flowerError,
     percent: num(e.percent), energy: num(e.energy), ms: num(e.ms), pollen: num(e.pollen), nectar: num(e.nectar),
-    flowerVersion: num(e.flowerVersion),
+    flowerVersion: num(e.flowerVersion), budgetMs: num(e.budgetMs),
   };
 }
 
@@ -31,11 +33,14 @@ export function recFromEntry(e: LedgerEntry, roundMs: number): TurnRec {
   return {
     t: e.atMs ?? (e.round - 1) * roundMs, bee: e.bee, flower: e.flower, fed: !!e.fed, failed: (e.response === null && !e.responseHash) || !!e.flowerError,
     percent: num(e.percent), energy: num(e.energy), ms: num(e.ms), pollen: num(e.pollen), nectar: num(e.nectar),
-    flowerVersion: num(e.flowerVersion),
+    flowerVersion: num(e.flowerVersion), budgetMs: num(e.budgetMs),
   };
 }
 
-/** The energy model's constants: E = (cap − size) × max(0, window − CPU ms). */
+/**
+ * The energy model's constants: E = (cap − size) × max(0, R − CPU ms), where R is the call's hidden time
+ * budget (at most `window`, the flower window); without R, the window itself.
+ */
 export interface EnergyModel {
   cap: number;          // the flower size budget, also the energy cap
   window: number;       // the flower window, ms
@@ -50,7 +55,7 @@ export interface TeamBins {
   energySum: Float64Array; energyN: Float64Array;
   msSum: Float64Array; msN: Float64Array;
   /** The energy budget of each visit whose energy the viewer can see, and where it went. */
-  budget: Float64Array; size: Float64Array; compute: Float64Array;
+  budget: Float64Array; reserve: Float64Array; size: Float64Array; compute: Float64Array;
   pollen: Float64Array; paid: Float64Array; lost: Float64Array; lostN: Float64Array;
   beeFeeds: Float64Array; nectar: Float64Array;
   /** Score components at the end of each bin (whole game up to then). */
@@ -70,7 +75,7 @@ export function binTurns(recs: Iterable<TurnRec>, n: number, endMs: number, binM
   const mk = () => new Float64Array(bins);
   const teams: TeamBins[] = Array.from({ length: n }, () => ({
     visits: mk(), feedsAt: mk(), percentSum: mk(), percentN: mk(), energySum: mk(), energyN: mk(), msSum: mk(), msN: mk(),
-    budget: mk(), size: mk(), compute: mk(), pollen: mk(), paid: mk(), lost: mk(), lostN: mk(), beeFeeds: mk(), nectar: mk(),
+    budget: mk(), reserve: mk(), size: mk(), compute: mk(), pollen: mk(), paid: mk(), lost: mk(), lostN: mk(), beeFeeds: mk(), nectar: mk(),
     pollination: mk(), forage: mk(), pollinationShare: mk(), forageShare: mk(), fitness: mk(),
   }));
   const { cap, window: W } = model;
@@ -91,13 +96,18 @@ export function binTurns(recs: Iterable<TurnRec>, n: number, endMs: number, binM
         f.energySum[k] += r.energy; f.energyN[k]++;
         // The flower's size: its version's, else worked out from E and its compute time, else as last seen.
         let size = r.flowerVersion !== null ? model.sizeOf?.(r.flower, r.flowerVersion) : undefined;
-        if (size === undefined && !r.failed && r.ms !== null && r.ms < W && r.energy > 0) size = Math.round(cap - r.energy / (W - r.ms));
+        // The call's budget: R where known (the rest of the window, up to the most it could have been, is the
+        // reserve it was never given), else the whole window.
+        const R = Math.min(W, r.budgetMs ?? W);
+        if (size === undefined && !r.failed && r.ms !== null && r.ms < R && r.energy > 0) size = Math.round(cap - r.energy / (R - r.ms));
         if (size === undefined) size = lastSize[r.flower];
         if (size !== undefined) lastSize[r.flower] = size;
-        const sizeCost = Math.min(B, (size ?? 0) * W);
+        const BR = cap * R;
+        const sizeCost = Math.min(BR, (size ?? 0) * R);
         f.budget[k] += B;
+        f.reserve[k] += B - BR;
         f.size[k] += sizeCost;
-        f.compute[k] += Math.max(0, B - sizeCost - r.energy);
+        f.compute[k] += Math.max(0, BR - sizeCost - r.energy);
         if (r.fed) {
           f.pollen[k] += r.pollen ?? Math.max(0, r.energy - (r.nectar ?? 0));
           f.paid[k] += r.nectar ?? 0;
@@ -187,15 +197,21 @@ export function seriesOf(m: Metric, t: TeamBins, bins: number, upto = bins): (nu
  * Whole-game totals per flower: its visits' energy budget and where it went. `known`: every visit's
  * energy was visible (its own team during play, everyone after the game), so the lost part is complete.
  */
-export interface EnergyTotals { budget: number; size: number; compute: number; pollen: number; nectar: number; lost: number; visits: number; feeds: number; known: boolean }
+export interface EnergyTotals { budget: number; reserve: number; size: number; compute: number; pollen: number; nectar: number; lost: number; visits: number; feeds: number; known: boolean }
 
 export function totalsOf(t: TeamBins): EnergyTotals {
   const sum = (a: Float64Array) => a.reduce((s, x) => s + x, 0);
   const visits = sum(t.visits), feeds = sum(t.feedsAt);
   return {
-    budget: sum(t.budget), size: sum(t.size), compute: sum(t.compute), pollen: sum(t.pollen), nectar: sum(t.paid), lost: sum(t.lost),
+    budget: sum(t.budget), reserve: sum(t.reserve), size: sum(t.size), compute: sum(t.compute), pollen: sum(t.pollen), nectar: sum(t.paid), lost: sum(t.lost),
     visits, feeds, known: visits > 0 && sum(t.energyN) >= visits,
   };
+}
+
+/** The range a flower call's hidden time budget R is drawn from (the config's, else 50 to the flower window). */
+export function flowerBudgetRange(cfg: GameConfig): { min: number; max: number } {
+  const f = cfg.budgets.flower as { ms: number; minMs?: number; maxMs?: number };
+  return { min: f.minMs ?? 50, max: f.maxMs ?? f.ms };
 }
 
 /** A size lookup from teams' version histories (participant index → flower version → size). */

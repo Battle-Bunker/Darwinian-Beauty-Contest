@@ -24,7 +24,7 @@ export const takesEffect = (kind: Kind) =>
   kind === "bee" ? "once your bee's current turn is over (it's asked first() straight away)" : "for turns that start from now (a turn under way finishes with the old one)";
 
 const BLURB: Record<Kind, string> = {
-  flower: "Your flower is a species: every visit is a bee meeting one of its flowers. flower(challenge) returns [response, percent]. It allocates its energy between compute, nectar and pollen: its size and its CPU time use up part of each visit's budget, leaving E = (size cap − size) × max(0, 150 − CPU ms); a bee that feeds gets percent% of E as nectar and the rest as pollen, which it carries to other flowers. An unfed visit's E is lost. It runs fresh for every turn and remembers nothing: it sees only its challenge and GAME.",
+  flower: "Your flower is a species: every visit is a bee meeting one of its flowers. flower(challenge) returns [response, percent]. It allocates its energy between compute, nectar and pollen: its size and its CPU time use up part of each visit's budget, leaving E = (size cap − size) × max(0, R − CPU ms), where R is this turn's time limit: hidden, and varying from 50 to 150 ms; a bee that feeds gets percent% of E as nectar and the rest as pollen, which it carries to other flowers. An unfed visit's E is lost. It runs fresh for every turn and remembers nothing: it sees only its challenge and GAME.",
   bee: "Your bee takes one turn a round at one flower of a random species, never told whose: first() gives a challenge when it has none queued, and decide(challenge, response) returns [\"feed\" or \"leave\", next challenge]. Feeding gets it nectar (and pollen to carry) and sits it out for the feed cost in rounds; if you define fed(nectar), it runs right after a feed decided in time, in the same program instance as that decide, and is told the nectar. Each turn runs fresh: only MEMORY, a tiny key–value store only the bee can write, carries over, and a new version starts it empty. What it prints shows up for your team below and in the feed.",
 };
 
@@ -195,7 +195,7 @@ export function ProgramEditors({ view, base, store }: { view: GameView; base: st
                 ? <BudgetMeter store={store} budget={budget} bank={mine.banks[kind]!} cost={unchanged ? 0 : cost} status={g.status} kind={kind} />
                 : <div className="meter-note muted">{g.status === "lobby" ? <>Writing programs before the game starts is <b>free</b>. Once it starts, every change costs change budget, which fills by {budget.perMinute.toLocaleString()} nodes a minute (up to {budget.cap.toLocaleString()}).</> : null}</div>}
             </div>
-            <div className="meter-note muted small">{kind === "bee" ? `Time limit: ${budget.ms} ms to decide (a late reply never feeds).` : `Time limit: ${budget.ms} ms per turn; every millisecond of CPU costs energy.`}</div>
+            <div className="meter-note muted small">{kind === "bee" ? `Time limit: ${budget.ms} ms to decide (a late reply never feeds).` : `Your flower's time limit this turn is hidden and varies from 50 to ${budget.ms} ms (it's the call's hard limit, and E counts from it); every millisecond of CPU costs energy. The response still reaches the bee at ${budget.ms} ms.`}</div>
             {s?.syntaxError && !empty && <Alert kind="warn">Syntax error: this code doesn't parse yet, so it can't be submitted.</Alert>}
             {overSize && <Alert kind="error">Too big: {s!.size.toLocaleString()} nodes, but the budget is {budget.size.toLocaleString()}. Make it {(s!.size - budget.size).toLocaleString()} nodes smaller to submit. Comments, spacing and name lengths are free; every byte of a string or number counts.</Alert>}
             {incoming[kind] !== undefined && (
@@ -478,7 +478,7 @@ function TryPanel({ kind, code, base, challengeType, flowerCode, view }: {
           <>
             {energies.length > 0 && (
               <p className="small">
-                {typeof flower.size === "number" && <>At {flower.size.toLocaleString()} nodes, E = ({cfg.budgets.flower.size.toLocaleString()} − {flower.size.toLocaleString()}) × (150 − CPU ms). </>}
+                {typeof flower.size === "number" && <>At {flower.size.toLocaleString()} nodes, E = ({cfg.budgets.flower.size.toLocaleString()} − {flower.size.toLocaleString()}) × (R − CPU ms), R being each call's hidden time limit. </>}
                 Excess energy per visit: typically <b>{fmtE(median(energies))}</b>, at most <b>{fmtE(Math.max(...energies))}</b> node·ms. A bee that feeds gets the percent you offer as nectar and the rest as pollen; a bee that leaves: nobody gets it.
               </p>
             )}
@@ -551,10 +551,10 @@ function EnergyMeter({ size, cap, ms }: { size: number | null; cap: number; ms: 
   const room = size === null ? null : Math.max(0, cap - size);
   const best = room === null ? null : room * ms;
   return (
-    <div className="meter energy-meter" title="E = (size cap − size) × max(0, window − CPU ms): a smaller, faster flower makes more">
+    <div className="meter energy-meter" title="E = (size cap − size) × max(0, R − CPU ms), R the call's hidden time limit (at most the window): a smaller, faster flower makes more">
       <div className="meter-label"><span>Max E a visit</span><b>{best === null ? "–" : fmtE(best)}</b><span className="muted">node·ms</span></div>
       <div className="meter-track"><div className="meter-fill" style={{ width: `${room === null ? 0 : (room / Math.max(1, cap)) * 100}%` }} /></div>
-      <div className="small muted">({cap.toLocaleString()} − {size ?? "size"}) × ({ms} − CPU ms): every node and every millisecond you save is more to give as nectar and pollen.</div>
+      <div className="small muted">({cap.toLocaleString()} − {size ?? "size"}) × (R − CPU ms), with R at most {ms} ms (it's hidden, from 50 to {ms} ms each turn): every node and every millisecond you save is more to give as nectar and pollen.</div>
     </div>
   );
 }

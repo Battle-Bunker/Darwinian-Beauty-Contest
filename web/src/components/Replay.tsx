@@ -17,6 +17,8 @@ import { Value } from "./Value";
 import { partsOfAction, ResponseView, responseUrl } from "./ResponseView";
 import { MemoryTable } from "./Memory";
 import { GrainChip, PollenPanel, type GrainRec } from "./Pollen";
+import { BudgetChart, type BudgetPoint } from "./BudgetChart";
+import { flowerBudgetRange } from "../lib/stats";
 
 const SPEEDS = [0.1, 0.25, 0.5, 1, 2, 5, 10];
 
@@ -200,7 +202,7 @@ function RoundInspector({ index, round, roundMs, teams, mine, focus, rev, base }
               <tr>
                 <th className="left">Bee → flower</th><th className="left">Challenge → response</th><th className="left">Decision</th>
                 <th title="Share of E offered">%</th><th title="Excess energy, node·ms">E</th><th>Nectar</th><th>Pollen</th><th title="Energy lost: the bee didn't feed">Lost</th>
-                <th title="The flower's CPU time">Flower ms</th><th title="How long the bee took to decide">Bee ms</th><th className="left">Versions</th>
+                <th title="The flower call's hidden time budget R">R</th><th title="The flower's CPU time">Flower ms</th><th title="How long the bee took to decide">Bee ms</th><th className="left">Versions</th>
               </tr>
             </thead>
             <tbody>
@@ -230,6 +232,7 @@ function InspectorRow({ t, teams, mine, focus, base }: { t: Turn; teams: Team[];
       <td title={fmtEExact(e?.nectar)}>{isFed ? fmtE(e?.nectar) : ""}</td>
       <td title={fmtEExact(e?.pollen)}>{isFed ? fmtE(e?.pollen) : ""}</td>
       <td className="muted" title={fmtEExact(isFed ? 0 : e?.energy)}>{!isFed && e && typeof e.energy === "number" ? fmtE(e.energy) : ""}</td>
+      <td>{fmtMs(e?.budgetMs)}</td>
       <td>{fmtMs(e?.ms)}</td>
       <td>{fmtMs(e?.beeMs)}</td>
       <td className="left small muted nowrap">{e ? `bee v${e.beeVersion ?? "?"} · flower v${e.flowerVersion ?? "?"}` : ""}</td>
@@ -253,6 +256,16 @@ function ReplayCharts({ view, history, teams, mine, focus, setFocus, cursor, onS
   }, [history, hrev, teams.length, endMs, roundMs, model]); // eslint-disable-line react-hooks/exhaustive-deps
   const upto = history.done ? data.bins : Math.floor(Math.max(0, history.turns.lastT) / data.binMs);
   const rows = teams.map((_, i) => i);
+  // Each flower call's hidden time budget R against its CPU time (when the engine gives R).
+  const budgetPoints = useMemo(() => {
+    const out: BudgetPoint[] = [];
+    for (const list of history.turns.bees) for (const t of list) {
+      const e = t.end;
+      if (e && typeof e.budgetMs === "number") out.push({ flower: t.flower, r: e.budgetMs, ms: typeof e.ms === "number" ? e.ms : null, failed: !!e.flowerError || (e.r === null && !e.rHash) });
+    }
+    return out;
+  }, [history, hrev]); // eslint-disable-line react-hooks/exhaustive-deps
+  const budgetRange = flowerBudgetRange(cfg);
   return (
     <div className="stack">
       <section>
@@ -260,6 +273,12 @@ function ReplayCharts({ view, history, teams, mine, focus, setFocus, cursor, onS
         <div className="row"><MetricPicker value={metric} onChange={setMetric} /><span className="small muted">Click the chart to jump the replay there.</span></div>
         <TeamSeriesChart teams={teams} rows={rows} data={data} metric={metric} focus={focus} onFocus={setFocus} cursor={cursor} onSeek={onSeek} upto={upto} endMs={endMs} />
       </section>
+      {budgetPoints.length > 0 && (
+        <section>
+          <h3>Each species' time budget against the work it did</h3>
+          <BudgetChart teams={teams} points={budgetPoints} min={budgetRange.min} max={budgetRange.max} />
+        </section>
+      )}
       <section>
         <h3>Where each flower's energy went</h3>
         <p className="small muted">A flower allocates every visit's energy budget ({cfg.budgets.flower.size.toLocaleString()} × {cfg.budgets.flower.ms} node·ms) between compute, nectar and pollen. Its size shrinks the budget and its CPU time uses part of it; what's left, E, goes to a bee that feeds, as nectar (the percent offered) and pollen (the rest), or is lost when the bee doesn't feed.</p>
