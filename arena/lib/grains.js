@@ -10,13 +10,13 @@
 //   uses        whether teams acted on leaked code: a later version of theirs (flower or bee) that contains a secret of
 //               the leaked code (a string of 6+ characters or a number of 6+ digits) they hadn't used before, or runs
 //               of 24+ characters of the leaked code they held then (a copy; "whole-version" when it is identical and they
-//               held all of it); runs that two or more other teams' lobby programs already shared are boilerplate
+//               held all of it); runs that two or more other teams' lobby programs already shared are boilerplate, and runs
+//               of the source species' public answers could have come from those
 // A grain is placed where it first occurs in the (wrapped) code: a short grain that occurs twice may be misplaced.
 
 const r3 = (x) => (x == null || !Number.isFinite(x) ? null : Math.round(x * 1000) / 1000);
 const median = (xs) => { if (!xs.length) return null; const s = [...xs].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
 export const COPY_RUN = 24; // characters of leaked code in a row that count as a copy
-const SECRET = /"((?:\\.|[^"\\\n]){6,})"|'((?:\\.|[^'\\\n]){6,})'|`([^`]{6,})`|(?<![\w.])(\d{6,})(?![\w.])/g;
 
 /** Where a grain lies in a wrapped code: its first start, or -1. */
 export function locate(grain, code) {
@@ -25,13 +25,31 @@ export function locate(grain, code) {
   return (code + code.slice(0, grain.length - 1)).indexOf(grain);
 }
 
-/** The secrets of a code: its long literals, with where they are ([{ text, at, end }]). */
+/** The secrets of a code: its long literals (strings of 6+ characters, numbers of 6+ digits), with where they are
+ * ([{ text, at, end }]). A small lexer: string literals (single, double, triple quotes, template strings) with escapes,
+ * comments skipped. */
 export function secretsOf(code) {
-  const out = [];
-  for (const m of String(code || "").matchAll(SECRET)) {
-    const text = m[1] ?? m[2] ?? m[3] ?? m[4];
-    const at = m.index + m[0].indexOf(text);
-    out.push({ text, at, end: at + text.length });
+  const c = String(code || ""), out = [];
+  for (let i = 0; i < c.length;) {
+    const ch = c[i];
+    if (ch === "#" || (ch === "/" && c[i + 1] === "/")) { while (i < c.length && c[i] !== "\n") i++; continue; }
+    if (ch === '"' || ch === "'" || ch === "`") {
+      const q = c.startsWith(ch.repeat(3), i) && ch !== "`" ? ch.repeat(3) : ch;
+      let j = i + q.length;
+      while (j < c.length && !c.startsWith(q, j)) { if (c[j] === "\\") j++; else if (c[j] === "\n" && q.length === 1 && ch !== "`") break; j++; }
+      const text = c.slice(i + q.length, j);
+      if (text.length >= 6) out.push({ text, at: i + q.length, end: j });
+      i = j + q.length;
+      continue;
+    }
+    if (/\d/.test(ch) && !/[\w.]/.test(c[i - 1] || "")) {
+      let j = i;
+      while (j < c.length && /\d/.test(c[j])) j++;
+      if (j - i >= 6 && !/[\w.]/.test(c[j] || "")) out.push({ text: c.slice(i, j), at: i, end: j });
+      i = j;
+      continue;
+    }
+    i++;
   }
   return out;
 }
@@ -128,15 +146,21 @@ export function grainMetrics({ turns, ids, name = {}, minified, liveAt, duration
           for (const x of secrets) if (x.leakedAt == null && cover.has(x.at, x.end)) x.leakedAt = t.atMs;
         }
       };
+      // Public answers of the source species: text a team could copy without any grain (its responses are public).
+      const answers = turns.filter((t) => t.flower === src.team && t.r != null && !t.r?.$big).map((t) => ({ atMs: t.atMs, text: JSON.stringify(t.r) }));
       for (let i = 0; i < mine.length; i++) {
         const v = mine[i];
         if (!(v.atMs > 0) || !v.code) continue; // lobby versions came before any grain
         heldAt(v.atMs);
         if (!cover.n) continue;
         const before = mine.slice(0, i).map((x) => x.code || "").join("\n");
+        const seenAnswers = new Set(answers.filter((a) => a.atMs < v.atMs).slice(-2000).map((a) => a.text));
+        const publicText = [...seenAnswers].join("\n");
         for (const x of secrets) {
           if (x.leakedAt == null || x.leakedAt > v.atMs || x.used) continue;
-          if (v.code.includes(x.text) && !before.includes(x.text)) {
+          // Not a secret if it was public (in the species' answers) or common (in two or more other teams' lobby code).
+          const common = ids.filter((id) => id !== T && versionsOf(id).some((w) => !(w.atMs > 0) && w.code?.includes(x.text))).length >= 2;
+          if (v.code.includes(x.text) && !before.includes(x.text) && !publicText.includes(x.text) && !common) {
             x.used = true;
             uses.push({ type: "secret", team: nm(T), teamId: T, kind: v.kind, version: v.version, from: nm(src.team), fromId: src.team, fromVersion: src.version,
               secret: x.text.length > 16 ? x.text.slice(0, 12) + "…" : x.text, leakedAtMs: x.leakedAt, usedAtMs: v.atMs, lagMs: v.atMs - x.leakedAt });
@@ -148,6 +172,7 @@ export function grainMetrics({ turns, ids, name = {}, minified, liveAt, duration
         for (let p = 0; p < src.code.length; p++) if (cover.has(p, p + COPY_RUN)) leaked.add(wrapped.slice(p, p + COPY_RUN));
         if (!leaked.size) continue;
         const old = kgrams(before);
+        for (const a of seenAnswers) for (const g of kgrams(a)) old.add(g);
         let copied = 0, last = -1;
         for (let p = 0; p + COPY_RUN <= v.code.length; p++) {
           const g = v.code.slice(p, p + COPY_RUN);
