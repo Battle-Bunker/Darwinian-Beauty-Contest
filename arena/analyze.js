@@ -158,6 +158,29 @@ for (const a of arenas) {
           secs(x.meanMsBetweenChanges), x.value != null ? JSON.stringify(x.value).slice(0, 80) : "-"]));
     }
 
+    // Pollen grains.
+    const Gr = m.grains;
+    if (Gr && Gr.setting !== "off" && Gr.grains != null) {
+      p(`Pollen grains (${Gr.setting ?? "feeder"}; on every feed the bee's team got floor(pollen^(1/3)) characters of the answering flower version's minified code): ` +
+        `${Gr.grains} grains, mean ${f2(Gr.meanLength)} characters; ${big(Gr.charactersToOthers)} characters to other teams' bees (${big(Gr.perMinute)} a minute). ` +
+        `${Gr.versionsFullyHeld} of ${Gr.versionsWithGrains} flower versions were fully held by one other team (median ${Gr.medianMsToFullyHeld != null ? mmss(Gr.medianMsToFullyHeld) : "-"} after going live), ` +
+        `${Gr.versionsFullyLeaked} by all of them together (median ${Gr.medianMsToFullyLeaked != null ? mmss(Gr.medianMsToFullyLeaked) : "-"}). Acting on leaked code: ` +
+        `${Gr.secretUses} leaked secrets used, ${Gr.copies} copies (${Gr.wholeVersions} whole versions).`);
+      table(["species of", "grains", "to other teams", "receiving teams", "characters to others", "per minute"],
+        (Gr.perSpecies || []).map((x) => [x.team, x.grains, x.toOthers, x.receivers, big(x.charactersToOthers), big(x.perMinute)]));
+      if ((Gr.versions || []).length) {
+        p("Flower versions and their grains (held: the share of the code one other team, or all of them together, held at the end; fully held: when, after it went live):");
+        table(["species of", "version", "code length", "grains (to others)", "placed", "best team's share (who)", "all together", "fully held by one team", "fully held by all together"],
+          Gr.versions.map((v) => [v.team, v.version, v.codeLength ?? "-", `${v.grains} (${v.toOthers})`, v.placed, `${pc(v.bestShare)} (${v.bestTeam ?? "-"})`, pc(v.unionShare),
+            v.fullByTeamMs != null ? `${mmss(v.fullByTeamMs)} (${v.fullByTeam})` : "-", v.fullUnionMs != null ? mmss(v.fullUnionMs) : "-"]));
+      }
+      if ((Gr.uses || []).length) {
+        p("Acting on leaked code (a later version of the team that got the grains, with a leaked secret, or 24+ characters in a row of the code it held):");
+        table(["when", "who", "what", "from", "detail"], Gr.uses.map((u) => [mmss(u.usedAtMs), `${u.team} ${u.kind} v${u.version}`, u.type, `${u.from} v${u.fromVersion}`,
+          u.type === "secret" ? `"${u.secret}", ${secs(u.lagMs)} after it leaked` : `${u.characters} characters (${pc(u.share)} of the version), ${secs(u.lagMs)} after the first grain`]));
+      }
+    }
+
     // Self-feeding and handshakes.
     p("Self-feeding (a bee at its own flower; flowers are drawn at random, so about 1/N of a bee's turns) and handshakes " +
       "(flagged when, over at least 5 such turns, the flower's own bee feeds there 30 points more often than other bees do, or is offered 15 points more):");
