@@ -67,7 +67,13 @@ export function TeamSeriesChart({ teams, rows, data, metric, focus, onFocus, cur
   const W = Math.max(260, width);
   const pw = W - M.left - M.right, ph = H - M.top - M.bottom;
   const series = useMemo(() => rows.map((i) => ({ i, v: seriesOf(m, data.teams[i], data.bins, upto ?? data.bins) })), [rows, m, data, upto]);
-  const max = Math.max(m.format === "percent" ? 10 : 0, m.par !== undefined ? m.par * 1.2 : 0, ...series.flatMap((s) => s.v.filter((x): x is number => x !== null)));
+  // Score levels swing wildly over the first few feeds: scale to the game after its opening tenth (the
+  // opening is clipped at the top of the plot).
+  const skip = m.mode === "level" ? Math.floor(data.bins / 10) : 0;
+  const values = series.flatMap((s) => s.v.slice(skip).filter((x): x is number => x !== null));
+  const max = Math.max(m.format === "percent" ? 10 : 0, m.par !== undefined ? m.par * 1.2 : 0, ...(values.length ? values : series.flatMap((s) => s.v.filter((x): x is number => x !== null))));
+  const clipped = skip > 0 && series.some((s) => s.v.slice(0, skip).some((x) => x !== null && x > max));
+  const clipId = `clip-${metric}-${rows.join("-")}`;
   const ticks = niceTicks(max);
   const top = ticks[ticks.length - 1] || 1;
   const span = Math.max(data.binMs, endMs);
@@ -115,10 +121,14 @@ export function TeamSeriesChart({ teams, rows, data, metric, focus, onFocus, cur
           {timeTicks(span).map((t) => (
             <text key={t} x={M.left + (t / span) * pw} y={H - 6} className="chart-tick" textAnchor={t === 0 ? "start" : t / span > 0.97 ? "end" : "middle"}>{fmtClock(t)}</text>
           ))}
-          {paths.map(({ i, d }) => (
-            <path key={i} d={d} fill="none" stroke={teams[i]?.color} strokeWidth={focus === i ? 3 : 2} strokeLinejoin="round" strokeLinecap="round"
-              opacity={focus === null || focus === i ? 1 : 0.28} />
-          ))}
+          <defs><clipPath id={clipId}><rect x={M.left - 4} y={M.top - 2} width={pw + 8} height={ph + 4} /></clipPath></defs>
+          <g clipPath={`url(#${clipId})`}>
+            {paths.map(({ i, d }) => (
+              <path key={i} d={d} fill="none" stroke={teams[i]?.color} strokeWidth={focus === i ? 3 : 2} strokeLinejoin="round" strokeLinecap="round"
+                opacity={focus === null || focus === i ? 1 : 0.28} />
+            ))}
+          </g>
+          {clipped && <text x={M.left + 4} y={M.top + 10} className="chart-tick">↑ off the scale while there were few feeds</text>}
           {m.par !== undefined && m.par <= top && <line x1={M.left} x2={W - M.right} y1={y(m.par)} y2={y(m.par)} className="chart-par" />}
           {typeof cursor === "number" && cursor >= 0 && <line x1={M.left + (cursor / span) * pw} x2={M.left + (cursor / span) * pw} y1={M.top} y2={M.top + ph} className="chart-cursor" />}
           {hover !== null && <line x1={tipLeft} x2={tipLeft} y1={M.top} y2={M.top + ph} className="chart-crosshair" />}

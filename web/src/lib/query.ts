@@ -59,11 +59,11 @@ export function loadSchema(): Promise<QSchema> {
 }
 
 /** The default name of an aggregate, canonical (as the TypeScript client and the AST use it). */
-export const defaultAs = (a: Agg) => (a.fn === "count" && !a.field ? "count" : `${a.fn}_${a.field}`);
+export const defaultAs = (a: Agg) => (a.fn === "count" && !a.field ? "count" : `${a.fn}_${a.field ?? "?"}`);
 
 // ---------- code ----------
 
-export const snake = (s: string) => s.replace(/[A-Z]/g, (m) => "_" + m.toLowerCase());
+export const snake = (s: string) => String(s ?? "").replace(/[A-Z]/g, (m) => "_" + m.toLowerCase());
 const scopeMethod = { py: { myBee: "my_bee", myFlower: "my_flower", mine: "mine" }, ts: { myBee: "myBee", myFlower: "myFlower", mine: "mine" } } as const;
 
 /** A JSON value as a Python literal. */
@@ -89,7 +89,7 @@ function chain(ast: QueryAst, lang: "py" | "ts"): string[] {
   const aggName = new Map<string, string>();
   for (const a of ast.aggregates ?? []) {
     const canon = a.as ?? defaultAs(a);
-    aggName.set(canon, canon === defaultAs(a) ? (a.fn === "count" && !a.field ? "count" : `${a.fn}_${name(a.field!)}`) : canon);
+    aggName.set(canon, canon === defaultAs(a) ? (a.fn === "count" && !a.field ? "count" : `${a.fn}_${a.field ? name(a.field) : "?"}`) : canon);
   }
   const out: string[] = [];
   if (ast.scope) out.push(`${scopeMethod[lang][ast.scope as keyof typeof scopeMethod.py] ?? ast.scope}()`);

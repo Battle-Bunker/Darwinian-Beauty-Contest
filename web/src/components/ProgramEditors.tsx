@@ -16,7 +16,7 @@ import { useLiveTick, type LiveStore } from "../lib/live";
 import { Value } from "./Value";
 import { FeedRow } from "./Feed";
 import { beeTiming, flowerTiming, TimingPanel } from "./Timing";
-import { MemoryView } from "./Memory";
+import { MemoryView, pretty } from "./Memory";
 
 /** When a submitted change takes effect (versions are pinned per turn). */
 export const takesEffect = (kind: Kind) =>
@@ -510,7 +510,7 @@ function TryPanel({ kind, code, base, challengeType, flowerCode, view }: {
           {bee.memory !== undefined && (
             <details className="try-ledger">
               <summary className="small">The test bee's MEMORY at the end ({new TextEncoder().encode(JSON.stringify(sortKeys(bee.memory))).length.toLocaleString()} bytes)</summary>
-              <pre className="memory-value">{JSON.stringify(bee.memory, null, 2)}</pre>
+              <pre className="memory-value">{pretty(bee.memory)}</pre>
             </details>
           )}
           <TimingPanel data={beeTiming(turns, null)} limit={cfg.budgets.bee.ms} title="Your bee's decision times" unit="turns" missLabel="too slow" />

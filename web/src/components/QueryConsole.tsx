@@ -10,7 +10,7 @@ import {
   curlCode, defaultAs, download, isNumericType, loadSchema, pythonCode, rulesOf, toCsv, typescriptCode,
   type AggFn, type CodeTarget, type Op, type QEntity, type QField, type QSchema, type QueryAst, type QueryResult,
 } from "../lib/query";
-import { Alert, CopyButton, Spinner } from "./ui";
+import { Alert, CopyButton, ErrorBoundary, Spinner } from "./ui";
 import { Value } from "./Value";
 
 interface DCond { id: number; field: string; op: Op; a: string; b: string }
@@ -103,7 +103,7 @@ function toAst(d: Draft, ent: QEntity): { ast: QueryAst; errors: Record<string, 
     const names = new Set<string>();
     ast.aggregates = d.aggs.map((a) => {
       const agg = { fn: a.fn, ...(a.field ? { field: a.field } : {}) };
-      if (a.fn !== "count" && !a.field) errors[a.id] = `${a.fn} needs a numeric field`;
+      if (a.fn !== "count" && !a.field) errors[a.id] = `${a.fn} needs a numeric field: pick one`;
       const as = a.as.trim() || defaultAs(agg);
       if (names.has(as)) errors[a.id] = `two aggregates are called ${as}: name one`;
       names.add(as);
@@ -125,6 +125,10 @@ function toAst(d: Draft, ent: QEntity): { ast: QueryAst; errors: Record<string, 
 }
 
 export function QueryConsole({ target }: { target: QueryTarget }) {
+  return <ErrorBoundary what="query console"><Console target={target} /></ErrorBoundary>;
+}
+
+function Console({ target }: { target: QueryTarget }) {
   const [schema, setSchema] = useState<QSchema | null>(null);
   const [schemaError, setSchemaError] = useState<string | null>(null);
   useEffect(() => { loadSchema().then(setSchema, (e) => setSchemaError(errorText(e))); }, []);

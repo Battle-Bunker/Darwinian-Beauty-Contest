@@ -5,10 +5,15 @@ import type { BeeMemory, GameView, Team } from "../types";
 import { fmtClock } from "../lib/format";
 import { Meter } from "./ui";
 
-/** The memory as canonical-ish JSON, pretty-printed for reading (the cap counts the compact form). */
-const pretty = (v: unknown) => {
-  try { return JSON.stringify(v, null, 2); } catch { return String(v); }
-};
+/** The memory as JSON for reading: short parts on one line, longer ones indented (the cap counts the compact form). */
+export function pretty(v: unknown, indent = ""): string {
+  let flat: string;
+  try { flat = JSON.stringify(v) ?? "null"; } catch { return String(v); }
+  if (flat.length <= 72 - indent.length || v === null || typeof v !== "object") return flat;
+  const inner = indent + "  ";
+  if (Array.isArray(v)) return `[\n${v.map((x) => inner + pretty(x, inner)).join(",\n")}\n${indent}]`;
+  return `{\n${Object.entries(v as Record<string, unknown>).map(([k, x]) => `${inner}${JSON.stringify(k)}: ${pretty(x, inner)}`).join(",\n")}\n${indent}}`;
+}
 
 export function MemoryView({ memory, team, view, own = false }: { memory: BeeMemory; team: Team; view: GameView; own?: boolean }) {
   const roundMs = view.game.config.budgets.flower.ms + view.game.config.budgets.bee.ms;
