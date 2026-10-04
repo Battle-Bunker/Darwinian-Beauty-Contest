@@ -12,10 +12,10 @@
 
 | cooperators' rule | 60% teams' mean fitness | rival feeds at the 60% teams | mimic fitness | rival feeds at mimic |
 |---|---|---|---|---|
-| static (G3b); team 4 has its own 5% rule | 1.020 | 107.5 | 0.978 ± 0.02 | 27.0 |
-| static (G3b); team 4 mimics | 0.882 | 99.8 | 1.164 ± 0.10 | 42.8 |
-| new rule every 20 rounds (4 s); team 4 has its own 5% rule | 0.951 | 104.0 | 0.988 ± 0.08 | 27.5 |
-| new rule every 20 rounds (4 s); team 4 mimics | 0.882 | 93.0 | 1.157 ± 0.20 | 39.3 |
-| new rule every 5 rounds (1 s); team 4 has its own 5% rule | 0.978 | 109.3 | 0.967 ± 0.09 | 28.3 |
-| new rule every 5 rounds (1 s); team 4 mimics | 0.903 | 95.5 | 1.185 ± 0.10 | 45.5 |
+| static (G3b); team 4 has its own 5% rule | 1.014 | 109.5 | 0.997 ± 0.07 | 29.0 |
+| static (G3b); team 4 mimics | 0.902 | 103.3 | 1.160 ± 0.08 | 41.5 |
+| new rule every 20 rounds (4 s); team 4 has its own 5% rule | 0.990 | 103.3 | 0.940 ± 0.07 | 24.8 |
+| new rule every 20 rounds (4 s); team 4 mimics | 0.980 | 103.5 | 1.080 ± 0.13 | 36.8 |
+| new rule every 5 rounds (1 s); team 4 has its own 5% rule | 1.037 | 110.0 | 0.931 ± 0.01 | 29.5 |
+| new rule every 5 rounds (1 s); team 4 mimics | 0.969 | 96.5 | 1.129 ± 0.12 | 43.0 |
 
