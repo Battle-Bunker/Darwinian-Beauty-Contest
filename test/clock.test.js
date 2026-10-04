@@ -109,7 +109,7 @@ for (const language of ["python", "typescript"]) {
   test(`${language}: a bee's first(), decide() and fed() each start at 0, turn after turn`, async () => {
     const bee = language === "python"
       ? `import time\ndef first():\n    MEMORY["first"] = round(time.time() * 1000, 2)\n    return 1\ndef decide(c, r):\n    MEMORY["decide"] = max(MEMORY.get("decide", 0), round(time.perf_counter() * 1000, 2))\n    return "feed", c + 1\ndef fed(n):\n    MEMORY["fed"] = max(MEMORY.get("fed", 0), round(time.monotonic() * 1000, 2))\n`
-      : `function first() { MEMORY.first = performance.now(); return 1; }\nfunction decide(c: number, r: any): ["feed", number] { MEMORY.decide = Math.max(MEMORY.decide ?? 0, Date.now()); return ["feed", c + 1]; }\nfunction fed(n: number) { MEMORY.fed = Math.max(MEMORY.fed ?? 0, performance.now()); }`;
+      : `const ms = () => Math.round(performance.now() * 100) / 100; // (MEMORY is small: two decimals)\nfunction first() { MEMORY.first = ms(); return 1; }\nfunction decide(c: number, r: any): ["feed", number] { MEMORY.decide = Math.max(MEMORY.decide ?? 0, Date.now()); return ["feed", c + 1]; }\nfunction fed(n: number) { MEMORY.fed = Math.max(MEMORY.fed ?? 0, ms()); }`;
     const flower = language === "python" ? `def flower(c):\n    return c, 50\n` : `function flower(c: number): [number, number] { return [c, 50]; }`;
     const out = await play(normalizeConfig({ language, feedCost: 1 }), [{ flower, bee }], 30, null, { paced: true });
     const m = JSON.parse(out.memories.at(-1).memory);

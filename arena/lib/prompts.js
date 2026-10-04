@@ -68,7 +68,7 @@ ${timingText(config)}
 ${KINDS.map((k) => `| ${k} | ${n0(b[k].size)} | ${n0(b[k].perMinute)} | ${n0(b[k].cap)} | ${b[k].ms} |`).join("\n")}
 
   Change budget starts at 0 when the game starts and grows with game time, up to its cap. The bee's MEMORY holds at most
-  ${n0(b.bee.memory ?? 50)} bytes. A response may be at most ${n0(config.maxResponseBytes ?? 1048576)} bytes of JSON.`;
+  ${n0(b.bee.memory ?? 50)} bytes. A response may be at most ${n0(config.maxResponseBytes ?? 65536)} bytes of JSON.`;
 }
 
 // ---------------------------------------------------------------- team agents

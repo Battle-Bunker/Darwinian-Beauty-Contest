@@ -87,7 +87,10 @@ export function keywordFlower(code) {
   // The percent: the last item of every pair returned is a constant, or it is computed.
   const rets = [...c.matchAll(/^[ \t]*return[ \t]*\(?(.+),[ \t]*([^,\n()]+?)[ \t]*\)?[ \t]*$/gm)].map((m) => m[2]);
   const percent = rets.length && rets.every((x) => /^\d+(?:\.\d+)?$/.test(x)) ? "fixed" : /random\./.test(c) && /percent|pct/i.test(c) ? "random?" : "computed";
-  return { mechanism, tags, percent, families };
+  // The specific signal, as far as keywords tell (a puzzle's name), marked uncertain.
+  const pm = c.match(PUZZLE);
+  const signal = pm ? `${signalName(pm[0].replace(/^pow.*$/i, "quadratic-residue"))}?` : hash ? "hash-nonce?" : null;
+  return { mechanism, tags, percent, families, signal };
 }
 
 /** Does a bee's code define fed(nectar), the optional call after a feed? (Python or TypeScript, at the top level.) */
@@ -127,7 +130,7 @@ export function keywordBee(code) {
 // Labels are cached by skeleton (ARENA_MECH_CACHE overrides the file, e.g. for tests).
 const cacheFile = () => process.env.ARENA_MECH_CACHE || path.join(ARENA_DIR, "runs", "mechanisms-cache.json");
 // Bump a kind's version when its definitions change: its labels are classified again.
-const KIND_VERSION = { flower: 4, bee: 4 };
+const KIND_VERSION = { flower: 5, bee: 4 };
 let cache = null;
 function loadCache() {
   if (cache) return cache;
@@ -146,7 +149,9 @@ and flowers are never told whose counterpart they met, and programs see no histo
 Programs run fresh for every call: flower(challenge), first(), decide(challenge, response), and the bee's optional
 fed(nectar), which runs after a feed it decided in time, in the same instance as that decide. The bee's only state from one
 turn to the next is MEMORY, a flat key-value store of 50 bytes (key bytes + value JSON bytes) that only the bee writes and
-that empties when its code changes.`;
+that empties when its code changes. A program's clock reads 0 when each call starts: it can time its own work, nothing
+more. Each flower call has a hidden time budget (its own hard limit) that sets its energy. On every feed the bee's team gets
+a pollen grain: a random piece of the answering flower's minified code (programs never get grains).`;
 
 const take = (s, n) => (s.length > n ? s.slice(0, n) + "\n# ... (cut)" : s);
 
@@ -180,6 +185,11 @@ motif, label pattern or structure, the same for every challenge or derived from 
 "keyed" (a secret ties the answer to the challenge), "puzzle" (a costly problem built from the challenge that is cheap to
 check: proof of work, a certificate, sequential work), "commitment" (commits now to something checked later); [] if none.
 Add "difficulty": a short phrase (e.g. "10 zero bits, as many nonces as fit in 40 ms") or "".
+Add "signal": the specific signal it sends, as a short lowercase hyphenated name of the idea, not of this program (e.g.
+"graceful-labeling", "clique", "hamiltonian-path", "graph-coloring", "spanning-tree", "degree-signature", "label-motif",
+"hash-nonce", "echo"; "none" for no signal), the same name for the same idea in every program.
+Tag "signature-plus-work" when it combines a recognisable species signature with costly work (e.g. a fixed motif on top of a
+checkable puzzle).
 
 For each BEE: "checks" (its strongest check), one of: "none", "shape-stats" (learns or counts answer shapes),
 "learned-value" (remembers in MEMORY, e.g. from fed(nectar), how much nectar answers like this paid), "exact-rule" (recomputes a known public rule
@@ -209,13 +219,19 @@ function parseJson(text) {
   try { return JSON.parse(s.slice(a, b + 1)); } catch { return null; }
 }
 
+/** A signal's short name, normalised: lowercase, hyphens, at most 40 characters (null for none). */
+export function signalName(x) {
+  const s = String(x ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+  return s && s !== "none" && s !== "null" ? s : null;
+}
+
 /** Normalise one classifier item. */
 function clean(it) {
   const tags = Array.isArray(it.tags) ? it.tags.map((t) => String(t).toLowerCase().slice(0, 40)) : [];
   if (it.kind === "flower") return { mechanism: MECHANISMS.includes(it.mechanism) ? it.mechanism : "other", percentPolicy: PERCENT_POLICIES.includes(it.percent_policy) ? it.percent_policy : "other",
     percent: Number.isFinite(Number(it.percent)) && it.percent !== null ? Number(it.percent) : null, tags,
     families: Array.isArray(it.families) ? [...new Set(it.families.map((f) => String(f).toLowerCase()).filter((f) => FAMILIES.includes(f)))] : [],
-    difficulty: String(it.difficulty || "").slice(0, 120), summary: String(it.summary || "").slice(0, 300) };
+    difficulty: String(it.difficulty || "").slice(0, 120), signal: signalName(it.signal), summary: String(it.summary || "").slice(0, 300) };
   return { checks: BEE_CHECKS.includes(it.checks) ? it.checks : "none", feeds: BEE_FEEDS.includes(it.feeds) ? it.feeds : "mixed",
     threshold: ["none", "fixed", "adaptive"].includes(it.threshold) ? it.threshold : "none", memory: BEE_MEMORY.includes(it.memory) ? it.memory : "none", tags,
     summary: String(it.summary || "").slice(0, 300) };

@@ -94,6 +94,8 @@ for (const a of arenas) {
         changes: inGame.length / Math.max(1, teams.length), scaffoldTeams: (m.scaffolds || []).filter((x) => x.starts > x.refused).length, teams: teams.length,
         tooSlow: teams.reduce((s, t) => s + (t.bee.tooSlow || 0), 0), sessions: ss.game / Math.max(1, teams.length), cost: cost.usd,
         memShare: mean((m.memory?.teams || []).map((x) => x.finalShare)), beeChanges: mean((m.memory?.teams || []).map((x) => x.beeChanges)),
+        grainRate: m.grains?.perMinute ?? null, grainHeld: m.grains?.versionsWithGrains ? `${m.grains.versionsFullyHeld}/${m.grains.versionsWithGrains}` : "-",
+        grainUses: m.grains?.uses ? `${m.grains.secretUses}/${m.grains.copies}` : "-",
         fitSpread: fit.length ? Math.max(...fit) - Math.min(...fit) : null });
     }
   }
@@ -272,10 +274,10 @@ if (across.length) {
   p("Per game, averaged over teams where it's per team. Change budgets accrue per minute of game time, so short games allow little change. " +
     "Bees discriminate if the feed rate at high offers exceeds the rate at low offers.");
   table(["minutes", "arena game", "turns/s", "feed rate", "mean percent", "energy lost", "mean flower size", "flower compute share", "self-feeds of all feeds", "own-bee handshakes / mutual pairs",
-    "feed rate at low / high offers", "copies (median latency)", "in-game changes per team", "bee MEMORY used at the end (mean share)", "bee changes per team", "teams with a scaffold", "too-slow bee decisions", "game sessions per team", "fitness spread", "USD"],
+    "feed rate at low / high offers", "copies (median latency)", "in-game changes per team", "bee MEMORY used at the end (mean share)", "bee changes per team", "teams with a scaffold", "too-slow bee decisions", "game sessions per team", "grain characters leaked a minute", "versions fully held by another team", "leaked secrets used / copies", "fitness spread", "USD"],
     across.sort((x, y) => x.arena.localeCompare(y.arena) || x.gen - y.gen).map((d) => [d.minutes, `${d.arena} ${d.gen}`, f2(d.turnsPerSec), pc(d.feedRate), f2(d.meanPercent), pc(d.lost), f2(d.size),
       pc(d.compute), pc(d.selfShare), `${d.handshakes} / ${d.mutual}`, `${pc(d.lowHigh[0])} / ${pc(d.lowHigh[1])}`, `${d.copies} (${secs(d.copyLatency)})`, f2(d.changes), pc(d.memShare), f2(d.beeChanges),
-      `${d.scaffoldTeams}/${d.teams}`, d.tooSlow, f2(d.sessions), f2(d.fitSpread), f2(d.cost)]));
+      `${d.scaffoldTeams}/${d.teams}`, d.tooSlow, f2(d.sessions), big(d.grainRate), d.grainHeld, d.grainUses, f2(d.fitSpread), f2(d.cost)]));
 }
 
 // ---------- ideas, breeders, audit

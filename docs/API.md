@@ -64,7 +64,7 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 {
   "language": "python",
   "minutes": 2, "feedCost": 10,
-  "challengeType": "int", "responseType": "int", "maxLen": 64, "maxNodes": 512, "maxResponseBytes": 1048576,
+  "challengeType": "int", "responseType": "int", "maxLen": 64, "maxNodes": 512, "maxResponseBytes": 65536,
   "revealOnFinish": true,
   "grains": "feeder", "pollenGrain": { "exponent": 0.3333333333333333, "scale": 1 },
   "budgets": {
@@ -98,7 +98,7 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
   (UTF-8 bytes of the key + UTF-8 bytes of the value's JSON text): `{"n": 7, "best": "a7"}` is 2 + 8 = 10.
 - `maxLen` bounds the challenge's strings and lists; `maxNodes` its trees and graphs (graphs: ≤ 4 × maxNodes
   edges).
-- `maxResponseBytes` (default 1,048,576; 16 to 16,777,216): the most UTF-8 bytes of a response's JSON text
+- `maxResponseBytes` (default 65,536; 16 to 16,777,216): the most UTF-8 bytes of a response's JSON text
   (no spaces). Checked by the runner inside the flower's time; over it, the response is null and E = 0.
   `maxLen` and `maxNodes` don't apply to responses; responses nest at most 256 levels.
 - `revealOnFinish`: when the game ends, everyone can see all code and every bee's print output (everything

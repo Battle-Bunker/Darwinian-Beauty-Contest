@@ -28,7 +28,7 @@ export const DEFAULT_CONFIG = Object.freeze({
   responseType: "int",         // type of the value a flower answers with
   maxLen: 64,                  // max length of strings and lists in challenges
   maxNodes: 512,               // max nodes in a challenge's tree or graph (graphs: at most 4× as many edges)
-  maxResponseBytes: 1048576,   // max UTF-8 bytes of a response's JSON text (responses have no maxLen/maxNodes)
+  maxResponseBytes: 65536,     // max UTF-8 bytes of a response's JSON text (responses have no maxLen/maxNodes)
   revealOnFinish: true,        // when the game ends, everyone can see all code and every bee's print output
   grains: "feeder",            // who sees a feed's pollen grain during play: "feeder" (the bee's team) | "public" | "off"
   pollenGrain: Object.freeze({ exponent: 1 / 3, scale: 1 }), // a grain is ⌊scale × pollen^exponent⌋ characters of code

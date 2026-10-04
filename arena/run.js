@@ -497,16 +497,18 @@ async function runExperiment(name) {
     if (!files.length) throw new Error(`${c.id}: its common knowledge ${c.common.dir} is missing or empty`);
   }
   const started = [];
+  // The experiment's own cap: each cohort gets an equal share (--budget overrides it per cohort).
+  const budgetUsd = args.budget ? Number(args.budget) : exp.capUsd ? exp.capUsd / exp.cohorts.length : null;
   for (const c of exp.cohorts) {
     started.push(await startArena(c.id, exp.preset, games, {
-      common: c.common || null, ledgerExclude: ids.filter((x) => x !== c.id),
+      budgetUsd, common: c.common || null, ledgerExclude: ids.filter((x) => x !== c.id),
       experiment: { name, arm: c.arm, label: c.label || null, cohorts: ids, description: exp.description },
     }));
   }
   const elog = logger(name);
   const labelOf = (id) => exp.cohorts.find((c) => c.id === id)?.label || exp.cohorts.find((c) => c.id === id)?.arm || id;
   elog(`experiment ${name}: ${exp.cohorts.map((c) => `${c.id} (${c.label || c.arm}${c.common ? `, common knowledge ${c.common.dir}` : ""})`).join(", ")}; ${games} games each, interleaved; ` +
-    `preset ${exp.preset}; spend cap $${GLOBAL_CAP}`);
+    `preset ${exp.preset}; ${budgetUsd ? `each cohort capped at $${+budgetUsd.toFixed(2)} ($${+(budgetUsd * exp.cohorts.length).toFixed(2)} in all), ` : ""}global ledger cap $${GLOBAL_CAP}`);
   let doneCount = (await one("SELECT count(*)::int AS n FROM arena.games WHERE arena_id = ANY($1) AND stage = 'done'", [ids]))?.n || 0;
   try {
     for (let gen = 1; gen <= games; gen++) {
@@ -528,8 +530,11 @@ async function runExperiment(name) {
         if (!already) {
           doneCount++;
           const sp = await spend(arena.id);
+          let mine = 0;
+          for (const x of started) mine += (await spend(x.arena.id)).arena;
           elog(`progress: game ${gen} of ${games} in ${arena.id} (${labelOf(arena.id)}) done; ${doneCount} of ${games * started.length} cohort-games done; ` +
-            `spend: this cohort $${sp.arena.toFixed(2)}, all $${sp.global.toFixed(2)} of $${GLOBAL_CAP}`);
+            `spend: this cohort $${sp.arena.toFixed(2)}${budgetUsd ? ` of $${+budgetUsd.toFixed(2)}` : ""}, this experiment $${mine.toFixed(2)}` +
+            `${budgetUsd ? ` of $${+(budgetUsd * started.length).toFixed(2)}` : ""}, the whole ledger $${sp.global.toFixed(2)} of $${GLOBAL_CAP}`);
         }
       }
     }

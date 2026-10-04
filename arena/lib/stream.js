@@ -21,7 +21,7 @@
 // team through its own history.jsonl and mine.jsonl only; the shared public file never carries any (unless the game
 // makes grains public), even after the game, when the public API reveals them.
 //
-// Responses can be up to a megabyte. The server already gives a response over 4 KB as its size, hash and first 4 KB
+// Responses can be big (maxResponseBytes, up to 16 MB). The server already gives a response over 4 KB as its size, hash and first 4 KB
 // (rBytes, rHash, rPreview; in ledger entries responseBytes and responseHash); the files keep only the first
 // STREAM_PREVIEW characters of that preview, so a turn costs at most about 4 KB of file. The whole response is fetched
 // when someone asks for it (GET .../responses/:seq: tools/stream.py response, garden.response).

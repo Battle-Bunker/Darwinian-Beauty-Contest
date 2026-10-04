@@ -12,7 +12,7 @@ species gave them; forage: Σ over species of √nectar the bee got). Programs r
 a feed decided in time in the same instance as that decide) and see only their arguments and `GAME`: no history. A bee
 also has `MEMORY`, a flat key-value store of 50 bytes (key bytes + value JSON bytes) that only it writes and that a new
 bee version starts empty. Teams (not programs) query the history with a typed builder (docs/QUERY.md). Responses may be
-up to `maxResponseBytes` (1 MiB, set in every preset: `MAX_RESPONSE_BYTES` in lib/presets.js); one over 4 KB is its
+up to `maxResponseBytes` (64 KiB, set in every preset: `MAX_RESPONSE_BYTES` in lib/presets.js); one over 4 KB is its
 size, hash and preview in streams and queries, fetched whole on request. A game is a lobby where programs are written for free, then one stretch of play where teams
 change their programs whenever they like, paying from change budgets that refill with game time. After each game come
 metrics, interviews, the teen judges and (unless membership is fixed) selection and breeding.
@@ -238,7 +238,7 @@ pollen. The runner also keeps a private master copy (`.runner/g<N>/`); if a team
 link, it is rewritten in place from the master (and writing to `stream/` is a fair-play violation). Each team's
 `history.jsonl` and `mine.jsonl` are fetched separately with that team's token, so the server decides what each holds:
 the percent and energy of unfed turns only at the team's own flower, compute times only for its own flower, printouts,
-decision times and versions only for its own programs. Responses can be up to a megabyte: the server gives one over
+decision times and versions only for its own programs. Responses can be big (`maxResponseBytes`): the server gives one over
 4 KB as its size, hash and first 4 KB, and the files keep only the first 256 characters of that preview
 (`STREAM_PREVIEW`), so a turn costs at most about 4 KB of file; the whole response is fetched only when asked for
 (`GET …/responses/<seq>`: `tools/stream.py response`, `garden.response`, and the metrics, which fetch distinct big

@@ -19,8 +19,8 @@
 //   scaffold       limits of the teams' scaffolds (lib/scaffold.js SCAFFOLD_LIMITS: cpuShare, memMB, cpuSeconds, ...)
 
 // The most UTF-8 bytes of a flower's response (its JSON text): set explicitly in every preset so it is one place to change.
-// The server's default (1 MiB); a garden of big responses can store tens of MB per game-second, so it may be lowered.
-export const MAX_RESPONSE_BYTES = 1048576;
+// 64 KiB, the server's default (a garden of big responses can store tens of MB per game-second at a megabyte).
+export const MAX_RESPONSE_BYTES = 65536;
 // Pollen grains, set explicitly in every preset: who sees a feed's grain during play ("feeder": the feeding bee's team;
 // "public"; "off"), and its length, ⌊scale × pollen^exponent⌋ characters of the answering flower's minified code (the
 // server's defaults).
@@ -61,8 +61,8 @@ export const PRESETS = {
     scaffold: { cpuShare: 0.1 }, // six scaffolds share the machine with the garden: keep them light
     reserveUsd: 3,
   },
-  // The new-ideas experiment (EXPERIMENTS.ideas): every cohort plays this preset; only `common` differs. 10-minute games, so
-  // cycles of innovation and imitation have time to happen; the csig founders.
+  // The pilot and the signals experiment (EXPERIMENTS): every cohort plays this preset; only `common` differs. 10-minute
+  // games, so cycles of innovation and imitation have time to happen; the csig founders.
   cohort10: {
     description: "python, int→graph[any], 6 teams (3 opus, 3 sonnet), 10-minute games, scaffolds, retirement and breeding",
     config: { language: "python", challengeType: "int", responseType: "graph[any]", maxResponseBytes: MAX_RESPONSE_BYTES, grains: GRAINS, pollenGrain: POLLEN_GRAIN },
@@ -101,36 +101,58 @@ export const PRESETS = {
 // game at a time, interleaved (game 1 of each, then game 2 of each, ...; the order rotates every game), so one garden has
 // the machine at a time. Each cohort's judges and breeders see only its own ideas, spawns and outcomes (plus arenas outside
 // the experiment); breeders never see the documents. Arena ids are neutral: breeders see them.
-//   { description, preset, games, gameUsd (a game starts only if every cohort can afford this), cohorts: [{ id, arm, label?, common? }] }
+//   { description, preset, games, gameUsd (a game starts only if every cohort can afford this), capUsd (the experiment's
+//     own spend: each cohort is capped at capUsd ÷ cohorts; --budget overrides that per cohort), cohorts: [{ id, arm,
+//     label?, common? }] }
 // The runner refuses to start an experiment whose common-knowledge folder is missing or empty.
 const IDEAS_DIR = "arena/priming/one-flower-ideas";
+const DRY_COMMON = process.env.ARENA_DRY_COMMON || IDEAS_DIR;
 export const EXPERIMENTS = {
-  // Do new costly-signalling ideas make the ecosystem more sophisticated while it stays interestingly complex? Two arms ×
-  // two seeds (replicate cohorts), interleaved one game at a time; cohort ids are neutral (teams see them in their paths,
-  // breeders in their prompts), the arm and label stay with the runner and the analysis.
-  ideas: {
-    description: "new costly-signalling ideas: control and ideas arms, two cohorts each; the ideas cohorts get one-flower-ideas as common knowledge",
+  // Step 1: a pilot of the new mechanics (no history for programs, a 50-byte MEMORY with fed, pollen grains, the clock
+  // that starts at zero, the flower's hidden time budget) before spending more: one unprimed cohort, two 10-minute games.
+  pilot: {
+    description: "pilot of the new mechanics: one unprimed cohort (3 opus, 3 sonnet), 2 games of 10 minutes, int→graph[any], evolution on",
+    preset: "cohort10",
+    games: 2,
+    gameUsd: 13,
+    capUsd: 35,
+    cohorts: [{ id: "kiln-a", arm: "control", label: "pilot" }],
+  },
+  // Step 2: does exploring a wide range of type-specific signals produce sustained dynamism? Two unprimed and two primed
+  // cohorts (the primed ones get one-flower-ideas: type-specific graph signal ideas), interleaved one game at a time;
+  // cohort ids are neutral (teams see them in their paths, breeders in their prompts), the arm and label stay with the
+  // runner and the analysis.
+  signals: {
+    description: "type-specific signal ideas: two unprimed and two primed cohorts (one-flower-ideas), 3 games of 10 minutes each, interleaved",
     preset: "cohort10",
     games: 3,
     gameUsd: 12, // a game starts only if every cohort can afford this much more (an estimate of one 10-minute cohort-game)
+    capUsd: 150,
     cohorts: [
-      { id: "nova-a", arm: "control", label: "control-a" },
-      { id: "nova-b", arm: "ideas", label: "ideas-a", common: { dir: IDEAS_DIR } },
-      { id: "nova-c", arm: "control", label: "control-b" },
-      { id: "nova-d", arm: "ideas", label: "ideas-b", common: { dir: IDEAS_DIR } },
+      { id: "fen-a", arm: "control", label: "control-a" },
+      { id: "fen-b", arm: "ideas", label: "ideas-a", common: { dir: IDEAS_DIR } },
+      { id: "fen-c", arm: "control", label: "control-b" },
+      { id: "fen-d", arm: "ideas", label: "ideas-b", common: { dir: IDEAS_DIR } },
     ],
   },
-  // The same experiment with the stub `claude` and short games (ARENA_DRY_COMMON: another folder for the ideas arm).
-  "ideas-dry": {
-    description: "dry run of the ideas experiment with the stub claude",
+  // The same with the stub `claude` and 30-second games (ARENA_DRY_COMMON: another folder for the primed arm).
+  "pilot-dry": {
+    description: "dry run of the pilot with the stub claude",
+    preset: "dry-cohort",
+    games: 2,
+    gameUsd: 0,
+    cohorts: [{ id: "dry-p", arm: "control", label: "pilot" }],
+  },
+  "signals-dry": {
+    description: "dry run of the signals experiment with the stub claude",
     preset: "dry-cohort",
     games: 2,
     gameUsd: 0,
     cohorts: [
       { id: "dry-a", arm: "control", label: "control-a" },
-      { id: "dry-b", arm: "ideas", label: "ideas-a", common: { dir: process.env.ARENA_DRY_COMMON || IDEAS_DIR } },
+      { id: "dry-b", arm: "ideas", label: "ideas-a", common: { dir: DRY_COMMON } },
       { id: "dry-c", arm: "control", label: "control-b" },
-      { id: "dry-d", arm: "ideas", label: "ideas-b", common: { dir: process.env.ARENA_DRY_COMMON || IDEAS_DIR } },
+      { id: "dry-d", arm: "ideas", label: "ideas-b", common: { dir: DRY_COMMON } },
     ],
   },
 };

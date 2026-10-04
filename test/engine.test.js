@@ -228,8 +228,8 @@ for (const language of ["python", "typescript"]) {
     const config = normalizeConfig({ language, responseType: "any", feedCost: 2 });
     const p = language === "python"
       ? {
-        flower: `def flower(c, *rest):\n    return [len(rest), "HISTORY" in globals(), sorted(k for k in globals() if not k.startswith("__"))], 50\n`,
-        bee: `def first(*args):\n    return len(args)\ndef decide(c, r, *rest):\n    print("[%d, %s, [%s]]" % (len(rest), str("HISTORY" in globals()).lower(), ", ".join('"' + k + '"' for k in sorted(globals()) if not k.startswith("__"))))\n    return "leave", 0\n`,
+        flower: `def flower(c, *rest):\n    return [len(rest), "HISTORY" in NAMES, sorted(k for k in NAMES if not k.startswith("__") and len(k) > 1)], 50\nNAMES = dir()  # (minified to a one-letter name)\n`,
+        bee: `def first(*args):\n    return len(args)\ndef decide(c, r, *rest):\n    print("[%d, %s, [%s]]" % (len(rest), str("HISTORY" in NAMES).lower(), ", ".join('"' + k + '"' for k in NAMES if not k.startswith("__") and len(k) > 1)))\n    return "leave", 0\nNAMES = dir()\n`,
       }
       : {
         flower: `function flower(c: number, ...rest: any[]): [any, number] { return [[rest.length, typeof (globalThis as any).HISTORY, Object.keys(globalThis).filter((k) => !k.startsWith("__")).sort()], 50]; }`,
@@ -456,7 +456,7 @@ for (const language of ["python", "typescript"]) {
 
 test("programs run minified: the names they define can't carry data", async () => {
   const config = normalizeConfig({ responseType: "any" });
-  const helper = (name) => `def ${name}():\n    return 0\ndef flower(c):\n    return [len(${name}.__name__), sorted(k for k in globals() if not k.startswith("__"))], 1\n`;
+  const helper = (name) => `def ${name}():\n    return 0\ndef flower(c):\n    return [len(${name}.__name__), sorted(k for k in NAMES if not k.startswith("__"))], 1\nNAMES = dir()\n`;
   const answers = async (code) => {
     const out = await play(config, [{ flower: code, bee: leaver() }], 4);
     return new Set(ends(out.actions).map((a) => JSON.stringify(a.r)));

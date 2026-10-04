@@ -282,8 +282,8 @@ Each game sets a **challenge type** and a **response type**. There is no starter
 
 **Challenges** are small: strings and lists at most 64 long, and trees and graphs at most 512 nodes (graphs
 at most 2,048 edges), `any` values at most 32 levels deep. **Responses** are limited by size instead:
-at most **1 MB** (`max_response_bytes`, 1,048,576 bytes) of JSON as the game writes it (UTF-8, no
-spaces), and at most 256 levels deep (a tree at most 256 levels). Graphs never have self-loops or repeated
+at most **64 KiB** (`max_response_bytes`, 65,536 bytes by default; the owner can change it) of JSON as the
+game writes it (UTF-8, no spaces), and at most 256 levels deep (a tree at most 256 levels). Graphs never have self-loops or repeated
 edges. The owner can change all of these limits.
 
 The size cap is checked inside the flower's 150 ms, and writing the response as JSON is part of its
