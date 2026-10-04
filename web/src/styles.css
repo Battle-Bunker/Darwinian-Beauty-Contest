@@ -866,6 +866,7 @@ input[type="range"] { accent-color: var(--honey); }
 /* charts */
 .chart { display: grid; gap: 6px; min-width: 0; }
 .chart-head { font-weight: 700; }
+.chart-note { font-weight: 600; }
 .chart-plot { position: relative; }
 .chart-plot svg { display: block; max-width: 100%; touch-action: pan-y; }
 .chart-plot svg.seekable { cursor: pointer; }

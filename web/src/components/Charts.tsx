@@ -106,7 +106,7 @@ export function TeamSeriesChart({ teams, rows, data, metric, focus, onFocus, cur
 
   return (
     <div className="chart" ref={boxRef}>
-      <div className="chart-head small muted">{m.label}: {m.unit}</div>
+      <div className="chart-head small muted">{m.label}: {m.unit}{clipped && <span className="chart-note"> · the first few seconds, with few feeds, run off the top</span>}</div>
       <div className="chart-plot">
         <svg ref={svgRef} width={W} height={H} viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`${m.label} over the game, one line per team`}
           onPointerMove={(e) => setHover(binAt(e))} onPointerLeave={() => setHover(null)}
@@ -128,7 +128,6 @@ export function TeamSeriesChart({ teams, rows, data, metric, focus, onFocus, cur
                 opacity={focus === null || focus === i ? 1 : 0.28} />
             ))}
           </g>
-          {clipped && <text x={M.left + 4} y={M.top + 10} className="chart-tick">↑ off the scale while there were few feeds</text>}
           {m.par !== undefined && m.par <= top && <line x1={M.left} x2={W - M.right} y1={y(m.par)} y2={y(m.par)} className="chart-par" />}
           {typeof cursor === "number" && cursor >= 0 && <line x1={M.left + (cursor / span) * pw} x2={M.left + (cursor / span) * pw} y1={M.top} y2={M.top + ph} className="chart-cursor" />}
           {hover !== null && <line x1={tipLeft} x2={tipLeft} y1={M.top} y2={M.top + ph} className="chart-crosshair" />}
