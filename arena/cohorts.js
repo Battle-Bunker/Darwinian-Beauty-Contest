@@ -75,7 +75,7 @@ async function labelGame(G) {
         feeds: l.feeds ?? "?", threshold: l.threshold ?? (l.kw.threshold ? "fixed" : "none"), memory: l.memory ?? (l.kw.checks.includes("uses-memory") ? "?" : "none"),
         tags: l.tags ?? l.kw.checks, summary: l.summary || "", llm: l.llm }
       : { mechanism: l.mechanism ?? l.kw.mechanism, percentPolicy: l.percentPolicy ?? l.kw.percent, percent: l.percent ?? null, tags: l.tags ?? l.kw.tags,
-        families: l.families ?? l.kw.families ?? [], difficulty: l.difficulty || "", summary: l.summary || "", llm: l.llm });
+        families: l.families ?? l.kw.families ?? [], signal: l.signal ?? l.kw.signal ?? null, difficulty: l.difficulty || "", summary: l.summary || "", llm: l.llm });
   }
   for (const v of G.programs.filter((x) => !x.code)) G.labels.set(`${v.team}:${v.kind}:${v.version}`, v.kind === "bee" ? { checks: "?", feeds: "?", tags: [] } : { mechanism: "?", percentPolicy: "?", tags: [] });
 }
@@ -207,9 +207,11 @@ async function cohortReport(arenaId) {
     "(the most nectar given to rival bees) from one minute to the next; imitation: signals copied and the median lag to the first close copy; detection: copies rival bees told " +
     "apart from their model, and the median rival feeds a copy got before that; rotations: new versions answering old challenges differently; cracks: answers " +
     "given before the copied species gave them; autarkic: species living mostly off their own bee):");
-  table(["game", "flower level (mean / feed-weighted / max)", "bee level (mean)", "families", "innovations (per minute)", "entropy mean / end (bits)", "turnover: mechanism / species",
+  table(["game", "flower level (mean / feed-weighted / max)", "bee level (mean)", "families", "signals (species each)", "signal entropy mean (bits)", "signature + work species",
+    "innovations (per minute)", "entropy mean / end (bits)", "turnover: mechanism / species",
     "signals copied (median lag)", "copies detected (median rival feeds before)", "rotations", "cracks", "self-feeds of feeds", "autarkic species", "collapse"],
     sums.map((x) => [x.G.gen, `${f2(x.meanLevel)} / ${f2(x.feedLevel)} / ${x.maxLevel}`, f2(x.beeLevel), Object.entries(x.families).map(([k, n]) => `${k} ${n}`).join(", ") || "none",
+      `${x.dyn.signalsDistinct}: ${Object.entries(x.dyn.signals).map(([k, n]) => `${k} ${n}`).join(", ") || "none"}`, f2(x.dyn.signalEntropyMean), x.dyn.signatureWork,
       `${x.dyn.newTokens} (${f2(x.innovationsPerMinute)})${x.dyn.innovations.length ? `: ${x.dyn.innovations.map((i) => `${i.token} at ${mmss(i.atMs)}`).join(", ")}` : ""}`,
       `${f2(x.dyn.entropyMean)} / ${f2(x.dyn.entropyEnd)}`, `${x.dyn.turnover.mechanism} / ${x.dyn.turnover.species}`,
       `${x.signalsCopied} (${x.imitationLag != null ? `${(x.imitationLag / 1000).toFixed(1)} s` : "-"})`, `${x.detected}/${x.copiesN} (${x.feedsBeforeDetection ?? "-"})`,
@@ -261,8 +263,8 @@ async function cohortReport(arenaId) {
   if (hidden) p(`(${hidden} program versions had no code to read: the games didn't reveal it.)\n`);
 
   p("Flower versions (energy = mean excess energy per turn; percent = mean percent offered):");
-  table(["game", "team", "v", "mechanism", "percent policy (typical)", "tags", "difficulty / summary", "level", "size", "mean ms", "energy", "percent", "turns", "feed rate", "nectar/feed", "pollen given", "label from"],
-    sums.flatMap((x) => x.flowers.map((f) => [x.G.gen, f.team?.name, f.version, f.label.mechanism, `${f.label.percentPolicy}${f.label.percent != null ? ` (${f.label.percent})` : ""}`, (f.label.tags || []).join(" "),
+  table(["game", "team", "v", "mechanism", "signal", "percent policy (typical)", "tags", "difficulty / summary", "level", "size", "mean ms", "energy", "percent", "turns", "feed rate", "nectar/feed", "pollen given", "label from"],
+    sums.flatMap((x) => x.flowers.map((f) => [x.G.gen, f.team?.name, f.version, f.label.mechanism, f.label.signal || "-", `${f.label.percentPolicy}${f.label.percent != null ? ` (${f.label.percent})` : ""}`, (f.label.tags || []).join(" "),
       (f.label.difficulty || f.label.summary || "").slice(0, 110), f.level ?? "-", f.size ?? "-", f2(f.meanMs), big(f.meanEnergy), f2(f.meanPercent), f.turns, pct(f.feedRate), big(f.nectarPerFeed), big(f.pollen),
       f.label.llm ? "haiku" : "keywords"])));
 
@@ -338,6 +340,9 @@ async function main() {
       ["self-feeds of feeds by game", ...per((x) => pct(x.selfShare))],
       ["bee level by game", ...per((x) => f2(x.beeLevel))],
       ["signal families by game", ...per((x) => Object.entries(x.families).map(([k, n]) => `${k} ${n}`).join("+") || "none")],
+      ["distinct signals by game (in the cohort so far)", ...ok.map((r) => { const all = new Set(); return r.sums.map((x) => { for (const k of Object.keys(x.dyn.signals)) all.add(k); return `${x.dyn.signalsDistinct} (${all.size})`; }).join(", "); })],
+      ["signal entropy, mean by game (bits)", ...per((x) => f2(x.dyn.signalEntropyMean))],
+      ["species combining a signature with work by game", ...per((x) => x.dyn.signatureWork)],
       ["innovations by game (per minute)", ...per((x) => `${x.dyn.newTokens} (${f2(x.innovationsPerMinute)})`)],
       ["mechanism entropy, mean by game (bits)", ...per((x) => f2(x.dyn.entropyMean))],
       ["dominance turnover by game (mechanism/species)", ...per((x) => `${x.dyn.turnover.mechanism}/${x.dyn.turnover.species}`)],
