@@ -11,6 +11,7 @@ import path from "node:path";
 import { ARENA_DIR, all, one } from "./db.js";
 import { Api, gamePath } from "./api.js";
 import { rules } from "./prompts.js";
+import { STREAM_PREVIEW } from "./stream.js";
 
 export const WS_ROOT = process.env.ARENA_WS_ROOT || "/home/user/arena-ws";
 export const TRANSCRIPTS = path.join(ARENA_DIR, "runs", "transcripts");
@@ -46,11 +47,11 @@ export function readme({ ext, apiBase, examples, common = null }) {
 | history/ | every version your team submitted in this game (\`<kind>/v1.${ext}\`, ...) and versions.md: when each went live, its size, its change cost |
 | status.txt | what \`tools/status.py\` said when this session started |
 | notebook.md | your private notes: they carry over to your next sessions and games |
-| stream/history.jsonl | YOUR PROGRAMS' HISTORY: one turn record per finished turn, oldest first, exactly what your programs see as \`HISTORY.turns\`. The runner appends new turns about once a second while the game runs. Query it (tools/query.py --local, garden.HISTORY); never write to it |
+| stream/history.jsonl | YOUR TEAM'S HISTORY: one turn record per finished turn, oldest first, as your team may see it (your programs see no history: this is for you and your scripts). The runner appends new turns about once a second while the game runs. Query it (tools/query.py --local, garden.local); never write to it |
 | stream/actions.jsonl | the public action stream: every arrival and every turn's end as anyone sees it |
 | stream/mine.jsonl | your own bee's and flower's actions as your team sees them, with your bee's printouts (\`log\`), decision times and errors |
 | stream/teams.json, stream/SCHEMA.md | team ids, names and indices; what each file holds |
-| tools/ | the tools below, and history.py: the query builder your programs use, as a Python module |
+| tools/ | the tools below, and history.py: the typed history query builder, as a Python module |
 | previous-games/ | earlier games in this arena, revealed: every team's final code, the standings, everyone's change timeline, and what the interview panel said about you |
 ${examples ? `| examples/ | example programs; every team in this garden has the same files (${examples.join(", ")}) |\n` : ""}${common ? `| common/ | common knowledge: every team in this garden has exactly these files and knows that every other team has them (${common.join(", ")}). Read only: the runner restores them at every game |\n` : ""}
 ## Tools (run them with python3 from this folder)
@@ -59,12 +60,13 @@ ${examples ? `| examples/ | example programs; every team in this garden has the 
 |---|---|
 | \`python3 tools/status.py [--afford N] [--memory]\` | the clock and time left, your change budgets right now (available, rate, cap; when you could afford N nodes), the live scores, your versions playing now, your bee's MEMORY (size; its value with --memory) |
 | \`python3 tools/check.py <kind> [file]\` | free: size against the budget, what submitting would cost now and whether you can afford it, a quick runtime test |
-| \`python3 tools/try.py flower [file] [challenge ...] [--history FILE]\` | free: run a flower on challenges on the game's real runner: response, percent, energy and compute time for each |
-| \`python3 tools/try.py bee [file] [--flower FILE] [--rounds N] [--memory JSON]\` | free: run a test bee for N rounds in a garden of just your own flower (FILE, else your latest submitted flower), starting with that MEMORY; it never touches your game bee's MEMORY |
+| \`python3 tools/try.py flower [file] [challenge ...]\` | free: run a flower on challenges on the game's real runner: response (over 4 KB, its size, hash and first bytes), percent, energy and compute time for each |
+| \`python3 tools/try.py bee [file] [--flower FILE] [--rounds N] [--memory JSON]\` | free: run a test bee for N rounds in a garden of just your own flower (FILE, else your latest submitted flower), starting with that MEMORY, with fed() called after each feed as in a game; it never touches your game bee's MEMORY |
 | \`python3 tools/submit.py <kind> [file]\` | submit: in the lobby it's free; during the game it goes live at once and pays its change cost. A new bee version starts with an empty MEMORY |
-| \`python3 tools/query.py '<query>' [--local\\|--room]\` | ask the game's history with the query builder your programs use (below) |
+| \`python3 tools/query.py '<query>' [--local\\|--room]\` | ask the game's history with the typed query builder (below) |
 | \`python3 tools/query.py summary\` | per species and per bee: turns, feeds, nectar, pollen; your own flower's percent, energy and compute |
 | \`python3 tools/stream.py tail [-n 20]\` | the latest public actions |
+| \`python3 tools/stream.py response <seq>\` | the whole response of a turn (a response over 4 KB is only its size, hash and first bytes in the files and queries) |
 
 \`<kind>\` is flower or bee; \`[file]\` defaults to \`<kind>.${ext}\`. Your own scripts can use the same tools through
 tools/garden.py (\`import sys; sys.path.insert(0, "tools"); import garden\`), and the scaffold API it documents.
@@ -75,27 +77,30 @@ A script you start may run in the background while your session lasts: start it 
 
 ## Querying history
 
-Your programs read \`HISTORY.turns\`; you query the same records, with the same builder, from tools/query.py or a script:
+Your programs see no history (only their arguments, GAME and the bee's MEMORY). Your team queries it, with a typed query
+builder, from tools/query.py or a script:
 
 | where | what it runs on |
 |---|---|
-| \`garden.HISTORY\`, \`query.py --local\` | stream/history.jsonl, in memory: exactly your programs' HISTORY (turns), about a second behind |
-| \`garden.game\`, \`query.py\` | this game, run by the game server as your team may see it: turns, versions (your own), teams (your bee's MEMORY in \`memory\`, \`memory_bytes\`), pairs, scores |
+| \`garden.local\`, \`query.py --local\` | stream/history.jsonl, in memory: your team's history (turns), about a second behind |
+| \`garden.game\`, \`query.py\` | this game, run by the game server as your team may see it: turns, versions (your own), teams (your bee's MEMORY in \`memory\`, \`memory_bytes\`, \`memory_error\`), pairs, scores |
 | \`garden.room\`, \`query.py --room\` | every finished game in this arena, fully revealed (\`game\` tells them apart) |
 
 \`\`\`python
 q = garden.game.turns.my_bee().eq("fed", True).group_by("flower").sum("nectar").count()
 q.rows()      # (Row(flower=0, sum_nectar=..., count=...), ...)
 q.ast()       # the query as JSON
-garden.HISTORY.turns.rounds(10, 20).eq("flower", 2).order_by("round", desc=True).limit(5).rows()   # (Turn, ...)
-garden.HISTORY.turns.count().value()
+garden.local.turns.rounds(10, 20).eq("flower", 2).order_by("round", desc=True).limit(5).rows()   # (Turn, ...)
+garden.local.turns.count().value()
 \`\`\`
 
 Every step returns a new query; results are read-only. Conditions: \`eq ne lt le gt ge\` (field, value), \`in_\` (field,
 values), \`between\` (field, lo, hi), \`is_null\` / \`not_null\` (field), \`rounds(lo, hi)\`. Scopes: \`my_bee() my_flower()
 mine()\`. Shape: \`select(*fields) group_by(*fields) count(field=None) sum avg min max (field) order_by(field, desc=False)
 limit(n) offset(n)\`. Run: \`rows() first() value() ast()\`. Aggregates are named \`count\` and \`<fn>_<field>\`. A field your
-team may not see reads as None, in filters and aggregates too. Fields: \`python3 tools/query.py schema\`.
+team may not see reads as None, in filters and aggregates too. Fields: \`python3 tools/query.py schema\`. A response over
+4 KB reads as None, with its size in \`response_bytes\` and the SHA-256 of its JSON text in \`response_hash\` (equal
+responses, equal hashes); \`garden.response(t.seq)\` fetches the whole of it.
 
 ## The game's public API
 
@@ -108,6 +113,7 @@ It shows public fields only (your private ones are in stream/history.jsonl and s
   (\`garden.follow_live()\` does)
 - \`GET ${apiBase}/actions?after=<seq>&limit=<n ≤ 5000>\`: a page of actions
 - \`GET ${apiBase}/scores\`: the live scoreboard, cheap to poll
+- \`GET ${apiBase}/responses/<seq>\`: the whole response of the turn whose end is action \`seq\` (as JSON text)
 - \`POST ${apiBase}/query\`: a history query (the JSON of \`q.ast()\`), public fields only
 - \`GET ${apiBase}\`: the game view (status, clock, scores)
 
@@ -117,10 +123,10 @@ Read at most a few times a second.
 
 export const SCHEMA = `# The streams
 
-## stream/history.jsonl: your programs' HISTORY
+## stream/history.jsonl: your team's history
 
-One turn record per finished turn, oldest first: exactly what your bee and flower see as \`HISTORY.turns\`, plus \`seq\`
-(the turn's number in the public stream). Field names are as the API gives them (\`atMs\`, \`flowerVersion\`, ...); the
+One turn record per finished turn, oldest first, as your team may see it (GET .../ledger; your programs see no history),
+with \`seq\` (the turn's number in the public stream). Field names are as the API gives them (\`atMs\`, \`flowerVersion\`, ...); the
 query builder and garden use the Python names (\`at_ms\`, \`flower_version\`, ...). Teams are indices \`0\` to \`N - 1\`
 (stream/teams.json maps them to names; yours is \`GAME["team"]\` in your programs, \`"myIndex"\` in teams.json). A field
 your team may not see is null; the server decides (RULES.md, "What everyone can see").
@@ -129,12 +135,13 @@ your team may not see is null; the server decides (RULES.md, "What everyone can 
 |---|---|
 | seq, round, atMs, turn | the turn's place in the public stream, its round (200 ms of game time), its game time, the bee's turn number |
 | bee, flower | whose bee met a flower of whose species (team indices) |
-| challenge, response | what the bee asked and what the flower answered (null if the flower failed) |
+| challenge, response | what the bee asked and what the flower answered (null if the flower failed, or if it is over 4 KB) |
+| responseBytes, responseHash | the response's size in bytes of JSON (null if the flower failed); for a response over 4 KB, the SHA-256 of its JSON text (\`python3 tools/stream.py response <seq>\` has the whole of it) |
 | fed | whether the bee fed |
 | nectar, pollen | on a feed: the nectar and the pollen the flower gave the bee (on a turn without a feed: null and 0) |
 | percent, energy | the share offered as nectar and the turn's excess energy E: on every feed, and on every turn at your own species (else null) |
 | ms, flowerVersion, flowerError | your own flower's compute time, version and error (null elsewhere) |
-| beeMs, beeVersion, beeError | your own bee's decision time, version and error, e.g. a MEMORY over its cap (null elsewhere) |
+| beeMs, beeVersion, beeError | your own bee's decision time, version and error, e.g. a MEMORY over its cap or of the wrong shape (null elsewhere) |
 
 ## stream/actions.jsonl: the public stream
 
@@ -147,7 +154,8 @@ actions: its \`arrive\` (written at once) and its end, \`feed\` or \`leave\`.
 | turn | the bee's turn number: (bee, turn) identifies a turn |
 | bee, flower | team ids: whose bee, whose species |
 | action | arrive, feed or leave |
-| c, r | on feed and leave: the challenge and the response (null if the flower failed) |
+| c, r | on feed and leave: the challenge and the response (null if the flower failed, or if it is over 4 KB) |
+| rBytes, rHash, rPreview | the response's size in bytes of JSON; for one over 4 KB, its SHA-256 and its first ${STREAM_PREVIEW} characters (the whole of it: \`python3 tools/stream.py response <seq>\`) |
 | percent, energy, nectar, pollen | on a feed: the share offered, the excess energy, the nectar and the pollen the flower gave (on a leave only pollen, 0) |
 
 ## stream/mine.jsonl: your own team's actions
@@ -161,7 +169,7 @@ missing. Once the game is over everything is public.
 index order], "myIndex": your index}\` (indices are fixed when the game starts).
 
 Querying them: \`python3 tools/query.py summary\`, \`python3 tools/query.py --local 'turns.my_flower().count()'\`,
-\`python3 tools/stream.py tail -n 20\`; from a script, \`garden.HISTORY.turns...\` and \`garden.follow()\`.
+\`python3 tools/stream.py tail -n 20\`; from a script, \`garden.local.turns...\` and \`garden.follow()\`.
 `;
 
 /** The generated Python history client (docs/QUERY.md), installed as tools/history.py. */

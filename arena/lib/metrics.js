@@ -5,7 +5,8 @@
 //
 //   windows        per stretch of game time: turns, feeds and feed rate, excess energy produced, energy lost to unfed
 //                  turns, nectar, pollen, mean percent offered, flower failures, self-feeds
-//   distributions  percent (every answered turn), energy (every turn), nectar and pollen (every fed turn): quantiles
+//   distributions  response size in bytes and percent (every answered turn), energy (every turn), nectar and pollen (every
+//                  fed turn): quantiles
 //   teams          per team: its flower (turns, feeds, pollinators, percent, energy, energy lost, nectar paid, pollen,
 //                  compute) and its bee (turns, feeds, nectar, decision time, too-slow decisions, self-feeding)
 //   versions       per flower version: size and compute against the energy it made, the percent it offered, and what it
@@ -23,10 +24,16 @@
 //   ecology        lib/ecology.js: each species' energy split (size, compute, nectar, pollen, lost), its percent over
 //                  time, imitation (signals and their first close copies, the lag, detection windows), key rotation,
 //                  cracking (answers predicted before the other species gave them), autarky
-//   memory         per bee: its MEMORY at the end (bytes of the cap, and the value), saves refused for the cap, its size
-//                  over the game (the runner's samples), and how often the team changed its bee (each change empties it)
+//   memory         per bee: its MEMORY at the end (bytes of the cap, keys, the value, its last save error), saves refused
+//                  (over the cap or of the wrong shape, from decide), failed fed() calls and other save errors the runner's
+//                  samples saw, its size over the game, and how often the team changed its bee (each change empties it)
+//
+// Responses over 4 KB come from the history as their size and SHA-256 only (responseBytes, responseHash). Here such a
+// response stands in as { $big: hash, bytes, shape }: equal responses are equal stand-ins, and `shape` (lib/ecology.js
+// shapeOf of the whole response) is filled in for as many distinct big responses as BIG_FETCH_BYTES allows
+// (computeGameMetrics fetches them from GET .../responses/:seq); past that, a response's shape is its hash.
 import { Api } from "./api.js";
-import { autarky, energySplit, imitation, percentOverTime, predictions, rotation } from "./ecology.js";
+import { autarky, energySplit, imitation, percentOverTime, predictions, rotation, shapeOf } from "./ecology.js";
 
 const r3 = (x) => (x == null || !Number.isFinite(x) ? null : Math.round(x * 1000) / 1000);
 const quantile = (xs, p) => { if (!xs.length) return null; const s = [...xs].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; };
@@ -44,6 +51,16 @@ export function windowFor(durationMs) {
   return nice.find((w) => durationMs / w <= 10) || 600000;
 }
 
+/** The most bytes of big responses one game's metrics fetch for their shapes. */
+export const BIG_FETCH_BYTES = 64 * 1024 * 1024;
+
+/** A turn row's response as the metrics use it: the response itself, or a stand-in for one over 4 KB (null: none). */
+export function responseOf(row, shapes = null) {
+  if (row.response !== null && row.response !== undefined) return row.response;
+  if (!row.responseHash) return null;
+  return { $big: row.responseHash, bytes: row.responseBytes ?? null, shape: shapes?.get(row.responseHash) ?? null };
+}
+
 const potential = (t) => (t.percent != null && t.energy != null ? (t.percent / 100) * t.energy : null); // nectar on offer
 
 /**
@@ -51,7 +68,7 @@ const potential = (t) => (t.percent != null && t.energy != null ? (t.percent / 1
  * teams, turns, versions, scores: the rows of those entities (teams by index); submits: [{ team_id, kind, version, source,
  * session_no }] from arena.requests (who submitted each version), optional. Teams in the result are keyed by team id.
  */
-export function computeMetrics({ game, teams: teamRows, turns: turnRows, versions: versionRows = [], scores: scoreRows = [], submits = [], memorySamples = [], windowMs }) {
+export function computeMetrics({ game, teams: teamRows, turns: turnRows, versions: versionRows = [], scores: scoreRows = [], submits = [], memorySamples = [], windowMs, shapes = null }) {
   const config = game.config;
   const byIndex = [...teamRows].sort((a, b) => a.index - b.index);
   const ids = byIndex.map((t) => t.id);
@@ -59,7 +76,7 @@ export function computeMetrics({ game, teams: teamRows, turns: turnRows, version
   const name = Object.fromEntries(byIndex.map((t) => [t.id, t.name]));
   // One object per turn, teams as ids.
   const turns = turnRows.map((r) => ({ atMs: Number(r.atMs) || 0, round: r.round, bee: idOf(r.bee), flower: idOf(r.flower), action: r.fed ? "feed" : "leave",
-    c: r.challenge, r: r.response, percent: r.percent, energy: r.energy, nectar: r.nectar, pollen: r.pollen, ms: r.ms, flowerVersion: r.flowerVersion,
+    c: r.challenge, r: responseOf(r, shapes), rBytes: r.responseBytes ?? null, percent: r.percent, energy: r.energy, nectar: r.nectar, pollen: r.pollen, ms: r.ms, flowerVersion: r.flowerVersion,
     flowerError: r.flowerError, beeMs: r.beeMs, beeVersion: r.beeVersion, beeError: r.beeError }));
   const durationMs = Math.max(Number(game.clockMs) || 0, ...turns.map((t) => t.atMs));
   const W = windowMs || windowFor(durationMs || config.minutes * 60000);
@@ -112,7 +129,8 @@ export function computeMetrics({ game, teams: teamRows, turns: turnRows, version
         percent: q5(answered.map((t) => t.percent).filter((x) => x != null)), energy: q5(atFlower.map((t) => t.energy || 0)),
         energyTotal: r3(sum(atFlower.map((t) => t.energy))), energyLost: r3(sum(atFlower.filter((t) => t.action !== "feed").map((t) => t.energy))),
         nectarPaid: r3(sum(fed.map((t) => t.nectar))), pollen: r3(sum(fed.map((t) => t.pollen))), ms: q5(ms),
-        computeShare: r3(ms.length ? mean(ms) / flowerMs : null) },
+        computeShare: r3(ms.length ? mean(ms) / flowerMs : null),
+        responseBytes: q5(atFlower.map((t) => t.rBytes).filter((x) => x != null)), bigResponses: atFlower.filter((t) => t.r?.$big).length },
       bee: { turns: byBee.length, feeds: beeFed.length, feedRate: r3(byBee.length ? beeFed.length / byBee.length : null), nectar: r3(sum(beeFed.map((t) => t.nectar))),
         nectarPerFeed: r3(beeFed.length ? sum(beeFed.map((t) => t.nectar)) / beeFed.length : null), flowersFedAt: new Set(beeFed.map((t) => t.flower)).size,
         tooSlow: byBee.filter((t) => TOO_SLOW.test(t.beeError || "")).length, errors: byBee.filter((t) => t.beeError && !TOO_SLOW.test(t.beeError)).length, decisionMs: q5(beeMs) },
@@ -159,7 +177,8 @@ export function computeMetrics({ game, teams: teamRows, turns: turnRows, version
     versions.push({ team: name[team], teamId: team, version: version === "?" ? null : Number(version), atMs: liveAt.get(`${team}:flower:${version}`) ?? null, size,
       maxEnergy: size != null ? (cap - size) * flowerMs : null, turns: ts.length, feeds: fed.length, feedRate: r3(ts.length ? fed.length / ts.length : null),
       meanMs: r3(mean(ms)), p90Ms: r3(quantile(ms, 0.9)), meanEnergy: r3(mean(ts.map((t) => t.energy || 0))), meanPercent: r3(mean(ts.map((t) => t.percent).filter((x) => x != null))),
-      nectarPerFeed: r3(fed.length ? sum(fed.map((t) => t.nectar)) / fed.length : null), pollen: r3(sum(fed.map((t) => t.pollen))), failures: ts.filter((t) => t.r == null).length });
+      nectarPerFeed: r3(fed.length ? sum(fed.map((t) => t.nectar)) / fed.length : null), pollen: r3(sum(fed.map((t) => t.pollen))), failures: ts.filter((t) => t.r == null).length,
+      medianResponseBytes: median(ts.map((t) => t.rBytes).filter((x) => x != null)) });
   }
   versions.sort((a, b) => String(a.team).localeCompare(String(b.team)) || (a.version ?? 0) - (b.version ?? 0));
 
@@ -216,16 +235,22 @@ export function computeMetrics({ game, teams: teamRows, turns: turnRows, version
     pollinationShare: r3(x.pollinationShare), forageShare: r3(x.forageShare), pollen: r3(x.pollen), feedsReceived: x.feedsReceived, feedsGiven: x.feedsGiven,
     pollinators: x.pollinators, nectarCollected: r3(x.nectarCollected), nectarGiven: r3(x.nectarGiven), nectarSources: x.nectarSources }));
 
-  // Bee MEMORY: its size at the end, saves refused for the cap, its size over time, and bee changes (each empties it).
+  // Bee MEMORY: its size at the end, saves refused (over the cap, the wrong shape, a failed fed()), its size over time,
+  // and bee changes (each empties it).
   const memCap = config.budgets?.bee?.memory ?? null;
   const memory = { cap: memCap, teams: byIndex.map((t) => {
     const beeVs = versionRows.filter((v) => idOf(v.team) === t.id && v.kind === "bee");
     const inGame = beeVs.filter((v) => Number(v.atMs) > 0).map((v) => Number(v.atMs)).sort((a, b) => a - b);
-    const samples = memorySamples.filter((x) => x.team === t.id).map((x) => ({ clockMs: x.clockMs, bytes: x.bytes, version: x.version }));
+    const mine = memorySamples.filter((x) => x.team === t.id);
+    const samples = mine.map((x) => ({ clockMs: x.clockMs, bytes: x.bytes, version: x.version, ...(x.keys != null ? { keys: x.keys } : {}), ...(x.error ? { error: x.error } : {}) }));
     const bytes = samples.map((x) => x.bytes).filter((x) => x != null);
     const turnsOfBee = turns.filter((x) => x.bee === t.id);
+    // Save errors the samples saw (each distinct error once): fed() failures are only seen this way (and at the end).
+    const errs = [...new Set([...mine.map((x) => x.error).filter(Boolean), ...(t.memoryError ? [t.memoryError] : [])])];
     return { team: t.name, teamId: t.id, finalBytes: t.memoryBytes ?? null, finalShare: r3(memCap && t.memoryBytes != null ? t.memoryBytes / memCap : null),
-      value: t.memory ?? null, overCap: turnsOfBee.filter((x) => /memory/i.test(x.beeError || "")).length, beeVersions: beeVs.length, beeChanges: inGame.length,
+      keys: t.memory && typeof t.memory === "object" ? Object.keys(t.memory).length : null, value: t.memory ?? null, finalError: t.memoryError ?? null,
+      overCap: turnsOfBee.filter((x) => /memory/i.test(x.beeError || "")).length, fedFailures: errs.filter((e) => /fed\(\)/.test(e)).length,
+      errors: errs.slice(0, 5).map((e) => String(e).slice(0, 200)), beeVersions: beeVs.length, beeChanges: inGame.length,
       beeChangesPerMinute: r3(durationMs ? inGame.length / (durationMs / 60000) : null),
       meanMsBetweenChanges: inGame.length > 1 ? r3(mean(inGame.slice(1).map((x, i) => x - inGame[i]))) : null,
       sampledMaxBytes: bytes.length ? Math.max(...bytes) : null, sampledMeanBytes: r3(mean(bytes)), samples };
@@ -252,7 +277,7 @@ export function computeMetrics({ game, teams: teamRows, turns: turnRows, version
       energyLost: r3(sum(turns.filter((t) => t.action !== "feed").map((t) => t.energy))), nectar: r3(sum(fedTurns.map((t) => t.nectar))), pollen: r3(sum(fedTurns.map((t) => t.pollen))),
       failures: turns.filter((t) => t.r == null).length, selfFeeds: fedTurns.filter((t) => t.bee === t.flower).length },
     windows: win,
-    distributions: { percent: q5(answered.map((t) => t.percent)), energy: q5(turns.map((t) => t.energy || 0)), nectar: q5(fedTurns.map((t) => t.nectar || 0)), pollen: q5(fedTurns.map((t) => t.pollen || 0)) },
+    distributions: { responseBytes: q5(turns.map((t) => t.rBytes).filter((x) => x != null)), percent: q5(answered.map((t) => t.percent)), energy: q5(turns.map((t) => t.energy || 0)), nectar: q5(fedTurns.map((t) => t.nectar || 0)), pollen: q5(fedTurns.map((t) => t.pollen || 0)) },
     teams, handshakes: { pairs, mutual }, versions, discrimination,
     copies: { matches: copies.length, copies: att.length, medianLatencyMs: median(att.map((x) => x.latencyMs)), byCopier },
     changes, final, memory, ecology,
@@ -274,10 +299,34 @@ export async function queryAll(api, gPath, ast, tok = null) {
 
 /** A finished game's metrics, from its history (everything is revealed once it is over). submits: who submitted each
  * version (arena.requests), optional. */
-export async function computeGameMetrics(gPath, { api = Api, submits = [], memorySamples = [], windowMs } = {}) {
+export async function computeGameMetrics(gPath, { api = Api, submits = [], memorySamples = [], windowMs, fetchBytes = BIG_FETCH_BYTES } = {}) {
   const view = await api.view(null, gPath);
   const [teams, turns, versions, scores] = await Promise.all(["teams", "turns", "versions", "scores"].map((from) => queryAll(api, gPath, { from })));
-  return computeMetrics({ game: view.game, teams, turns, versions, scores, submits, memorySamples, windowMs });
+  const shapes = await bigShapes(api, gPath, turns, fetchBytes);
+  return { ...computeMetrics({ game: view.game, teams, turns, versions, scores, submits, memorySamples, windowMs, shapes }), bigResponses: shapes.stats };
+}
+
+/**
+ * The shapes of a game's big responses (over 4 KB: the history has only their size and hash), fetched lazily: distinct
+ * hashes in order of first appearance, one at a time, until `budget` bytes. Map(hash -> shape) with `stats`.
+ */
+export async function bigShapes(api, gPath, turns, budget = BIG_FETCH_BYTES) {
+  const shapes = new Map(), first = new Map();
+  for (const t of turns) if (t.responseHash && !first.has(t.responseHash)) first.set(t.responseHash, t);
+  let bytes = 0, fetched = 0, failed = 0;
+  for (const [hash, t] of first) {
+    if (bytes + (t.responseBytes || 0) > budget) continue;
+    try {
+      const r = await api.response(null, gPath, t.seq);
+      if (!r) { failed++; continue; }
+      bytes += Buffer.byteLength(r.text);
+      fetched++;
+      shapes.set(hash, shapeOf(r.value));
+    } catch { failed++; }
+  }
+  const all = turns.filter((t) => t.responseHash);
+  shapes.stats = { turns: all.length, distinct: first.size, fetched, failed, fetchedBytes: bytes, bytes: all.reduce((a, t) => a + (t.responseBytes || 0), 0) };
+  return shapes;
 }
 
 /** Who submitted each version of a game (a session, the scaffold, or the runner's lobby fallback): arena.requests. */

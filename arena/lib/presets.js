@@ -3,7 +3,7 @@
 // (a persona from an earlier arena: same prompt and team name, plus its last notebook). Models: opus, sonnet, haiku
 // (never a Fable model).
 // Config keys left out take the server's defaults (server/lib/gameConfig.js): 2-minute games, a feeding bee sits out 10
-// rounds, change budgets of one minute's worth.
+// rounds, change budgets of one minute's worth, a 50-byte bee MEMORY. maxResponseBytes is always set (MAX_RESPONSE_BYTES).
 //
 //   minutesByGame  game N lasts minutesByGame[N-1] minutes (the last entry repeats); else config.minutes
 //   session        warmupSeconds: the first in-game sessions start this long before the game does;
@@ -17,12 +17,16 @@
 //   examples       a folder copied into every workspace as examples/ (and named in the lobby brief)
 //   scaffold       limits of the teams' scaffolds (lib/scaffold.js SCAFFOLD_LIMITS: cpuShare, memMB, cpuSeconds, ...)
 
+// The most UTF-8 bytes of a flower's response (its JSON text): set explicitly in every preset so it is one place to change.
+// The server's default (1 MiB); a garden of big responses can store tens of MB per game-second, so it may be lowered.
+export const MAX_RESPONSE_BYTES = 1048576;
+
 export const DEFAULT_SESSION = { warmupSeconds: 8, gapSeconds: 5, maxIdleGapSeconds: 20, endMarginSeconds: 10, maxMinutes: 6 };
 
 export const PRESETS = {
   pilot: {
     description: "Pilot: one flower per team, python, int→int, 3 teams (sonnet/haiku), games of 30 s, 1 and 2 minutes",
-    config: { language: "python", challengeType: "int", responseType: "int" },
+    config: { language: "python", challengeType: "int", responseType: "int", maxResponseBytes: MAX_RESPONSE_BYTES },
     minutesByGame: [0.5, 1, 2],
     lineup: [["luna", "sonnet"], ["grace", "haiku"], ["tess", "sonnet"]],
     maxModel: "sonnet",
@@ -32,7 +36,7 @@ export const PRESETS = {
   },
   graphs: {
     description: "One flower per team, python, int→graph[any], 4 teams (2 opus, 2 sonnet), games of 2, 5 and 10 minutes, scaffolds",
-    config: { language: "python", challengeType: "int", responseType: "graph[any]" },
+    config: { language: "python", challengeType: "int", responseType: "graph[any]", maxResponseBytes: MAX_RESPONSE_BYTES },
     minutesByGame: [2, 5, 10],
     lineup: [["mallory", "opus"], ["kenji", "opus"], ["rosalind", "sonnet"], ["priya", "sonnet"]],
     session: { warmupSeconds: 10, gapSeconds: 15, maxIdleGapSeconds: 120, endMarginSeconds: 20, maxMinutes: 6 },
@@ -43,7 +47,7 @@ export const PRESETS = {
   },
   cohort6: {
     description: "One flower per team, python, int→graph[any], 6 teams (3 opus, 3 sonnet), 5-minute games, scaffolds, retirement and breeding",
-    config: { language: "python", challengeType: "int", responseType: "graph[any]" },
+    config: { language: "python", challengeType: "int", responseType: "graph[any]", maxResponseBytes: MAX_RESPONSE_BYTES },
     minutesByGame: [5],
     lineup: [["mallory", "opus"], ["kenji", "opus"], ["ada", "opus"], ["rosalind", "sonnet"], ["priya", "sonnet"], ["theo", "sonnet"]],
     session: { warmupSeconds: 10, gapSeconds: 15, maxIdleGapSeconds: 120, endMarginSeconds: 20, maxMinutes: 6 },
@@ -55,7 +59,7 @@ export const PRESETS = {
   // cycles of innovation and imitation have time to happen; the csig founders.
   cohort10: {
     description: "python, int→graph[any], 6 teams (3 opus, 3 sonnet), 10-minute games, scaffolds, retirement and breeding",
-    config: { language: "python", challengeType: "int", responseType: "graph[any]" },
+    config: { language: "python", challengeType: "int", responseType: "graph[any]", maxResponseBytes: MAX_RESPONSE_BYTES },
     minutesByGame: [10],
     lineup: [["mallory", "opus"], ["kenji", "opus"], ["ada", "opus"], ["rosalind", "sonnet"], ["priya", "sonnet"], ["theo", "sonnet"]],
     session: { warmupSeconds: 10, gapSeconds: 15, maxIdleGapSeconds: 120, endMarginSeconds: 20, maxMinutes: 6 },
@@ -66,7 +70,7 @@ export const PRESETS = {
   // The same shape for dry runs with the stub `claude` (no model calls): graph responses, 30-second games.
   "dry-cohort": {
     description: "dry run of the cohort experiment: python, int→graph[any], 6 teams, 30-second games, retirement and breeding",
-    config: { language: "python", challengeType: "int", responseType: "graph[any]" },
+    config: { language: "python", challengeType: "int", responseType: "graph[any]", maxResponseBytes: MAX_RESPONSE_BYTES },
     minutesByGame: [0.5],
     lineup: [["mallory", "sonnet"], ["kenji", "sonnet"], ["ada", "sonnet"], ["rosalind", "haiku"], ["priya", "haiku"], ["theo", "haiku"]],
     session: { warmupSeconds: 3, gapSeconds: 2, maxIdleGapSeconds: 4, endMarginSeconds: 3, maxMinutes: 2 },
@@ -76,7 +80,7 @@ export const PRESETS = {
   // For dry runs with the stub `claude` (no model calls): int→int, 20-second games, evolution on.
   dry: {
     description: "dry run: one flower per team, python, int→int, 4 teams, 20-second games, retirement and breeding",
-    config: { language: "python", challengeType: "int", responseType: "int" },
+    config: { language: "python", challengeType: "int", responseType: "int", maxResponseBytes: MAX_RESPONSE_BYTES },
     minutesByGame: [0.34],
     lineup: [["mallory", "sonnet"], ["kenji", "sonnet"], ["rosalind", "haiku"], ["priya", "haiku"]],
     session: { warmupSeconds: 3, gapSeconds: 2, maxIdleGapSeconds: 4, endMarginSeconds: 3, maxMinutes: 2 },

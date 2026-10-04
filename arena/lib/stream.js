@@ -8,16 +8,20 @@
 //                                                   as stream/actions.jsonl, so it is never copied per team.
 //   <WS_ROOT>/<arena>/.runner/g<gen>/actions.jsonl   the runner's private master copy. If a team damages the shared
 //                                                   file through its link, it is rewritten in place from this one.
-//   <workspace>/stream/history.jsonl                 per team: its HISTORY (GET .../ledger with its token): one turn record
-//                                                   per finished turn, exactly what its programs see as HISTORY.turns: what
-//                                                   everyone sees of every turn, plus its own private fields (percent and
-//                                                   energy of unfed turns at its flower, its flower's compute time, its
-//                                                   bee's decision times). tools/garden.py and tools/query.py run the
-//                                                   same typed queries over it that the programs run.
+//   <workspace>/stream/history.jsonl                 per team: its history (GET .../ledger with its token): one turn record
+//                                                   per finished turn: what everyone sees of every turn, plus its own
+//                                                   private fields (percent and energy of unfed turns at its flower, its
+//                                                   flower's compute time, its bee's decision times). Programs see no
+//                                                   history; tools/garden.py and tools/query.py run typed queries over it.
 //   <workspace>/stream/mine.jsonl                    per team: the actions of its own bee and at its own flower as that
 //                                                   team sees them (GET .../actions?mine=1): with its bee's printouts,
 //                                                   decision times, errors and versions.
 // No team's file ever holds another team's private fields: the server decides what each request may see.
+//
+// Responses can be up to a megabyte. The server already gives a response over 4 KB as its size, hash and first 4 KB
+// (rBytes, rHash, rPreview; in ledger entries responseBytes and responseHash); the files keep only the first
+// STREAM_PREVIEW characters of that preview, so a turn costs at most about 4 KB of file. The whole response is fetched
+// when someone asks for it (GET .../responses/:seq: tools/stream.py response, garden.response).
 //
 // Agents read these files with code at their own cadence (tools/query.py, tools/garden.py); nothing from the stream
 // goes into a prompt except a few headline numbers (headline()).
@@ -26,6 +30,16 @@ import path from "node:path";
 import { Api } from "./api.js";
 
 const BUCKET_MS = 5000;
+/** Characters of a big response's preview the stream files keep. */
+export const STREAM_PREVIEW = 256;
+
+/** An action or ledger entry as the stream files keep it: a big response's preview cut to STREAM_PREVIEW characters. */
+export function slim(a) {
+  if (typeof a?.rPreview === "string" && a.rPreview.length > STREAM_PREVIEW) return { ...a, rPreview: a.rPreview.slice(0, STREAM_PREVIEW) };
+  return a;
+}
+/** A turn end without a response (the flower failed): r null and no size (a big response has r null but a size). */
+export const noResponse = (a) => a.action !== "arrive" && ("r" in a) && a.r === null && a.rBytes == null && !a.rHash;
 
 /** The runner's samples of every bee's MEMORY size during a game (one JSON line each). */
 export const memoryFile = (root, gen) => path.join(root, ".runner", `g${gen}`, "memory.jsonl");
@@ -52,7 +66,7 @@ class Tracked {
       const rows = (page[key] || []).filter((a) => a.seq > this.lastSeq);
       if (!rows.length) return;
       fs.mkdirSync(path.dirname(this.file), { recursive: true });
-      fs.appendFileSync(this.file, rows.map((a) => JSON.stringify(a)).join("\n") + "\n");
+      fs.appendFileSync(this.file, rows.map((a) => JSON.stringify(slim(a))).join("\n") + "\n");
       this.lastSeq = rows[rows.length - 1].seq;
       if ((page[key] || []).length < 5000) return;
     }
@@ -118,7 +132,7 @@ export class GameStream {
         this.status = page.status ?? this.status;
         const fresh = (page.actions || []).filter((a) => a.seq > this.lastSeq);
         if (fresh.length) {
-          const text = fresh.map((a) => JSON.stringify(a)).join("\n") + "\n";
+          const text = fresh.map((a) => JSON.stringify(slim(a))).join("\n") + "\n";
           this.#checkShared();
           fs.appendFileSync(this.masterFile, text);
           fs.appendFileSync(this.sharedFile, text);
@@ -189,14 +203,16 @@ export class GameStream {
   }
 
   /** One sample of every tracked team's bee MEMORY size (read with that team's token; nothing writes it but the bee),
-   * appended to the runner's memory.jsonl: { clockMs, team, bytes, cap, version }. */
+   * appended to the runner's memory.jsonl: { clockMs, team, bytes, cap, version, keys, error } (error: why its last save
+   * failed: over the cap, the wrong shape, a failed fed()). */
   async sampleMemory() {
     const rows = [];
     for (const [teamId, t] of this.tracked) {
       if (!t.tok) continue;
       const v = await this.fetchView(t.tok);
       const mem = (v.teams || []).find((x) => x.id === teamId)?.memory;
-      if (mem) rows.push({ clockMs: Number(v.game?.clockMs) || this.clockMs, team: teamId, bytes: mem.bytes ?? null, cap: mem.cap ?? null, version: mem.version ?? null });
+      if (mem) rows.push({ clockMs: Number(v.game?.clockMs) || this.clockMs, team: teamId, bytes: mem.bytes ?? null, cap: mem.cap ?? null, version: mem.version ?? null,
+        keys: mem.value && typeof mem.value === "object" ? Object.keys(mem.value).length : null, error: mem.error ?? null });
     }
     if (rows.length) fs.appendFileSync(this.memoryFile, rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
     return rows.length;
@@ -221,7 +237,7 @@ export class GameStream {
     if (!m) this.buckets.set(b, (m = new Map()));
     const inc = (what) => { const k = `${a.bee}|${a.flower}|${what}`; m.set(k, (m.get(k) || 0) + 1); };
     inc(a.action); // arrive | feed | leave
-    if (a.action !== "arrive" && ("r" in a) && a.r === null) inc("noResponse");
+    if (noResponse(a)) inc("noResponse");
     if (a.action === "feed") { // public on a feed: what the bee got and what the flower kept
       const add = (what, v) => { if (typeof v === "number" && Number.isFinite(v)) { const k = `${a.bee}|${a.flower}|${what}`; m.set(k, (m.get(k) || 0) + v); } };
       add("nectar", a.nectar);

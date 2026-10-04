@@ -10,7 +10,7 @@
 //   autarky         per species: how much of its pollination comes from its own bee, and of its bee's nectar from its own
 //                   species; collapse when most species live off themselves
 // Turns: [{ atMs, round, bee, flower (team ids), action, c, r, percent, energy, nectar, pollen, ms, flowerVersion }],
-// in game order.
+// in game order; a response over 4 KB is a stand-in { $big: its hash, bytes, shape } (lib/metrics.js responseOf).
 
 const r3 = (x) => (x == null || !Number.isFinite(x) ? null : Math.round(x * 1000) / 1000);
 const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
@@ -20,6 +20,9 @@ const canon = (v) => JSON.stringify(v, (k, x) => (x && typeof x === "object" && 
 /** A response's shape: for a graph, its node and edge counts, degree sequence and label types; else its type and size. */
 export function shapeOf(r) {
   if (r === null || r === undefined) return "null";
+  // A response over 4 KB stands in as { $big: hash, bytes, shape } (lib/metrics.js): its shape if it was fetched, else
+  // its hash (so it matches only the same response).
+  if (typeof r === "object" && !Array.isArray(r) && typeof r.$big === "string") return r.shape ?? `big:${r.$big}`;
   if (typeof r === "object" && !Array.isArray(r) && Number.isFinite(r.nodes) && Array.isArray(r.edges)) {
     const deg = new Array(Math.min(r.nodes, 4096)).fill(0);
     for (const e of r.edges) if (Array.isArray(e)) for (const x of e) if (x >= 0 && x < deg.length) deg[x]++;

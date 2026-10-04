@@ -1,26 +1,27 @@
-"""Ask the game's history, with the same typed query builder your programs use on HISTORY (tools/history.py; the
-whole interface is in README.md, "Querying history").
+"""Ask the game's history, with a typed query builder (tools/history.py; the whole interface is in README.md,
+"Querying history"). Your programs see no history: this is for you and your scripts.
 
     python3 tools/query.py 'turns.my_bee().eq("fed", True).group_by("flower").sum("nectar")'
     python3 tools/query.py 'turns.rounds(100, 200).eq("flower", 2).order_by("round", desc=True).limit(5)'
     python3 tools/query.py 'scores.order_by("fitness", desc=True)'
     python3 tools/query.py 'turns.my_flower().eq("fed", False).sum("energy").value()'
 
-    --local   run it on stream/history.jsonl: exactly what your programs' HISTORY holds (turns only)
+    --local   run it on stream/history.jsonl: your team's history file (turns only)
     --room    run it across this arena's finished games, fully revealed (the `game` field tells them apart)
     --ast     print the query (JSON) instead of running it
     --json    print the rows as JSON
 
 Without --local or --room it runs on this game, as your team may see it (through the game runner: your private fields
 included). Entities: turns, versions (your own during play), teams (your bee's MEMORY is teams.memory), pairs, scores.
-A query ends with .rows() unless you end it with .value(), .first() or .ast().
+A query ends with .rows() unless you end it with .value(), .first() or .ast(). A response over 4 KB reads as None, with
+its size and hash in response_bytes and response_hash: tools/stream.py response <seq> shows the whole of it.
 
     python3 tools/query.py summary [--local]     per species and per bee: turns, feeds, nectar, pollen, mean percent;
                                                  your own flower's percent, energy, compute and energy lost
     python3 tools/query.py schema                the entities and their fields
 
 From a script:  import sys; sys.path.insert(0, "tools"); import garden
-                garden.game.turns.my_bee().count().value()      (or garden.HISTORY, garden.room)
+                garden.game.turns.my_bee().count().value()      (or garden.local, garden.room)
 """
 import ast as pyast
 import dataclasses
@@ -106,7 +107,7 @@ def table(rows, limit=200):
 
 def root_for(args):
     if "--local" in args:
-        return garden.HISTORY
+        return garden.local
     if "--room" in args:
         return garden.room
     return garden.game

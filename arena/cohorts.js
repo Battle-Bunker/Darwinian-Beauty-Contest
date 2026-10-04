@@ -13,7 +13,7 @@
 import { all, one, pool } from "./lib/db.js";
 import { Api, gamePath } from "./lib/api.js";
 import { callModel } from "./lib/llm.js";
-import { BASE_LEVEL, beeLevelOf, classifyPrograms, keywordBee, keywordFlower, levelOf, unlabelled } from "./lib/mechanisms.js";
+import { BASE_LEVEL, beeLevelOf, classifyPrograms, definesFed, keywordBee, keywordFlower, levelOf, unlabelled } from "./lib/mechanisms.js";
 import { dynamics } from "./lib/dynamics.js";
 import { computeGameMetrics, queryAll } from "./lib/metrics.js";
 import { EXPERIMENTS } from "./lib/presets.js";
@@ -71,7 +71,7 @@ async function labelGame(G) {
   for (const v of versions) {
     const l = label(v);
     G.labels.set(`${v.team}:${v.kind}:${v.version}`, v.kind === "bee"
-      ? { checks: l.checks ?? (l.kw.checks.find((c) => !["learns", "random-challenges", "uses-memory"].includes(c)) || (l.kw.checks.includes("learns") ? "shape-stats" : "none")),
+      ? { checks: l.checks ?? (l.kw.checks.find((c) => !["learns", "random-challenges", "uses-memory", "uses-fed"].includes(c)) || (l.kw.checks.includes("learns") ? "learned-value" : "none")),
         feeds: l.feeds ?? "?", threshold: l.threshold ?? (l.kw.threshold ? "fixed" : "none"), memory: l.memory ?? (l.kw.checks.includes("uses-memory") ? "?" : "none"),
         tags: l.tags ?? l.kw.checks, summary: l.summary || "", llm: l.llm }
       : { mechanism: l.mechanism ?? l.kw.mechanism, percentPolicy: l.percentPolicy ?? l.kw.percent, percent: l.percent ?? null, tags: l.tags ?? l.kw.tags,
@@ -105,7 +105,8 @@ function gameSummary(G, seen) {
     const mt = m.teams?.[t.teamId] || {}, d = m.discrimination?.perBee?.[t.teamId] || {};
     const mem = (m.memory?.teams || []).find((x) => x.teamId === t.teamId) || {};
     return { team: t, version: v, label: l, p90: mt.bee?.decisionMs?.p90, feedRate: mt.bee?.feedRate, nectar: mt.bee?.nectar, tooSlow: mt.bee?.tooSlow, offerFed: d.offerWhenFed, offerLeft: d.offerWhenLeft,
-      memBytes: mem.finalBytes ?? null, memShare: mem.finalShare ?? null, memOverCap: mem.overCap ?? 0, beeChanges: mem.beeChanges ?? 0 };
+      memBytes: mem.finalBytes ?? null, memShare: mem.finalShare ?? null, memKeys: mem.keys ?? null, memOverCap: mem.overCap ?? 0, fedFailures: mem.fedFailures ?? 0,
+      usesFed: code ? definesFed(code) : null, beeChanges: mem.beeChanges ?? 0 };
   });
   const finals = flowers.filter((f) => f.last);
   const feeds = sum(flowers.map((f) => f.feeds));
@@ -249,9 +250,9 @@ async function cohortReport(arenaId) {
       f.label.llm ? "haiku" : "keywords"])));
 
   p("Bees (final version of each game; offer = percent × energy, the nectar a feed would have paid):");
-  table(["game", "team", "model", "checks", "feeds", "threshold", "MEMORY use", "summary", "p90 decision ms", "too slow", "feed rate", "nectar", "mean offer when it fed / left", "MEMORY at the end (share of cap)", "saves over the cap", "in-game bee changes"],
+  table(["game", "team", "model", "checks", "feeds", "threshold", "MEMORY use", "summary", "p90 decision ms", "too slow", "feed rate", "nectar", "mean offer when it fed / left", "MEMORY at the end (share of cap; keys)", "saves refused", "fed()", "in-game bee changes"],
     sums.flatMap((x) => x.bees.map((b) => [x.G.gen, b.team.name, b.team.model, b.label.checks, b.label.feeds, b.label.threshold || "-", b.label.memory || "-", (b.label.summary || "").slice(0, 110), f2(b.p90), b.tooSlow ?? "-",
-      pct(b.feedRate), big(b.nectar), `${big(b.offerFed)} / ${big(b.offerLeft)}`, `${b.memBytes ?? "-"} (${pct(b.memShare)})`, b.memOverCap, b.beeChanges])));
+      pct(b.feedRate), big(b.nectar), `${big(b.offerFed)} / ${big(b.offerLeft)}`, `${b.memBytes ?? "-"} (${pct(b.memShare)}; ${b.memKeys ?? "-"})`, b.memOverCap, b.usesFed == null ? "?" : b.usesFed ? `yes${b.fedFailures ? `, ${b.fedFailures} errors` : ""}` : "no", b.beeChanges])));
 
   // Pooled over games: by mechanism and by percent policy.
   const pool_ = (keyOf) => {

@@ -55,18 +55,35 @@ export const Api = {
   check: (tok, g, kind, code) => api(tok, "POST", `${g}/check`, { kind, code }),
   // A 422 (too big, can't afford it yet, game over) comes back as a body with ok: false and errors.
   submit: (tok, g, kind, code) => api(tok, "POST", `${g}/programs`, { kind, code }, { retries: 1 }),
-  /** A flower on challenges (`history`: turn records for its HISTORY.turns, default none); a bee for `rounds` rounds in a
-   * garden of just its own flower (`flower`: that code, else the team's latest flower). */
-  tryFlower: (tok, g, code, challenges, history) => api(tok, "POST", `${g}/try`, { kind: "flower", code, challenges, ledger: history }),
-  /** memory: what the test bee starts with (default {}); a try never touches the game bee's MEMORY. */
+  /** A flower on challenges (a response over 4 KB comes back as rBytes, rHash and rPreview with r null). */
+  tryFlower: (tok, g, code, challenges) => api(tok, "POST", `${g}/try`, { kind: "flower", code, challenges }),
+  /** A bee for `rounds` rounds in a garden of just its own flower (`flower`: that code, else the team's latest flower),
+   * fed() called after each feed. memory: what the test bee starts with (default {}); a try never touches the game bee's
+   * MEMORY. */
   tryBee: (tok, g, code, { flower, rounds, memory } = {}) => api(tok, "POST", `${g}/try`, { kind: "bee", code, flower, rounds, memory }),
   view: (tok, g) => api(tok, "GET", g),
   /** mine: only the turns of the team's bee and at its flower, as the team sees them (its token). Without a token: the
    * public fields only. */
   actions: (tok, g, after = 0, limit = 5000, { mine = false } = {}) => api(tok, "GET", `${g}/actions?after=${after}&limit=${limit}${mine ? "&mine=1" : ""}`),
-  /** The team ledger: exactly what the team's programs get (its token); a spectator gets the public fields. */
+  /** The team ledger: every finished turn as the team may see it (its token); a spectator gets the public fields. */
   ledger: (tok, g, after = 0, limit = 5000) => api(tok, "GET", `${g}/ledger?after=${after}&limit=${limit}`),
   scores: (tok, g) => api(tok, "GET", `${g}/scores`),
+  /** The whole response of the turn whose end is action `seq` (public): { text, value } (its JSON text, parsed), or null
+   * if that turn has none. */
+  response: async (tok, g, seq) => {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const res = await fetch(`${BASE}/api${g}/responses/${seq}`, { headers: tok ? { authorization: "Bearer " + tok } : {} });
+        if (res.status === 404) return null;
+        if (!res.ok) throw new ApiError(res.status, `GET ${g}/responses/${seq} -> ${res.status}`);
+        const text = await res.text();
+        return { text, value: JSON.parse(text) };
+      } catch (e) {
+        if (attempt >= 2 || (e instanceof ApiError && e.status < 500)) throw e;
+        await sleep(1000 * (attempt + 1));
+      }
+    }
+  },
   /** A history query (docs/QUERY.md): one game as the viewer may see it (its token; none: the public fields). */
   query: (tok, g, ast) => api(tok, "POST", `${g}/query`, ast, { okStatuses: [] }),
   /** A history query across a room's finished games (fully revealed). */

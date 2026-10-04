@@ -32,10 +32,12 @@ export function timingText(config) {
 - A flower's energy goes to compute, nectar and pollen. Its excess energy for a turn is
   E = (${n0(fl.size)} − flower size) × max(0, ${fl.ms} − the flower's CPU ms). If the bee feeds, the flower gives it
   percent/100 × E as nectar and the rest as pollen. If it doesn't feed, that energy is lost.
-- Programs run fresh for every call: flower(challenge), first(), decide(challenge, response). They read GAME (the
-  settings and their team's index) and HISTORY (every finished turn your team may see, as a query: HISTORY.turns...).
-  The bee also has MEMORY: a JSON value of at most ${n0(bee.memory ?? 1024)} bytes that it alone writes, the only thing kept
-  between its calls; a new bee version starts with {}. A turn reaches HISTORY only after its round.
+- Programs run fresh for every call: flower(challenge), first(), decide(challenge, response), and the bee's optional
+  fed(nectar), which runs after a feed decided in time, in the same instance as that decide. Programs see only their
+  arguments and GAME (the settings and their team's index): no history. The bee also has MEMORY: a flat key-value store
+  (string keys; string, number, true/false or null values) of at most ${n0(bee.memory ?? 50)} bytes (each key's bytes plus
+  its value's JSON bytes) that it alone writes, the only thing kept from one turn to the next; a new bee version starts
+  with {}.
 - Arrivals, challenges, responses and feeds are public as they happen, and so are a feed's percent, energy, nectar and
   pollen. The percent and energy of turns without a feed, and every compute time, stay with the flower's team until the
   game ends.`;
@@ -54,7 +56,7 @@ ${timingText(config)}
 ${KINDS.map((k) => `| ${k} | ${n0(b[k].size)} | ${n0(b[k].perMinute)} | ${n0(b[k].cap)} | ${b[k].ms} |`).join("\n")}
 
   Change budget starts at 0 when the game starts and grows with game time, up to its cap. The bee's MEMORY holds at most
-  ${n0(b.bee.memory ?? 1024)} bytes.`;
+  ${n0(b.bee.memory ?? 50)} bytes. A response may be at most ${n0(config.maxResponseBytes ?? 1048576)} bytes of JSON.`;
 }
 
 // ---------------------------------------------------------------- team agents
@@ -119,24 +121,27 @@ ${personaAndSituation(persona, fixed)}
   \`python3 tools/submit.py <kind>\`. In the lobby submitting is free. While the game runs a submission goes live at once and
   pays its change cost; if you can't afford it yet it is refused and you're told when you can. \`tools/check.py\` (size, cost
   now, a quick runtime test) and \`tools/try.py\` (run it on the game's real runner: a flower on challenges with its percent,
-  energy and CPU time; a test bee in a garden of your own flower, with a MEMORY of your choosing) are free.
+  energy and CPU time; a test bee in a garden of your own flower, with a MEMORY of your choosing, fed() called after each
+  feed as in a game) are free.
   \`tools/status.py\` shows the clock, your change budgets, your bee's MEMORY and the live scores.
-- Ask the game's history with \`tools/query.py\`, using the same typed query builder your programs use on HISTORY (docs:
+- Your programs see no history, but your team can: ask it with \`tools/query.py\`, a typed query builder (docs:
   tools/history.py and README.md): \`python3 tools/query.py 'turns.my_bee().eq("fed", True).group_by("flower").sum("nectar")'\`.
-  It runs on the game as your team may see it; \`--local\` runs on stream/history.jsonl, exactly your programs' HISTORY;
+  It runs on the game as your team may see it; \`--local\` runs on stream/history.jsonl, your team's history file;
   \`--room\` runs across this arena's finished games, fully revealed. The entities are turns, versions, teams (with your
-  bee's MEMORY), pairs and scores.
+  bee's MEMORY), pairs and scores. A response over 4 KB shows as its size and hash (response_bytes, response_hash); the
+  whole of it: \`python3 tools/stream.py response <seq>\` or garden.response(seq).
 - Your bee's MEMORY is written only by your deployed bee. You can read it; nothing you or your tools do can set it, and it
   is emptied whenever your bee's code changes.
 - Games are short (this one: ${durationText(config.minutes)}), and a session is slow by comparison: you think in seconds to
-  minutes, the garden moves every 200 ms. So in a game what reacts is what you prepared: programs that adapt by themselves
-  (both read HISTORY on every call), and your SCAFFOLD.
+  minutes, the garden moves every 200 ms. So in a game what reacts is what you prepared: a bee that adapts by itself
+  (through its MEMORY and fed), and your SCAFFOLD.
 - Your scaffold is a program of your own that runs outside the game engine for the rest of the game, even between and after
   your sessions: it watches the game and changes your programs itself, within your change budget. Write it in Python with
   tools/garden.py and start it with \`python3 tools/scaffold.py start scaffold.py\` (you can start it in the
   lobby). The runner supervises it: it restarts it if it crashes, stops it when the game ends, and gives it a small CPU share.
-  It runs with tools/ on its import path, so \`import garden\` works. garden.py: \`HISTORY\` (your programs' HISTORY, kept up to
-  date), \`game\` and \`room\` (the same query builder, run by the game), \`follow()\` (each new turn as it arrives),
+  It runs with tools/ on its import path, so \`import garden\` works. garden.py: \`local\` (your team's history file as a query
+  builder, kept up to date), \`game\` and \`room\` (the same query builder, run by the game), \`follow()\` (each new turn as it
+  arrives), \`response(seq)\` (a whole response over 4 KB),
   \`follow_live()\` (public actions as they happen), \`status()\` (clock, round, live scores, your exact budgets and their
   refill rate, your versions), \`memory()\` (your bee's MEMORY, read only), \`live(kind)\` (your code playing now),
   \`measure(kind, code)\` (size and cost, free), \`check(kind, code)\`, \`try_flower(code, challenges)\`, \`try_bee(code)\`,
@@ -151,7 +156,7 @@ ${personaAndSituation(persona, fixed)}
   flower's team during play: the percent and energy of turns without a feed, and the flower's compute time on every turn.
   Code, versions, budgets, bee decision times, a bee's MEMORY and what it prints stay with their own team. Once the game is
   over, everything is revealed. (RULES.md and the server decide; queries and files show exactly what your team may see.)
-- Your files: stream/history.jsonl holds your programs' HISTORY (one record per finished turn, growing about once a second);
+- Your files: stream/history.jsonl holds your team's history (one record per finished turn, growing about once a second);
   stream/actions.jsonl is the public stream; stream/mine.jsonl has your own bee's and flower's actions with your private
   fields and your bee's printouts (stream/SCHEMA.md). They grow big: query them, never print them whole. The public API
   needs no login: ${apiBase}/events?after=<seq> (Server-Sent Events; garden.follow_live reads it),
@@ -194,14 +199,14 @@ export function lobbyBrief({ config, teamName, generation, maxTurns, carried, st
       `interview panel said about you.`);
   } else {
     parts.push(`This is your first game: the program files are empty. Write both from scratch (interface.txt and RULES.md say ` +
-      `what each must define: flower(challenge), first() and decide(challenge, response), with GAME, HISTORY and the bee's MEMORY; ` +
+      `what each must define: flower(challenge), first() and decide(challenge, response), optionally fed(nectar), with GAME and the bee's MEMORY; ` +
       `there is no starter code).`);
   }
   if (examples) parts.push(`Shared examples: every team in this garden received the same example files in examples/ (${examples.join(", ")}). ` +
     `Every team has exactly these files and was told the same thing.`);
   if (common) parts.push(commonNotice(common));
   parts.push(`Writing is free in the lobby: only the size budgets apply (flower ${n0(b.flower.size)}, bee ${n0(b.bee.size)} nodes; ` +
-    `a flower's size also sets its energy; the bee's MEMORY holds ${n0(b.bee.memory ?? 1024)} bytes). Test with tools/check.py and tools/try.py, then submit both with ` +
+    `a flower's size also sets its energy; the bee's MEMORY holds ${n0(b.bee.memory ?? 50)} bytes). Test with tools/check.py and tools/try.py, then submit both with ` +
     `\`python3 tools/submit.py <kind>\`: a team needs both submitted to play. ${startsWith ? startsWith : ""}`.trim());
   parts.push(`When every team is done, the game starts and runs for ${durationText(config.minutes)} of game time, without stopping. As it starts ` +
     `you get another session, while it runs. The game won't wait for you, and it will likely be over before that session ends. ` +
@@ -237,13 +242,14 @@ export function gameBrief({ config, teamName, teamId = null, generation, session
       `${n0(head.flower.pollen)} pollen given${head.flower.noResponse ? `, ${head.flower.noResponse} turns with no response` : ""}.`);
   }
   if (budgets) lines.push(`Your change budgets now: ${KINDS.map((k) => `${k} ${n0(budgets[k].available)} of ${n0(budgets[k].cap)} (+${n0(budgets[k].perMinute)}/min)`).join(", ")}.`);
-  if (memory) lines.push(`Your bee's MEMORY: ${n0(memory.bytes ?? 0)} of ${n0(memory.cap ?? 0)} bytes (bee v${memory.version ?? "-"}; read it with tools/status.py --memory).`);
+  if (memory) lines.push(`Your bee's MEMORY: ${n0(memory.bytes ?? 0)} of ${n0(memory.cap ?? 0)} bytes (bee v${memory.version ?? "-"}; read it with tools/status.py --memory)` +
+    `${memory.error ? `; its last save failed: ${String(memory.error).slice(0, 160)}` : ""}.`);
   if (scaffold?.file) lines.push(`Your scaffold ${scaffold.file}: ${scaffold.state}${scaffold.restarts ? `, ${scaffold.restarts} restart${scaffold.restarts > 1 ? "s" : ""}` : ""}; ` +
     `it has submitted ${automatic} change${automatic === 1 ? "" : "s"} by itself (\`tools/scaffold.py logs\`).`);
   else lines.push(`You have no scaffold running (\`python3 tools/scaffold.py start scaffold.py\` starts one; it runs until the game ends).`);
   if (lines.length) parts.push(lines.join("\n"));
-  parts.push(`Your program files are the versions playing now. Ask the game's history with \`python3 tools/query.py\` (the query ` +
-    `builder your programs use on HISTORY); stream/mine.jsonl has your own bee's printouts. \`python3 tools/status.py\` shows the ` +
+  parts.push(`Your program files are the versions playing now. Ask the game's history with \`python3 tools/query.py\` (a typed ` +
+    `query builder); stream/mine.jsonl has your own bee's printouts. \`python3 tools/status.py\` shows the ` +
     `clock, your budgets, your bee's MEMORY and the live scores.`);
   if (drafts.length) parts.push(`Edits from an earlier session that were never submitted: drafts/${drafts.map((k) => `${k}.${x}`).join(", drafts/")}.`);
   if (scripts.length) parts.push(`Python files in your workspace: ${scripts.join(", ")}.`);
@@ -289,9 +295,10 @@ visits flowers one at a time, each time one flower of a species picked at random
 question (a "challenge"); the flower answers and also says how it would split its spare energy between nectar for the bee
 and pollen for the bee to carry to other flowers of its species; then the bee feeds or leaves. A flower has more spare
 energy when its program is small and fast. If the bee feeds, the flower gives it the nectar and the pollen; if the bee
-leaves, that energy is lost. The bee wants nectar; the flower wants to give away as much pollen as it can. Nobody is told
-whose bee or flower it was until the turn is over. Programs start fresh for every question: only the bee keeps a small
-memory (about a kilobyte) that it alone can write. A game is one short continuous stretch of play (a few minutes):
+leaves, that energy is lost. The bee wants nectar; the flower wants to give away as much pollen as it can. The programs
+are never told whose bee or flower they met, and never see what happened before: they start fresh for every question, and
+only the bee keeps a tiny memory (50 bytes) that it alone can write, including right after it eats. A game is one short continuous
+stretch of play (a few minutes):
 everyone sees every visit, question, answer and feed at once, and teams may change their programs while it runs, paying
 from a change budget that refills with time.
 A team scores when its species gives pollen to bees of many different teams, and when its bee gets nectar from many

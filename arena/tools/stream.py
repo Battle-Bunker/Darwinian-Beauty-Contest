@@ -1,13 +1,15 @@
 """The game's files in stream/, read with code at your own pace (stream/SCHEMA.md says what each holds).
 
-    stream/history.jsonl   YOUR TEAM'S HISTORY: one turn record per finished turn, oldest first, exactly what your
-                           programs see as HISTORY.turns (plus "seq"). Teams are indices 0..N-1.
+    stream/history.jsonl   YOUR TEAM'S HISTORY: one turn record per finished turn, oldest first, as your team may see
+                           it (with "seq"). Teams are indices 0..N-1. Your programs see no history: this is for you.
     stream/actions.jsonl   the public stream: every arrival and every turn's end as anyone sees it. Teams are ids.
     stream/mine.jsonl      your own bee's and flower's actions with your private fields and your bee's printouts.
     stream/teams.json      ids -> names, "names" in index order, "me" (your id) and "myIndex".
 The runner appends to them about once a second while the game runs. Read them, never write to them.
-To ask questions of the history, use tools/query.py (or garden.HISTORY in a script): the same typed queries your
-programs run on HISTORY.
+To ask questions of the history, use tools/query.py (or garden.local in a script): typed history queries.
+
+A response over 4 KB is in the files and queries only as its size, its SHA-256 and its first characters (rBytes, rHash,
+rPreview in actions; responseBytes and responseHash in history records); fetch the whole of it when you need it.
 
 As a library (from a script in your workspace):
     import sys; sys.path.insert(0, "tools")
@@ -18,15 +20,22 @@ As a library (from a script in your workspace):
     for a in s.actions(): ...                # the public stream (arrivals too)
     for a in s.mine(): ...                   # your own actions with your private fields and printouts
     s.name(i), s.my_index, s.n, s.last()     # names (by index or id), your index, team count, the latest turn
+    response(seq)                            # the whole response of the turn whose end is action seq (parsed JSON)
 
 From the shell:
     python3 tools/stream.py tail [-n 20]     the latest public actions, one line each
+    python3 tools/stream.py response SEQ [--out FILE]
+                                             a whole response: its size, hash, shape and first characters (--out
+                                             saves all of it to FILE in your workspace)
 """
+import hashlib
 import json
 import os
 import re
 import sys
 import time
+import urllib.error
+import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _SNAKE = re.compile(r"(?<!^)(?=[A-Z])")
@@ -84,6 +93,46 @@ def _follow(path, poll=0.25, from_start=False):
                         pass
         else:
             time.sleep(poll)
+
+
+_responses = {}  # seq -> JSON text (a few, the latest asked for)
+
+
+def response_text(seq, root=ROOT):
+    """The whole response of the turn whose end is action `seq`, as its JSON text, from the game's public API (GET
+    .../responses/<seq>). None if that turn has no response (the flower failed)."""
+    seq = int(seq)
+    if seq in _responses:
+        return _responses[seq]
+    with open(os.path.join(root, "config.json")) as f:
+        api = json.load(f).get("public_api")
+    try:
+        with urllib.request.urlopen("%s/responses/%d" % (api, seq), timeout=30) as r:
+            text = r.read().decode("utf-8")
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None
+        raise
+    if len(_responses) >= 8:
+        _responses.pop(next(iter(_responses)))
+    _responses[seq] = text
+    return text
+
+
+def response(seq, root=ROOT):
+    """The whole response of the turn whose end is action `seq`, parsed (None if the flower failed)."""
+    text = response_text(seq, root)
+    return None if text is None else json.loads(text)
+
+
+def describe(r):
+    """A response's shape in a few words: a graph's nodes, edges and labels; else its type and length."""
+    if isinstance(r, dict) and "nodes" in r and isinstance(r.get("edges"), list):
+        labels = r.get("labels")
+        return "graph: %s nodes, %d edges%s" % (r["nodes"], len(r["edges"]), ", %d labels" % len(labels) if isinstance(labels, list) else "")
+    if isinstance(r, (list, str)):
+        return "%s of length %d" % (type(r).__name__, len(r))
+    return type(r).__name__
 
 
 class Stream:
@@ -201,7 +250,8 @@ def tail(s, n):
     for a in rows[-n:]:
         what = a["action"]
         if what != "arrive":
-            what += " c=%s r=%s" % (_short(a.get("c")), _short(a.get("r")))
+            r = _short(a.get("r")) if a.get("rHash") is None else "<%s bytes: tools/stream.py response %d>" % (a.get("rBytes"), a["seq"])
+            what += " c=%s r=%s" % (_short(a.get("c")), r)
         if a.get("action") == "feed" and a.get("nectar") is not None:
             what += " percent=%s energy=%s nectar=%s pollen=%s" % (a.get("percent"), a.get("energy"), a.get("nectar"), a.get("pollen"))
         print("#%d %s round %s  %s bee -> %s flower (turn %s)  %s" % (a["seq"], _mmss(a.get("atMs", 0)), a.get("round"), s.name(a["bee"])[:16],
@@ -213,5 +263,21 @@ if __name__ == "__main__":
     cmd = args[0] if args else "tail"
     if cmd == "tail":
         tail(Stream(), int(args[args.index("-n") + 1]) if "-n" in args else 20)
+    elif cmd == "response" and len(args) > 1:
+        text = response_text(args[1])
+        if text is None:
+            sys.exit("turn #%s has no response (the flower failed), or there is no such turn" % args[1])
+        print("turn #%s: %d bytes, sha256 %s; %s" % (args[1], len(text.encode("utf-8")), hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                                                   describe(json.loads(text))))
+        if "--out" in args:
+            out = args[args.index("--out") + 1]
+            full = os.path.abspath(out)
+            if not full.startswith(ROOT + os.sep) or full.startswith(os.path.join(ROOT, "stream") + os.sep):
+                sys.exit("--out: a file in your workspace (not in stream/)")
+            with open(full, "w") as f:
+                f.write(text)
+            print("saved to %s" % out)
+        else:
+            print(text[:1500] + (" ... (%d more characters; --out FILE saves it all)" % (len(text) - 1500) if len(text) > 1500 else ""))
     else:
         print(__doc__)

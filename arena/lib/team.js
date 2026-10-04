@@ -12,11 +12,16 @@ import { BudgetError, callModel, capModel, extractTag, runSession } from "./llm.
 import { gameBrief, interviewPrompt, interviewSystem, lobbyBrief, mmss, toolSystem } from "./prompts.js";
 import { Broker } from "./broker.js";
 import { Scaffold } from "./scaffold.js";
+import { definesFed } from "./mechanisms.js";
 import { TRANSCRIPTS, audit, collect, commonFiles, extOf, killLeftovers, prepareWorkspace, recordViolations, spillDir, writeMinified } from "./workspace.js";
 
 const KINDS = ["flower", "bee"];
 const n0 = (x) => Math.floor(x).toLocaleString("en-US");
 /** JSON as the game measures MEMORY: sorted keys, no spaces. */
+/** A MEMORY's size as the game counts it: Σ over its entries of the key's UTF-8 bytes + the value's JSON bytes. */
+export const memorySize = (m) => (m && typeof m === "object" && !Array.isArray(m) ? Object.entries(m).reduce((a, [k, v]) => a + Buffer.byteLength(k) + Buffer.byteLength(JSON.stringify(v) ?? "null"), 0) : null);
+/** A response as a short text: a big one (over 4 KB, r null with rBytes and rHash) as its size, hash and first characters. */
+const showResponse = (a, n = 40) => (a.rHash ? `<${n0(a.rBytes)} bytes, sha256 ${String(a.rHash).slice(0, 12)}…: ${String(a.rPreview ?? "").slice(0, n)}…>` : JSON.stringify(a.r ?? null).slice(0, n));
 const canonical = (v) => JSON.stringify(v, (k, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map((key) => [key, x[key]])) : x)) ?? "null";
 
 export const SESSION_LIMITS = {
@@ -138,8 +143,9 @@ export function statusOf(view, teamId, { afford = null, code = false, memory = f
   // The bee's MEMORY: read only (only the deployed bee writes it; it starts as {} with every new bee version).
   const mem = mine?.memory;
   if (mem) {
-    out.memory = { bytes: mem.bytes, cap: mem.cap ?? config.budgets?.bee?.memory ?? null, version: mem.version ?? null, ...(memory ? { value: mem.value } : {}) };
+    out.memory = { bytes: mem.bytes, cap: mem.cap ?? config.budgets?.bee?.memory ?? null, version: mem.version ?? null, error: mem.error ?? null, ...(memory ? { value: mem.value } : {}) };
     lines.push(`Your bee's MEMORY: ${n0(mem.bytes ?? 0)} of ${n0(out.memory.cap ?? 0)} bytes (bee v${mem.version ?? "-"}; only your bee writes it)` +
+      (mem.error ? `; its last save failed: ${String(mem.error).slice(0, 200)}` : "") +
       (memory ? `:\n  ${JSON.stringify(mem.value ?? null).slice(0, 4000)}` : ". tools/status.py --memory shows it."));
   }
   out.text = lines.join("\n");
@@ -211,11 +217,11 @@ export function requestHandler(ctx) {
         let out;
         if (kind === "flower") {
           const challenges = Array.isArray(req.challenges) && req.challenges.length ? req.challenges : sampleChallenges(config);
-          const t = await api.tryFlower(tok, gPath, req.code, challenges, Array.isArray(req.history) ? req.history : undefined);
+          const t = await api.tryFlower(tok, gPath, req.code, challenges);
           const res = t.results || [];
           out = { ok: !t.error && res.every((r) => !r.error), error: t.error, results: res, size: t.size ?? null,
-            text: t.error ? `fails to load: ${t.error}` : (t.size != null ? `size ${n0(t.size)} nodes\n` : "") + res.map((r) => `flower(${JSON.stringify(r.c).slice(0, 50)}) -> ${r.error ? `ERROR ${r.error}` : `${JSON.stringify(r.r).slice(0, 160)}, percent ${r.percent}`}` +
-              `  (energy ${r.energy != null ? n0(r.energy) : "-"}, ${r.ms ?? "?"} ms CPU)`).join("\n") };
+            text: t.error ? `fails to load: ${t.error}` : (t.size != null ? `size ${n0(t.size)} nodes\n` : "") + res.map((r) => `flower(${JSON.stringify(r.c).slice(0, 50)}) -> ${r.error ? `ERROR ${r.error}` : `${showResponse(r, 160)}, percent ${r.percent}`}` +
+              `  (energy ${r.energy != null ? n0(r.energy) : "-"}, ${r.ms ?? "?"} ms CPU${r.rBytes != null ? `, ${n0(r.rBytes)} bytes` : ""})`).join("\n") };
         } else {
           // memory: what the TEST bee starts with (default {}); the game's bee's MEMORY is never touched by a try.
           const opts = { rounds: Number.isFinite(req.rounds) ? req.rounds : undefined, flower: typeof req.flower === "string" ? req.flower : undefined,
@@ -226,20 +232,26 @@ export function requestHandler(ctx) {
           const acts = (t.actions || []).filter((a) => a.action !== "arrive");
           // The test bee's final MEMORY: the server sends { value, bytes, cap, error } (a bare value is taken as the value).
           const tm = t.memory === undefined ? null : t.memory && typeof t.memory === "object" && "value" in t.memory && "bytes" in t.memory
-            ? t.memory : { value: t.memory, bytes: Buffer.byteLength(canonical(t.memory)), cap: null, error: null };
+            ? t.memory : { value: t.memory, bytes: memorySize(t.memory), cap: null, error: null };
+          // fed(nectar): run by the server after each feed decided in time, in the instance that decided; a failure is a
+          // bee problem "fed() failed (...)", and MEMORY stays as decide saved it.
+          const fedFails = (t.problems || []).filter((p) => /^fed\(\) failed/.test(p.error || ""));
+          const fed = { defined: definesFed(req.code), calls: definesFed(req.code) ? t.feeds ?? null : 0, failures: fedFails.length, firstError: fedFails[0]?.error ?? null };
           const by = (a) => acts.filter((x) => x.action === a).length;
           const probs = (t.problems || []).map((p) => `${p.kind ?? "?"}: ${p.error}`);
           const slowN = acts.filter((a) => /too slow/i.test(a.beeError || "")).length;
           const ms = acts.map((a) => a.beeMs).filter((x) => x != null).sort((a, b) => a - b);
-          out = { ok: !probs.some((p) => p.startsWith("bee") && !/too slow/i.test(p)), rounds: t.rounds, feeds: t.feeds, nectar: t.nectar, pollen: t.pollen, memory: tm, problems: probs, tooSlow: slowN,
+          out = { ok: !probs.some((p) => p.startsWith("bee") && !/too slow/i.test(p)), rounds: t.rounds, feeds: t.feeds, nectar: t.nectar, pollen: t.pollen, memory: tm, fed, problems: probs, tooSlow: slowN,
             actions: acts.slice(0, 200),
             text: `${t.rounds ?? "?"} rounds in a garden of just your own flower: ${acts.length} turns, ${by("feed")} feeds, ${by("leave")} leaves; ` +
               `your bee got ${n0(t.nectar ?? 0)} nectar and ${n0(t.pollen ?? 0)} pollen.` +
+              (fed.defined ? ` fed(nectar) ran after each of the ${n0(t.feeds ?? 0)} feeds${fed.failures ? `, and failed ${fed.failures} time${fed.failures === 1 ? "" : "s"} (${String(fed.firstError).slice(0, 160)})` : ""}.`
+                : " Your bee defines no fed(nectar) (optional: it would run after each feed, in the same instance, and could update MEMORY).") +
               (tm ? ` The test bee's MEMORY at the end (${n0(tm.bytes)} bytes of ${n0(tm.cap ?? config.budgets?.bee?.memory ?? 0)}): ${canonical(tm.value).slice(0, 300)}${tm.error ? ` (a save was refused: ${String(tm.error).slice(0, 120)})` : ""}.` : "") +
               `${slowN ? ` ${slowN} decisions were too slow (each costs a turn).` : ""}` +
               (ms.length ? ` Decision time: median ${ms[Math.floor(ms.length / 2)].toFixed(1)} ms, slowest ${ms[ms.length - 1].toFixed(1)} ms (limit ${config.budgets?.bee?.ms ?? "?"} ms).` : "") +
               (probs.length ? `\nProblems:\n- ${probs.join("\n- ")}` : "") +
-              `\nFirst turns:\n` + acts.slice(0, 12).map((a) => `  ${a.action} c=${JSON.stringify(a.c).slice(0, 40)} r=${JSON.stringify(a.r).slice(0, 40)}` +
+              `\nFirst turns:\n` + acts.slice(0, 12).map((a) => `  ${a.action} c=${JSON.stringify(a.c).slice(0, 40)} r=${showResponse(a)}` +
                 `${a.percent != null ? ` percent=${a.percent}` : ""}${a.energy != null ? ` energy=${n0(a.energy)}` : ""}${a.nectar != null ? ` nectar=${n0(a.nectar)}` : ""}` +
                 `${a.beeError ? ` bee error: ${String(a.beeError).slice(0, 80)}` : ""}${a.flowerError ? ` flower error: ${String(a.flowerError).slice(0, 80)}` : ""}${a.log ? ` printed: ${String(a.log).trim().slice(0, 60)}` : ""}`).join("\n") +
               `\n(--json for every turn)` };

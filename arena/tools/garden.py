@@ -4,9 +4,9 @@ so `import garden` works). Sessions can use it too (after sys.path.insert(0, "to
 
     import garden
 
-    # The game's history, with the same typed query builder your programs use on HISTORY (tools/history.py):
-    garden.HISTORY.turns.my_flower().eq("fed", True).avg("percent").value()   # exactly your programs' HISTORY, kept up
-                                                                              # to date from stream/history.jsonl
+    # The game's history, with a typed query builder (tools/history.py). Your programs see no history: this is for you.
+    garden.local.turns.my_flower().eq("fed", True).avg("percent").value()     # your team's history, kept up to date
+                                                                              # from stream/history.jsonl
     garden.game.scores.order_by("fitness", desc=True).rows()   # run by the game, as your team may see it: turns,
     garden.game.versions.mine().rows()                         # versions (your own), teams, pairs, scores
     garden.room.turns.eq("fed", True).count().value()          # the room's finished games, fully revealed
@@ -15,7 +15,9 @@ so `import garden` works). Sessions can use it too (after sys.path.insert(0, "to
         if t.fed and t.flower == garden.MY_INDEX:
             ...                                     # a bee fed at your species: t.percent, t.energy, t.nectar, t.pollen
     s = garden.status()                             # clock, round, live scores; YOUR budgets (exact) and versions
-    m = garden.memory()                             # your bee's MEMORY: {"value", "bytes", "cap", "version"} (read only)
+    r = garden.response(t)                          # a turn's whole response (one over 4 KB is None in t.response)
+    m = garden.memory()                             # your bee's MEMORY: {"value", "bytes", "cap", "version", "error"}
+                                                    # (read only)
     m = garden.measure("flower", code)              # free: {"ok", "size", "cost", "available", "errors"}
     r = garden.submit("flower", code)               # live at once if affordable; else r["ok"] is False and
                                                     # r["wait_s"] says how long until it is (None: never, too big)
@@ -26,8 +28,9 @@ The change budget is enforced by the server: a submission you can't afford is re
 MEMORY is written only by your deployed bee: nothing here can set it, and it is emptied whenever your bee's code changes.
 Everything goes through the game runner (tools/_runner.py): no password or token is ever needed here.
 
-Turns are the same records as in HISTORY (Python field names: round, at_ms, bee, flower, challenge, response, fed,
-percent, energy, nectar, pollen, ms, flower_version, ...); a field your team may not see is None. garden.MY_INDEX is your
+Turns are the records of stream/history.jsonl (Python field names: seq, round, at_ms, bee, flower, challenge, response,
+response_bytes, response_hash, fed, percent, energy, nectar, pollen, ms, flower_version, ...); a field your team may not
+see is None, and so is a response over 4 KB (response_bytes and response_hash say what it is; garden.response(t) fetches it). garden.MY_INDEX is your
 index, garden.N the number of teams, garden.name(i) a team's name. follow_live() yields the public actions (arrive, feed,
 leave; teams as ids, garden.ME is yours) straight from the game's public API.
 """
@@ -39,7 +42,7 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _runner import ROOT, call  # noqa: E402
-from stream import Stream  # noqa: E402
+from stream import Stream, response as _response  # noqa: E402
 
 _s = Stream(ROOT)
 KINDS = ("flower", "bee")
@@ -104,7 +107,6 @@ def _local():
                     rec = json.loads(raw)
                 except ValueError:
                     continue
-                rec.pop("seq", None)
                 records.append(rec)
         st["offset"] += end
         if records:
@@ -113,13 +115,16 @@ def _local():
 
 
 def __getattr__(attr):
-    """garden.HISTORY: your programs' HISTORY (turns), kept up to date. garden.game / garden.room: the query builder run
+    """garden.local: your team's history (turns) from stream/history.jsonl, kept up to date. garden.game / garden.room: the
+    query builder run
     by the game (this game as your team may see it / the room's finished games). garden.ME (your team id),
     garden.MY_INDEX (your team index), garden.N (the number of teams) and garden.TEAMS (ids -> names): in the lobby
     MY_INDEX is None and N is 0; the indices are fixed when the game starts, and from then on these give them (a scaffold
     started in the lobby needn't restart)."""
-    if attr == "HISTORY":
+    if attr == "local":
         return _local().history
+    if attr == "HISTORY":
+        raise AttributeError("garden.HISTORY is now garden.local (your team's history; programs see no history)")
     if attr == "game":
         if _hist["game"] is None:
             base, room, game = _where()
@@ -141,7 +146,7 @@ def name(team):
 
 
 def turns():
-    """Every turn so far (your programs' HISTORY): a tuple of Turn records, oldest first."""
+    """Every turn so far (your team's history): a tuple of Turn records, oldest first."""
     return _local().turns.rows()
 
 
@@ -152,7 +157,7 @@ def last():
 
 
 def follow(poll=0.1, from_start=False):
-    """Yield each new turn (a Turn record, as in HISTORY) as the runner appends it to stream/history.jsonl (about once a
+    """Yield each new turn (a Turn record) as the runner appends it to stream/history.jsonl (about once a
     second). Starts after what's there now, unless from_start. Never returns: break out of it yourself."""
     done = 0 if from_start else _local().turns.count().value()
     while True:
@@ -163,6 +168,19 @@ def follow(poll=0.1, from_start=False):
             done = n
         else:
             time.sleep(poll)
+
+
+def response(turn):
+    """The whole response of a turn (a Turn record, a dict with "seq", or the seq itself), parsed: a response over 4 KB
+    is None in the files and queries, with its size and hash. None if the flower failed. Fetched from the game's public
+    API when needed (a few are kept)."""
+    if isinstance(turn, int):
+        return _response(turn)
+    get = (lambda k: turn.get(k)) if isinstance(turn, dict) else (lambda k: getattr(turn, k, None))
+    r = get("response") if get("response") is not None else get("r")
+    if r is not None or (get("response_bytes") is None and get("responseBytes") is None and get("rBytes") is None):
+        return r
+    return _response(get("seq"))
 
 
 def actions(after=0, since_ms=None):
@@ -225,8 +243,9 @@ def status(afford=None):
 
 
 def memory():
-    """Your bee's MEMORY as the game holds it: {"value", "bytes", "cap", "version"} (None before your bee has one). Read
-    only: only your deployed bee writes it, and a new bee version starts with {}."""
+    """Your bee's MEMORY as the game holds it: {"value", "bytes", "cap", "version", "error"} (None before your bee has
+    one; error: why its last save failed). A flat key-value store: bytes is the sum of each key's bytes and its value's
+    JSON bytes. Read only: only your deployed bee writes it, and a new bee version starts with {}."""
     r = call("status", memory=True)
     return r.get("memory")
 
@@ -251,16 +270,19 @@ def measure(kind, code):
     return {k: r.get(k) for k in ("ok", "size", "cost", "available", "errors", "budget")}
 
 
-def try_flower(code, challenges=None, history=None):
+def try_flower(code, challenges=None):
     """Run a flower on challenges on the game's real runner without submitting it: {"ok", "size", "results": [{"c", "r",
-    "percent", "energy", "ms", "error"}]}. history: turn records for its HISTORY.turns (default none)."""
-    return call("try", kind="flower", code=code, challenges=challenges, history=history)
+    "rBytes", "rHash", "rPreview", "percent", "energy", "ms", "error"}]} (a response over 4 KB: r None, its size, hash and
+    first 4 KB)."""
+    return call("try", kind="flower", code=code, challenges=challenges)
 
 
 def try_bee(code, rounds=None, flower=None, memory=None):
     """Run a test bee for `rounds` rounds in a garden of just your own flower (`flower` code, else your latest submitted
-    one), starting with `memory` as its MEMORY (default {}): {"ok", "feeds", "nectar", "pollen", "rounds", "memory" (the
-    test bee's at the end), "actions", "problems"}. It never touches your game bee's MEMORY."""
+    one), starting with `memory` as its MEMORY (default {}), with fed(nectar) called after each feed as in a game: {"ok",
+    "feeds", "nectar", "pollen", "rounds", "memory" (the test bee's at the end: value, bytes, cap, error), "fed" (whether
+    your bee defines fed, how often it ran, its failures), "actions", "problems"}. It never touches your game bee's
+    MEMORY."""
     return call("try", kind="bee", code=code, rounds=rounds, flower=flower, memory=memory)
 
 

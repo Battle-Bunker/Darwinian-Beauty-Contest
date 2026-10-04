@@ -113,8 +113,10 @@ for (const a of arenas) {
     p(`Totals: ${T.feeds} feeds (${pc(T.feedRate)} of turns), ${T.selfFeeds} of them a bee at its own flower; excess energy ${big(T.energy)}, of which ${big(T.energyLost)} ` +
       `(${pc(T.energy ? T.energyLost / T.energy : null)}) lost to turns without a feed; nectar ${big(T.nectar)}, pollen ${big(T.pollen)}; ${T.failures} turns with no response.`);
     p();
-    p("Distributions (p10 / p50 / p90; percent over answered turns, energy over every turn, nectar and pollen over feeds):");
-    table(["", "n", "min", "p10 / p50 / p90", "max", "mean"], ["percent", "energy", "nectar", "pollen"].map((k) => { const d = m.distributions[k] || {}; return [k, d.n ?? 0, big(d.min), q3(d), big(d.max), big(d.mean)]; }));
+    if (m.bigResponses?.turns) p(`Responses over 4 KB: ${m.bigResponses.turns} turns, ${m.bigResponses.distinct} distinct, ${big(m.bigResponses.bytes)} bytes in all; ` +
+      `${m.bigResponses.fetched} fetched (${big(m.bigResponses.fetchedBytes)} bytes) for their shapes${m.bigResponses.failed ? `, ${m.bigResponses.failed} failed` : ""}.`);
+    p("Distributions (p10 / p50 / p90; response bytes and percent over answered turns, energy over every turn, nectar and pollen over feeds):");
+    table(["", "n", "min", "p10 / p50 / p90", "max", "mean"], ["responseBytes", "percent", "energy", "nectar", "pollen"].map((k) => { const d = m.distributions[k] || {}; return [k === "responseBytes" ? "response bytes" : k, d.n ?? 0, big(d.min), q3(d), big(d.max), big(d.mean)]; }));
     p(`Over time (windows of ${secs(m.windowMs)}; energy lost = energy of turns without a feed; self = a bee at its own flower):`);
     table(["window", "turns", "feeds", "feed rate", "energy", "energy lost", "nectar", "pollen", "mean percent", "no response", "self feeds / turns"],
       m.windows.map((x) => [`${mmss(x.from)}-${mmss(x.from + m.windowMs)}`, x.turns, x.feeds, pc(x.feedRate), big(x.energy), `${big(x.energyLost)} (${pc(x.energyLostShare)})`, big(x.nectar), big(x.pollen),
@@ -130,9 +132,9 @@ for (const a of arenas) {
 
     // Flowers.
     p("Flowers (percent p10 / p50 / p90 over answered turns; compute = CPU ms per call, and its mean as a share of the flower window):");
-    table(["species of", "visits", "feeds", "feed rate", "pollinators", "percent", "mean energy", "energy lost", "nectar given", "pollen given", "compute mean / p90 ms", "compute share", "no response"],
+    table(["species of", "visits", "feeds", "feed rate", "pollinators", "percent", "mean energy", "energy lost", "nectar given", "pollen given", "compute mean / p90 ms", "compute share", "response bytes p50 / max", "over 4 KB", "no response"],
       Object.values(m.teams).map((t) => { const f = t.flower; return [t.name, f.turns, f.feeds, pc(f.feedRate), f.pollinators, q3(f.percent, f2), big(f.energy?.mean), big(f.energyLost), big(f.nectarPaid), big(f.pollen),
-        `${f2(f.ms?.mean)} / ${f2(f.ms?.p90)}`, pc(f.computeShare), f.failures]; }));
+        `${f2(f.ms?.mean)} / ${f2(f.ms?.p90)}`, pc(f.computeShare), `${big(f.responseBytes?.p50)} / ${big(f.responseBytes?.max)}`, f.bigResponses ?? "-", f.failures]; }));
     // Bees, with the team's sessions and requests.
     const brows = [];
     for (const [id, t] of Object.entries(m.teams)) {
@@ -148,9 +150,11 @@ for (const a of arenas) {
 
     // Bee MEMORY and bee changes.
     if (m.memory) {
-      p(`Bee MEMORY (cap ${m.memory.cap ?? "-"} bytes; only the bee writes it; every new bee version starts empty). Sizes during play are the runner's samples:`);
-      table(["bee of", "MEMORY at the end", "share of cap", "largest / mean sampled", "saves refused (over the cap)", "bee versions", "in-game bee changes", "per minute", "mean time between changes", "value at the end"],
-        m.memory.teams.map((x) => [x.team, x.finalBytes ?? "-", pc(x.finalShare), `${x.sampledMaxBytes ?? "-"} / ${f2(x.sampledMeanBytes)}`, x.overCap, x.beeVersions, x.beeChanges, f2(x.beeChangesPerMinute),
+      p(`Bee MEMORY (a key-value store, cap ${m.memory.cap ?? "-"} bytes: Σ key bytes + value JSON bytes; only the bee writes it, in first, decide and fed; every new bee version ` +
+        `starts empty). Sizes during play are the runner's samples; saves refused = decide's (over the cap or the wrong shape); fed() failures and the last error from the samples and the end:`);
+      table(["bee of", "MEMORY at the end", "share of cap", "keys", "largest / mean sampled", "saves refused", "fed() failures", "last save error", "bee versions", "in-game bee changes", "per minute", "mean time between changes", "value at the end"],
+        m.memory.teams.map((x) => [x.team, x.finalBytes ?? "-", pc(x.finalShare), x.keys ?? "-", `${x.sampledMaxBytes ?? "-"} / ${f2(x.sampledMeanBytes)}`, x.overCap, x.fedFailures ?? "-",
+          x.finalError ? String(x.finalError).slice(0, 60) : "-", x.beeVersions, x.beeChanges, f2(x.beeChangesPerMinute),
           secs(x.meanMsBetweenChanges), x.value != null ? JSON.stringify(x.value).slice(0, 80) : "-"]));
     }
 

@@ -2,17 +2,17 @@
 
     python3 tools/try.py flower                     # flower.py on a few sample challenges
     python3 tools/try.py flower flower.py 1 42 99   # your challenges (JSON values: 7, "abc", [1,2])
-    python3 tools/try.py flower --history FILE      # ...with these turn records as its HISTORY.turns (a JSON list, or a
-                                                    # .jsonl file such as stream/history.jsonl)
     python3 tools/try.py bee                        # bee.py for 300 rounds in a garden of just your own flower
     python3 tools/try.py bee my_bee.py --rounds 100 --flower flower.py
     python3 tools/try.py bee --memory '{"seen": 3}' # the test bee starts with this MEMORY (JSON, or a .json file)
     python3 tools/try.py bee --json                 # raw result: every turn of the try, and the test bee's final MEMORY
 
-A flower shows each response with its percent, the turn's excess energy E and its CPU time. A bee plays your
-latest submitted flower unless you name a flower file. A try runs a separate test bee: it never reads or changes
-your game bee's MEMORY (only your deployed bee writes that). The runner runs the program minified, exactly as the
-game would.
+A flower shows each response with its percent, the turn's excess energy E and its CPU time (a response over 4 KB as
+its size, hash and first characters). A bee plays your latest submitted flower unless you name a flower file; as in a
+game, its fed(nectar), if it defines one, runs after every feed it decides in time, in the same instance as that
+decide, and MEMORY is saved after it. The result says how often fed ran and whether it failed. A try runs a separate
+test bee: it never reads or changes your game bee's MEMORY (only your deployed bee writes that). The runner runs the
+program minified, exactly as the game would.
 """
 import json
 import sys
@@ -28,7 +28,7 @@ def opt(name, default=None):
 
 
 skip = set()
-for name in ("--history", "--flower", "--rounds", "--memory"):
+for name in ("--flower", "--rounds", "--memory"):
     if name in sys.argv:
         i = sys.argv.index(name)
         skip.update((i, i + 1))
@@ -44,17 +44,7 @@ if kind == "flower":
             challenges.append(json.loads(a))
         except ValueError:
             challenges.append(a)
-    history = None
-    if opt("--history"):
-        with open(opt("--history")) as f:
-            text = f.read()
-        try:
-            history = json.loads(text)
-        except ValueError:
-            history = [json.loads(line) for line in text.splitlines() if line.strip()]
-        if isinstance(history, dict):
-            history = [history]  # a .jsonl file of one record
-    r = call("try", kind=kind, code=code, challenges=challenges or None, history=history)
+    r = call("try", kind=kind, code=code, challenges=challenges or None)
 else:
     flower = read_code("flower", opt("--flower")) if opt("--flower") else None
     rounds = int(opt("--rounds")) if opt("--rounds") else None

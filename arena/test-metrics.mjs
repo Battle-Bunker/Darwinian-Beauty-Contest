@@ -4,11 +4,11 @@
 // flower size and compute against energy; copies of answers between flowers; the change timeline with sessions; the
 // scores with their two shares.
 //   node arena/test-metrics.mjs
-import { computeMetrics, windowFor } from "./lib/metrics.js";
+import { bigShapes, computeMetrics, windowFor } from "./lib/metrics.js";
 
 let failed = 0;
 const check = (name, ok, extra = "") => { console.log(`${ok ? "ok  " : "FAIL"} ${name}${ok || !extra ? "" : `: ${JSON.stringify(extra).slice(0, 500)}`}`); if (!ok) failed++; };
-const config = { minutes: 1, feedCost: 10, challengeType: "int", responseType: "int", budgets: { flower: { size: 1100, ms: 150 }, bee: { size: 11000, ms: 50, memory: 1024 } } };
+const config = { minutes: 1, feedCost: 10, challengeType: "int", responseType: "int", budgets: { flower: { size: 1100, ms: 150 }, bee: { size: 11000, ms: 50, memory: 50 } } };
 const E = (size, ms) => (1100 - size) * Math.max(0, 150 - ms);
 
 const IDX = { A: 0, B: 1, C: 2 };
@@ -30,12 +30,13 @@ turn(2, "B", "C", 7, 7, 90, 0, true);                     // E 150,000, nectar 1
 turn(76, "B", "A", 5, 16, 20, 50, true, { size: 200, v: 2 }); // E 90,000: nectar 18,000, pollen 72,000
 turn(76, "A", "B", 9, null, 0, 160, false, { size: 600 });    // the flower failed: no response, no energy
 turn(77, "A", "A", 3, 3, 20, 50, false, { size: 200, v: 2, beeError: "too slow: no reply within 50 ms" }); // E 90,000 lost
-turn(77, "C", "B", 2, 4, 5, 100, false, { size: 600, beeError: "MEMORY over its cap (1,300 of 1,024 bytes): not saved" }); // E 25,000 lost
+turn(77, "C", "B", 2, 4, 5, 100, false, { size: 600, beeError: "MEMORY over its cap (60 of 50 bytes): not saved" }); // E 25,000 lost
 
 const ver = (team, kind, version, size, atMs, extra = {}) => ({ game: "G", team: IDX[team], kind, version, size, atMs, round: atMs / 200 + 1, distance: null, cost: 0, problem: null, ...extra });
 const game = { config, clockMs: 20000, round: 100 };
-const teams = [{ index: 0, id: "A", name: "Alpha", memory: { seen: 3 }, memoryBytes: 10 }, { index: 1, id: "B", name: "Beta", memory: {}, memoryBytes: 2 },
-  { index: 2, id: "C", name: "Gamma", memory: { big: "x".repeat(990) }, memoryBytes: 1000 }];
+const teams = [{ index: 0, id: "A", name: "Alpha", memory: { seen: 3 }, memoryBytes: 5 },
+  { index: 1, id: "B", name: "Beta", memory: {}, memoryBytes: 0, memoryError: "fed() failed (ZeroDivisionError: division by zero): MEMORY is as saved after decide" },
+  { index: 2, id: "C", name: "Gamma", memory: { big: "x".repeat(40), n: 7 }, memoryBytes: 47 }];
 const versions = [ver("A", "flower", 1, 100, 0), ver("A", "flower", 2, 200, 12000, { distance: 100, cost: 100 }), ver("A", "bee", 1, 300, 0),
   ver("B", "flower", 1, 600, 0), ver("B", "bee", 1, 300, 0), ver("B", "bee", 2, 310, 6000, { distance: 10, cost: 10 }), ver("B", "bee", 3, 320, 16000, { distance: 10, cost: 10 }),
   ver("C", "flower", 1, 100, 0), ver("C", "bee", 1, 300, 0)];
@@ -45,7 +46,8 @@ const scores = [
   { game: "G", team: 2, fitness: 1.0, pollination: 244.9, forage: 367.4, pollinationShare: 0.31, forageShare: 0.25, pollen: 30000, feedsReceived: 2, feedsGiven: 1, pollinators: 2, nectarCollected: 135000, nectarGiven: 270000, nectarSources: 1 },
 ];
 const submits = [{ team_id: "A", kind: "flower", version: 2, source: "session", session_no: 1 }];
-const memorySamples = [{ clockMs: 5000, team: "C", bytes: 400, version: 1 }, { clockMs: 10000, team: "C", bytes: 1000, version: 1 }, { clockMs: 10000, team: "B", bytes: 50, version: 2 }];
+const memorySamples = [{ clockMs: 5000, team: "C", bytes: 20, version: 1, keys: 1 }, { clockMs: 10000, team: "C", bytes: 47, version: 1, keys: 2 },
+  { clockMs: 10000, team: "B", bytes: 9, version: 2, error: "fed() failed (KeyError: 'n'): MEMORY is as saved after decide" }];
 const r = computeMetrics({ game, teams, turns: rows, versions, scores, submits, memorySamples, windowMs: 10000 });
 
 check("turns: one per turn row", r.turns === 8 && r.rounds === 100, { turns: r.turns, rounds: r.rounds });
@@ -74,10 +76,12 @@ check("versions: size and compute against energy", v2 && v2.size === 200 && v2.m
 check("copies: A's new flower copied B's answer 15 s after it appeared", r.copies.matches === 1 && r.copies.copies === 1 && r.copies.medianLatencyMs === 15000 && r.copies.byCopier[0].sources[0] === "Beta", r.copies);
 check("changes: timeline with the session that submitted", r.changes.find((c) => c.kind === "flower" && c.version === 2 && c.teamId === "A")?.session === 1 && r.changes[0].atMs === 0 && r.changes.length === 9, r.changes);
 const mB = r.memory.teams.find((x) => x.teamId === "B"), mC = r.memory.teams.find((x) => x.teamId === "C");
-check("memory: each bee's MEMORY at the end, against the cap", r.memory.cap === 1024 && mC.finalBytes === 1000 && mC.finalShare === 0.977 && r.memory.teams[0].value.seen === 3, r.memory);
-check("memory: saves refused for the cap", mC.overCap === 1 && mB.overCap === 0, [mB, mC]);
+check("memory: each bee's MEMORY at the end, against the cap, and its keys", r.memory.cap === 50 && mC.finalBytes === 47 && mC.finalShare === 0.94 && mC.keys === 2 && r.memory.teams[0].value.seen === 3, r.memory);
+check("memory: saves refused (decide's, on the turn)", mC.overCap === 1 && mB.overCap === 0, [mB, mC]);
+check("memory: failed fed() calls and the last save error, from the samples and the teams entity", mB.fedFailures === 2 && /ZeroDivisionError/.test(mB.finalError) && mB.errors.length === 2
+  && mC.fedFailures === 0 && mC.finalError === null, [mB, mC]);
 check("memory: how often a team changed its bee (each change empties its MEMORY)", mB.beeVersions === 3 && mB.beeChanges === 2 && mB.meanMsBetweenChanges === 10000 && mC.beeChanges === 0, mB);
-check("memory: its size over the game, from the runner's samples", mC.samples.length === 2 && mC.sampledMaxBytes === 1000 && mC.sampledMeanBytes === 700, mC);
+check("memory: its size over the game, from the runner's samples", mC.samples.length === 2 && mC.sampledMaxBytes === 47 && mC.sampledMeanBytes === 33.5 && mC.samples[1].keys === 2, mC);
 check("final: fitness, pollination and forage with their shares, pollen", r.final.length === 3 && r.final.find((x) => x.teamId === "C").pollinationShare === 0.31
   && r.final.find((x) => x.teamId === "A").pollen === 72000 && r.final.every((x) => Number.isFinite(x.fitness)) && !("allure" in r.final[0]), r.final);
 check("handshakes: pairs computed only on 5+ turns", r.handshakes.pairs.length === 0 && r.handshakes.mutual.length === 0, r.handshakes);
@@ -144,6 +148,33 @@ check("handshakes: two teams favouring each other both ways are mutual", h.hands
   const auB = e.autarky.teams.find((x) => x.teamId === "B");
   check("autarky: how much a species lives off its own bee", auB.ownPollenShare > 0.5 && e.autarky.autarkic >= 1 && e.autarky.collapse === false, e.autarky);
   check("percent over time, per species and window", e.percentOverTime.find((x) => x.teamId === "B").byWindow[3] === 50 && e.percentOverTime.find((x) => x.teamId === "B").byWindow[6] === 10, e.percentOverTime);
+}
+
+// Big responses (over 4 KB): the history has only their size and hash. They are no failures; equal hashes are equal
+// answers (a copy); a shape comes from the fetched response, else from the hash.
+{
+  const big = (round, flower, v, c, hash, bytes = 9000) => ({ game: "G", seq: round * 2, round, atMs: (round - 1) * 200, turn: round, bee: 2, flower, challenge: c, response: null,
+    responseBytes: bytes, responseHash: hash, fed: true, percent: 10, energy: 1000, nectar: 100, pollen: 900, ms: 20, flowerVersion: v, flowerError: null, beeMs: 1, beeVersion: 1, beeError: null });
+  const shapes = new Map([["h1", "graph:300:299:shape"]]);
+  const rowsB = [big(1, 0, 1, 5, "h1"), big(2, 0, 1, 6, "h2", 12000), big(30, 1, 2, 5, "h1"), big(31, 1, 2, 6, "h3")];
+  const versionsB = [ver("A", "flower", 1, 100, 0), ver("B", "flower", 1, 100, 0), ver("B", "flower", 2, 100, 4000)];
+  const m = computeMetrics({ game: { config, clockMs: 8000, round: 40 }, teams, turns: rowsB, versions: versionsB, scores: [], windowMs: 10000, shapes });
+  check("big responses: answered, not failures; their sizes", m.totals.failures === 0 && m.teams.A.flower.bigResponses === 2 && m.teams.A.flower.responseBytes.max === 12000
+    && m.distributions.responseBytes.n === 4, [m.totals, m.teams.A.flower]);
+  const cp = m.ecology.imitation.copies.find((x) => x.copier === "Beta" && x.model === "Alpha");
+  check("big responses: the same hash to the same challenge is an exact copy; a different unfetched one is no shape copy", cp && cp.exact && m.ecology.imitation.copies.length === 1, m.ecology.imitation);
+}
+
+// Fetching big responses for their shapes: distinct hashes once each, in order of first appearance, within the byte budget.
+{
+  const g = { nodes: 3, edges: [[0, 1], [1, 2]], labels: ["x".repeat(3000), "y", "z"] }, text = JSON.stringify(g);
+  const asked = [];
+  const api = { response: async (_tok, _g, seq) => { asked.push(seq); return seq === 99 ? null : { text, value: g }; } };
+  const rowsF = [{ seq: 2, responseHash: "a", responseBytes: text.length }, { seq: 4, responseHash: "a", responseBytes: text.length }, { seq: 6, responseHash: "b", responseBytes: text.length },
+    { seq: 8, responseHash: "c", responseBytes: 10 ** 7 }, { seq: 10, response: 5, responseHash: null, responseBytes: 1 }];
+  const shapes = await bigShapes(api, "/g", rowsF, 1024 * 1024);
+  check("bigShapes: each distinct big response fetched once, within the budget", asked.join() === "2,6" && shapes.get("a") === shapes.get("b") && /^graph:3:2:/.test(shapes.get("a"))
+    && !shapes.has("c") && shapes.stats.distinct === 3 && shapes.stats.fetched === 2 && shapes.stats.turns === 4, { asked, stats: shapes.stats });
 }
 
 check("windowFor: at most 10 windows in round numbers (a minute for a 10-minute game)", windowFor(30000) === 10000 && windowFor(120000) === 15000 && windowFor(600000) === 60000 && windowFor(1800000) === 300000);

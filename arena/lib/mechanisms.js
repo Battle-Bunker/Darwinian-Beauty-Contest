@@ -22,13 +22,13 @@ export function levelOf(label) {
 /** Signal families a flower may use (several at once): a recognisable signature, a keyed signal, a puzzle, a commitment. */
 export const FAMILIES = ["signature", "keyed", "puzzle", "commitment"];
 /** How a flower sets its percent (the share of the turn's excess energy it gives a feeding bee). */
-export const PERCENT_POLICIES = ["fixed", "by-challenge", "by-history", "by-visitor", "random", "other"];
-export const BEE_CHECKS = ["none", "shape-stats", "history-value", "exact-rule", "key-check", "work-count", "certificate-check", "mixed"];
+export const PERCENT_POLICIES = ["fixed", "by-challenge", "by-visitor", "random", "other"];
+export const BEE_CHECKS = ["none", "shape-stats", "learned-value", "exact-rule", "key-check", "work-count", "certificate-check", "mixed"];
 /** A bee's checking level: 0 none; 1 learns from shapes or from what paid; 2 recomputes a rule or a keyed signal; 3 verifies
  * work or a puzzle's solution; mixed counts as 2. */
-export const BEE_LEVEL = { none: 0, "shape-stats": 1, "history-value": 1, "exact-rule": 2, "key-check": 2, mixed: 2, "work-count": 3, "certificate-check": 3 };
+export const BEE_LEVEL = { none: 0, "shape-stats": 1, "learned-value": 1, "history-value": 1, "exact-rule": 2, "key-check": 2, mixed: 2, "work-count": 3, "certificate-check": 3 };
 export const beeLevelOf = (label) => (label && label.checks in BEE_LEVEL ? BEE_LEVEL[label.checks] : null);
-/** How a bee uses its MEMORY (the only state it keeps between calls). */
+/** How a bee uses its MEMORY (a 50-byte key-value store by default: the only state it keeps between turns). */
 export const BEE_MEMORY = ["none", "counters", "table", "plan", "mixed"];
 export const BEE_FEEDS = ["always", "never", "by-check", "by-learned-value", "handshake-only", "random", "mixed"];
 
@@ -75,7 +75,6 @@ export function keywordFlower(code) {
   if (kinds.length > 1) tags.push("combined?");
   let mechanism = kinds[0] || (timed ? "work-unchecked" : "rule");
   if (puzzle && timed && SCORE.test(c) && !hash) mechanism = /cliq|paley|factori|prime/i.test(c) ? "certificate" : "anytime";
-  if (/\bHISTORY\b/.test(c)) tags.push("reads-history");
   if (/GAME\s*\[\s*["']team["']\s*\]/.test(c)) tags.push("knows-own-team");
   // Signal families: a puzzle (costly work a bee can check), a keyed signal (a hash of the challenge with a secret
   // constant), a commitment (a hash of something revealed later).
@@ -85,17 +84,23 @@ export function keywordFlower(code) {
   if (/commit|reveal/i.test(c)) families.push("commitment?");
   // The percent: the last item of every pair returned is a constant, or it is computed.
   const rets = [...c.matchAll(/^[ \t]*return[ \t]*\(?(.+),[ \t]*([^,\n()]+?)[ \t]*\)?[ \t]*$/gm)].map((m) => m[2]);
-  const percent = rets.length && rets.every((x) => /^\d+(?:\.\d+)?$/.test(x)) ? "fixed" : /random\./.test(c) && /percent|pct/i.test(c) ? "random?" : tags.includes("reads-history") ? "by-history?" : "computed";
+  const percent = rets.length && rets.every((x) => /^\d+(?:\.\d+)?$/.test(x)) ? "fixed" : /random\./.test(c) && /percent|pct/i.test(c) ? "random?" : "computed";
   return { mechanism, tags, percent, families };
 }
 
-/** Keyword evidence for a bee: does it re-check work (hashes, certificates) or rules, or only learn from shapes? */
+/** Does a bee's code define fed(nectar), the optional call after a feed? (Python or TypeScript, at the top level.) */
+export const definesFed = (code) => /^(?:def\s+fed\s*\(|(?:export\s+)?(?:async\s+)?function\s+fed\s*\(|(?:const|let|var)\s+fed\s*=)/m.test(stripProse(code));
+
+/** Keyword evidence for a bee: does it re-check work (hashes, certificates) or rules, or only learn from what paid (fed and
+ * MEMORY)? */
 export function keywordBee(code) {
   const c = stripProse(code);
   const checks = [];
   if (HASH.test(c)) checks.push(HASH_TEST.test(c) ? "work-count" : "key-check");
   if (PUZZLE.test(c)) checks.push("certificate-check");
-  if (/\bHISTORY\b/.test(c) && /nectar/.test(c)) checks.push("learns");
+  const fed = definesFed(c);
+  if (fed && /\bMEMORY\b/.test(c)) checks.push("learns"); // fed(nectar) can save what paid
+  if (fed) checks.push("uses-fed");
   if (/\bMEMORY\b/.test(c)) checks.push("uses-memory");
   if (/random\.(?:randint|randrange|getrandbits|random)\(/.test(c)) checks.push("random-challenges");
   return { checks, threshold: /\b(?:T|THRESH\w*|threshold|need|enough|min_\w+)\s*=\s*\d/.test(c) };
@@ -106,7 +111,7 @@ export function keywordBee(code) {
 // Labels are cached by skeleton (ARENA_MECH_CACHE overrides the file, e.g. for tests).
 const cacheFile = () => process.env.ARENA_MECH_CACHE || path.join(ARENA_DIR, "runs", "mechanisms-cache.json");
 // Bump a kind's version when its definitions change: its labels are classified again.
-const KIND_VERSION = { flower: 3, bee: 3 };
+const KIND_VERSION = { flower: 4, bee: 4 };
 let cache = null;
 function loadCache() {
   if (cache) return cache;
@@ -121,9 +126,11 @@ challenge. The flower returns [response, percent] within 150 ms; the bee then ha
 energy for the turn is E = (1100 - its size in nodes) x max(0, 150 - its CPU ms): small, fast flowers have more to give. If
 the bee feeds, the flower gives it percent% of E as nectar and the rest as pollen (for the bee to carry to other flowers of
 the species); if not, E is lost. A team's flower program is its species: every turn is one independent flower of it. Bees
-and flowers aren't told whose counterpart they met until the turn is over, but both query HISTORY, the finished turns.
-Programs run fresh for every call: flower(challenge), first(), decide(challenge, response). The bee's only state between
-calls is MEMORY, a JSON value of about a kilobyte that only the bee writes and that empties when its code changes.`;
+and flowers are never told whose counterpart they met, and programs see no history: only their arguments and GAME.
+Programs run fresh for every call: flower(challenge), first(), decide(challenge, response), and the bee's optional
+fed(nectar), which runs after a feed it decided in time, in the same instance as that decide. The bee's only state from one
+turn to the next is MEMORY, a flat key-value store of 50 bytes (key bytes + value JSON bytes) that only the bee writes and
+that empties when its code changes.`;
 
 const take = (s, n) => (s.length > n ? s.slice(0, n) + "\n# ... (cut)" : s);
 
@@ -142,16 +149,16 @@ For each FLOWER: "mechanism" (what its response proves), one of:
 - "certificate": a hard search puzzle built from the challenge, answered with a solution that is quick to check
 - "anytime": an optimisation whose answer quality grows with time, graded by a score a bee can compute
 - "commitment": the answer commits to something revealed or checked in a later turn (e.g. a hash of a future value), so a
-  bee can check it with HISTORY afterwards
+  bee can check it afterwards (keeping what it needs in MEMORY)
 - "other"
 (for an answer that combines several kinds of proof, the costliest one, with the tag "combined")
-"percent_policy", one of: "fixed" (a constant), "by-challenge" (depends on the challenge), "by-history" (adapts to what
-HISTORY shows, e.g. how often bees fed), "by-visitor" (guesses who is asking, e.g. its own bee, and pays differently),
-"random", "other"; "percent": its typical percent as a number, or null if it varies;
+"percent_policy", one of: "fixed" (a constant), "by-challenge" (depends on the challenge), "by-visitor" (guesses who is
+asking from the challenge, e.g. its own bee, and pays differently), "random", "other"; "percent": its typical percent as a number, or null if it varies;
 and "tags" (any that apply): "time-bounded" (spends most of its time limit: energy it gives up), "lean" (written to keep size
-and CPU small, for energy), "adaptive" (deliberately sets how much work it proves per challenge or from HISTORY; NOT just
+and CPU small, for energy), "adaptive" (deliberately sets how much work it proves per challenge; NOT just
 running until the time limit), "combined" (two or more kinds of costly proof), "own-bee-handshake" (a private signal between
-its own bee and flower), "secret" (relies on hidden constants), "challenge-tied", "reads-history", plus "puzzle:<name>".
+its own bee and flower), "secret" (relies on hidden constants), "challenge-tied", "big-response" (answers with large responses, kilobytes or
+more), plus "puzzle:<name>".
 "families": every signal family it uses, any of: "signature" (a recognisable mark of the species in its answers: a fixed
 motif, label pattern or structure, the same for every challenge or derived from it by a public rule; anyone can copy it),
 "keyed" (a secret ties the answer to the challenge), "puzzle" (a costly problem built from the challenge that is cheap to
@@ -159,17 +166,17 @@ check: proof of work, a certificate, sequential work), "commitment" (commits now
 Add "difficulty": a short phrase (e.g. "10 zero bits, as many nonces as fit in 40 ms") or "".
 
 For each BEE: "checks" (its strongest check), one of: "none", "shape-stats" (learns or counts answer shapes),
-"history-value" (estimates from HISTORY how much nectar answers like this pay), "exact-rule" (recomputes a known public rule
+"learned-value" (remembers in MEMORY, e.g. from fed(nectar), how much nectar answers like this paid), "exact-rule" (recomputes a known public rule
 and compares), "key-check" (recomputes a keyed signal with a secret it shares with its own flower, or one it worked out),
 "work-count" (verifies proof-of-work items and counts them), "certificate-check" (verifies a puzzle solution or grades its
 quality), "mixed";
 "feeds", one of: "always", "never", "by-check", "by-learned-value", "handshake-only", "random", "mixed";
 "threshold": "none", "fixed" or "adaptive"; "memory": how it uses MEMORY, one of "none", "counters" (tallies or running
 averages), "table" (remembers specific answers or challenges), "plan" (a schedule or a challenge sequence), "mixed";
-"tags": any of "learns" (updates from HISTORY or nectar), "reads-history", "memory-tight" (works to fit MEMORY's cap),
-"random-challenges", "handshake" (recognises its own team's flower), "avoids-own-flower", "prefers-own-flower", "cracks"
-(works out other species' rules or keys from HISTORY to check or forge them), "rotates-challenges" (varies its challenges so
-answers can't be replayed).
+"tags": any of "learns" (updates MEMORY from what it ate or saw), "uses-fed" (defines fed(nectar)), "memory-tight" (works
+to fit MEMORY's 50-byte cap), "random-challenges", "handshake" (recognises its own team's flower), "avoids-own-flower",
+"prefers-own-flower", "cracks" (works out other species' rules or keys from their answers to check or forge them),
+"rotates-challenges" (varies its challenges so answers can't be replayed).
 
 Every item also gets "summary": one sentence.
 
