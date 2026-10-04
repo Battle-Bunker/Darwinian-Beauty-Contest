@@ -10,7 +10,8 @@ each bee that isn't feeding takes one **turn**: the engine draws a flower at ran
 flower answers `[response, percent]` within 150 ms, and the bee decides `["feed" | "leave", next]` within
 50 ms. Excess energy E = (flower size cap − flower size) × max(0, 150 − flower CPU ms); a feed pays
 nectar = percent/100 × E to the bee and the rest to the flower team's surplus; a turn without a feed pays
-nobody (its energy is lost). fitness = N³ × allure share × forage share × surplus share.
+nobody (its energy is lost). fitness = N² × pollination share × forage share, where pollination is the
+rootsum of the surplus a flower kept per bee team and forage the rootsum of the nectar a bee got per flower team.
 
 ## Auth
 
@@ -53,7 +54,7 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 | POST | `base/teams/join` | user | `{ joinCode }` | `{ id, name }` |
 | POST | `base/check` | team member | `{ kind, code }` | `{ ok, kind, size, minified, budget, distance, cost, available, errors[] }`. Validates without saving: syntax, the entry points (`flower`; for a bee `first` and `decide`, at the top level), size, and once the game runs the change budget: `distance` is the node edits from the version playing now, `cost` what the change would spend, `available` the budget now (floored) |
 | POST | `base/programs` | team member | `{ kind, code }` | same as check plus `submitted: true, version, atMs` (the game time it went live; 0 in the lobby) and `available` after paying. **422** with `errors` if it's too big or can't be afforded yet |
-| POST | `base/try` | team member | flower: `{ kind: "flower", code, challenges?, ledger? }`; bee: `{ kind: "bee", code, flower?, rounds? }` | flower: `{ size, results: [{ c, r, percent, energy, ms, error? }] }` (each challenge called with `ledger`, default `[]`; `size` is the flower's size, used for `energy`). bee: `{ actions, problems, feeds, nectar, surplus, rounds }`: `rounds` (default 300, at most 1000) unpaced rounds in a garden of just your own flower (`flower`, else your latest). In both, the programs run as team 0 of 1 (`GAME.team` 0, `GAME.teams` 1) |
+| POST | `base/try` | team member | flower: `{ kind: "flower", code, challenges?, ledger? }`; bee: `{ kind: "bee", code, flower?, rounds? }` | flower: `{ size, results: [{ c, r, percent, energy, ms, error? }] }` (`ledger`: turn records for its `HISTORY.turns`, default none; `size` is the flower's size, used for `energy`). bee: `{ actions, problems, feeds, nectar, surplus, rounds }`: `rounds` (default 300, at most 1000) unpaced rounds in a garden of just your own flower (`flower`, else your latest). In both, the programs run as team 0 of 1 (`GAME.team` 0, `GAME.teams` 1) |
 
 ### Config
 
@@ -110,9 +111,9 @@ Types: `int`, `float`, `bool`, `str`, `any`, `list[T]`, `tree[T]`, `graph`, `dig
 | program versions, sizes, costs, change budgets, problems | own team | everyone |
 | the scoreboard (every team's totals, shares and fitness) and `ledgers` (feeds, nectar, surplus) | everyone, live | everyone |
 
-A field you may not see is **absent** from actions, and **null** in ledger entries.
+A field you may not see is **absent** from actions, and **null** in ledger entries and query rows.
 Every way of reading actions (pages, `before=`, `mine=1`, the SSE and WebSocket streams) and the team
-ledger apply these rules, so programs reading the API see exactly what the web page shows. Submissions
+ledger and history queries apply these rules, so programs reading the API see exactly what the web page shows. Submissions
 don't bump the public `game.version`, so other teams can't tell when a team changes its code.
 
 ## The game view
@@ -182,48 +183,66 @@ A turn makes two actions: its **arrival**, written to the stream at once, and it
 
 A queued challenge appears only when its turn ends: nothing shows a bee's next challenge before then.
 
+## Querying history
+
+docs/QUERY.md has the whole query interface: the schema (`turns`, `versions`, `teams`, `pairs`, `scores`),
+the JSON query AST, and the generated Python and TypeScript clients (`/vendor/query/history.py`,
+`/vendor/query/history.ts`), which build the same queries programs run on `HISTORY`.
+
+| Method | Path | Who | Body | Returns |
+|---|---|---|---|---|
+| POST | `base/query` | anyone | a query AST | `{ rows, truncated }`: this game, filtered for the viewer (spectators: the public fields) |
+| POST | `/rooms/:room/query` | anyone | a query AST | `{ rows, truncated }`: across the room's **finished** games, fully revealed |
+| GET | `/query/schema` | anyone | | the schema |
+
+`limit` defaults to 1,000 rows and is capped at 5,000; `truncated` says more rows matched. A bad query is a
+**400** with the reason.
+
 ## The team ledger
 
-`GET base/ledger` returns the same entries the team's programs get, one per finished turn, oldest first,
-plus `seq` (the turn's `feed`/`leave` action) for paging. Team numbers are indices into `participants`.
+`GET base/ledger` returns the turn records the team's programs see in `HISTORY.turns` (the `turns` entity
+of docs/QUERY.md), oldest first by `seq` (the turn's `feed`/`leave` action), plus that `seq` for paging.
+Team numbers are indices into `participants`.
 
 ```jsonc
-{ "seq": 812, "round": 41, "bee": 2, "flower": 0, "challenge": 17, "response": 52, "fed": true,
+{ "seq": 812, "game": "7", "round": 41, "atMs": 8000, "turn": 12, "bee": 2, "flower": 0,
+  "challenge": 17, "response": 52, "fed": true,
   "percent": 25, "energy": 123486.0, // public on a feed; on a leave null except at your own flower
   "nectar": 30871.5,                 // on a feed; null on a leave
   "surplus": 92614.5,                // on a feed; 0 on a leave
-  "ms": 2.1 }                        // null except at your own flower
+  "ms": 2.1, "flowerVersion": 3, "flowerError": null,   // null except at your own flower
+  "beeMs": 0.4, "beeVersion": 2, "beeError": null }     // null except for your own bee
 ```
 
-Once the game is over, `GET base/ledger` fills in every field for everyone. Programs get these entries
-without `seq`. A round's entries reach the programs after the round is over,
-before the next round's flowers are called, delivered incrementally between timed calls.
+Once the game is over, every field is filled in for everyone. A round's turns reach the programs after the
+round is over, before the next round's flowers are called, brought up to date between timed calls.
 
 ## Program interfaces
 
 **Python**
 
 ```python
-def flower(challenge, ledger):              # ledger optional: def flower(challenge)
+def flower(challenge):
     return response, percent                # percent: 0-100 of this turn's excess energy, if the bee feeds
 
-def first(ledger):                          # ledger optional
+def first():
     return challenge                        # the challenge for the bee's next turn
 
-def decide(challenge, response, ledger):    # ledger optional; response is None if the flower failed
+def decide(challenge, response):            # response is None if the flower failed
     return "feed", next_challenge           # or "leave", next_challenge
 ```
 
 **TypeScript**
 
 ```ts
-function flower(challenge: Challenge, ledger: readonly Entry[]): [Response, number]
-function first(ledger: readonly Entry[]): Challenge
-function decide(challenge: Challenge, response: Response | null, ledger: readonly Entry[]): ["feed" | "leave", Challenge]
+function flower(challenge: Challenge): [Response, number]
+function first(): Challenge
+function decide(challenge: Challenge, response: Response | null): ["feed" | "leave", Challenge]
 ```
 
-Every program reads `GAME`: `team`, `teams`, `feed_cost`, `challenge_type`, `response_type`, `max_len`,
-`max_nodes`, `round_ms`, `ms` (its own limit), `flower_ms`, `flower_size_cap`; a flower also `size` (its own).
+Every program reads two globals: `GAME` (`team`, `teams`, `feed_cost`, `challenge_type`, `response_type`,
+`max_len`, `max_nodes`, `round_ms`, `ms` (its own limit), `flower_ms`, `flower_size_cap`; a flower also
+`size`, its own) and `HISTORY` (`HISTORY.turns`: the team's history, a query builder; docs/QUERY.md).
 `interface` in the game view has the signatures for the game's language and types.
 
 ## Scores
@@ -232,20 +251,21 @@ Every program reads `GAME`: `team`, `teams`, `feed_cost`, `challenge_type`, `res
 
 ```jsonc
 { "teamId",
-  "allure", "forage", "surplus",
-  "allureShare", "forageShare", "surplusShare", "fitness",
-  "feedsReceived", "feedsGiven", "pollinators", "nectarCollected", "nectarGiven", "nectarSources" }
+  "pollination", "forage",
+  "pollinationShare", "forageShare", "fitness",
+  "surplus", "feedsReceived", "feedsGiven", "pollinators", "nectarCollected", "nectarGiven", "nectarSources" }
 ```
 
 The scoreboard is live and public: every team's numbers, for everyone (spectators included), during play
 and after.
 
-- `allure` = Σ over bee teams b of √feeds[b][me]; `pollinators` = how many bee teams fed at your flower.
-- `forage` = Σ over flower teams f of √nectar[me][f]; `nectarSources` = how many flower teams paid your bee.
-- `surplus` = what your flower kept: the sum of (1 − percent/100) × E over the turns where a bee fed at it
-  (a turn without a feed adds nothing). `nectarCollected` = nectar your bee got; `nectarGiven` = nectar your flower paid.
+- `pollination` = Σ over bee teams b of √surplus[b][me]: the surplus your flower kept from each bee team's feeds.
+- `forage` = Σ over flower teams f of √nectar[me][f]: the nectar your bee got at each flower.
 - each share = your value ÷ the sum over all teams (1/N when that sum is 0).
-- `fitness` = N³ × allureShare × forageShare × surplusShare. Par is 1.0.
+- `fitness` = N² × pollinationShare × forageShare. Par is 1.0.
+- Information only: `surplus` (all your flower kept), `feedsReceived` / `feedsGiven`, `pollinators` (bee
+  teams that fed at your flower), `nectarCollected`, `nectarGiven` (all your flower paid) and
+  `nectarSources` (flower teams that paid your bee).
 
 Every server process connected to the same database runs whichever running games nobody else is running
 (docs/DESIGN.md), so servers that share a database share their games.

@@ -16,8 +16,8 @@ happens (who visited whom, the challenge, the response, whether the bee fed, and
 nectar and surplus), and so is the scoreboard; code, timings and the details of unfed turns stay with
 their teams until the end. Both programs read a **team ledger** of every finished turn, delivered between
 their timed calls. Each program earns a change budget as the game goes on, and a team can spend it at any
-moment on a new version. Fitness rewards *diverse* success: bees from many teams feeding at your flower
-(**allure**), nectar from many teams' flowers (**forage**), and energy your flower kept (**surplus**).
+moment on a new version. Fitness rewards *diverse* success: energy your flower kept from many teams' bees
+(**pollination**) and nectar your bee got from many teams' flowers (**forage**).
 
 **[RULES.md](RULES.md)** has the full rules for players. **[docs/API.md](docs/API.md)** documents the HTTP API.
 
@@ -48,7 +48,7 @@ To work on the web app with hot reload, run the server and then `API=http://loca
 | `server/live.js` | runs each running game's garden in one server process (advisory lock), writing actions, clock and ledgers 4× a second (arrivals at once); adoption restores the team ledgers |
 | `server/realtime.js`, `server/sockets.js` | the live game feed for each viewer, over SSE and WebSocket (the same messages), fed by Postgres `LISTEN/NOTIFY` |
 | `server/runners/` | program runners. Python flowers fork per call (stateless, CPU-timed, the ledger inherited through the fork); a bee is one process for as long as its version plays. TypeScript flowers run in fresh `vm` contexts and read the ledger from a locked-down realm |
-| `server/lib/scoring.js` | rootsum → allure / forage, plus surplus → shares → fitness (N³ × the three shares) |
+| `server/lib/scoring.js` | rootsum → pollination / forage → shares → fitness (N² × the two shares) |
 | `server/lib/shortid.js` | Crockford base32 codes and shortest-unique-prefix allocation |
 | `server/auth/` | pluggable login. `dev` = name only. Production adds e.g. Replit Auth in `replit.js` with the same shape |
 | `server/db/migrations/` | SQL schema, applied on boot |

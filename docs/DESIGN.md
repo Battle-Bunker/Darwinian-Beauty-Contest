@@ -18,11 +18,10 @@ A flower now *chooses* how much to pay, out of energy it can only have by being 
 | `feeds[b][f]`, `nectar[b][f]`, `surplus[b][f]` | **feed / nectar / surplus ledgers** | row = bee team, column = flower team |
 | every finished turn, as one team may see it | **team ledger** | what the team's programs and operators get |
 | Σ√xᵢ | **rootsum** | the diversity-weighted size of an earnings vector |
-| rootsum of a flower's feed column | **allure** | how widely the flower is pollinated |
+| rootsum of a flower's surplus column | **pollination** | how widely, and how profitably, the flower is pollinated |
 | rootsum of a bee's nectar row | **forage** | how widely the bee eats |
-| sum of a flower's surplus column | **surplus** (score) | what the flower kept |
 | value ÷ Σ value over teams (1/N when Σ = 0) | **share** | par 1/N |
-| N³ × allure share × forage share × surplus share | **fitness** | par 1.0 for any N |
+| N² × pollination share × forage share | **fitness** | par 1.0 for any N |
 
 ## The game in one paragraph
 
@@ -158,8 +157,10 @@ Diminishing returns per source (`d√k/dk = 1/(2√k)`) mean the k-th feed from 
 less and less, so a bee can't farm one friendly flower and a flower can't rely on one loyal bee. Own-team
 entries count like any other source: a team can always earn from itself, but only as one of N columns.
 
-Surplus is a plain sum: it measures how much a flower kept, and the rootsums on the other two terms
-already reward spreading. Fitness is N³ × the three shares, so a perfectly even game scores 1 for everyone.
+Pollination is the rootsum of the surplus a flower kept per bee team: one term that rewards both being fed
+at (no feed, no surplus) and keeping something when fed, spread over many teams' bees. (An earlier version
+had separate allure, from feed counts, and surplus terms; they merged into this one.) Fitness is
+N² × pollination share × forage share, so a perfectly even game scores 1 for everyone.
 
 ## Budgets
 

@@ -36,22 +36,27 @@ Every bee that isn't busy feeding gets **one turn per round**: one challenge, on
 1. **0 ms.** Your bee's challenge must already be **queued** (it came with its previous decision, or from
    `first`). A bee with nothing queued as the round starts **loses its turn** this round.
 2. The engine draws a flower **uniformly at random from all N flowers**, your own included, independently
-   every time. This **arrival** (whose bee, whose flower) is public at once.
-3. The flower is called: `flower(challenge, ledger)`. It has **150 ms** and returns
+   every time. This **arrival** (whose bee, whose flower) is public at once to people watching the game,
+   but neither program is told: a turn keeps the versions it started with, so nobody can pass it on.
+3. The flower is called: `flower(challenge)`. It has **150 ms** and returns
    `[response, percent]`: its answer, and the share (0–100, clamped) of this turn's **excess energy** it
    gives the bee if the bee feeds. A late answer, an error, or a malformed return (not a pair, a response
    of the wrong type, a percent that isn't a number) gives a `null` response and no energy.
 4. **150 ms.** The response is delivered to the bee, always at 150 ms however fast the flower was, so
-   timing tells the bee nothing. The bee has **50 ms**: `decide(challenge, response, ledger)` returns
+   timing tells the bee nothing. The bee has **50 ms**: `decide(challenge, response)` returns
    `["feed", next_challenge]` or `["leave", next_challenge]`. The next challenge is queued for its next
-   turn.
+   turn. **The bee is never told which team's flower it is facing**: not in the call, not in `GAME`, and
+   not in `HISTORY`, which holds only turns that are over. It decides whether to feed from the challenge
+   and the response alone (and whatever it remembers). The team numbers in `HISTORY` belong to earlier
+   turns, so a flower's reputation can only be carried by what its responses look like, never by who it
+   is.
 5. **The turn is settled** (see "Energy, nectar and surplus"). If the bee fed, it sits out the next
    **10 rounds** (`feed_cost`; the owner can change it), then plays again with the challenge it queued.
 
 **Late replies.** A bee that takes more than 50 ms isn't cut off: its call keeps running (up to 2 s, when
 it is stopped), but the turn is settled without it. **A late reply never feeds.** If the late reply is
 `["leave", c]`, then `c` is queued for the bee's next turn. Anything else (a late `["feed", c]`, a crash)
-gives no next challenge, so the engine at once calls `first(ledger)` for one. The bee can't play while
+gives no next challenge, so the engine at once calls `first()` for one. The bee can't play while
 a call is running, so a slow bee also loses turns.
 
 **No next challenge.** A reply in time that gives no usable next challenge (a bare `"feed"` or `"leave"`,
@@ -62,7 +67,7 @@ challenge, `first` is called again at most once a round. A quick answer makes th
 **Bees remember; flowers don't.** Your bee is one running program: its variables last from call to call
 for as long as that version plays. A new version (or a crash) starts afresh. A flower runs fresh for
 every call: nothing it does survives to the next call. It can use randomness (freshly seeded every
-call) and the clock, and it can read the ledger.
+call) and the clock, and it can read `HISTORY`.
 
 ## Energy, nectar and surplus
 
@@ -74,8 +79,8 @@ A flower's **excess energy** for a turn, in node·ms, is
   cap is 1,100. A smaller flower has more to give.
 - **compute ms** is the **CPU time** your flower's process used for this call: running the program and
   calling `flower`. It is CPU time, not wall time: a busy server doesn't cost you, and time your flower
-  spends not computing isn't counted. The ledger is delivered between calls, so it costs nothing until
-  you read it.
+  spends not computing isn't counted. `HISTORY` is brought up to date between calls, so it costs
+  nothing until you query it.
 - A late answer, an error or a malformed return: E = 0.
 
 Then:
@@ -86,90 +91,97 @@ Then:
 
 So a flower's surplus grows only when bees feed at it.
 
-## The ledger
+## History
 
-Your bee, your flower and your team all see the same **team ledger**: every turn of every bee so far,
-oldest first, with everything your team may see of it. One entry per turn:
+Your bee, your flower and your team all see the same history: every finished turn of every bee, oldest
+first, with everything your team may see of it. Your programs query it through **`HISTORY`**, a global
+like `GAME`; your team queries the same records over the API (docs/QUERY.md). One record per turn:
 
 ```python
-{"round": 41, "bee": 2, "flower": 0,         # team indices: whose bee visited whose flower
- "challenge": 17, "response": 52,            # response is None if the flower failed
- "fed": True,
- "percent": 25, "energy": 123486.0,          # on a feed: public. Otherwise: your own flower only
- "nectar": 30871.5, "surplus": 92614.5,      # on a feed: what the bee got and the flower kept.
-                                             #   Otherwise nectar is None and surplus is 0
- "ms": 2.1}                                  # the flower's compute time: your own flower only
+Turn(game="7", round=41, at_ms=8000, turn=12,
+     bee=2, flower=0,                     # team indices: whose bee visited whose flower
+     challenge=17, response=52,           # response is None if the flower failed
+     fed=True,
+     percent=25.0, energy=123486.0,       # on a feed: public. Otherwise: your own flower only
+     nectar=30871.5, surplus=92614.5,     # on a feed: what the bee got and the flower kept.
+                                          #   Otherwise nectar is None and surplus is 0
+     ms=2.1, flower_version=3, flower_error=None,   # your own flower only (ms: its compute time)
+     bee_ms=0.4, bee_version=2, bee_error=None)     # your own bee only
 ```
 
-Fields you aren't allowed to see are `None` (`null`): `percent` and `energy` of turns without a feed
-at other teams' flowers, and `ms` except at your own flower. When a flower failed, its `percent` is
-`None` and its `energy` 0. Teams are numbered `0` to `N - 1`;
-`GAME["team"]` is yours and `GAME["teams"]` is N.
+Fields you aren't allowed to see are `None` (`null`). When a flower failed, its `percent` is `None`, its
+`energy` 0 and `flower_error` says why. Teams are numbered `0` to `N - 1`; `GAME["team"]` is yours and
+`GAME["teams"]` is N. In TypeScript the fields are camelCase (`atMs`, `flowerVersion`, …).
 
-**Nobody learns the counterpart of a turn until it's over.** A round's entries reach the programs together,
+`HISTORY.turns` is a query: chain conditions and run it. Every step returns a new query, and results are
+read-only:
+
+```python
+HISTORY.turns.rows()                                   # every turn so far: a tuple of Turn
+HISTORY.turns.eq("flower", 2).rounds(10, 20).rows()    # conditions: eq ne lt le gt ge in_ between is_null not_null
+HISTORY.turns.my_bee().order_by("round", desc=True).limit(5).rows()   # my_bee() my_flower() mine()
+HISTORY.turns.offset(100).rows()                       # the turns after the first 100
+HISTORY.turns.count().value()                          # aggregates: count sum avg min max
+HISTORY.turns.group_by("flower").sum("nectar").rows()  # (Row(flower=0, sum_nectar=...), ...)
+```
+
+The same in TypeScript: `HISTORY.turns.eq("flower", 2).rounds(10, 20).rows()`, with `in`, `isNull`,
+`notNull`, `myBee`, `orderBy("round", "desc")` and `groupBy`. docs/QUERY.md has the whole interface.
+
+**Nobody learns the counterpart of a turn until it's over.** A round's turns reach `HISTORY` together,
 after the round is over and before the next round's flowers are called. So while your flower answers it
 isn't told whose bee asked, and while your bee decides it isn't told whose flower answered, nor the
 percent, the energy or the nectar it would get. (Whatever either can work out from the challenge, the
-answer and the ledger is fair game.)
+response and the history is fair game.)
 
-**The ledger is free to receive, not to read.** It is delivered to your programs as it grows, outside
-their timed calls, so its size costs you nothing until you read it. Reading it is part of your compute.
-Your bee keeps its variables between calls; a flower can't remember anything between calls. Treat the
-ledger as read-only.
+**History is free to receive, not to query.** It is brought up to date between your programs' timed
+calls, so its size costs you nothing until you query it. Running a query is part of your compute (for a
+flower, part of the CPU time that costs energy). Your bee keeps its variables between calls; a flower
+can't remember anything between calls.
 
 ## The programs
 
 ### Python
 
 ```python
-# flower: runs fresh for every turn at your flower. The ledger argument is optional: def flower(challenge).
-def flower(challenge, ledger):
+# flower: runs fresh for every turn at your flower.
+def flower(challenge):
     # challenge: a value of the game's challenge type
-    # ledger:    the team ledger (list of entries, oldest first; see "The ledger")
-    # GAME["team"], GAME["size"], GAME["flower_size_cap"], GAME["flower_ms"], ... (see below)
+    # HISTORY, GAME["team"], GAME["size"], GAME["flower_size_cap"], GAME["flower_ms"], ... (see below)
     return challenge, 50            # (response, percent): your answer, and 0-100% of E if the bee feeds
 ```
 
 ```python
-# bee: one long-running program. first and decide may also leave out the ledger argument.
+# bee: one long-running program.
 import random
 
-def first(ledger):
+def first():
     # called when your bee needs a challenge and has none queued (it starts, or its last reply gave none)
     return random.randint(0, 9)     # the challenge for its next turn
 
-def decide(challenge, response, ledger):
+def decide(challenge, response):
     # challenge: what your bee asked this turn; response: the flower's answer (None if it failed)
-    # ledger:    the team ledger, up to the end of the last round
     return "leave", random.randint(0, 9)    # ("feed" or "leave", the challenge for its next turn)
 ```
 
 ### TypeScript
 
 ```ts
-type Entry = {
-  round: number; bee: number; flower: number;       // team indices
-  challenge: Challenge; response: Response | null; fed: boolean;
-  percent: number | null; energy: number | null;    // public on a feed; otherwise your own flower only
-  nectar: number | null; surplus: number;           // on a feed; otherwise null and 0
-  ms: number | null;                                // your own flower only
-};
-
-function flower(challenge: number, ledger: readonly Entry[]): [number, number] {
+function flower(challenge: number): [number, number] {
   return [challenge, 50];                           // [response, percent]
 }
 
-function first(ledger: readonly Entry[]): number {
+function first(): number {
   return Math.floor(Math.random() * 10);            // the challenge for the bee's next turn
 }
 
-function decide(challenge: number, response: number | null, ledger: readonly Entry[]): ["feed" | "leave", number] {
+function decide(challenge: number, response: number | null): ["feed" | "leave", number] {
   return ["leave", Math.floor(Math.random() * 10)]; // ["feed" | "leave", next challenge]
 }
 ```
 
 In TypeScript, `tree[T]` is `{ value: T; children: Tree<T>[] }` and a graph is
-`{ nodes: number; edges: [number, number][] }`. A TypeScript flower's ledger is frozen.
+`{ nodes: number; edges: [number, number][] }`; `HISTORY` is typed (`Turn` records).
 
 Every program can read a `GAME` dictionary/object: `team` (your team's index), `teams` (N), `feed_cost`,
 `challenge_type`, `response_type`, `max_len`, `max_nodes`, `round_ms` (200), `ms` (your program's own time
@@ -222,7 +234,7 @@ and punctuation add nothing), except that **every literal counts one node per by
 - **Comments, spacing and TypeScript types are free.**
 - **Names are free.** Every name your program defines is renamed to a one- or two-letter name. A few keep
   their spelling so the program still works: names defined in a class body, parameters you also pass by
-  keyword, names that shadow a builtin, and `flower`, `first`, `decide` and `GAME`.
+  keyword, names that shadow a builtin, and `flower`, `first`, `decide`, `GAME` and `HISTORY`.
 - **Everything else counts:** every string and number byte by byte (including `"feed"` and `"leave"`),
   names after a dot, keyword-argument names, and names you use but don't define (`len`, `Math`, `GAME`).
 
@@ -261,30 +273,31 @@ programs do together happens in plain view.
 | the flower's **compute time**, on every turn, and why a flower failed | the flower's team |
 | **code**, what your bee **prints**, program **versions** and **sizes**, change **budgets**, the bee's **decision times** and errors | that team |
 
-Your bee's and flower's ledger holds exactly what your team can see, from turns that are over.
+Your programs' `HISTORY` holds exactly what your team can see, from turns that are over.
 
 **When the game ends, everything is revealed** for a full replay: every percent, energy and timing, every
 version and change, every budget, and (unless the owner turns it off) all code and printouts.
 
 ## Scoring: Darwinian fitness
 
-Three numbers per team, each from the whole game:
+Two numbers per team, each from the whole game:
 
 | Name | What it is |
 |---|---|
-| **allure** | the sum over bee teams of √(times that team's bee fed at your flower). How widely you're pollinated |
-| **forage** | the sum over flower teams of √(nectar your bee got there). How widely your bee eats |
-| **surplus** | the energy your flower kept from the turns where bees fed at it: (1 − percent/100) × E each |
+| **pollination** | the sum over bee teams of √(the surplus your flower kept from that team's bee's feeds). How widely, and how profitably, your flower is pollinated |
+| **forage** | the sum over flower teams of √(the nectar your bee got there). How widely your bee eats |
 
 Each becomes a **share**: your value ÷ the sum over all teams (when that sum is 0, every share is 1/N).
 
-> **fitness = N³ × allure share × forage share × surplus share.** Par is 1.0 however many teams play.
+> **fitness = N² × pollination share × forage share.** Par is 1.0 however many teams play.
 
-The square roots reward variety: 4 feeds from one bee team give allure 2, one from each of four teams
-gives 4. Your own team's bee and flower count like any other team's.
+The square roots reward variety. A flower that kept 400 from one team's bee has pollination √400 = 20;
+one that kept 100 from each of four teams' bees has 4 × √100 = 40, though both kept 400 in all. A bee
+that got 900 nectar from one flower has forage 30; 300 from each of three flowers gives about 52. Your own
+team's bee and flower count like any other team's.
 
 **The scoreboard is live and public**: during play everyone, spectators included, sees every team's
-allure, forage, surplus, shares and fitness as they change.
+pollination, forage, shares and fitness as they change, along with its feed counts, nectar and surplus.
 
 ## After the game
 

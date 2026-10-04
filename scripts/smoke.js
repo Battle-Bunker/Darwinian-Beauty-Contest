@@ -190,7 +190,8 @@ assert.ok(publicLedger.entries.every((e) => e.ms === null && (e.fed || e.percent
 const board = await api(null, "GET", `${g}/scores`);
 assert.equal(board.scores.length, 3);
 for (const s of board.scores) {
-  for (const k of ["allure", "forage", "surplus", "allureShare", "forageShare", "surplusShare", "fitness"]) assert.equal(typeof s[k], "number", `${k} is public`);
+  for (const k of ["pollination", "forage", "pollinationShare", "forageShare", "fitness", "surplus"]) assert.equal(typeof s[k], "number", `${k} is public`);
+  for (const k of ["allure", "allureShare", "surplusShare"]) assert.ok(!(k in s), `${k} is no longer a score term`);
 }
 assert.ok(board.scores.reduce((x, s) => x + s.surplus, 0) > 0);
 assert.ok(board.ledgers.nectar.flat().every((x) => typeof x === "number") && board.ledgers.surplus.flat().every((x) => typeof x === "number"));
