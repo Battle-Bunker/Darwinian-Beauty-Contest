@@ -282,7 +282,7 @@ function ReplayCharts({ view, history, teams, mine, focus, setFocus, cursor, onS
       )}
       <section>
         <h3>Where each flower's energy went</h3>
-        <p className="small muted">A flower allocates every visit's energy budget ({cfg.budgets.flower.size.toLocaleString()} × {cfg.budgets.flower.ms} node·ms) between compute, nectar and pollen. Its size shrinks the budget and its CPU time uses part of it; what's left, E, goes to a bee that feeds, as nectar (the percent offered) and pollen (the rest), or is lost when the bee doesn't feed.</p>
+        <p className="small muted">A flower allocates every visit's energy budget ({cfg.budgets.flower.size.toLocaleString()} × R node·ms, R the call's hidden time budget, at most {cfg.budgets.flower.ms} ms) between compute, nectar and pollen. Each bar counts every visit at the most, {cfg.budgets.flower.ms} ms: what R fell short of that is "not given". Its size shrinks the budget and its CPU time uses part of it; what's left, E, goes to a bee that feeds, as nectar (the percent offered) and pollen (the rest), or is lost when the bee doesn't feed.</p>
         <EnergySplit rows={rows.map((i) => ({ team: teams[i], t: totalsOf(data.teams[i]), you: i === mine }))} />
       </section>
     </div>

@@ -40,7 +40,7 @@ export function BudgetChart({ teams, points, min, max }: { teams: Team[]; points
                 <rect x={PAD.l} y={PAD.t} width={S - PAD.l - PAD.r} height={S - PAD.t - PAD.b} className="budget-plot" />
                 <rect x={PAD.l} y={PAD.t} width={x(min) - PAD.l} height={S - PAD.t - PAD.b} className="budget-never" />
                 <line x1={x(0)} y1={y(0)} x2={x(Math.min(max, top))} y2={y(Math.min(max, top))} className="budget-diag" />
-                {ticks.map((v) => <text key={`x${v}`} x={x(v)} y={S - 12} className="chart-tick" textAnchor="middle">{v}</text>)}
+                {ticks.map((v, k) => <text key={`x${v}`} x={x(v)} y={S - 12} className="chart-tick" textAnchor={k === 0 ? "start" : k === ticks.length - 1 ? "end" : "middle"}>{v}</text>)}
                 {ticks.map((v) => <text key={`y${v}`} x={PAD.l - 4} y={y(v) + 4} className="chart-tick" textAnchor="end">{v}</text>)}
                 <text x={(PAD.l + S - PAD.r) / 2} y={S - 1} className="chart-tick" textAnchor="middle">R (ms)</text>
                 {show.map((p, k) => p.failed
