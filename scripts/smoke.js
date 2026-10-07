@@ -102,6 +102,12 @@ assert.match(big.errors[0], /Too big: \d+ nodes > budget 1100/);
 const tf = await api(players[0].token, "POST", `${g}/try`, { kind: "flower", code: variants[0].flower, challenges: [1, 2, 500] });
 assert.deepEqual(tf.results.map((x) => [x.r, x.percent]), [[4, 30], [7, 30], [501, 30]]);
 assert.ok(tf.results.every((x) => x.energy > 0 && typeof x.ms === "number"));
+// Each flower call has a hidden time budget R (50–150 ms), told to it as GAME["ms"]; try can set it.
+assert.ok(tf.results.every((x) => x.budgetMs >= 50 && x.budgetMs <= 150), "try draws R per challenge by default");
+const tr = await api(players[0].token, "POST", `${g}/try`, { kind: "flower", challenges: [1, 2, 3], budgetMs: [60, 90, 140],
+  code: `def flower(c):\n    return int(GAME["ms"]), 50\n` });
+assert.deepEqual(tr.results.map((x) => [x.budgetMs, x.r]), [[60, 60], [90, 90], [140, 140]], "R per challenge, as GAME['ms']");
+assert.equal((await api(players[0].token, "POST", `${g}/try`, { kind: "flower", code: variants[0].flower, budgetMs: "lots" }, { allow: [400] })).status, 400);
 // Every call's clock starts at 0 (as if at the Unix epoch): a program can time itself, not the world.
 const clock = await api(players[0].token, "POST", `${g}/try`, { kind: "flower", challenges: [1, 2],
   code: `import time\ndef flower(c):\n    return [round(time.time() * 1000, 3), time.gmtime()[0]], 50\n` });
@@ -144,6 +150,8 @@ for (const a of ends) {
     assert.equal("energy" in a, a.flower === bo);
   }
   assert.equal("ms" in a, a.flower === bo, "the flower's CPU time: its own team only");
+  assert.equal("budgetMs" in a, a.flower === bo, "the flower's hidden time budget R: its own team only");
+  if (a.flower === bo) assert.ok(a.budgetMs >= 50 && a.budgetMs <= 150, `R ${a.budgetMs}`);
   assert.equal("beeMs" in a, a.bee === bo, "the bee's decision time: its own team only");
   assert.ok(a.bee === bo || !("log" in a), "what a bee prints stays with its team");
 }
@@ -384,6 +392,7 @@ assert.equal(await lastSeq(), settled, "nothing happens after the end");
 const after = (await api(null, "GET", `${g}/actions?limit=5000`)).actions;
 assert.ok(after.every((a) => "beeVersion" in a && "flowerVersion" in a), "a spectator sees every version");
 assert.ok(after.filter(isEnd).every((a) => "ms" in a && "beeMs" in a && "percent" in a && "energy" in a), "and every timing, percent and energy");
+assert.ok(after.filter(isEnd).every((a) => a.budgetMs >= 50 && a.budgetMs <= 150), "and every flower call's R");
 assert.ok(after.some((a) => a.bee === ada && /fed \d+/.test(a.log || "")), "prints are revealed");
 assert.ok(done.teams.filter((t) => t.participant).every((t) => t.memory && typeof t.memory.value === "object"), "every bee's MEMORY is revealed");
 const allGrains = after.filter((a) => a.action === "feed" && a.pollen >= 1);

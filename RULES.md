@@ -38,10 +38,11 @@ Every bee that isn't busy feeding gets **one turn per round**: one challenge, on
 2. The engine draws a flower **uniformly at random from all N flowers**, your own included, independently
    every time. This **arrival** (whose bee, whose flower) is public at once to people watching the game,
    but neither program is told: a turn keeps the versions it started with, so nobody can pass it on.
-3. The flower is called: `flower(challenge)`. It has **150 ms** and returns
+3. The flower is called: `flower(challenge)`. It has its **hidden time budget R** for this call (50 to 150
+   ms, drawn at random every call; see "Energy") and returns
    `[response, percent]`: its answer, and the share (0–100, clamped) of this turn's **excess energy** it
-   gives the bee if the bee feeds. A late answer, an error, or a malformed return (not a pair, a response
-   of the wrong type, a percent that isn't a number) gives a `null` response and no energy.
+   gives the bee if the bee feeds. A late answer (slower than R), an error, or a malformed return (not a
+   pair, a response of the wrong type, a percent that isn't a number) gives a `null` response and no energy.
 4. **150 ms.** The response is delivered to the bee, always at 150 ms however fast the flower was, so
    timing tells the bee nothing. The bee has **50 ms**: `decide(challenge, response)` returns
    `["feed", next_challenge]` or `["leave", next_challenge]`. The next challenge is queued for its next

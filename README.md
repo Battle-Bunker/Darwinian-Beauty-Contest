@@ -11,9 +11,9 @@ the `claude/one-flower` branch):
   an optional `fed(nectar)` can update after a feed, in the same instance that decided
 
 A game is one continuous garden of 200 ms rounds. Every round, each bee that isn't feeding takes a turn at a
-flower drawn at random (its own included): the flower has 150 ms, the bee 50 ms. A flower allocates its
-energy between **compute**, **nectar** and **pollen**: its **excess energy** is (size cap − its size) ×
-(150 ms − the CPU time it used), and a feed splits it into nectar for the bee and pollen the flower keeps;
+flower drawn at random (its own included): the flower has a hidden time budget R, drawn from 50–150 ms
+every call, the bee 50 ms. A flower allocates its energy between **compute**, **nectar** and **pollen**: its
+**excess energy** is (size cap − its size) × (R − the CPU time it used), and a feed splits it into nectar for the bee and pollen the flower keeps;
 a turn without a feed pays nobody. Every turn is public as it
 happens (who visited whom, the challenge, the response, whether the bee fed, and a feed's percent, energy,
 nectar and pollen), and so is the scoreboard; code, timings and the details of unfed turns stay with

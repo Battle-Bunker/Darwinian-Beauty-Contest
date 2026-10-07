@@ -11,7 +11,8 @@ A flower now *chooses* how much to pay, out of energy it can only have by being 
 | a team's answering program | **flower** | |
 | a team's asking program | **bee** | |
 | one bee's challenge, one flower's response, one decision | **turn** | at most one per bee per round |
-| (flower size cap − size) × max(0, 150 − CPU ms) | **excess energy** E (node·ms) | what a flower saved this turn by being small and quick |
+| each flower call's time budget, uniform in 50–150 ms | **R** | hidden from the bee: this flower instance's reserve this turn |
+| (flower size cap − size) × max(0, R − CPU ms) | **excess energy** E (node·ms) | what a flower saved this turn by being small and quick |
 | the share of E a flower offers | **percent** | 0–100, clamped |
 | percent/100 × E, to the bee if it feeds | **nectar** | |
 | (1 − percent/100) × E, kept by the flower if the bee feeds | **pollen** | a turn without a feed pays nobody. A flower allocates its energy between compute, nectar and pollen |
@@ -31,18 +32,33 @@ A flower now *chooses* how much to pay, out of energy it can only have by being 
 
 Each team has one flower species and one bee. Every 200 ms round, each bee that isn't feeding takes one
 turn. Its challenge must already be queued. The engine draws a flower uniformly at random among all N
-species (its own included), calls `flower(challenge)`, and the flower has 150 ms to return
-`[response, percent]`. The runner measures the call's CPU time, which gives E. At 150 ms the response
+species (its own included), calls `flower(challenge)`, and the flower has its hidden budget R (50–150
+ms, drawn per call) to return `[response, percent]`. The runner measures the call's CPU time, which gives E. At 150 ms the response
 reaches the bee, `decide(challenge, response)`, which has 50 ms to return `["feed" | "leave", next]`. On a
 feed the flower gives the bee nectar and pollen, the bee sits out `feedCost` rounds, and its optional
 `fed(nectar)` runs in the same program instance that decided; a leave pays nobody. The bee's next challenge
 is queued for its next turn. Every flower call and every bee turn runs a fresh program; the bee's 50-byte
 MEMORY is the only thing that carries over. No program sees any history.
 
+## A hidden budget per call: R
+
+Every flower call gets its own time budget **R**, drawn uniformly from `budgets.flower.minMs` (50) to
+`budgets.flower.ms` (150), independently each time. R is the call's hard limit (the runner stops the flower at
+R, as it stopped it at 150 before) and the ceiling its energy counts down from: E = (cap − size) × max(0, R −
+CPU ms). The flower is told R as `GAME.ms`; the bee never is, and the response still reaches it at the fixed
+150 ms, so timing tells it nothing about R.
+
+So compute costs the same energy whatever R is, but a flower can only show t ms of checkable work (and
+still have energy to give) when R ≥ t. Each flower instance has its own hidden reserve this turn, and work
+is an honest signal of it: the bee has to judge from the answer alone whether this flower is rich and
+generous. R is the flower's team's during play (`budgetMs` on its actions and turn records, like its CPU
+time) and everyone's after the game. The engine draws R as each turn starts (`drawBudget`), sends it with
+the call, and the runners use it as both the timeout and `GAME.ms` (`try` can fix it per challenge).
+
 ## Why energy, and why CPU time
 
 The cosmos/orchid design made "effort" a signal through a time asymmetry: a cosmos had more time than an
-orchid. Here every flower has the same 150 ms, but effort is *paid for*: every millisecond of CPU a flower
+orchid. Here every flower has the same window, but effort is *paid for*: every millisecond of CPU a flower
 spends, and every node of code it carries, comes out of E, the pie it shares with a bee that feeds. A
 flower that makes its answers hard to fake spends energy doing it, and has less to offer. A flower that
 answers cheaply has more to offer, or to keep.
@@ -54,8 +70,8 @@ E is measured in **CPU time**, inside the runner, around exactly the flower's ow
   encoding its reply (creating the context, which costs every flower the same, is left out).
 
 Wall time would charge a flower for the machine being busy, and would let a flower game E by sleeping in
-another's slot. CPU time charges for work done. The time *limit* is still wall-clock (150 ms, enforced in
-the runner); since the engine runs at most one program per core, the two stay close.
+another's slot. CPU time charges for work done. The time *limit* is still wall-clock (R, enforced in the
+runner); since the engine runs at most one program per core, the two stay close.
 
 ## Lockstep rounds: why timing is equalised
 
@@ -294,7 +310,7 @@ N² × pollination share × forage share, so a perfectly even game scores 1 for 
 |---|---|---|
 | size | 1,100 nodes | 11,000 nodes |
 | change | 220 a minute, banking a minute's worth | 2,200 a minute, banking a minute's worth |
-| time | 150 ms | 50 ms |
+| time | R: 50–150 ms, drawn per call (`minMs`..`ms`) | 50 ms |
 | memory | none | 50 bytes (Σ key bytes + value JSON bytes) |
 
 The flower keeps the cosmos's limits: small and slow to change. Its size cap is also the size cap of the

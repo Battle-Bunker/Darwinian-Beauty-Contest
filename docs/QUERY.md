@@ -46,7 +46,7 @@ text is at `GET /api/rooms/:room/games/:game/responses/:seq`, `seq` being the tu
 **Visibility.** During play a field you may not see reads as `null`, everywhere: in rows, in filters, in
 sorts and in aggregates (`sum(percent)` over turns without a feed adds up only your own flower's). The
 rules: `turns.percent` and `turns.energy` are public on a feed, else the flower's team's; `turns.ms`,
-`flowerVersion` and `flowerError` are the flower's team's; `beeMs`, `beeVersion` and `beeError` the bee's
+`budgetMs` (the call's hidden time budget R), `flowerVersion` and `flowerError` are the flower's team's; `beeMs`, `beeVersion` and `beeError` the bee's
 team's; `grain`, `grainVersion` and `grainCodeLength` (a feed's pollen grain) the bee's team's, or
 everyone's if the game's `grains` are `"public"`; `teams.memory`, `memoryBytes`, `memoryVersion` and
 `memoryError` (the bee's MEMORY) the team's own;
