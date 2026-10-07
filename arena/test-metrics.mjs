@@ -204,6 +204,20 @@ check("handshakes: two teams favouring each other both ways are mutual", h.hands
   check("grains: off", off.setting === "off");
 }
 
+// The flower's hidden budget R (budgetMs): the energy split counts what R left short of the window; wealth metrics appear.
+{
+  const rowsR = Array.from({ length: 40 }, (_, i) => { const R = 50 + (i * 37) % 100, ms = 10; return { game: "G", round: i + 1, atMs: i * 200, turn: i + 1, bee: 1, flower: 0, challenge: i, response: { nodes: Math.round(R / 10), edges: [] },
+    responseBytes: 30, responseHash: null, fed: R > 100, percent: 50, energy: (1100 - 100) * (R - ms), nectar: R > 100 ? 500 * (R - ms) : null, pollen: R > 100 ? 500 * (R - ms) : 0, ms,
+    budgetMs: R, flowerVersion: 1, flowerError: null, beeMs: 1, beeVersion: 1, beeError: null }; });
+  const mR = computeMetrics({ game: { config: { ...config, budgets: { ...config.budgets, flower: { size: 1100, ms: 150, minMs: 50 } } }, clockMs: 8000, round: 40 }, teams, turns: rowsR,
+    versions: [ver("A", "flower", 1, 100, 0)], scores: [], windowMs: 10000 });
+  const eA = mR.ecology.energySplit.A;
+  check("budget R: the energy split's short share (R below the window) and the rest add up to the budget", eA.short > 0.2 && Math.abs(eA.size + eA.compute + eA.short + eA.nectar + eA.pollen + eA.lost - 1) < 0.01, eA);
+  check("budget R: wealth metrics (visible work against R, bees at rich instances)", mR.wealth && mR.wealth.species.find((x) => x.teamId === "A").nodes > 0.9
+    && mR.wealth.bees.find((x) => x.teamId === "B").lift > 0.5 && mR.wealth.range[0] === 50, mR.wealth);
+  check("no budget R: no wealth metrics", computeMetrics({ game, teams, turns: rows, versions, scores, windowMs: 10000 }).wealth === null);
+}
+
 // Fetching big responses for their shapes: distinct hashes once each, in order of first appearance, within the byte budget.
 {
   const g = { nodes: 3, edges: [[0, 1], [1, 2]], labels: ["x".repeat(3000), "y", "z"] }, text = JSON.stringify(g);

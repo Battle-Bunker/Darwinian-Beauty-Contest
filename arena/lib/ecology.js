@@ -35,23 +35,26 @@ export function shapeOf(r) {
 }
 
 /** Where each species' energy went. Per turn the budget is cap × window (node·ms): size × (window − ms) goes to its
- * size, cap × ms to compute, and the rest, E, to nectar and pollen on a feed or is lost otherwise (a failed answer
- * loses it all). */
+ * size, cap × ms to compute, (cap − size) × (window − R) is short (the call's hidden budget R below the window), and
+ * the rest, E, to nectar and pollen on a feed or is lost otherwise (a failed answer loses it all). */
 export function energySplit(turns, ids, { sizeOf, cap, windowMs }) {
   const out = {};
   for (const id of ids) {
-    const s = { turns: 0, budget: 0, size: 0, compute: 0, nectar: 0, pollen: 0, lost: 0 };
+    const s = { turns: 0, budget: 0, size: 0, compute: 0, short: 0, nectar: 0, pollen: 0, lost: 0 };
     for (const t of turns) {
       if (t.flower !== id) continue;
       const size = sizeOf.get(`${id}:${t.flowerVersion}`) ?? 0, ms = Math.min(windowMs, Math.max(0, t.ms ?? 0)), budget = cap * windowMs;
       s.turns++; s.budget += budget;
       s.size += size * (windowMs - ms);
       s.compute += cap * ms;
-      const e = Math.max(0, (cap - size) * (windowMs - ms));
+      // The call's hidden budget R (when the game has one): (cap − size) × (window − R) of the budget was never there.
+      const R = Number.isFinite(t.R) ? Math.min(windowMs, Math.max(ms, t.R)) : windowMs;
+      s.short += Math.max(0, (cap - size) * (windowMs - R));
+      const e = Math.max(0, (cap - size) * (R - ms));
       if (t.action === "feed" && t.r != null) { s.nectar += t.nectar || 0; s.pollen += t.pollen || 0; } else s.lost += t.r == null ? e : (t.energy ?? e);
     }
     const sh = (x) => r3(s.budget ? x / s.budget : null);
-    out[id] = { turns: s.turns, size: sh(s.size), compute: sh(s.compute), nectar: sh(s.nectar), pollen: sh(s.pollen), lost: sh(s.lost) };
+    out[id] = { turns: s.turns, size: sh(s.size), compute: sh(s.compute), short: sh(s.short), nectar: sh(s.nectar), pollen: sh(s.pollen), lost: sh(s.lost) };
   }
   return out;
 }

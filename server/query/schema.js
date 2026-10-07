@@ -75,6 +75,7 @@ export const SCHEMA = {
         f("nectar", "float", "public", "the nectar the flower gave the bee: percent/100 × E on a feed, else null", true),
         f("pollen", "float", "public", "the pollen the flower gave the bee: (1 − percent/100) × E on a feed, else 0"),
         f("ms", "float", "flower", "the flower's CPU time for the call (ms)", true),
+        f("budgetMs", "float", "flower", "R: the call's hidden time budget (ms, uniform in minMs..ms): its hard limit, and E's ceiling", true),
         f("flowerVersion", "int", "flower", "the flower version that answered", true),
         f("flowerError", "str", "flower", "why the response is null (a timeout, an error, a malformed return)", true),
         f("beeMs", "float", "bee", "how long the bee took to decide (ms; null if it was late)", true),

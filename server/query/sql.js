@@ -31,7 +31,7 @@ const SOURCES = {
       game: "gs.short", seq: "a.seq::int", round: "a.round::int", atMs: "(a.at_ms - gs.flower_ms)::int", turn: "a.turn", bee: "pb.idx", flower: "pf.idx",
       challenge: "a.c", response: "a.r", responseBytes: "a.r_bytes", responseHash: "a.r_hash",
       fed: "(a.action = 'feed')", percent: "a.percent", energy: "a.energy", nectar: "a.nectar",
-      pollen: "coalesce(a.pollen, 0)", ms: "a.cpu_ms", flowerVersion: "a.flower_version", flowerError: "a.flower_error",
+      pollen: "coalesce(a.pollen, 0)", ms: "a.cpu_ms", budgetMs: "a.budget_ms", flowerVersion: "a.flower_version", flowerError: "a.flower_error",
       beeMs: "a.bee_ms", beeVersion: "a.bee_version", beeError: "a.bee_error",
       grain: "a.grain", grainVersion: "a.grain_version", grainCodeLength: "a.grain_code_length",
     },

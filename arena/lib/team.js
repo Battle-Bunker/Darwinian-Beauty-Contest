@@ -148,7 +148,8 @@ export function statusOf(view, teamId, { afford = null, code = false, memory = f
     }
     lines.push(`Your programs ${g.status === "lobby" ? "submitted" : "playing"}: ${parts.join(", ")}.`);
     const fl = out.versions.flower, cap = config.budgets?.flower?.size, fms = config.budgets?.flower?.ms;
-    if (fl && cap && fms) lines.push(`Your flower's size ${n0(fl.size)} of ${n0(cap)}: its excess energy per turn is at most (${n0(cap)} − ${n0(fl.size)}) × ${fms} = ${n0((cap - fl.size) * fms)} node·ms, less ${n0(cap - fl.size)} for every ms of compute.`);
+    if (fl && cap && fms) lines.push(`Your flower's size ${n0(fl.size)} of ${n0(cap)}: its excess energy per turn is (${n0(cap)} − ${n0(fl.size)}) × (R − CPU ms), R the call's hidden budget ` +
+      `(${config.budgets.flower.minMs ?? 50} to ${fms} ms): at most ${n0((cap - fl.size) * fms)} node·ms, less ${n0(cap - fl.size)} for every ms of compute or of R below ${fms}.`);
   }
   // The bee's MEMORY: read only (only the deployed bee writes it; it starts as {} with every new bee version).
   const mem = mine?.memory;
@@ -218,7 +219,8 @@ export function requestHandler(ctx) {
         const out = { ok: !errors.length, kind, size: c.size, budget: c.budget?.size, distance: c.distance, cost: c.cost, available: c.available, minified: c.minified, errors };
         const cap = config.budgets?.flower?.size, fms = config.budgets?.flower?.ms;
         out.text = [`${kind}: ${n0(c.size)} of ${n0(c.budget?.size ?? 0)} nodes.` + (c.available != null ? ` Submitting now would cost ${n0(c.cost)} of the ${n0(c.available)} you have.` : " (lobby: submitting is free)") +
-          (kind === "flower" && cap && fms && c.size != null ? ` Excess energy per turn at most (${n0(cap)} − ${n0(c.size)}) × ${fms} = ${n0(Math.max(0, cap - c.size) * fms)} node·ms, less ${n0(Math.max(0, cap - c.size))} per ms of compute.` : ""),
+          (kind === "flower" && cap && fms && c.size != null ? ` Excess energy per turn (${n0(cap)} − ${n0(c.size)}) × (R − CPU ms), R the call's hidden budget (${config.budgets.flower.minMs ?? 50} to ${fms} ms): ` +
+            `at most ${n0(Math.max(0, cap - c.size) * fms)} node·ms, less ${n0(Math.max(0, cap - c.size))} per ms of compute or of R below ${fms}.` : ""),
           errors.length ? `Problems:\n- ${errors.join("\n- ")}` : "No problems found.", refusalHint(errors)].filter(Boolean).join("\n");
         if (refusalHint(errors)) out.refused = true;
         await record({ op, kind, code: req.code, ok: out.ok, result: { size: c.size, cost: c.cost, available: c.available, errors } });
@@ -228,11 +230,29 @@ export function requestHandler(ctx) {
         let out;
         if (kind === "flower") {
           const challenges = Array.isArray(req.challenges) && req.challenges.length ? req.challenges : sampleChallenges(config);
-          const t = await api.tryFlower(tok, gPath, req.code, challenges);
+          // The call's hidden budget R: a number (ms), "random" (a fresh one per challenge, as in a game; the default), or one
+          // per challenge. The server runs each call with its R as the limit and GAME.ms; a server that doesn't yet takes
+          // none, and then E is recomputed here at the R asked for (its limit stays the maximum).
+          const fb = config.budgets?.flower || {}, lo = fb.minMs ?? 50, hi = fb.ms ?? 150;
+          const want = Array.isArray(req.budget) ? req.budget : req.budget === undefined || req.budget === null || req.budget === "random" ? "random" : Number(req.budget);
+          if (typeof want === "number" && !(want >= lo && want <= hi)) return { ok: false, error: `budget must be from ${lo} to ${hi} ms`, text: `error: --budget must be a number from ${lo} to ${hi} (ms), or random` };
+          const t = await api.tryFlower(tok, gPath, req.code, challenges, want);
           const res = t.results || [];
+          let local = false;
+          if (res.length && res.every((r) => r.budgetMs === undefined)) {
+            local = true;
+            res.forEach((r, i) => {
+              const R = Array.isArray(want) ? Number(want[i % want.length]) : typeof want === "number" ? want : lo + Math.random() * (hi - lo);
+              r.budgetMs = R;
+              // (cap − size): from the size, else from the energy the server computed at its own limit.
+              const k = t.size != null ? Math.max(0, (fb.size ?? 1100) - t.size) : r.energy != null && r.ms != null && hi > r.ms ? r.energy / (hi - r.ms) : null;
+              if (k != null && r.ms != null && !r.error) r.energy = k * Math.max(0, R - r.ms);
+            });
+          }
           out = { ok: !t.error && res.every((r) => !r.error), error: t.error, results: res, size: t.size ?? null,
             text: t.error ? `fails to load: ${t.error}` : (t.size != null ? `size ${n0(t.size)} nodes\n` : "") + res.map((r) => `flower(${JSON.stringify(r.c).slice(0, 50)}) -> ${r.error ? `ERROR ${r.error}` : `${showResponse(r, 160)}, percent ${r.percent}`}` +
-              `  (energy ${r.energy != null ? n0(r.energy) : "-"}, ${r.ms ?? "?"} ms CPU${r.rBytes != null ? `, ${n0(r.rBytes)} bytes` : ""})`).join("\n") };
+              `  (R ${r.budgetMs != null ? Number(r.budgetMs).toFixed(1) : "?"} ms, energy ${r.energy != null ? n0(r.energy) : "-"}, ${r.ms ?? "?"} ms CPU${r.rBytes != null ? `, ${n0(r.rBytes)} bytes` : ""})`).join("\n") +
+              (local ? `\n(the game's try doesn't take a budget yet: each call ran with ${hi} ms as its limit, and the energy is recomputed here at the R shown)` : "") };
         } else {
           // memory: what the TEST bee starts with (default {}); the game's bee's MEMORY is never touched by a try.
           const opts = { rounds: Number.isFinite(req.rounds) ? req.rounds : undefined, flower: typeof req.flower === "string" ? req.flower : undefined,

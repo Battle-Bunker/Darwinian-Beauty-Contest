@@ -43,6 +43,8 @@ var DbcHistory = (function () {
                           
                                                 
                              
+                                                                                                     
+                                   
                                          
                                         
                                                                            
@@ -385,6 +387,11 @@ const SCHEMA         = {
         },
         {
           "name": "ms",
+          "type": "float",
+          "nullable": true
+        },
+        {
+          "name": "budgetMs",
           "type": "float",
           "nullable": true
         },

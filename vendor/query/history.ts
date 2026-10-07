@@ -40,6 +40,8 @@ export interface Turn {
   readonly pollen: number;
   /** the flower's CPU time for the call (ms) */
   readonly ms: number | null;
+  /** R: the call's hidden time budget (ms, uniform in minMs..ms): its hard limit, and E's ceiling */
+  readonly budgetMs: number | null;
   /** the flower version that answered */
   readonly flowerVersion: number | null;
   /** why the response is null (a timeout, an error, a malformed return) */
@@ -382,6 +384,11 @@ export const SCHEMA: Schema = {
         },
         {
           "name": "ms",
+          "type": "float",
+          "nullable": true
+        },
+        {
+          "name": "budgetMs",
           "type": "float",
           "nullable": true
         },

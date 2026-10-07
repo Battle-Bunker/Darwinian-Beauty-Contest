@@ -78,6 +78,7 @@ export function keywordFlower(code) {
   let mechanism = kinds[0] || (timed ? "work-unchecked" : "rule");
   if (puzzle && timed && SCORE.test(c) && !hash) mechanism = /cliq|paley|factori|prime/i.test(c) ? "certificate" : "anytime";
   if (/GAME\s*\[\s*["']team["']\s*\]/.test(c)) tags.push("knows-own-team");
+  if (/GAME\s*\[\s*["']ms["']\s*\]|GAME\.ms\b/.test(c)) tags.push("reads-budget");
   // Signal families: a puzzle (costly work a bee can check), a keyed signal (a hash of the challenge with a secret
   // constant), a commitment (a hash of something revealed later).
   const families = [];
@@ -130,7 +131,7 @@ export function keywordBee(code) {
 // Labels are cached by skeleton (ARENA_MECH_CACHE overrides the file, e.g. for tests).
 const cacheFile = () => process.env.ARENA_MECH_CACHE || path.join(ARENA_DIR, "runs", "mechanisms-cache.json");
 // Bump a kind's version when its definitions change: its labels are classified again.
-const KIND_VERSION = { flower: 5, bee: 4 };
+const KIND_VERSION = { flower: 6, bee: 4 };
 let cache = null;
 function loadCache() {
   if (cache) return cache;
@@ -150,7 +151,8 @@ Programs run fresh for every call: flower(challenge), first(), decide(challenge,
 fed(nectar), which runs after a feed it decided in time, in the same instance as that decide. The bee's only state from one
 turn to the next is MEMORY, a flat key-value store of 50 bytes (key bytes + value JSON bytes) that only the bee writes and
 that empties when its code changes. A program's clock reads 0 when each call starts: it can time its own work, nothing
-more. Each flower call has a hidden time budget (its own hard limit) that sets its energy. On every feed the bee's team gets
+more. Each flower call has a hidden time budget R (50-150 ms, uniform, fresh every call; its hard limit, which it reads as
+GAME["ms"]) and E = (1100 - size) x max(0, R - CPU ms): work a flower shows can signal how rich this call is. On every feed the bee's team gets
 a pollen grain: a random piece of the answering flower's minified code (programs never get grains).`;
 
 const take = (s, n) => (s.length > n ? s.slice(0, n) + "\n# ... (cut)" : s);
@@ -179,7 +181,8 @@ and "tags" (any that apply): "time-bounded" (spends most of its time limit: ener
 and CPU small, for energy), "adaptive" (deliberately sets how much work it proves per challenge; NOT just
 running until the time limit), "combined" (two or more kinds of costly proof), "own-bee-handshake" (a private signal between
 its own bee and flower), "secret" (relies on hidden constants), "challenge-tied", "big-response" (answers with large responses, kilobytes or
-more), plus "puzzle:<name>".
+more), "reads-budget" (reads its call's budget R, GAME["ms"], to set how much work it shows or the percent), plus
+"puzzle:<name>".
 "families": every signal family it uses, any of: "signature" (a recognisable mark of the species in its answers: a fixed
 motif, label pattern or structure, the same for every challenge or derived from it by a public rule; anyone can copy it),
 "keyed" (a secret ties the answer to the challenge), "puzzle" (a costly problem built from the challenge that is cheap to

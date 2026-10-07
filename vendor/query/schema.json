@@ -215,6 +215,11 @@
           "nullable": true
         },
         {
+          "name": "budgetMs",
+          "type": "float",
+          "nullable": true
+        },
+        {
           "name": "flowerVersion",
           "type": "int",
           "nullable": true
@@ -634,6 +639,10 @@
         },
         "ms": {
           "doc": "the flower's CPU time for the call (ms)",
+          "visibility": "flower"
+        },
+        "budgetMs": {
+          "doc": "R: the call's hidden time budget (ms, uniform in minMs..ms): its hard limit, and E's ceiling",
           "visibility": "flower"
         },
         "flowerVersion": {

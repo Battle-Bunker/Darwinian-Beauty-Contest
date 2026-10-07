@@ -60,7 +60,7 @@ ${examples ? `| examples/ | example programs; every team in this garden has the 
 |---|---|
 | \`python3 tools/status.py [--afford N] [--memory]\` | the clock and time left, your change budgets right now (available, rate, cap; when you could afford N nodes), the live scores, your versions playing now, your bee's MEMORY (size; its value with --memory) |
 | \`python3 tools/check.py <kind> [file]\` | free: size against the budget, what submitting would cost now and whether you can afford it, a quick runtime test |
-| \`python3 tools/try.py flower [file] [challenge ...]\` | free: run a flower on challenges on the game's real runner: response (over 4 KB, its size, hash and first bytes), percent, energy and compute time for each |
+| \`python3 tools/try.py flower [file] [challenge ...] [--budget MS\\|random]\` | free: run a flower on challenges on the game's real runner, each call with a hidden budget R (one you choose, or a random one as in a game; your flower reads it as GAME["ms"]): response (over 4 KB, its size, hash and first bytes), percent, R, energy and compute time for each |
 | \`python3 tools/try.py bee [file] [--flower FILE] [--rounds N] [--memory JSON]\` | free: run a test bee for N rounds in a garden of just your own flower (FILE, else your latest submitted flower), starting with that MEMORY, with fed() called after each feed as in a game; it never touches your game bee's MEMORY |
 | \`python3 tools/submit.py <kind> [file]\` | submit: in the lobby it's free; during the game it goes live at once and pays its change cost. A new bee version starts with an empty MEMORY |
 | \`python3 tools/query.py '<query>' [--local\\|--room]\` | ask the game's history with the typed query builder (below) |
@@ -141,7 +141,7 @@ your team may not see is null; the server decides (RULES.md, "What everyone can 
 | fed | whether the bee fed |
 | nectar, pollen | on a feed: the nectar and the pollen the flower gave the bee (on a turn without a feed: null and 0) |
 | percent, energy | the share offered as nectar and the turn's excess energy E: on every feed, and on every turn at your own species (else null) |
-| ms, flowerVersion, flowerError | your own flower's compute time, version and error (null elsewhere) |
+| ms, budgetMs, flowerVersion, flowerError | your own flower's compute time, the call's hidden time budget R, version and error (null elsewhere) |
 | beeMs, beeVersion, beeError | your own bee's decision time, version and error, e.g. a MEMORY over its cap or of the wrong shape (null elsewhere) |
 | grain, grainVersion, grainCodeLength | on your own bee's feeds: the pollen grain (floor(pollen^(1/3)) characters of the answering flower version's minified code, from a random start, wrapping), that version, and its code's length in characters (null elsewhere, and when the pollen was 0) |
 
@@ -163,7 +163,7 @@ actions: its \`arrive\` (written at once) and its end, \`feed\` or \`leave\`.
 ## stream/mine.jsonl: your own team's actions
 
 The actions of your bee and at your species as your team sees them (same \`seq\`), with your private fields: at your
-flower \`percent\` and \`energy\` (also on turns without a feed), \`ms\`, \`flowerError\`, \`flowerVersion\`; for your bee
+flower \`percent\` and \`energy\` (also on turns without a feed), \`ms\`, \`budgetMs\` (the call's R), \`flowerError\`, \`flowerVersion\`; for your bee
 \`beeMs\` (decision time), \`beeError\`, \`beeVersion\` and \`log\` (what it printed), and on your bee's feeds its pollen
 grain (\`grain\`, \`grainVersion\`, \`grainCodeLength\`). A field you may not see is simply missing. Once the game is over everything is public.
 

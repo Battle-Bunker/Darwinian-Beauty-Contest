@@ -28,6 +28,7 @@ class Turn(NamedTuple):
     nectar: Optional[float]  # the nectar the flower gave the bee: percent/100 × E on a feed, else null
     pollen: float  # the pollen the flower gave the bee: (1 − percent/100) × E on a feed, else 0
     ms: Optional[float]  # the flower's CPU time for the call (ms)
+    budget_ms: Optional[float]  # R: the call's hidden time budget (ms, uniform in minMs..ms): its hard limit, and E's ceiling
     flower_version: Optional[int]  # the flower version that answered
     flower_error: Optional[str]  # why the response is null (a timeout, an error, a malformed return)
     bee_ms: Optional[float]  # how long the bee took to decide (ms; null if it was late)
@@ -41,14 +42,14 @@ class Turn(NamedTuple):
     def from_json(cls, d: dict) -> "Turn":
         """From a dict with canonical (camelCase) field names."""
         g = d.get
-        return cls(g("game"), g("seq"), g("round"), g("atMs"), g("turn"), g("bee"), g("flower"), g("challenge"), g("response"), g("responseBytes"), g("responseHash"), g("fed"), g("percent"), g("energy"), g("nectar"), g("pollen"), g("ms"), g("flowerVersion"), g("flowerError"), g("beeMs"), g("beeVersion"), g("beeError"), g("grain"), g("grainVersion"), g("grainCodeLength"))
+        return cls(g("game"), g("seq"), g("round"), g("atMs"), g("turn"), g("bee"), g("flower"), g("challenge"), g("response"), g("responseBytes"), g("responseHash"), g("fed"), g("percent"), g("energy"), g("nectar"), g("pollen"), g("ms"), g("budgetMs"), g("flowerVersion"), g("flowerError"), g("beeMs"), g("beeVersion"), g("beeError"), g("grain"), g("grainVersion"), g("grainCodeLength"))
 
     def to_json(self) -> dict:
         """As a dict with canonical (camelCase) field names."""
-        return {"game": self.game, "seq": self.seq, "round": self.round, "atMs": self.at_ms, "turn": self.turn, "bee": self.bee, "flower": self.flower, "challenge": self.challenge, "response": self.response, "responseBytes": self.response_bytes, "responseHash": self.response_hash, "fed": self.fed, "percent": self.percent, "energy": self.energy, "nectar": self.nectar, "pollen": self.pollen, "ms": self.ms, "flowerVersion": self.flower_version, "flowerError": self.flower_error, "beeMs": self.bee_ms, "beeVersion": self.bee_version, "beeError": self.bee_error, "grain": self.grain, "grainVersion": self.grain_version, "grainCodeLength": self.grain_code_length}
+        return {"game": self.game, "seq": self.seq, "round": self.round, "atMs": self.at_ms, "turn": self.turn, "bee": self.bee, "flower": self.flower, "challenge": self.challenge, "response": self.response, "responseBytes": self.response_bytes, "responseHash": self.response_hash, "fed": self.fed, "percent": self.percent, "energy": self.energy, "nectar": self.nectar, "pollen": self.pollen, "ms": self.ms, "budgetMs": self.budget_ms, "flowerVersion": self.flower_version, "flowerError": self.flower_error, "beeMs": self.bee_ms, "beeVersion": self.bee_version, "beeError": self.bee_error, "grain": self.grain, "grainVersion": self.grain_version, "grainCodeLength": self.grain_code_length}
 
 
-TurnField = Literal["game", "seq", "round", "at_ms", "turn", "bee", "flower", "challenge", "response", "response_bytes", "response_hash", "fed", "percent", "energy", "nectar", "pollen", "ms", "flower_version", "flower_error", "bee_ms", "bee_version", "bee_error", "grain", "grain_version", "grain_code_length"]
+TurnField = Literal["game", "seq", "round", "at_ms", "turn", "bee", "flower", "challenge", "response", "response_bytes", "response_hash", "fed", "percent", "energy", "nectar", "pollen", "ms", "budget_ms", "flower_version", "flower_error", "bee_ms", "bee_version", "bee_error", "grain", "grain_version", "grain_code_length"]
 
 
 class Version(NamedTuple):
@@ -182,6 +183,7 @@ _NAMES = {
         "nectar": "nectar",
         "pollen": "pollen",
         "ms": "ms",
+        "budget_ms": "budgetMs",
         "flower_version": "flowerVersion",
         "flower_error": "flowerError",
         "bee_ms": "beeMs",
@@ -276,6 +278,7 @@ SCHEMA = {
                 {"name": "nectar", "type": "float", "nullable": True},
                 {"name": "pollen", "type": "float", "nullable": False},
                 {"name": "ms", "type": "float", "nullable": True},
+                {"name": "budgetMs", "type": "float", "nullable": True},
                 {"name": "flowerVersion", "type": "int", "nullable": True},
                 {"name": "flowerError", "type": "str", "nullable": True},
                 {"name": "beeMs", "type": "float", "nullable": True},

@@ -300,11 +300,12 @@ def measure(kind, code):
     return {k: r.get(k) for k in ("ok", "size", "cost", "available", "errors", "budget")}
 
 
-def try_flower(code, challenges=None):
-    """Run a flower on challenges on the game's real runner without submitting it: {"ok", "size", "results": [{"c", "r",
-    "rBytes", "rHash", "rPreview", "percent", "energy", "ms", "error"}]} (a response over 4 KB: r None, its size, hash and
-    first 4 KB)."""
-    return call("try", kind="flower", code=code, challenges=challenges)
+def try_flower(code, challenges=None, budget="random"):
+    """Run a flower on challenges on the game's real runner without submitting it, each call with the hidden budget R
+    `budget` (ms; "random": a fresh one per call, as in a game; or a list, one per challenge), which it reads as
+    GAME["ms"]: {"ok", "size", "results": [{"c", "r", "rBytes", "rHash", "rPreview", "percent", "budgetMs", "energy",
+    "ms", "error"}]} (a response over 4 KB: r None, its size, hash and first 4 KB)."""
+    return call("try", kind="flower", code=code, challenges=challenges, budget=budget)
 
 
 def try_bee(code, rounds=None, flower=None, memory=None):

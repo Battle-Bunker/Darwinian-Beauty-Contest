@@ -12,7 +12,8 @@
 //
 // Protocol: JSON lines on stdin/stdout, one reply per request, in order. The first line is the setup
 // {code, ms, limitMs, game, maxChars, maxResponseBytes}. Requests (as in py_runner.py):
-//   flower: {op: "call", c}               -> {v: [response, percent], bytes, cpu} | {e, cpu}
+//   flower: {op: "call", c, ms: R}        -> {v: [response, percent], bytes, cpu} | {e, cpu}
+//           R is the call's hidden time budget: its hard limit, and GAME.ms for the call
 //   bee:    {op: "first", memory}         -> {a, out, memory} | {e, out}
 //           {op: "stage", c, r}           -> {ok}: the next decide's fresh context, its arguments read in
 //           {op: "decide", staged: true, memory} (or with c and r) -> {a, out, memory} | {e, out}
@@ -95,10 +96,10 @@ const maxChars = () => setup.maxChars || 20000;
 const hostNow = () => performance.now();
 
 /** A fresh context with the prelude run. */
-function fresh() {
+function fresh(game = setup.game) {
   const c = newContext();
   c.__hr = hostNow; // taken into the prelude's closure, and deleted from the context
-  vm.runInContext(PRELUDE(setup.game), c);
+  vm.runInContext(PRELUDE(game), c);
   return c;
 }
 
@@ -161,14 +162,16 @@ function encode(c, name, what, timeout) {
 
 function callFlower(req) {
   if (loadError) return out({ e: "the program failed to load: " + loadError, cpu: 0 });
-  const c = fresh();
+  // R, this call's hidden time budget: its hard limit, and GAME.ms for the call (at most the flower window).
+  const budget = typeof req.ms === "number" && req.ms > 0 ? Math.min(setup.ms, req.ms) : setup.ms;
+  const c = fresh({ ...setup.game, ms: budget });
   setGlobals(c, { __c: text(req.c) });
   startClock(c);
   const t0 = performance.now(), cpu0 = process.cpuUsage();
-  const left = () => Math.max(1, Math.round(setup.ms - (performance.now() - t0)));
+  const left = () => Math.max(1, Math.round(budget - (performance.now() - t0)));
   try {
     // The flower's compute: its program, flower(challenge), and encoding the reply: all on the clock.
-    script.runInContext(c, { timeout: setup.ms });
+    script.runInContext(c, { timeout: Math.max(1, Math.round(budget)) });
     if (vm.runInContext("typeof __fns.flower", c, { timeout: left() }) !== "function") throw new Error(`program must define ${SIGNATURE}`);
     vm.runInContext("globalThis.__r = __fns.flower(__c);", c, { timeout: left() });
     const s = encode(c, "__r", "flower", left());

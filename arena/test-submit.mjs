@@ -33,8 +33,8 @@ const SECRET = "tok-SECRET-1234567890";
 // ---------------------------------------------------------------- a fake game API (records what the runner sent)
 const calls = [];
 const config = { language: "python", minutes: 2, feedCost: 10, challengeType: "int", responseType: "int", maxLen: 64, maxNodes: 512,
-  budgets: { flower: { size: 1100, perMinute: 220, cap: 220, ms: 150 }, bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 50, memory: 50 } } };
-let gameOver = false, noFlowerYet = false;
+  budgets: { flower: { size: 1100, perMinute: 220, cap: 220, ms: 150, minMs: 50 }, bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 50, memory: 50 } } };
+let gameOver = false, serverBudget = false, noFlowerYet = false;
 const fakeApi = {
   view: async (tok) => { calls.push(["view", tok]); return {
     game: { status: "running", clockMs: 30000, endMs: 120000, round: 150, config },
@@ -49,7 +49,10 @@ const fakeApi = {
     // The game's Python refuses introspection (dunder names): the check reports it.
     if (code.includes("__class__")) return { ok: false, size: 50, budget: config.budgets[kind], distance: 3, cost: 3, available: 120, minified: code, errors: ["line 2: '__class__' is not allowed (no dunder names)"] };
     return { ok: true, size: 42, budget: config.budgets[kind], distance: 3, cost: 3, available: 120, minified: code, errors: [] }; },
-  tryFlower: async (tok, g, code, challenges, ...rest) => { calls.push(["try", tok, "flower", code, rest.length]);
+  tryFlower: async (tok, g, code, challenges, budgetMs) => { calls.push(["try", tok, "flower", code, budgetMs]);
+    // A server that takes the budget runs each call at its R and says which (serverBudget); an older one ignores it.
+    const R = (i) => (Array.isArray(budgetMs) ? budgetMs[i] : typeof budgetMs === "number" ? budgetMs : 77);
+    if (serverBudget) return { size: 42, results: (challenges || [1]).map((c, i) => ({ c, r: c * 3 + 1, rBytes: 2, percent: 40, energy: (1100 - 42) * (R(i) - 1.5), ms: 1.5, budgetMs: R(i) })) };
     if (code.includes("CRASH")) return { results: (challenges || [1]).map((c) => ({ c, r: null, percent: null, energy: 0, error: "ZeroDivisionError: division by zero", ms: 1 })) };
     // A response over 4 KB comes back as its size, hash and first 4 KB, with r null.
     return { results: (challenges || [1]).map((c) => (c === 99 ? { c, r: null, rBytes: 90000, rHash: "ab12cd34ef56" + "0".repeat(52), rPreview: '{"nodes":3000,"edges":[[0,1],[1,2]' , percent: 40, energy: 150000, ms: 9 }
@@ -106,13 +109,23 @@ r = await tool("tools/check.py", "flower", "dunder.py");
 check("check: a refused introspection is shown with what the game's Python refuses", r.status === 1 && /'__class__' is not allowed/.test(r.stdout) && /The game.s Python refuses introspection: dunder attributes/.test(r.stdout), r.stdout);
 r = await tool("tools/check.py", "flower");
 check("check: size, cost now and what's available, and the flower's energy", r.status === 0 && /42 of 1,100 nodes\. Submitting now would cost 3 of the 120 you have/.test(r.stdout)
-  && /\(1,100 − 42\) × 150 = 158,700 node·ms/.test(r.stdout), r.stdout);
-r = await tool("tools/try.py", "flower", "flower.py", "5", "7");
-check("try (flower): response, percent, energy and CPU time per challenge", r.status === 0 && /flower\(5\) -> 16, percent 40\s+\(energy 158,000, 1\.5 ms CPU, 2 bytes\)/.test(r.stdout) && /flower\(7\) -> 22/.test(r.stdout), r.stdout + r.stderr);
+  && /\(1,100 − 42\) × \(R − CPU ms\), R the call's hidden budget \(50 to 150 ms\): at most 158,700 node·ms/.test(r.stdout), r.stdout);
+r = await tool("tools/try.py", "flower", "flower.py", "5", "7", "--budget", "60");
+check("try (flower) --budget, on a server that doesn't take it yet: E recomputed at that R, and said so", r.status === 0
+  && /flower\(5\) -> 16, percent 40\s+\(R 60\.0 ms, energy 62,242, 1\.5 ms CPU, 2 bytes\)/.test(r.stdout) && /flower\(7\) -> 22/.test(r.stdout)
+  && /doesn't take a budget yet/.test(r.stdout) && calls.filter((c) => c[0] === "try" && c[2] === "flower").pop()[4] === 60, r.stdout + r.stderr);
+serverBudget = true;
+r = await tool("tools/try.py", "flower", "flower.py", "5", "--budget", "120");
+check("try (flower) --budget: the server's R, as it ran the call", r.status === 0 && /\(R 120\.0 ms, energy 125,373, 1\.5 ms CPU/.test(r.stdout) && !/doesn't take a budget/.test(r.stdout), r.stdout + r.stderr);
+r = await tool("tools/try.py", "flower", "flower.py", "5");
+check("try (flower): a random R per call by default", r.status === 0 && calls.filter((c) => c[0] === "try" && c[2] === "flower").pop()[4] === "random" && /\(R 77\.0 ms/.test(r.stdout), r.stdout + r.stderr);
+r = await tool("tools/try.py", "flower", "flower.py", "5", "--budget", "200");
+check("try (flower) --budget outside the range is refused", r.status !== 0 && /from 50 to 150/.test(r.stdout + r.stderr), r.stdout + r.stderr);
+serverBudget = false;
 r = await tool("tools/try.py", "flower", "flower.py", "99");
 check("try (flower): a response over 4 KB as its size, hash and first characters; no history goes with a try", r.status === 0
   && /flower\(99\) -> <90,000 bytes, sha256 ab12cd34ef56…: \{"nodes":3000/.test(r.stdout) && /90,000 bytes\)/.test(r.stdout)
-  && calls.filter((c) => c[0] === "try" && c[2] === "flower").every((c) => c[4] === 0) && !/history/.test(fs.readFileSync(path.join(ws, "tools", "try.py"), "utf8")), r.stdout + r.stderr);
+  && !/history/.test(fs.readFileSync(path.join(ws, "tools", "try.py"), "utf8")), r.stdout + r.stderr);
 r = await tool("tools/try.py", "bee", "--rounds", "100");
 check("try (bee): a summary of the garden of your own flower, and fed() after each feed", r.status === 0 && /100 rounds in a garden of just your own flower: 2 turns, 1 feeds, 1 leaves; your bee got 10 nectar and 20 pollen/.test(r.stdout)
   && /fed\(nectar\) ran after each of the 1 feeds\./.test(r.stdout)

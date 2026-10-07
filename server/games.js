@@ -314,14 +314,19 @@ export async function submitProgram(game, user, kind, code) {
 }
 
 /** Try a program without submitting it. A flower answers challenges; a bee forages a garden of your own flower. */
-export async function tryProgram(game, user, { kind, code, challenges, flower, rounds, memory } = {}) {
+export async function tryProgram(game, user, { kind, code, challenges, budgetMs, flower, rounds, memory } = {}) {
   const team = await myTeam(game.id, user.id);
   if (!team) fail(403, "Join a team first");
   if (!KINDS.includes(kind) || typeof code !== "string") fail(400, "kind (flower or bee) and code required");
   const cfg = game.config;
   if (kind === "flower") {
     const list = Array.isArray(challenges) && challenges.length ? challenges : [exampleValue(parseType(cfg.challengeType))];
-    return tryFlower({ config: cfg, code, challenges: list });
+    // R per challenge: a number, "random" (drawn as in a game; the default) or one per challenge.
+    const valid = (b) => b === "random" || (typeof b === "number" && Number.isFinite(b));
+    if (budgetMs !== undefined && budgetMs !== null && !(valid(budgetMs) || (Array.isArray(budgetMs) && budgetMs.every(valid)))) {
+      fail(400, 'budgetMs must be a number, "random", or a list of them (one per challenge)');
+    }
+    return tryFlower({ config: cfg, code, challenges: list, budgetMs: budgetMs ?? "random" });
   }
   const own = typeof flower === "string" ? flower : (await latestProgram({ query }, game.id, team.id, "flower"))?.code;
   if (!own) fail(409, "Your bee needs a flower to visit: write your flower first (or pass one as `flower`)");
@@ -469,7 +474,7 @@ export function actionView(a, me, over, revealed, grainsPublic = false) {
     if (a.r_hash) Object.assign(out, { rHash: a.r_hash, rPreview: a.r_preview });
     if (fed) out.nectar = a.nectar;
     if (fed || myFlower) Object.assign(out, { percent: a.percent, energy: a.energy });
-    if (myFlower) Object.assign(out, { ms: a.cpu_ms, flowerError: a.flower_error });
+    if (myFlower) Object.assign(out, { ms: a.cpu_ms, budgetMs: a.budget_ms ?? null, flowerError: a.flower_error });
     if (myBee) Object.assign(out, { beeMs: a.bee_ms, beeError: a.bee_error });
   }
   if (a.log && (revealed || (!!me && a.bee_team === me))) out.log = a.log;
@@ -509,7 +514,7 @@ export const turnOf = (a, idx, { game, flowerMs }) => ({
   game, seq: Number(a.seq), round: Number(a.round), atMs: Number(a.at_ms) - flowerMs, turn: a.turn, bee: idx.get(a.bee_team), flower: idx.get(a.flower_team),
   challenge: a.c, response: a.r, responseBytes: a.r_bytes ?? null, responseHash: a.r_hash ?? null,
   fed: a.action === "feed", percent: a.percent, energy: a.energy, nectar: a.nectar, pollen: a.pollen ?? 0,
-  ms: a.cpu_ms, flowerVersion: a.flower_version, flowerError: a.flower_error, beeMs: a.bee_ms, beeVersion: a.bee_version, beeError: a.bee_error,
+  ms: a.cpu_ms, budgetMs: a.budget_ms ?? null, flowerVersion: a.flower_version, flowerError: a.flower_error, beeMs: a.bee_ms, beeVersion: a.bee_version, beeError: a.bee_error,
   grain: a.grain ?? null, grainVersion: a.grain_version ?? null, grainCodeLength: a.grain_code_length ?? null,
 });
 

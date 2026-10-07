@@ -16,7 +16,8 @@
 # Protocol: JSON lines on stdin/stdout, one reply per request, in order. The first line is the setup
 # {code, ms, limitMs, game, maxChars, maxResponseBytes}.
 # Requests:
-#   flower: {"op": "call", "c": challenge} -> {"v": [response, percent], "bytes": n, "cpu": ms} | {"e": error, "cpu": ms}
+#   flower: {"op": "call", "c": challenge, "ms": R} -> {"v": [response, percent], "bytes": n, "cpu": ms} | {"e": error, "cpu": ms}
+#           R is the call's hidden time budget: its hard limit, and GAME["ms"] for the call (default: setup ms)
 #   bee:    {"op": "first", "memory": json}  -> {"a": challenge, "out", "memory": json} | {"e", "out"}
 #           {"op": "stage", "c", "r"}        -> {"ok": true}: the next decide's arguments, read in ahead of its call
 #           {"op": "decide", "staged": true, "memory": json}   (or with "c" and "r" instead of "staged")
@@ -440,6 +441,8 @@ def main(role, setup):
         t0 = time.process_time()
         _CLOCK["module"], start_clock = game_clock()
         ns = {"__name__": "__program__", "__builtins__": SAFE_BUILTINS, "GAME": dict(game)}
+        if role == "flower" and not trial:
+            ns["GAME"]["ms"] = budget  # this call's hidden time budget R: its hard limit
         keep = False
         try:
             if role == "bee":
@@ -643,7 +646,12 @@ def main(role, setup):
                 continue
             req["c"], req["r"] = state["staged"]
         state["staged"] = None
-        send(run(req, ms if role == "flower" else limit))
+        if role == "flower":
+            r = req.get("ms")  # R, this call's time budget (at most the flower window)
+            budget = min(ms, r) if isinstance(r, (int, float)) and not isinstance(r, bool) and r > 0 else ms
+            send(run(req, budget))
+        else:
+            send(run(req, limit))
 
 
 if __name__ == "__main__":

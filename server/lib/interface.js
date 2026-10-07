@@ -61,11 +61,13 @@ function flowerNotes(ts, config) {
   const c = ts ? "//" : "#", G = (k) => (ts ? `GAME.${k}` : `GAME["${k}"]`), nul = ts ? "null" : "None";
   const { flower } = config.budgets;
   return `${c} Your flower species: each call is one flower of it, meeting one bee, and runs fresh: nothing is kept between\n` +
-    `${c} calls. ${ts ? "Math.random()" : "random"} is freshly seeded every call; the clock reads 0 (the epoch) as each call starts. ${G("ms")} = ${flower.ms}: your time limit\n` +
-    `${c} per call in ms; a response that isn't done in time (or an error, a malformed return, or more than\n` +
+    `${c} calls. ${ts ? "Math.random()" : "random"} is freshly seeded every call; the clock reads 0 (the epoch) as each call starts. ${G("ms")} is this\n` +
+    `${c} call's hidden time budget R, drawn from ${flower.minMs ?? 50} to ${flower.ms} ms (${G("flower_ms")}) for every call: your time limit; a response that\n` +
+    `${c} isn't done within R (or an error, a malformed return, or more than\n` +
     `${c} ${G("max_response_bytes")} = ${config.maxResponseBytes} bytes of JSON) reaches the bee as ${nul}.\n` +
     `${c} If the bee feeds, it gets nectar = percent/100 × E and pollen = the rest; no feed, nothing is given.\n` +
-    `${c} E = (${G("flower_size_cap")} - ${G("size")}) * max(0, ${G("flower_ms")} - CPU ms of this call, writing the response as JSON included).\n` +
+    `${c} E = (${G("flower_size_cap")} - ${G("size")}) * max(0, ${G("ms")} - CPU ms of this call, writing the response as JSON included).\n` +
+    `${c} The bee is never told R: the response reaches it at ${G("flower_ms")} ms whatever R was.\n` +
     `${c} Programs see only their arguments and GAME: no history.`;
 }
 

@@ -106,11 +106,12 @@ one minute's worth: flower 220 and bee 2,200 nodes), `minutesByGame`, `session` 
 
 Does exploring a wide range of type-specific signals produce sustained dynamism? Both run on `cohort10` (python,
 int → graph[any], 10-minute games, the csig founders: 3 opus, 3 sonnet; evolution on; default scoring; `grains:
-"feeder"`; `maxResponseBytes` 64 KiB: `MAX_RESPONSE_BYTES`, `GRAINS` and `POLLEN_GRAIN` in lib/presets.js, set
-in every preset).
+"feeder"`; the flower's hidden budget R from 50 to 150 ms; `maxResponseBytes` 64 KiB: `MAX_RESPONSE_BYTES`, `GRAINS`,
+`POLLEN_GRAIN`, `FLOWER_MIN_MS` and `FLOWER_MAX_MS` in lib/presets.js, set in every preset).
 
 1. **`pilot`**: one unprimed cohort (`kiln-a`), 2 games, to shake out the new mechanics (no history for programs, a
-   50-byte MEMORY with `fed`, pollen grains, the clock that starts at zero) before spending more. Capped at $35
+   50-byte MEMORY with `fed`, pollen grains, the clock that starts at zero, the flower's hidden budget R) before
+   spending more. Capped at $35
    (`capUsd`); expect about $25.
 2. **`signals`**: two unprimed and two primed cohorts, 3 games each, interleaved one game at a time in a rotating
    order, capped at $150 in all ($37.50 a cohort):
@@ -141,7 +142,8 @@ node arena/cohorts.js --experiment signals --count                              
 The analysis for the question: per game and cohort, the distinct signals (the classifier's specific names) and
 signal families with their entropy, the innovation rate, dominance turnover, imitation lag (also through leaked
 pollen grains: secrets and copies, with the lag from leak to use), and species that combine a signature with work
-(the classifier's `signature-plus-work` tag). `pilot-dry` and `signals-dry` are the same with the stub `claude`
+(the classifier's `signature-plus-work` tag), and honest wealth signalling (does a species' visible work follow its
+hidden budget R, and do bees feed more at rich instances?). `pilot-dry` and `signals-dry` are the same with the stub `claude`
 (`ARENA_CLAUDE_BIN`), 30-second games and the `dry-` arenas.
 
 ## How a game runs
@@ -233,8 +235,10 @@ finished games, fully revealed); `follow()` (each new turn, a `Turn` record), `t
 budgets now with rate and cap and when N nodes are affordable, the live scoreboard with the two shares, versions playing
 and the flower's maximum energy, the bee's MEMORY size and last save error, and its value with `--memory`),
 `tools/check.py <kind> [file]` (size, cost now, the flower's energy at that size, a quick runtime test, which fails on a
-crashing `fed`), `tools/try.py flower [file] [challenges…]` (response, its size, percent, energy and CPU time per
-challenge on the game's real runner; a response over 4 KB as its size, hash and first characters), `tools/try.py bee
+crashing `fed`, and an explanation of what the game's Python refuses), `tools/try.py flower [file] [challenges…]
+[--budget MS|random]` (response, its size, percent, the call's hidden budget R, energy and CPU time per challenge on the
+game's real runner, each call at the R given or a random one; a response over 4 KB as its size, hash and first
+characters), `tools/try.py bee
 [file] [--flower FILE] [--rounds N] [--memory JSON]` (a test bee in a garden of just the team's own flower, starting
 with that MEMORY, with `fed(nectar)` after each feed: how often it ran and whether it failed; it never touches the game
 bee's), and
@@ -342,6 +346,10 @@ game, at least 10 s):
   cap or of the wrong shape), failed `fed()` calls and the last save error (`teams.memoryError` and the samples), its
   size during play (the runner samples each team's own view every 5 s), and **how often the team changed its bee**
   (each change empties MEMORY): versions, in-game changes, changes per minute, mean time between them
+- **wealth signals** (`lib/wealth.js`; each flower call's hidden budget R, `budgetMs`, revealed after the game): per
+  species Spearman's rho of R with its effort (CPU ms) and its visible work (response bytes, graph nodes and edges;
+  honest when visible work rises with R, rho ≥ 0.3 over 30+ answered turns); per bee and overall, the feed rate at
+  poor and rich instances (R terciles); the energy split's "short" share is what R left below the window
 - **pollen grains** (`lib/grains.js`; the versions' minified code comes from the game's own minifier): per species the
   grains it gave and the characters leaked to other teams' bees, per minute; per flower version the share of its code
   one other team (and all of them together) held at the end, and when one (or all together) first held every character,

@@ -9,7 +9,7 @@ let failed = 0;
 const check = (name, ok, extra = "") => { console.log(`${ok ? "ok  " : "FAIL"} ${name}${ok || !extra ? "" : `: ${String(extra).slice(0, 400)}`}`); if (!ok) failed++; };
 const config = { language: "python", minutes: 0.5, feedCost: 10, challengeType: "int", responseType: "int", maxLen: 64, maxNodes: 512,
   maxResponseBytes: 1048576,
-  budgets: { flower: { size: 1100, perMinute: 220, cap: 220, ms: 150 }, bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 50, memory: 50 } } };
+  budgets: { flower: { size: 1100, perMinute: 220, cap: 220, ms: 150, minMs: 50 }, bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 50, memory: 50 } } };
 const persona = { persona_prompt: "You are Luna, 12.", team_name: "Moonpetal" };
 const apiBase = "http://localhost:4100/api/rooms/R/games/G";
 const OLD = /\bcosmos|\borchid|\bpatch(?:es)?\b|turns_left|before each round|change turn|surplus|allure|\bledger\b|N³|three shares/i;
@@ -40,10 +40,12 @@ check("system: fair play allows reading the public API and its history queries, 
 check("system: RULES.md in full (species, pollen, MEMORY, fed, no history for programs)", /## A turn/.test(sys) && /## Energy: compute, nectar and pollen/.test(sys) && /### Bee memory/.test(sys)
   && /### After a feed: `fed\(nectar\)`/.test(sys) && /## History is for teams, not programs/.test(sys) && /## What everyone can see/.test(sys));
 const tt = timingText(config);
-check("timing: 200 ms rounds, the flower's 150 ms and the bee's 50 ms, a feed costs 10 rounds", /Rounds of 200 ms/.test(tt) && /about\s+150 rounds/.test(tt) && /150 ms to return \[response, percent\]/.test(tt)
-  && /50 ms to return \["feed" or "leave", next\s+challenge\]/.test(tt) && /out for 10 rounds/.test(tt), tt);
+check("timing: 200 ms rounds, the flower's hidden budget R (50 to 150 ms) and the bee's 50 ms, a feed costs 10 rounds", /Rounds of 200 ms/.test(tt) && /about\s+150 rounds/.test(tt)
+  && /hidden time budget R, drawn uniformly from\s+50 to 150 ms afresh for every call: its hard limit to return \[response, percent\]/.test(tt) && /told its R as\s+GAME\["ms"\]/.test(tt)
+  && /reaches the bee at 150 ms whatever R/.test(tt) && /bee is never told R/.test(tt)
+  && /50 ms to return \["feed" or "leave", next challenge\]/.test(tt) && /out for 10 rounds/.test(tt), tt);
 check("timing: species; energy goes to compute, nectar and pollen; the flower gives both on a feed", /flower program is its flower species/.test(tt) && /one flower of a species/.test(tt)
-  && /energy goes to compute, nectar and pollen/.test(tt) && /E = \(1,100 − flower size\) × max\(0, 150 − the flower's CPU ms\)/.test(tt)
+  && /energy goes to compute, nectar and pollen/.test(tt) && /E = \(1,100 − flower size\) × max\(0, R − the flower's CPU ms\)/.test(tt)
   && /the flower gives it\s+percent\/100 × E as nectar and the rest as pollen/.test(tt) && /If it doesn't feed, that energy is lost/.test(tt), tt);
 check("timing: the interface: fresh calls, fed, GAME, no history, the bee's 50-byte key-value MEMORY", /flower\(challenge\), first\(\), decide\(challenge, response\), and the bee's optional\s+fed\(nectar\)/.test(tt)
   && /in the same instance as that decide/.test(tt) && /no history/.test(tt) && !/HISTORY/.test(tt) && /MEMORY: a flat key-value store/.test(tt) && /of at most\s+50 bytes \(each key's bytes plus its value's JSON bytes\)/.test(tt)
@@ -55,11 +57,11 @@ check("timing: pollen grains, as the game sets them (feeder, public, off), inter
 check("system: the grain tools and check.py's refusals", /tools\/grains\.py/.test(sys) && /garden\.grains\(\), garden\.assemble\(flower\)/.test(sys) && /`grains\(\)` and `assemble\(flower\)`/.test(sys)
   && /what the game's Python refuses \(e\.g\. dunder names such as\s+__class__/.test(sys) && /pollen grain with the feeding bee's team/.test(sys), head0);
 check("timing and system: a feed is public with its percent, energy, nectar and pollen; unfed percent and energy and compute time are the flower team's",
-  /a feed's percent, energy, nectar and\s+pollen/.test(tt) && /percent and energy of turns without a feed, and every compute time, stay with the flower's team/.test(tt)
+  /a feed's percent, energy, nectar and\s+pollen/.test(tt) && /percent and energy of turns without a feed, every compute time and every flower call's R stay with the\s+flower's team/.test(tt)
   && /on a\s+feed, its percent, energy, nectar and pollen/.test(sys) && /Private to the\s+flower's team during play: the percent and energy of turns without a feed, and the flower's compute time/.test(sys)
   && /live scoreboard/.test(sys), tt);
 check("system: arrivals public; SSE and the WebSocket", /every arrival \(whose bee at whose species\)/.test(sys) && /ws:\/\/localhost:4100\/api\/rooms\/R\/games\/G\/ws\?after=/.test(sys) && /from Python use the Server-Sent Events/.test(sys));
-check("system: this game's settings with per-minute change budgets, caps and the memory cap", /\| flower \| 1,100 \| 220 \| 220 \| 150 \|/.test(sys) && /\| bee \| 11,000 \| 2,200 \| 2,200 \| 50 \|/.test(sys)
+check("system: this game's settings with per-minute change budgets, caps and the memory cap", /\| flower \| 1,100 \| 220 \| 220 \| R: 50 to 150 \|/.test(sys) && /\| bee \| 11,000 \| 2,200 \| 2,200 \| 50 \|/.test(sys)
   && /3 teams: 3 flower species and 3 bees/.test(sys) && /MEMORY holds at most\s+50 bytes/.test(sys));
 check("system: no leftovers of earlier variants (in the arena's text)", !OLD.test(OLDX(head0)), OLDX(head0).match(OLD)?.[0]);
 const devSecret = fs.existsSync(new URL("./runs/.dev-secret", import.meta.url)) ? fs.readFileSync(new URL("./runs/.dev-secret", import.meta.url), "utf8").trim() : "no-secret-file";

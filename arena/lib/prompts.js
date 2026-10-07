@@ -22,15 +22,17 @@ export const changeText = () => `A change costs the node edits that turn the ver
 
 /** How a turn works, in short; RULES.md has the official wording. Every time limit is public. */
 export function timingText(config) {
-  const b = config.budgets, fl = b.flower, bee = b.bee;
+  const b = config.budgets, fl = b.flower, bee = b.bee, minR = fl.minMs ?? 50;
   return `- Rounds of 200 ms of game time, all bees in lockstep: a ${durationText(config.minutes)} game is about
   ${Math.round((config.minutes * 60000) / 200)} rounds. Every bee that isn't feeding gets one turn per round.
 - Each team's flower program is its flower species. A turn: the bee's queued challenge goes to one flower of a species
-  drawn at random from all species (yours included); the flower has ${fl.ms} ms to return [response, percent]; the response
-  reaches the bee at ${fl.ms} ms whatever the flower's speed; the bee has ${bee.ms} ms to return ["feed" or "leave", next
-  challenge]. Neither is told whose the other is. A feed takes the bee out for ${config.feedCost} rounds.
+  drawn at random from all species (yours included); that flower call gets a hidden time budget R, drawn uniformly from
+  ${minR} to ${fl.ms} ms afresh for every call: its hard limit to return [response, percent] (the flower is told its R as
+  GAME["ms"]; GAME["flower_ms"] is ${fl.ms}). The response reaches the bee at ${fl.ms} ms whatever R and the flower's speed,
+  and the bee is never told R; the bee has ${bee.ms} ms to return ["feed" or "leave", next challenge]. Neither is told
+  whose the other is. A feed takes the bee out for ${config.feedCost} rounds.
 - A flower's energy goes to compute, nectar and pollen. Its excess energy for a turn is
-  E = (${n0(fl.size)} − flower size) × max(0, ${fl.ms} − the flower's CPU ms). If the bee feeds, the flower gives it
+  E = (${n0(fl.size)} − flower size) × max(0, R − the flower's CPU ms). If the bee feeds, the flower gives it
   percent/100 × E as nectar and the rest as pollen. If it doesn't feed, that energy is lost.
 - Programs run fresh for every call: flower(challenge), first(), decide(challenge, response), and the bee's optional
   fed(nectar), which runs after a feed decided in time, in the same instance as that decide. Programs see only their
@@ -40,8 +42,8 @@ export function timingText(config) {
   ${n0(bee.memory ?? 50)} bytes (each key's bytes plus its value's JSON bytes) that it alone writes, the only thing kept
   from one turn to the next; a new bee version starts with {}.
 - Arrivals, challenges, responses and feeds are public as they happen, and so are a feed's percent, energy, nectar and
-  pollen. The percent and energy of turns without a feed, and every compute time, stay with the flower's team until the
-  game ends.
+  pollen. The percent and energy of turns without a feed, every compute time and every flower call's R stay with the
+  flower's team until the game ends.
 ${grainText(config)}`;
 }
 
@@ -61,11 +63,11 @@ export function settingsText(config, teams) {
   return `- ${teams} teams: ${teams} flower species and ${teams} bees. The game lasts ${durationText(config.minutes)} of game time.
 - Challenges are ${config.challengeType}, responses are ${config.responseType} (interface.txt). Language: ${config.language}.
 ${timingText(config)}
-- Budgets (nodes; time per call in ms):
+- Budgets (nodes; time per call in ms; a flower's is its call's hidden R):
 
 | program | size | change budget earned per minute | most it can bank | time per call |
 |---|---|---|---|---|
-${KINDS.map((k) => `| ${k} | ${n0(b[k].size)} | ${n0(b[k].perMinute)} | ${n0(b[k].cap)} | ${b[k].ms} |`).join("\n")}
+${KINDS.map((k) => `| ${k} | ${n0(b[k].size)} | ${n0(b[k].perMinute)} | ${n0(b[k].cap)} | ${k === "flower" ? `R: ${b[k].minMs ?? 50} to ${b[k].ms}` : b[k].ms} |`).join("\n")}
 
   Change budget starts at 0 when the game starts and grows with game time, up to its cap. The bee's MEMORY holds at most
   ${n0(b.bee.memory ?? 50)} bytes. A response may be at most ${n0(config.maxResponseBytes ?? 65536)} bytes of JSON.`;
@@ -133,8 +135,8 @@ ${personaAndSituation(persona, fixed)}
   \`python3 tools/submit.py <kind>\`. In the lobby submitting is free. While the game runs a submission goes live at once and
   pays its change cost; if you can't afford it yet it is refused and you're told when you can. \`tools/check.py\` (size, cost
   now, a quick runtime test) and \`tools/try.py\` (run it on the game's real runner: a flower on challenges with its percent,
-  energy and CPU time; a test bee in a garden of your own flower, with a MEMORY of your choosing, fed() called after each
-  feed as in a game) are free. \`tools/check.py\` also shows what the game's Python refuses (e.g. dunder names such as
+  energy and CPU time, at a budget R you choose or a random one (--budget); a test bee in a garden of your own flower,
+  with a MEMORY of your choosing, fed() called after each feed as in a game) are free. \`tools/check.py\` also shows what the game's Python refuses (e.g. dunder names such as
   __class__, or a module's private names), with the message the runner gave.
   \`tools/status.py\` shows the clock, your change budgets, your bee's MEMORY and the live scores.
 - Your programs see no history, but your team can: ask it with \`tools/query.py\`, a typed query builder (docs:
@@ -170,8 +172,9 @@ ${personaAndSituation(persona, fixed)}
 - What everyone sees, the moment it happens: every arrival (whose bee at whose species), challenge, response and feed; on a
   feed, its percent, energy, nectar and pollen; the nectar and pollen ledgers and the live scoreboard. Private to the
   flower's team during play: the percent and energy of turns without a feed, and the flower's compute time on every turn.
-  Code, versions, budgets, bee decision times, a bee's MEMORY and what it prints stay with their own team, and a feed's
-  pollen grain with the feeding bee's team. Once the game is over, everything is revealed. (RULES.md and the server decide; queries and files show exactly what your team may see.)
+  Code, versions, budgets, bee decision times, a bee's MEMORY and what it prints stay with their own team, a flower
+  call's R with the flower's team, and a feed's pollen grain with the feeding bee's team. Once the game is over,
+  everything is revealed. (RULES.md and the server decide; queries and files show exactly what your team may see.)
 - Your files: stream/history.jsonl holds your team's history (one record per finished turn, growing about once a second);
   stream/actions.jsonl is the public stream; stream/mine.jsonl has your own bee's and flower's actions with your private
   fields and your bee's printouts (stream/SCHEMA.md). They grow big: query them, never print them whole. The public API

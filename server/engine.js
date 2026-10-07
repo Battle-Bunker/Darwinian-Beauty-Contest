@@ -45,7 +45,7 @@ import { ProgramProcess } from "./runners/proc.js";
 import { createHash, randomInt } from "node:crypto";
 import { checkValue, parseType } from "./lib/types.js";
 import { zeroLedger } from "./lib/scoring.js";
-import { KINDS, excessEnergy, limitsOf, responseLimits, roundMs } from "./lib/gameConfig.js";
+import { KINDS, drawBudget, excessEnergy, limitsOf, responseLimits, roundMs } from "./lib/gameConfig.js";
 import { size as measure } from "./lib/measure.js";
 
 export { KINDS };
@@ -148,8 +148,8 @@ export class FlowerPool {
     this.respawnAt = this.procs.map(() => 0); // per slot: no respawn before this performance.now()
     this.ready = Promise.all(this.procs.map((p) => p.ready)).then((r) => r[0]);
   }
-  /** The flower's reply to challenge c: { v, cpu } or { e, cpu?, dead? }. */
-  async call(c) {
+  /** The flower's reply to challenge c within time budget r (ms; GAME.ms for the call): { v, cpu } or { e, cpu?, dead? }. */
+  async call(c, r) {
     // The least busy slot, passing over dead ones that can't respawn yet.
     const now = performance.now();
     const load = (j) => (this.procs[j].dead && now < this.respawnAt[j] ? Infinity : this.pending[j]);
@@ -160,7 +160,7 @@ export class FlowerPool {
       return await withCpu(async () => {
         const proc = this.#live(i);
         await proc.ready; // a fresh process starts up on this core, before the flower's time starts
-        const res = await proc.call({ op: "call", c });
+        const res = await proc.call(r === undefined ? { op: "call", c } : { op: "call", c, ms: r });
         if (!res.dead) this.respawns[i] = 0;
         return res;
       });
@@ -184,15 +184,15 @@ export class FlowerPool {
 }
 
 /**
- * Read a flower's reply: { r, rBytes, rFull?, rHash?, rPreview?, percent, energy, ms, flowerError }. A late
- * answer, an error or a malformed return (not [response, percent], a response of the wrong type or over
- * maxResponseBytes, a percent that isn't a number) gives a null response and E = 0. percent is clamped to
- * 0–100; ms is the call's CPU time. A response over INLINE_BYTES also gets its JSON text (rFull), its
- * SHA-256 and its first INLINE_BYTES (rPreview).
+ * Read a flower's reply: { r, rBytes, rFull?, rHash?, rPreview?, percent, energy, ms, budgetMs, flowerError }.
+ * A late answer (over its budget R), an error or a malformed return (not [response, percent], a response of
+ * the wrong type or over maxResponseBytes, a percent that isn't a number) gives a null response and E = 0.
+ * percent is clamped to 0–100; ms is the call's CPU time; E = (cap − size) × max(0, R − ms). A response over
+ * INLINE_BYTES also gets its JSON text (rFull), its SHA-256 and its first INLINE_BYTES (rPreview).
  */
-export function readAnswer(config, rType, res, size) {
+export function readAnswer(config, rType, res, size, budgetMs = config.budgets.flower.ms) {
   const ms = typeof res.cpu === "number" && Number.isFinite(res.cpu) ? Math.round(res.cpu * 1000) / 1000 : null;
-  const fail = (e) => ({ r: null, rBytes: null, percent: null, energy: 0, ms, flowerError: String(e).slice(0, 300) });
+  const fail = (e) => ({ r: null, rBytes: null, percent: null, energy: 0, ms, budgetMs, flowerError: String(e).slice(0, 300) });
   if (res.e) return fail(res.e);
   const v = res.v;
   if (!Array.isArray(v) || v.length !== 2) return fail(`flower must return [response, percent] (got ${JSON.stringify(v)?.slice(0, 60)})`);
@@ -205,7 +205,7 @@ export function readAnswer(config, rType, res, size) {
     rBytes = Buffer.byteLength(full);
     if (rBytes > config.maxResponseBytes) return fail(`the response is ${rBytes} bytes of JSON, over the cap of ${config.maxResponseBytes}`);
   }
-  const answer = { r: v[0], rBytes, percent: Math.min(100, Math.max(0, v[1])), energy: ms === null ? 0 : excessEnergy(config, size, ms), ms, flowerError: null };
+  const answer = { r: v[0], rBytes, percent: Math.min(100, Math.max(0, v[1])), energy: ms === null ? 0 : excessEnergy(config, size, ms, budgetMs), ms, budgetMs, flowerError: null };
   return rBytes > INLINE_BYTES ? { ...answer, ...largeResponse(full) } : answer;
 }
 
@@ -443,6 +443,7 @@ export class Garden {
       if (!slot) continue;
       const t = {
         b, gen: b.gen, no: ++b.turns, round: r, start, c: b.queued.c, flower: slot.team, pool: slot.pool, size: slot.size, flowerCode: slot.code,
+        budgetMs: round3(drawBudget(this.config)), // R: this flower call's hidden time budget
         flowerVersion: slot.version, beeVersion: b.version, fed: false, nectar: null, pollen: 0, beeMs: null, beeError: null, log: null,
         staged: null, // the response's delivery to the bee, ahead of its decision window
       };
@@ -508,7 +509,7 @@ export class Garden {
     this.out.push({
       seq: ++this.seq, atMs: Math.round(atMs), round: t.round, turn: t.no, bee: t.b.ti, flower: t.flower, action,
       beeVersion: t.beeVersion, flowerVersion: t.flowerVersion,
-      c: null, r: null, rBytes: null, percent: null, energy: null, ms: null, pollen: null, nectar: null, flowerError: null,
+      c: null, r: null, rBytes: null, percent: null, energy: null, ms: null, budgetMs: null, pollen: null, nectar: null, flowerError: null,
       beeMs: null, beeError: null, log: null, grain: null, grainVersion: null, grainCodeLength: null, ...fields,
     });
   }
@@ -633,8 +634,8 @@ export class Garden {
    * at once ("stage": read in there, off the bee's clock), so a big response costs the bee no time.
    */
   async #answer(t) {
-    const res = await t.pool.call(t.c);
-    Object.assign(t, readAnswer(this.config, this.rType, res, t.size));
+    const res = await t.pool.call(t.c, t.budgetMs);
+    Object.assign(t, readAnswer(this.config, this.rType, res, t.size, t.budgetMs));
     if (t.flowerError) this.#problem(t.flower, "flower", t.flowerVersion, t.flowerError);
     const b = t.b;
     if (t.gen === b.gen && b.proc && !b.proc.dead && !this.stopped) {
@@ -768,7 +769,7 @@ export class Garden {
     const large = t.rFull !== undefined ? { rFull: t.rFull, rHash: t.rHash, rPreview: t.rPreview } : {};
     this.#record(t, t.fed ? "feed" : "leave", {
       c: t.c, r: t.rFull !== undefined ? null : t.r, rBytes: t.rBytes ?? null, ...large,
-      percent: t.percent, energy: t.energy, ms: t.ms, pollen: t.pollen, nectar: t.fed ? t.nectar : null,
+      percent: t.percent, energy: t.energy, ms: t.ms, budgetMs: t.budgetMs, pollen: t.pollen, nectar: t.fed ? t.nectar : null,
       flowerError: t.flowerError, beeMs: t.beeMs, beeError: t.beeError, log: t.log, ...grain,
     }, t.start + this.windowMs);
     // The turn as a `turns` record (server/query/schema.js), unmasked.
@@ -776,7 +777,7 @@ export class Garden {
       t.record = {
         game: this.game, seq: this.seq, round: t.round, atMs: Math.round(t.start), turn: t.no, bee: b.ti, flower: f,
         challenge: t.c, response: t.rFull !== undefined ? null : t.r, responseBytes: t.rBytes ?? null, responseHash: t.rHash ?? null,
-        fed: t.fed, percent: t.percent, energy: t.energy, nectar: t.fed ? t.nectar : null, pollen: t.pollen, ms: t.ms,
+        fed: t.fed, percent: t.percent, energy: t.energy, nectar: t.fed ? t.nectar : null, pollen: t.pollen, ms: t.ms, budgetMs: t.budgetMs,
         flowerVersion: t.flowerVersion, flowerError: t.flowerError, beeMs: t.beeMs, beeVersion: t.beeVersion, beeError: t.beeError,
         grain: grain.grain ?? null, grainVersion: grain.grainVersion ?? null, grainCodeLength: grain.grainCodeLength ?? null,
       };
@@ -822,8 +823,15 @@ export class Garden {
  * Run a flower program on a list of challenges (for the "try it" tool), as team 0 of 1. A response over
  * INLINE_BYTES comes back as its size, hash and preview, as in actions.
  */
-export async function tryFlower({ config, code, challenges }) {
+export async function tryFlower({ config, code, challenges, budgetMs = "random" }) {
   const cType = parseType(config.challengeType), rType = parseType(config.responseType);
+  const { ms: maxMs, minMs } = config.budgets.flower;
+  // Each challenge's R: a given number, one from a list, or (default) drawn as in a game; within [minMs, ms].
+  const budgetFor = (i) => {
+    const b = Array.isArray(budgetMs) ? budgetMs[i] : budgetMs;
+    if (typeof b === "number" && Number.isFinite(b)) return round3(Math.min(maxMs, Math.max(minMs, b)));
+    return round3(drawBudget(config));
+  };
   const limits = limitsOf(config);
   const { size, minified } = await measure(config.language, code);
   const proc = new ProgramProcess(config.language, "flower", flowerSetup(config, 0, 1, minified, size));
@@ -831,11 +839,12 @@ export async function tryFlower({ config, code, challenges }) {
     const load = await proc.ready;
     if (!load.ok) return { error: load.e, results: [] };
     const results = [];
-    for (const c of challenges.slice(0, 50)) {
+    for (const [i, c] of challenges.slice(0, 50).entries()) {
+      const r = budgetFor(i);
       const bad = checkValue(cType, c, limits, "challenge");
-      if (bad) { results.push({ c, r: null, rBytes: null, percent: null, energy: 0, ms: null, error: bad }); continue; }
-      const res = await withCpu(() => proc.call({ op: "call", c }));
-      const { flowerError, rFull, ...answer } = readAnswer(config, rType, res, size);
+      if (bad) { results.push({ c, r: null, rBytes: null, percent: null, energy: 0, ms: null, budgetMs: r, error: bad }); continue; }
+      const res = await withCpu(() => proc.call({ op: "call", c, ms: r }));
+      const { flowerError, rFull, ...answer } = readAnswer(config, rType, res, size, r);
       if (rFull !== undefined) answer.r = null;
       results.push({ c, ...answer, ...(flowerError ? { error: flowerError } : {}) });
     }

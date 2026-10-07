@@ -55,8 +55,9 @@ export const Api = {
   check: (tok, g, kind, code) => api(tok, "POST", `${g}/check`, { kind, code }),
   // A 422 (too big, can't afford it yet, game over) comes back as a body with ok: false and errors.
   submit: (tok, g, kind, code) => api(tok, "POST", `${g}/programs`, { kind, code }, { retries: 1 }),
-  /** A flower on challenges (a response over 4 KB comes back as rBytes, rHash and rPreview with r null). */
-  tryFlower: (tok, g, code, challenges) => api(tok, "POST", `${g}/try`, { kind: "flower", code, challenges }),
+  /** A flower on challenges (a response over 4 KB comes back as rBytes, rHash and rPreview with r null), each call with the
+   * hidden budget R `budgetMs`: a number (ms), "random" (one per call) or one per challenge; results carry `budgetMs`. */
+  tryFlower: (tok, g, code, challenges, budgetMs) => api(tok, "POST", `${g}/try`, { kind: "flower", code, challenges, ...(budgetMs !== undefined ? { budgetMs } : {}) }),
   /** A bee for `rounds` rounds in a garden of just its own flower (`flower`: that code, else the team's latest flower),
    * fed() called after each feed. memory: what the test bee starts with (default {}); a try never touches the game bee's
    * MEMORY. */
