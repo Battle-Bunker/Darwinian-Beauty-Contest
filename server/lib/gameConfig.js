@@ -13,7 +13,7 @@ import { parseType, typeToString } from "./types.js";
 // `cap` (one minute's worth): spend it whenever you like, on any change you can afford, and the new
 // program goes live at once. Before the game starts, writing programs is free.
 const BUDGETS = {
-  flower: { size: 1100, perMinute: 220, cap: 220, ms: 150 },
+  flower: { size: 1100, perMinute: 220, cap: 220, ms: 150, minMs: 50 },
   bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 50, memory: 50 },
 };
 
@@ -73,6 +73,10 @@ export function normalizeConfig(input = {}, base = DEFAULT_CONFIG) {
       cap: int(b.cap, 0, 10000000, d.cap),
       ms: int(b.ms, 1, 10000, d.ms),
     };
+    if (kind === "flower") {
+      // R, the per-call time budget, is drawn from [minMs, ms]; minMs can't exceed ms.
+      out.budgets.flower.minMs = Math.min(out.budgets.flower.ms, int(b.minMs, 1, 10000, d.minMs ?? BUDGETS.flower.minMs));
+    }
     if (kind === "bee") out.budgets.bee.memory = int(b.memory, 0, 1000000, d.memory ?? BUDGETS.bee.memory);
   }
   return out;
@@ -93,8 +97,17 @@ export function available(budget, bank, clockMs) {
   return Math.min(budget.cap, bank.bank + (budget.perMinute * Math.max(0, clockMs - bank.atMs)) / 60000);
 }
 
-/** Excess energy of a turn, in node·ms: (flower size cap − the flower's size) × max(0, flower ms − CPU ms). */
-export function excessEnergy(config, size, cpuMs) {
-  const { size: cap, ms } = config.budgets.flower;
-  return Math.max(0, cap - size) * Math.max(0, ms - cpuMs);
+/**
+ * Excess energy of a turn, in node·ms: (flower size cap − the flower's size) × max(0, R − CPU ms), where R
+ * is this call's time budget (default: the flower window, for callers without a per-call R).
+ */
+export function excessEnergy(config, size, cpuMs, r = config.budgets.flower.ms) {
+  const { size: cap } = config.budgets.flower;
+  return Math.max(0, cap - size) * Math.max(0, r - cpuMs);
+}
+
+/** Draw a flower call's time budget R: uniform in [minMs, ms] ms. */
+export function drawBudget(config, rand = Math.random) {
+  const { ms, minMs } = config.budgets.flower;
+  return minMs + rand() * (ms - minMs);
 }
