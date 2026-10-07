@@ -482,7 +482,7 @@ function TryPanel({ kind, code, base, challengeType, flowerCode, view }: {
           <div className="row try-budget">
             <label className="feed-filter"><span className="small">Time budget R</span>
               <select value={budgetMode} onChange={(e) => setBudgetMode(e.target.value as "random" | "fixed")} aria-label="Time budget R for the try">
-                <option value="random">random each call, {cfg.budgets.flower.minMs ?? 50}–{cfg.budgets.flower.ms} ms (as in a game)</option>
+                <option value="random">random, {cfg.budgets.flower.minMs ?? 50}–{cfg.budgets.flower.ms} ms (as in a game)</option>
                 <option value="fixed">fixed</option>
               </select>
             </label>
