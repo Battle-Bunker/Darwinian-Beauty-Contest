@@ -186,7 +186,7 @@ export function SettingsSummary({ cfg }: { cfg: GameConfig }) {
         <span className="chip" title={`Each round every bee that isn't feeding visits a random flower: it answers within ${cfg.budgets.flower.ms} ms, then the bee decides within ${cfg.budgets.bee.ms} ms`}>rounds of {cfg.budgets.flower.ms + cfg.budgets.bee.ms} ms</span>
         <span className="chip" title="Each flower call's hidden time budget R is drawn uniformly from this range">flower R {cfg.budgets.flower.minMs ?? 50}–{cfg.budgets.flower.ms} ms · bee {cfg.budgets.bee.ms} ms</span>
         <span className="chip">a feed costs {cfg.feedCost} rounds</span>
-        <span className="chip" title="E = (flower size cap − flower size) × max(0, flower ms − CPU ms)">energy cap {cfg.budgets.flower.size.toLocaleString()} nodes</span>
+        <span className="chip" title="E = (flower size cap − flower size) × max(0, R − CPU ms), R each call's hidden time budget">energy cap {cfg.budgets.flower.size.toLocaleString()} nodes</span>
         <span className="chip mono">{cfg.challengeType} → {cfg.responseType}</span>
         {[cfg.challengeType, cfg.responseType].some((t) => /str|list|any/i.test(t)) && <span className="chip">max length {cfg.maxLen}</span>}
         {[cfg.challengeType, cfg.responseType].some((t) => /tree|graph/i.test(t)) && <span className="chip">max {cfg.maxNodes} nodes</span>}
