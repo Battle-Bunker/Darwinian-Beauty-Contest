@@ -394,6 +394,9 @@ function TryPanel({ kind, code, base, challengeType, flowerCode, view }: {
 }) {
   const [text, setText] = useState(() => storage.get(`dbc:try:${challengeType}`) ?? "");
   const [rounds, setRounds] = useState(300);
+  // The flower's time budget R for a try: drawn at random per call (as in a game), or a fixed number of ms.
+  const [budgetMode, setBudgetMode] = useState<"random" | "fixed">("random");
+  const [budgetText, setBudgetText] = useState("100");
   const [memoryText, setMemoryText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -430,7 +433,14 @@ function TryPanel({ kind, code, base, challengeType, flowerCode, view }: {
           throw new Error(`Couldn't read the challenges. Write them ${fmt.label}, like ${fmt.placeholder}`);
         }
         storage.set(`dbc:try:${challengeType}`, text || null);
-        setFlower(await api<TryFlowerResult>("POST", `${base}/try`, { kind, code, challenges }));
+        let budgetMs: number | "random" = "random";
+        if (budgetMode === "fixed") {
+          const n = Number(budgetText);
+          const lo = cfg.budgets.flower.minMs ?? 50, hi = cfg.budgets.flower.ms;
+          if (!Number.isFinite(n) || n < lo || n > hi) throw new Error(`The time budget R must be a number of ms from ${lo} to ${hi}.`);
+          budgetMs = n;
+        }
+        setFlower(await api<TryFlowerResult>("POST", `${base}/try`, { kind, code, challenges, budgetMs }));
       }
     } catch (e) {
       setError(errorText(e));
@@ -468,6 +478,15 @@ function TryPanel({ kind, code, base, challengeType, flowerCode, view }: {
             <textarea value={text} onChange={(e) => setText(e.target.value)} className="mono try-input" spellCheck={false}
               rows={SCALARS.includes(normType(challengeType)) ? 1 : 3} placeholder={fmt.placeholder} />
           </label>
+          <div className="row try-budget">
+            <label className="feed-filter"><span className="small">Time budget R</span>
+              <select value={budgetMode} onChange={(e) => setBudgetMode(e.target.value as "random" | "fixed")} aria-label="Time budget R for the try">
+                <option value="random">random each call, {cfg.budgets.flower.minMs ?? 50}–{cfg.budgets.flower.ms} ms (as in a game)</option>
+                <option value="fixed">fixed</option>
+              </select>
+            </label>
+            {budgetMode === "fixed" && <label className="feed-filter"><input className="qc-num" inputMode="decimal" value={budgetText} onChange={(e) => setBudgetText(e.target.value)} aria-label="Fixed time budget in ms" /><span className="small muted">ms</span></label>}
+          </div>
         </>
       )}
       <button className="btn btn-ghost" onClick={run} disabled={busy}>{busy ? <Spinner label="Running…" /> : kind === "bee" ? "Try my bee" : "Ask my flower"}</button>
@@ -486,7 +505,7 @@ function TryPanel({ kind, code, base, challengeType, flowerCode, view }: {
               limit={cfg.budgets.flower.ms} title="How long your flower took (CPU)" unit="calls" missLabel="no answer" />
             <div className="table-scroll">
               <table className="data-table try-table">
-                <thead><tr><th className="left">Challenge</th><th className="left">Response</th><th>Percent</th><th>E (node·ms)</th><th>CPU ms</th></tr></thead>
+                <thead><tr><th className="left">Challenge</th><th className="left">Response</th><th>Percent</th><th>E (node·ms)</th><th title="The call's time budget R: its hard limit, and E counts from it">R ms</th><th>CPU ms</th></tr></thead>
                 <tbody>
                   {fr.map((x, i) => (
                     <tr key={i}>
@@ -494,6 +513,7 @@ function TryPanel({ kind, code, base, challengeType, flowerCode, view }: {
                       <td className={`left ${x.error ? "bad" : ""}`}>{x.error ? <span className="mono">{`None (${x.error})`}</span> : <ResponseView p={partsOfAction(x)} max={60} />}</td>
                       <td>{x.percent ?? "–"}</td>
                       <td title={fmtEExact(x.energy)}>{fmtE(x.energy)}</td>
+                      <td className="nowrap">{fmtMs(x.budgetMs)}</td>
                       <td className="nowrap">{fmtMs(x.ms)}</td>
                     </tr>
                   ))}

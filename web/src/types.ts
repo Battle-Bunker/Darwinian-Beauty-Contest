@@ -214,6 +214,7 @@ export interface ProgramInterface {
 export interface TryFlowerRow {
   c: unknown; r: unknown; rBytes?: number | null; rHash?: string | null; rPreview?: string | null;
   percent: number | null; energy: number | null; ms: number | null; error?: string;
+  budgetMs?: number | null;   // the time budget R this call had
 }
 export interface TryFlowerResult { size?: number; results: TryFlowerRow[]; error?: string }
 export interface TryBeeResult {
