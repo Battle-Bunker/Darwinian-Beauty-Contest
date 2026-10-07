@@ -23,9 +23,9 @@ import { partsOfAction, ResponseView } from "./ResponseView";
 export const takesEffect = (kind: Kind) =>
   kind === "bee" ? "once your bee's current turn is over (it's asked first() straight away)" : "for turns that start from now (a turn under way finishes with the old one)";
 
-const BLURB: Record<Kind, string> = {
-  flower: "Your flower is a species: every visit is a bee meeting one of its flowers. flower(challenge) returns [response, percent]. It allocates its energy between compute, nectar and pollen: its size and its CPU time use up part of each visit's budget, leaving E = (size cap − size) × max(0, R − CPU ms), where R is this turn's time limit: hidden from the bee, varying from 50 to 150 ms, and told to your flower as GAME's ms; a bee that feeds gets percent% of E as nectar and the rest as pollen, which it carries to other flowers. An unfed visit's E is lost. It runs fresh for every turn and remembers nothing: it sees only its challenge and GAME.",
-  bee: "Your bee takes one turn a round at one flower of a random species, never told whose: first() gives a challenge when it has none queued, and decide(challenge, response) returns [\"feed\" or \"leave\", next challenge]. Feeding gets it nectar (and pollen to carry) and sits it out for the feed cost in rounds; if you define fed(nectar), it runs right after a feed decided in time, in the same program instance as that decide, and is told the nectar. Each turn runs fresh: only MEMORY, a tiny key–value store only the bee can write, carries over, and a new version starts it empty. What it prints shows up for your team below and in the feed.",
+const BLURB: Record<Kind, (lo: number, hi: number) => string> = {
+  flower: (lo, hi) => `Your flower is a species: every visit is a bee meeting one of its flowers. flower(challenge) returns [response, percent]. It allocates its energy between compute, nectar and pollen: its size and its CPU time use up part of each visit's budget, leaving E = (size cap − size) × max(0, R − CPU ms), where R is this turn's time limit: hidden from the bee, varying from ${lo} to ${hi} ms, and told to your flower as GAME's ms; a bee that feeds gets percent% of E as nectar and the rest as pollen, which it carries to other flowers. An unfed visit's E is lost. It runs fresh for every turn and remembers nothing: it sees only its challenge and GAME.`,
+  bee: () => "Your bee takes one turn a round at one flower of a random species, never told whose: first() gives a challenge when it has none queued, and decide(challenge, response) returns [\"feed\" or \"leave\", next challenge]. Feeding gets it nectar (and pollen to carry) and sits it out for the feed cost in rounds; if you define fed(nectar), it runs right after a feed decided in time, in the same program instance as that decide, and is told the nectar. Each turn runs fresh: only MEMORY, a tiny key–value store only the bee can write, carries over, and a new version starts it empty. What it prints shows up for your team below and in the feed.",
 };
 
 const SCALARS = ["int", "float", "bool", "str"];
@@ -155,7 +155,7 @@ export function ProgramEditors({ view, base, store }: { view: GameView; base: st
   else status = <span className="warn-text">Unsubmitted changes. {g.status === "lobby" ? `v${playing.version} is what's saved.` : `v${playing.version} keeps playing until you submit.`}</span>;
 
   const r = result[kind];
-  const iface = useMemo(() => <InterfaceBox iface={view.interface} kind={kind} language={cfg.language} />, [view.interface, kind, cfg.language]);
+  const iface = useMemo(() => <InterfaceBox iface={view.interface} kind={kind} language={cfg.language} budgets={cfg.budgets} />, [view.interface, kind, cfg.language, cfg.budgets]);
 
   return (
     <div className="editors">
@@ -180,7 +180,7 @@ export function ProgramEditors({ view, base, store }: { view: GameView; base: st
       <div className="editor-panel" role="tabpanel">
         <div className="editor-layout">
           <div className="editor-main">
-            <p className="muted small">{BLURB[kind]}</p>
+            <p className="muted small">{BLURB[kind](cfg.budgets.flower.minMs ?? 50, cfg.budgets.flower.ms)}</p>
             {playing && live && (
               <p className="small playing-line">
                 <b>Live: v{playing.version}</b> · {playing.size.toLocaleString()} nodes · {playing.atMs > 0 ? `since ${fmtClock(playing.atMs)}` : "since the start"} · by {playing.submittedBy}
@@ -190,7 +190,7 @@ export function ProgramEditors({ view, base, store }: { view: GameView; base: st
             {playing?.problem && <Alert kind="error"><b>v{playing.version} hit a problem while playing:</b> <span className="mono">{playing.problem}</span></Alert>}
             <div className="meters">
               <Meter label="Size (nodes)" value={empty ? 0 : s?.size ?? null} max={budget.size} />
-              {kind === "flower" && <EnergyMeter size={empty ? null : s?.size ?? null} cap={budget.size} ms={budget.ms} />}
+              {kind === "flower" && <EnergyMeter size={empty ? null : s?.size ?? null} cap={budget.size} ms={budget.ms} minMs={budget.minMs ?? 50} />}
               {live && participant && mine?.banks?.[kind]
                 ? <BudgetMeter store={store} budget={budget} bank={mine.banks[kind]!} cost={unchanged ? 0 : cost} status={g.status} kind={kind} />
                 : <div className="meter-note muted">{g.status === "lobby" ? <>Writing programs before the game starts is <b>free</b>. Once it starts, every change costs change budget, which fills by {budget.perMinute.toLocaleString()} nodes a minute (up to {budget.cap.toLocaleString()}).</> : null}</div>}
@@ -361,8 +361,9 @@ function BeePrints({ store, teamId }: { store: LiveStore; teamId: string }) {
 }
 
 /** What every team knows: the functions to define and the game's types. Deliberately no example code. */
-function InterfaceBox({ iface, kind, language }: { iface: ProgramInterface; kind: Kind; language: "python" | "typescript" }) {
+function InterfaceBox({ iface, kind, language, budgets }: { iface: ProgramInterface; kind: Kind; language: "python" | "typescript"; budgets: Record<Kind, Budget> }) {
   const t = iface.types;
+  const lo = budgets.flower.minMs ?? 50, hi = budgets.flower.ms;
   const none = language === "python" ? "None" : "null";
   // Open beside the editor on wide screens; folded above it on phones (tap to read).
   const [open, setOpen] = useState(() => typeof window === "undefined" || window.matchMedia("(min-width: 1000px)").matches);
@@ -378,7 +379,7 @@ function InterfaceBox({ iface, kind, language }: { iface: ProgramInterface; kind
       </dl>
       {t.rules.length > 0 && <ul className="iface-rules">{t.rules.map((r, i) => <li key={i}>{r}</li>)}</ul>}
       <p className="small muted">
-        Programs see only their arguments and <code>GAME</code>: {language === "python" ? 'GAME["team"]' : "GAME.team"} (your team's number), teams, feed_cost, challenge_type, response_type, max_len and max_nodes (challenge limits), max_response_bytes, round_ms, ms (this call's time limit: a bee's 50; a flower's this call's hidden budget R, from 50 to 150), flower_ms (150, the most R can be) and flower_size_cap; a flower also gets size, its own; a bee also memory, its MEMORY cap. No program sees any history: your team can query it over the API. <code>time.time()</code>, <code>Date.now()</code> and <code>performance.now()</code> measure time since this call started (it reads as 1970-01-01); there is no real-world clock, and no round or game time.
+        Programs see only their arguments and <code>GAME</code>: {language === "python" ? 'GAME["team"]' : "GAME.team"} (your team's number), teams, feed_cost, challenge_type, response_type, max_len and max_nodes (challenge limits), max_response_bytes, round_ms, ms (this call's time limit: a bee's {budgets.bee.ms}; a flower's this call's hidden budget R, from {lo} to {hi}), flower_ms ({hi}, the most R can be) and flower_size_cap; a flower also gets size, its own; a bee also memory, its MEMORY cap. No program sees any history: your team can query it over the API. <code>time.time()</code>, <code>Date.now()</code> and <code>performance.now()</code> measure time since this call started (it reads as 1970-01-01); there is no real-world clock, and no round or game time.
         {kind === "bee" && <>
           {" "}A bee also has <code>MEMORY</code>: a flat key–value store (string keys; string, number, boolean or {none} values) that it changes inside first, decide and fed ({language === "python" ? "MEMORY[\"n\"] = 3" : "MEMORY.n = 3"}). It's saved after each of them if it fits in {language === "python" ? 'GAME["memory"]' : "GAME.memory"} bytes, each entry counting its key's bytes plus its value's JSON bytes ({'{"n": 7, "best": "a7"}'} is 2 + 8 = 10). It's the only thing a bee keeps from one turn to the next.
           {" "}Optional: <code>fed(nectar)</code> runs after a feed decided in time, in the same program instance as that decide (its globals still there), within {language === "python" ? 'GAME["ms"]' : "GAME.ms"}; MEMORY is saved after it.
@@ -567,14 +568,14 @@ function median(xs: number[]) {
 }
 
 /** The flower's energy at this size: the most it can make a visit, (cap − size) × the whole window. */
-function EnergyMeter({ size, cap, ms }: { size: number | null; cap: number; ms: number }) {
+function EnergyMeter({ size, cap, ms, minMs }: { size: number | null; cap: number; ms: number; minMs: number }) {
   const room = size === null ? null : Math.max(0, cap - size);
   const best = room === null ? null : room * ms;
   return (
     <div className="meter energy-meter" title="E = (size cap − size) × max(0, R − CPU ms), R the call's hidden time limit (at most the window): a smaller, faster flower makes more">
       <div className="meter-label"><span>Max E a visit</span><b>{best === null ? "–" : fmtE(best)}</b><span className="muted">node·ms</span></div>
       <div className="meter-track"><div className="meter-fill" style={{ width: `${room === null ? 0 : (room / Math.max(1, cap)) * 100}%` }} /></div>
-      <div className="small muted">({cap.toLocaleString()} − {size ?? "size"}) × (R − CPU ms), with R at most {ms} ms (hidden from the bee, from 50 to {ms} ms each turn): every node and every millisecond you save is more to give as nectar and pollen.</div>
+      <div className="small muted">({cap.toLocaleString()} − {size ?? "size"}) × (R − CPU ms), with R at most {ms} ms (hidden from the bee, from {minMs} to {ms} ms each turn): every node and every millisecond you save is more to give as nectar and pollen.</div>
     </div>
   );
 }

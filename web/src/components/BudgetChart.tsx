@@ -23,7 +23,7 @@ export function BudgetChart({ teams, points, min, max }: { teams: Team[]; points
   return (
     <div className="budget-charts">
       <p className="small muted">
-        Every visit, the flower had a hidden time budget R, drawn from {min}–{max} ms (x), and used some CPU time (y). Under the diagonal it finished in time, and (cap − size) × (R − CPU ms) became its energy; on or over it, it ran out and made nothing (×).
+        Every visit, the flower had a hidden time budget R, drawn from {min}–{max} ms (x), and used some CPU time (y). A dot finished in time, and its gap under the diagonal, R − CPU ms, times (cap − size) became its energy. A × ran out of time and made nothing: R limits wall-clock time, so a × can sit under the diagonal when the machine was busy.
       </p>
       <div className="budget-grid">
         {teams.map((t, i) => {

@@ -266,12 +266,13 @@ export function computeFrame(idx: TurnIndex, layout: Layout, p: FrameParams, now
     const e = readT.end;
     const age = p.D - readT.t0 - DEC;
     const big = e.rHash ? { bytes: e.rBytes ?? null, seq: e.seq } : null;
+    const R = typeof e.budgetMs === "number" ? `R ${Math.round(e.budgetMs)} ms · ` : "";
     if (e.flowerError || (e.r === null && !big)) {
-      readout = { flower: readT.flower, line1: "no answer (E = 0)", line2: fed(readT) ? "fed, but nothing to give" : "left", kind: "fail", age, big: null };
+      const why = e.flowerError && /timeout/i.test(e.flowerError) ? "out of time" : "no answer";
+      readout = { flower: readT.flower, line1: `${R}${why} (E = 0)`, line2: fed(readT) ? "fed, but nothing to give" : "left", kind: "fail", age, big: null };
     } else {
       const E = e.energy ?? 0;
-      // Compute first (it shrinks what's left), then E, then how E went: nectar and pollen, or lost.
-      const R = typeof e.budgetMs === "number" ? `R ${Math.round(e.budgetMs)} ms · ` : "";
+      // R, then compute (it shrinks what's left), then E, then how E went: nectar and pollen, or lost.
       const line1 = `${R}${typeof e.ms === "number" ? `${e.ms < 10 ? e.ms.toFixed(1) : Math.round(e.ms)} ms CPU → ` : ""}E ${fmtE(E)}, offers ${e.percent ?? "?"}%`;
       readout = fed(readT)
         ? { flower: readT.flower, line1, line2: `fed: nectar ${fmtE(e.nectar ?? 0)} · pollen ${fmtE(e.pollen ?? 0)}`, kind: "fed", age, big }
