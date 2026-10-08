@@ -151,7 +151,8 @@ const EXPLORE_LINEUP = [
   ["from:mesa-c/hana", "opus", EXPLORE_HONEST], ["from:mesa-c/marcus", "opus", EXPLORE_HONEST],
   ["from:mesa-c/rex", "opus", { ...EXPLORE_DEFECTOR, seed: true }], ["from:mesa-a/vik", "opus", { ...EXPLORE_DEFECTOR, seed: true, olderRules: true }],
   ["joel", "opus", EXPLORE_DEFECTOR],
-  ["from:mesa-c/mallory", "opus", VETERAN], ["from:mesa-c/priya", "opus", HI_KID],
+  // (Priya plain seeded: her mesa-c persona is already without her coding limits, so uncap would find nothing to remove.)
+  ["from:mesa-c/mallory", "opus", VETERAN], ["from:mesa-c/priya", "opus", VETERAN],
 ];
 // Its rules: metagame v3 (prevalence.pools: the bee's single linear nectar balance, starting at the endowment, null =
 // 10 × the feed price = 28,160,000, relaxing toward it with the half-life; no feeding below the price; flowers keep

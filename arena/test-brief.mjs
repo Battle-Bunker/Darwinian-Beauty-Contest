@@ -169,16 +169,19 @@ check("v2 settings: Scores names F × B as the score (pollination and forage onl
   const RULE_KEYS = ["feedCost", "feedPrice", "flowerWindowMs", "maxResponseBytes", "energy.bytes", "scoring.alpha", "scoring.beta", "prevalence.on", "pollenGrain.scale",
     "budgets.flower.ms", "budgets.flower.minMs", "budgets.flower.perMinute", "budgets.flower.cap", "budgets.bee.perMinute", "budgets.bee.cap", "budgets.bee.ms", "budgets.bee.memory"];
   const at = (o, k) => k.split(".").reduce((x, y) => x?.[y], o);
-  const old = Object.entries(PRESETS).filter(([k]) => !/coop/.test(k)), coop = Object.entries(PRESETS).filter(([k]) => /coop/.test(k));
+  const NEW = /coop|explore/, old = Object.entries(PRESETS).filter(([k]) => !NEW.test(k)), coop = Object.entries(PRESETS).filter(([k]) => /coop/.test(k));
+  const explore = Object.entries(PRESETS).filter(([k]) => /explore/.test(k));
   const bad = old.filter(([, p]) => RULE_KEYS.some((k) => at(p.config, k) === undefined || p.expectConfig?.[k] !== at(p.config, k))
     || p.config.feedPrice !== 0 || p.config.prevalence.on !== false || p.config.flowerWindowMs !== p.config.budgets.flower.ms).map(([k]) => k);
   const adaptOld = PRESETS.adapt14.config, hi = PRESETS.adapt14hi.config;
-  check("presets: the old ones pinned to their rules (explicit and checked: no prevalence, free feeds, the window at their flower ms); coop-eq on v2",
+  check("presets: the old ones pinned to their rules (explicit and checked: no prevalence, free feeds, the window at their flower ms); coop-eq on v2 (pools false); explore-1 on v3 (pools)",
     !bad.length && old.length >= 10 && adaptOld.feedCost === 10 && adaptOld.budgets.flower.minMs === 50 && adaptOld.budgets.flower.perMinute === 220 && adaptOld.budgets.bee.cap === 2200
     && adaptOld.energy.bytes === false && adaptOld.scoring.alpha === 0.5 && adaptOld.maxResponseBytes === 65536 && hi.feedCost === 20 && hi.budgets.flower.minMs === 3
     && hi.energy.bytes === true && hi.scoring.alpha === 0.85 && hi.maxResponseBytes === 1024 && hi.pollenGrain.scale === 0.1 && PRESETS["dry-adapt-hi"].config === hi
     && coop.length === 2 && coop.every(([, p]) => p.config.prevalence.on === true && p.config.feedPrice === null && p.config.flowerWindowMs === 150 && p.config.budgets.flower.ms === 50
-      && RULE_KEYS.every((k) => at(p.config, k) !== undefined && p.expectConfig[k] === at(p.config, k))), bad.join(", "));
+      && RULE_KEYS.every((k) => at(p.config, k) !== undefined && p.expectConfig[k] === at(p.config, k)) && p.expectConfig["prevalence.pools"] === false)
+    && explore.length === 2 && explore.every(([, p]) => p.config.prevalence.pools === true && p.config.prevalence.endowment === null && p.expectConfig["prevalence.pools"] === true
+      && p.expectConfig["prevalence.endowment"] === null && RULE_KEYS.every((k) => at(p.config, k) !== undefined && p.expectConfig[k] === at(p.config, k))), bad.join(", "));
 }
 const v2Scores = [{ teamId: "me", fitness: 1.08, pollinationShare: 0.3, forageShare: 0.2, flowerSuccess: 1.2, beeSuccess: 0.9 }, { teamId: "b", fitness: 0.92 }];
 const v2Brief = gameBrief({ config: v2, teamName: "M", teamId: "me", generation: 1, sessionNo: 3, status: "running", clockMs: 60000, budgets: null, scores: v2Scores, maxTurns: 60, brevity: false });
