@@ -20,8 +20,8 @@ n, M = 48, 96             # must match the flowers (integrated.py)
 K = 4
 # (CPU ms, U) for an honest flower with equal weights, measured on the game machine (one response varies by about 1):
 CURVE = ((0, 0.0), (1.8, 8.6), (6, 13.4), (12, 15.5), (25.2, 17.3), (45.6, 17.9), (90, 18.4))
-RATE = 216                # prior rate: a 410-node, 85-byte flower burning 0.6, at 50%: 0.5 × 690 × 939 × 0.4 / 0.6 / 1000
-NEED = 5e6                # feed when the predicted nectar reaches this (the prior flower at about R = 40); a feed costs 20 rounds
+RATE = 216                # prior rate: a 410-node, 85-byte flower, BURN 0.6, 50%: 0.5 × 690 × 939 × 0.4 / 0.6 / 1000
+NEED = 5e6                # feed when the predicted nectar reaches this (the prior at about R = 40); a feed costs 20 rounds
 NEAR = 3.5                # readings closer than this (in tenths) count as the same profile
 LEARN = 0.5               # how far one feed moves its profile's rate toward what it paid (in log terms)
 EXPLORE = 0.05            # the share of other arrangements fed anyway, so a rate learned too low can recover
@@ -104,7 +104,7 @@ def first():                  # for engines that still ask for a first challenge
 def decide(challenge, response):
     global cpu, here, near
     z = levels(challenge, response)
-    cpu = 0
+    cpu, near = 0, ""
     if not z or sum(z) <= 0:                # not an arrangement, or no better than chance
         return "leave", random.getrandbits(52)
     cpu, here = wealth(sum(z)), profile(z)

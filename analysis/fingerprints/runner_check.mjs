@@ -1,6 +1,6 @@
 // The integrated flower and bee on the game's real runner (server/engine.js tryFlower and tryBee, in-process).
 //   CPU_SLOTS=2 node analysis/fingerprints/runner_check.mjs
-// Flower: 10 calls at each fixed R (3, 20, 76, 150 ms): CPU ms, the share f of 0.6 R it recorded, bytes, energy
+// Flower: 10 calls at each fixed R (3, 20, 76, 150 ms): CPU ms, the share f of BURN × R it recorded, bytes, energy
 // (and whether it equals (1100 - size) × (R - CPU ms) × (1024 - bytes)), and failures. Bee: 300 unpaced rounds
 // in a garden of its own flower: decide time, feeds, fed() runs and failures, the final MEMORY.
 import fs from "node:fs";

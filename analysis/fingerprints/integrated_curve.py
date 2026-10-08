@@ -53,8 +53,8 @@ BYTES = []
 
 
 def call(c, R, W, burn=0.6):
-    # One flower call at budget R with relative weights W, spending burn × R (the flower spends 0.6 of GAME ms).
-    fl.GAME, fl.W, fl.time = {"ms": R * burn / 0.6}, tuple(W[d] / SC[d] for d in range(K)), Clock()
+    # One flower call at budget R with relative weights W, spending burn × R (the flower's BURN).
+    fl.GAME, fl.BURN, fl.W, fl.time = {"ms": R}, burn, tuple(W[d] / SC[d] for d in range(K)), Clock()
     resp, _ = fl.flower(c)
     cpu = fl.time.process_time() * 1000
     BYTES.append(len(json.dumps(resp, ensure_ascii=False, separators=(",", ":")).encode()))
