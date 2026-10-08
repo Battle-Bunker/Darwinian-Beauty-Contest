@@ -3,7 +3,7 @@
 // rules; the lobby and in-game briefs carry headline numbers only (never actions or logs); interview and judge prompts.
 //   node arena/test-brief.mjs
 import fs from "node:fs";
-import { GAME_SUMMARY, gameBrief, interviewPrompt, judgePrompt, judgeSystem, lobbyBrief, settingsText, timingText, toolSystem } from "./lib/prompts.js";
+import { GAME_SUMMARY, gameBrief, interviewPrompt, judgePrompt, judgeSystem, lobbyBrief, roleText, settingsText, timingText, toolSystem } from "./lib/prompts.js";
 
 let failed = 0;
 const check = (name, ok, extra = "") => { console.log(`${ok ? "ok  " : "FAIL"} ${name}${ok || !extra ? "" : `: ${String(extra).slice(0, 400)}`}`); if (!ok) failed++; };
@@ -68,6 +68,21 @@ const devSecret = fs.existsSync(new URL("./runs/.dev-secret", import.meta.url)) 
 check("system: no secrets, tokens or database URLs", !sys.includes(devSecret) && !/postgres:|Bearer |DATABASE_URL|DEV_LOGIN|\.dev-secret/i.test(sys));
 check("settings: budgets start at zero and refill", /Change budget starts at 0 when the game starts/.test(settingsText(config, 3)));
 check("no starter strategies in the system prompt", !/(?<!no )starter (code|strateg)|for example, (pay|offer|feed)/i.test(sys));
+
+// Roles (EXPERIMENTS.adapt): private briefs. The honest one sets no amount of costly signalling (no fraction of R).
+const honest = roleText("honest", { common: ["signals.md"] }), defector = roleText("defector");
+check("roles: honesty: costly signalling at its discretion that reveals R, always 50%; its documents; no target amount", /specialise in honesty/.test(honest)
+  && /some level of costly signalling, at your discretion/.test(honest) && /reveals its true\s+per-turn wealth/.test(honest) && /percent 50 on every\s+answer/.test(honest)
+  && /common\/ \(signals\.md\)/.test(honest) && !/\d+\s*%\s*of\s*(R|its|your) (budget|time)|0\.\d+\s*[×x*]\s*R|fraction|most of (its|your) R|\bR\s*[×x*]/i.test(honest), honest);
+check("roles: defection: imitate the most-fed flowers cheaply, from grains too; always 0%", /specialise in defection/.test(defector) && /flowers getting the most feeds/.test(defector)
+  && /including from your pollen grains/.test(defector) && /percent 0 on every answer/.test(defector), defector);
+const sysRole = toolSystem(persona, config, "/w", { apiBase, teams: 14, role: "honest", common: ["signals.md"], commonScope: "role" });
+const sysVet = toolSystem(persona, config, "/w", { apiBase, teams: 14 });
+check("roles: in the role's system prompt only (private), and role documents aren't announced as common knowledge", /# Your role in this tournament \(private/.test(sysRole)
+  && !/Your role/.test(sysVet) && !/every team in this garden, including any team that joins/.test(sysRole));
+const seeded = lobbyBrief({ config, teamName: "Red Team Petals", generation: 1, maxTurns: 30, carried: true, seeded: true });
+check("lobby: a seeded veteran starts from its last tournament's programs and files, with no strategy hint", /final programs from your last tournament/.test(seeded)
+  && /earlier-tournament\//.test(seeded) && !/previous-games\/ has/.test(seeded) && !/honest|defect/i.test(seeded), seeded);
 
 const fresh = lobbyBrief({ config, teamName: "Moonpetal", generation: 1, maxTurns: 30, carried: false });
 check("lobby (first game): write both from scratch to the interface, no starter code", /program files are empty/.test(fresh) && /Write both from scratch/.test(fresh) && /no starter code/.test(fresh)

@@ -146,6 +146,34 @@ pollen grains: secrets and copies, with the lag from leak to use), and species t
 hidden budget R, and do bees feed more at rich instances?). `pilot-dry` and `signals-dry` are the same with the stub `claude`
 (`ARENA_CLAUDE_BIN`), 30-second games and the `dry-` arenas.
 
+### The `adapt` experiment
+
+Will veterans of the cheap-signalling arenas adapt when honest, costly signallers and defectors share their garden? One
+arena (`mesa-a`, preset `adapt14`) of 14 teams, fixed membership (no retirement or breeding; interviews and judges still
+run), 4 games of 10 minutes, the cohort10 rules (int → graph[any], grains to feeders, R from 50 to 150 ms, 64 KiB),
+capped at $120:
+
+| who | how many | model | what they get |
+|---|---|---|---|
+| veterans | 7 | their own | the best instance of each distinct persona over the pilot and signals arenas by mean fitness percentile ((N − rank) / (N − 1)): Mallory (fen-d), Kenji (fen-a), Ada (fen-a), Theo (kiln-a), Rosalind (fen-c), Priya (fen-a), Bao (fen-c). Carried over as they were (`seed`): the persona, its last flower and bee as its starting programs, its notebook, and the files it wrote in its workspace (that arena's previous games in `earlier-tournament/`). No new hint |
+| honesty specialists | 5 | opus | new personas (`ROLE_PERSONAS`) with a private role brief: costly signalling *at their discretion* that reveals their true per-turn wealth R, and always 50% nectar; `arena/priming/honest-signals/` in their `common/` (no other team has it) |
+| defection specialists | 2 | opus | a private role brief: find the most-fed flowers from the public record and query tools, imitate them as cheaply as possible (grains too), always 0% nectar |
+
+Roles are private (in that team's system prompt only); everyone sees only behaviour. Conformance is logged, never
+enforced: after each game the runner logs a `ROLE DRIFT` line for a role team that answered off its percent, and stores
+`metrics.roles`. `node arena/adapt.js [--classify] > arena/runs/analysis-adapt.md` reports, per game, each veteran's
+flower mechanism and level, CPU share, median percent, copies of honest or defecting flowers (answers and leaked code),
+its bee's feed rate at honest, defector and veteran flowers and at rich and poor R, and fitness; the honest specialists'
+conformance, costly honesty and feeds; the defectors' conformance, imitation latency and feeds before and after being told
+apart; and an adaptation summary per veteran. `adapt-dry` is its capacity check with the stub `claude` (14 teams,
+1-minute games; the stub's honest flowers burn 0.9 × R of CPU, a load test only).
+
+```
+arena/server.sh
+ARENA_BUDGET_USD=250 nohup node arena/run.js --experiment adapt >> arena/runs/adapt.out 2>&1 &
+node arena/adapt.js > arena/runs/analysis-adapt.md                               # afterwards, no spend
+```
+
 ## How a game runs
 
 1. **Setup.** The arena's room owner creates the game with the preset's config (and this game's duration). Every active
