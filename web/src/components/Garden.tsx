@@ -4,7 +4,7 @@
 // from the turns, and the painter (gardenPainter.ts) moves the SVG without React. The flowers and labels
 // underneath are ordinary React, redrawn only when they change.
 import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
-import { scoringOf, type Action, type GameStatus, type GameView, type Scoring, type Team, type TeamScore } from "../types";
+import { roundMsOf, scoringOf, windowMsOf, type Action, type GameStatus, type GameView, type Scoring, type Team, type TeamScore } from "../types";
 import { useElementWidth } from "../hooks";
 import { useLiveTick, type LiveStore } from "../lib/live";
 import { TurnIndex } from "../lib/turns";
@@ -291,7 +291,7 @@ export function LiveGarden({ view, store, wasted }: { view: GameView; store: Liv
   const teamsById = useMemo(() => Object.fromEntries(view.teams.map((t) => [t.id, t])), [view.teams]);
   const statusRef = useRef(status);
   statusRef.current = status;
-  const driver = useMemo(() => new LiveDriver(store, order, cfg.budgets.flower.ms, () => statusRef.current), [store, order.join(","), cfg.budgets.flower.ms]); // eslint-disable-line react-hooks/exhaustive-deps
+  const driver = useMemo(() => new LiveDriver(store, order, windowMsOf(cfg), () => statusRef.current), [store, order.join(","), windowMsOf(cfg)]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [focusPick, setFocus] = useState<number | null | undefined>(undefined);
   const focus = focusPick === undefined ? (mine >= 0 ? mine : null) : focusPick;
@@ -317,7 +317,7 @@ export function LiveGarden({ view, store, wasted }: { view: GameView; store: Liv
       {status !== "lobby" && (
         <GardenControls teams={teams} mine={mine} focus={focus} setFocus={setFocus} bubbles={bubbles} setBubbles={setBubbles} names={names} setNames={setNames} />
       )}
-      <GardenStage teams={teams} driver={driver} status={status} roundMs={cfg.budgets.flower.ms + cfg.budgets.bee.ms} flowerMs={cfg.budgets.flower.ms}
+      <GardenStage teams={teams} driver={driver} status={status} roundMs={roundMsOf(cfg)} flowerMs={windowMsOf(cfg)}
         beeMs={cfg.budgets.bee.ms} focus={focus} mine={mine >= 0 ? mine : null} bubbles={bubbles} names={names} tallies={tallies} dim={dim} banner={banner}
         apiBase={gameBase(view.room.shortId, g.shortId)} />
       {status !== "lobby" && (

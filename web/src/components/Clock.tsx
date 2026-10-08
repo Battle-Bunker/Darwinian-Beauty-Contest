@@ -1,7 +1,7 @@
 // The game clock: game time interpolated locally between server updates while the game runs, shown in
 // whole rounds (game time is rounds × the round length, 200 ms by default: the flowers' window to answer
 // plus the bees' window to decide).
-import type { GameView } from "../types";
+import { prevalenceOn, roundMsOf as roundMsOfConfig, windowMsOf, type GameView } from "../types";
 import { useLiveTick, type LiveStore } from "../lib/live";
 import { fmtClock } from "../lib/format";
 import { Progress } from "./ui";
@@ -10,12 +10,13 @@ import { Progress } from "./ui";
 export const showTenths = (endMs: number) => endMs <= 120_000;
 
 /** The round length: the flower window plus the bees' decision window. */
-export const roundMsOf = (view: GameView) => view.game.config.budgets.flower.ms + view.game.config.budgets.bee.ms;
+export const roundMsOf = (view: GameView) => roundMsOfConfig(view.game.config);
 
 /** One line on how a round works, for the clock and the settings. */
 export const roundLine = (view: GameView) => {
-  const b = view.game.config.budgets;
-  return `A round is ${b.flower.ms + b.bee.ms} ms of game time: every bee that isn't feeding visits a random flower, the flower has a hidden ${b.flower.minMs ?? 50}–${b.flower.ms} ms of CPU time to answer (delivered at ${b.flower.ms} ms), then the bee has ${b.bee.ms} ms of CPU time to feed or leave. A feed sits it out ${view.game.config.feedCost} rounds.`;
+  const cfg = view.game.config, b = cfg.budgets, prev = prevalenceOn(cfg) ? cfg.prevalence! : null;
+  return `A round is ${roundMsOfConfig(cfg)} ms of game time: ${prev ? `ceil(${prev.slots} × N) bees, drawn by their recent success, each visit a species drawn by its recent success` : "every bee that isn't feeding visits a random flower"}; the flower has a hidden ${b.flower.minMs ?? 50}–${b.flower.ms} ms of CPU time to answer (delivered at ${windowMsOf(cfg)} ms), then the bee has ${b.bee.ms} ms of CPU time to feed or leave.` +
+    (cfg.feedCost > 0 ? ` A feed sits it out ${cfg.feedCost} rounds.` : "");
 };
 
 export function GameClock({ store, view }: { store: LiveStore; view: GameView }) {

@@ -5,7 +5,7 @@
 // (including what it lost on visits where the bee didn't feed, which only my team sees until the end)
 // and my team over time.
 import { useMemo, useState } from "react";
-import { byteCapOf, energyBytes, scoringOf, type GameView, type LedgerEntry, type Team } from "../types";
+import { byteCapOf, energyBytes, roundMsOf, scoringOf, type GameView, type LedgerEntry, type Team } from "../types";
 import { gameBase } from "../api";
 import type { LedgerStore } from "../lib/history";
 import { useLiveTick } from "../lib/live";
@@ -24,7 +24,7 @@ export function LedgerPanel({ view, ledger }: { view: GameView; ledger: LedgerSt
   const rev = useLiveTick(ledger, 1000);
   const g = view.game;
   const cfg = g.config;
-  const roundMs = cfg.budgets.flower.ms + cfg.budgets.bee.ms;
+  const roundMs = roundMsOf(cfg);
   const order = ledger.participants ?? view.participants ?? [];
   const teams: Team[] = useMemo(() => {
     const byId = new Map(view.teams.map((t) => [t.id, t]));

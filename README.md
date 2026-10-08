@@ -11,13 +11,14 @@ the `claude/one-flower` branch):
   an optional `fed(nectar)` can update after a feed, in the same instance that decided; `fed` may also
   return the bee's next challenge in place of the one `decide` queued
 
-A game is one continuous garden of 200 ms rounds. Every round, each bee that isn't feeding takes a turn at a
-flower drawn at random (its own included): the flower has a hidden time budget R, drawn from 3–150 ms
-every call, the bee 50 ms. A flower allocates its energy between **compute**, **nectar** and **pollen**: its
+A game is one continuous garden of 200 ms rounds. Every round a quarter of the bees, drawn by their recent
+success, each take a turn at a flower species drawn by its recent success (its own included): the flower has
+a hidden CPU budget R, drawn from 1–50 ms every call (its answer still arrives at 150 ms), the bee 50 ms. A flower allocates its energy between **compute**, **nectar** and **pollen**: its
 **excess energy** is (size cap − its size) × (R − the CPU time it used) × (byte cap − its response's bytes),
 in node·ms·bytes, so code nodes, compute milliseconds and output bytes are each free only when unused. A feed splits
-it into nectar for the bee and pollen the flower keeps, and sits the bee out 20 rounds; a turn without a
-feed pays nobody. Every turn is public as it
+it into nectar for the bee and pollen the flower keeps, and the bee pays a feed price out of its nectar;
+a turn without a feed pays nobody. Fitness is the time-average of flower success × bee success (RULES.md
+"Prevalence"). Every turn is public as it
 happens (who visited whom, the challenge, the response, whether the bee fed, and a feed's percent, energy,
 nectar and pollen), and so is the scoreboard; code, timings and the details of unfed turns stay with
 their teams until the end. Programs see no history; teams, operators and agents query every finished turn
@@ -62,7 +63,7 @@ To work on the web app with hot reload, run the server and then `API=http://loca
 | `server/realtime.js`, `server/sockets.js` | the live game feed for each viewer, over SSE and WebSocket (the same messages), fed by Postgres `LISTEN/NOTIFY` |
 | `server/runners/` | program runners: every call runs fresh. Python forks per call; TypeScript runs each call in a fresh `vm` context. A feed decision's instance is kept for `fed`. Flowers are CPU-timed, their response's size checked; replies and MEMORY are encoded on the program's clock, so no user code runs after it stops |
 | `server/lib/scoring.js` | Σ nectar^α and Σ pollen^β (the game's `scoring` exponents, 0.85 by default; √ for games stored without them) → forage / pollination → shares → fitness (N² × the two shares) |
-| `server/lib/prevalence.js` | species prevalence: decayed per-(bee, species) ledgers → P_s (N × share of recent success, capped) → each turn's species drawn with p_s = (c(t) + P_s) / Σ (c + P); rebuilt from the feeds when a garden is adopted |
+| `server/lib/prevalence.js` | prevalence on both sides: decayed ledgers of pollen given and net nectar got (nectar − feed price) → flower and bee success F, B (N × share, capped) → each round's bees drawn without replacement by c(t) + B, their flowers by c(t) + F; fitness = the time-average of F × B (the scoreboard, for games with it); ledgers rebuilt from the feeds when a garden is adopted |
 | `server/lib/shortid.js` | Crockford base32 codes and shortest-unique-prefix allocation |
 | `server/auth/` | pluggable login. `dev` = name only. Production adds e.g. Replit Auth in `replit.js` with the same shape |
 | `server/db/migrations/` | SQL schema, applied on boot |

@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errorText, gameBase } from "../api";
 import { Link } from "../router";
 import { useDocumentTitle } from "../hooks";
-import { energyUnitOf, type GameView, type Kind, type ScoresView } from "../types";
+import { energyUnitOf, windowMsOf, type GameView, type Kind, type ScoresView } from "../types";
 import { setEnergyUnit } from "../lib/format";
 import { LiveStore, useGameStream, useLiveTick } from "../lib/live";
 import { useHistory, useLedger, type HistoryStore, type LedgerStore } from "../lib/history";
@@ -117,7 +117,7 @@ function GameBody({ view, base, store }: { view: GameView; base: string; store: 
   // has lost); for spectators and after the game, once its panel is opened.
   const [ledgerOpen, setLedgerOpen] = useState(false);
   const ledger = useLedger(base, (live && playing) || ledgerOpen, g.status, myTeamId ?? "");
-  const history = useHistory(base, view.participants, cfg.budgets.flower.ms, over);
+  const history = useHistory(base, view.participants, windowMsOf(cfg), over);
   const myIndex = myTeamId ? (view.participants ?? []).indexOf(myTeamId) : -1;
   const wasted = useWasted(ledger, myIndex);
 

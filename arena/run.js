@@ -136,8 +136,8 @@ async function setupGame(arena, generation, log) {
     const config = configFor(arena, generation);
     const g = await Api.createGame(ownerTok, arena.room_short_id, config);
     const view = await Api.view(ownerTok, gamePath(arena.room_short_id, g.shortId));
-    // A preset that relies on the server's defaults (adapt-hi: the new R floor, feed cost and score exponents) checks
-    // them on its first game, before any session runs: an old server would play the old rules.
+    // Every preset sets its rules and checks them on each new game, before any session runs (lib/presets.js
+    // expectConfig): a server that drops or changes one would play other rules.
     for (const [key, want] of Object.entries(arena.settings.expectConfig || {})) {
       const got = key.split(".").reduce((o, k) => o?.[k], view.game.config);
       if (got !== want) throw new Error(`the server's game config has ${key} = ${JSON.stringify(got)}, not ${JSON.stringify(want)}: restart it with the engine's new defaults (arena/server.sh)`);

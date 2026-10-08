@@ -2,7 +2,7 @@
 // over), the garden replays it at any speed and can be scrubbed to any round, the round inspector shows
 // every field of every turn in the round on screen, and the charts show each team over the game.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { byteCapOf, energyBytes, scoringOf, type GameView, type Team } from "../types";
+import { byteCapOf, energyBytes, roundMsOf, scoringOf, windowMsOf, type GameView, type Team } from "../types";
 import { gameBase } from "../api";
 import type { HistoryStore } from "../lib/history";
 import { useLiveTick, type Ticking } from "../lib/live";
@@ -61,7 +61,7 @@ export function Replay({ view, history }: { view: GameView; history: HistoryStor
   const g = view.game;
   const base = gameBase(view.room.shortId, g.shortId);
   const cfg = g.config;
-  const roundMs = cfg.budgets.flower.ms + cfg.budgets.bee.ms;
+  const roundMs = roundMsOf(cfg);
   const endMs = Math.max(roundMs, g.clockMs);
   const order = view.participants ?? [];
   const teams = useMemo(() => {
@@ -94,7 +94,7 @@ export function Replay({ view, history }: { view: GameView; history: HistoryStor
       <LoadBar history={history} />
       <GardenControls teams={teams} mine={mine} focus={focus} setFocus={setFocus} bubbles={bubbles} setBubbles={setBubbles} names={names} setNames={setNames} />
       <div className="garden">
-        <GardenStage teams={teams} driver={driver} status="running" roundMs={roundMs} flowerMs={cfg.budgets.flower.ms} beeMs={cfg.budgets.bee.ms}
+        <GardenStage teams={teams} driver={driver} status="running" roundMs={roundMs} flowerMs={windowMsOf(cfg)} beeMs={cfg.budgets.bee.ms}
           focus={focus} mine={mine >= 0 ? mine : null} bubbles={bubbles} names={names} tallies={tallies} apiBase={base}
           banner={!driver.playing && t === 0 ? <button className="garden-banner garden-play" onClick={() => driver.play()}><PlayIcon size={16} /> Play the replay</button> : null} />
         <Transport driver={driver} roundMs={roundMs} endMs={endMs} loadedT={loadedT} round={round} />
@@ -246,7 +246,7 @@ function ReplayCharts({ view, history, teams, mine, focus, setFocus, cursor, onS
   cursor: number; onSeek: (t: number) => void; hrev: number;
 }) {
   const cfg = view.game.config;
-  const roundMs = cfg.budgets.flower.ms + cfg.budgets.bee.ms;
+  const roundMs = roundMsOf(cfg);
   const endMs = Math.max(roundMs, view.game.clockMs);
   const [metric, setMetric] = useState<MetricKey>("fitness");
   const { alpha, beta } = scoringOf(cfg);

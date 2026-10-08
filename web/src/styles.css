@@ -1059,14 +1059,14 @@ input[type="range"] { accent-color: var(--honey); }
   .who { display: none; }
 }
 
-/* Species prevalence, beside the scoreboard (components/Prevalence.tsx). */
+/* Prevalence on both sides, beside the scoreboard (components/Prevalence.tsx). */
 .prevalence { display: grid; gap: 8px; margin: 4px 0 14px; }
-.prev-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
-.prev-list li { display: grid; grid-template-columns: minmax(90px, 160px) minmax(60px, 1fr) 54px 64px; align-items: center; gap: 8px; }
-.prev-list li.mine .team-name { font-weight: 800; }
-.prev-track { position: relative; height: 10px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.prev-table td, .prev-table th { white-space: nowrap; }
+.prev-cell { display: inline-grid; grid-template-columns: minmax(60px, 120px) 48px; align-items: center; gap: 6px; }
+.prev-track { position: relative; height: 10px; border-radius: 999px; background: var(--line); overflow: hidden; display: block; }
 .prev-fill { position: absolute; inset: 0 auto 0 0; border-radius: 999px; opacity: .85; }
 .prev-par { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--ink); opacity: .45; }
 .prev-num { font-variant-numeric: tabular-nums; text-align: right; font-size: 13px; }
 .prev-parline { stroke: var(--ink-soft); stroke-width: 1; stroke-dasharray: 4 4; }
-@media (max-width: 520px) { .prev-list li { grid-template-columns: minmax(80px, 1fr) 1fr 48px; } .prev-list li .prev-num.muted { display: none; } }
+.prev-pick select { margin-left: 4px; }
+@media (max-width: 520px) { .prev-cell { grid-template-columns: 50px 44px; } }

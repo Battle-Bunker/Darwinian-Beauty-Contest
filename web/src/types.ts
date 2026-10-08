@@ -13,7 +13,11 @@ export interface Budget { size: number; perMinute: number; cap: number; ms: numb
 export interface GameConfig {
   language: "python" | "typescript";
   minutes: number;          // game time; the clock stops while paused
-  feedCost: number;         // rounds a bee sits out after it feeds
+  feedCost: number;         // rounds a bee sits out after it feeds (0 by default; 20 in games from before)
+  /** When every response is delivered (null: flower.ms, as in games from before). */
+  flowerWindowMs?: number | null;
+  /** What a feed costs the bee out of its nectar, in E's unit (null: 0.05 × Emax; 0: free, as in games from before). */
+  feedPrice?: number | null;
   challengeType: string;
   responseType: string;
   maxLen: number;
@@ -26,20 +30,28 @@ export interface GameConfig {
   scoring?: Scoring;
   /** bytes: E = (cap − size) × max(0, R − CPU ms) × (maxResponseBytes − response bytes), in node·ms·bytes. Without it, no byte factor (node·ms). */
   energy?: { bytes: boolean };
-  /** Species prevalence: each turn's species drawn with p_s = (c + P_s) / Σ (c + P_k). The view always has every key (off: a game without it). */
+  /** Prevalence on both sides: the view always has every key (off: a game without it). */
   prevalence?: PrevalenceConfig;
   budgets: Record<Kind, Budget>;
 }
 
-export type PrevalenceBasis = "pollination" | "feeds" | "fitness";
-/** As stored: halfLifeS null = cumulative, prior null = the basis's default, cap null = none. */
-export interface PrevalenceConfig { on: boolean; basis: PrevalenceBasis; halfLifeS: number | null; cStart: number; cEnd: number; prior: number | null; cap: number | null }
-/** One species in a sample: p (the chance a turn draws it) and P (its recent success, par 1). */
-export interface PrevalenceSpecies { team: string; index: number; p: number; P: number }
+/**
+ * As stored: each round ceil(slots × N) bees are drawn by c + B (bee success), each visiting a species drawn by
+ * c + F (flower success); halfLifeS null = cumulative, prior null = 0.12 × Emax, cap null = none.
+ */
+export interface PrevalenceConfig { on: boolean; halfLifeS: number | null; cStart: number; cEnd: number; cap: number | null; slots: number; prior: number | null }
+/** One team in a sample: its flower and bee success (par 1), their draw chances, and its fitness so far. */
+export interface PrevalenceSpecies { team: string; index: number; flowerSuccess: number; beeSuccess: number; flowerP: number; beeP: number; fitness: number }
 /** A sample, about once a second of game time: the round whose draws it gave, and that round's start. */
-export interface PrevalenceSample { round: number; atMs: number; c: number; species: PrevalenceSpecies[] }
-/** The game's prevalence (settings with the prior resolved) and its latest sample (round null and species [] before the first). */
-export type PrevalenceView = Omit<PrevalenceConfig, "prior"> & { prior: number; round: number | null; atMs: number | null; c: number | null; species: PrevalenceSpecies[] };
+export interface PrevalenceSample { round: number; atMs: number; c: number; slots: number; species: PrevalenceSpecies[] }
+/** The game's prevalence (settings with the prior and the feed price resolved) and its latest sample (null before the first). */
+export type PrevalenceView = Omit<PrevalenceConfig, "prior"> & { prior: number; feedPrice: number; sample: PrevalenceSample | null };
+/** Whether a game has prevalence (and so its fitness is the time-average of F × B). */
+export const prevalenceOn = (cfg: { prevalence?: PrevalenceConfig } | null | undefined) => cfg?.prevalence?.on === true && "slots" in (cfg.prevalence ?? {});
+/** The flower window: when every response is delivered (flower.ms in games from before). */
+export const windowMsOf = (cfg: GameConfig) => Math.max(cfg.flowerWindowMs ?? cfg.budgets.flower.ms, cfg.budgets.flower.ms);
+/** One round of game time: the flower window plus the bees' decision window. */
+export const roundMsOf = (cfg: GameConfig) => windowMsOf(cfg) + cfg.budgets.bee.ms;
 
 /** Whether a game's E has the byte factor (a config without `energy`: no, as games before it). */
 export const energyBytes = (cfg: { energy?: { bytes: boolean } } | null | undefined) => cfg?.energy?.bytes === true;
@@ -127,7 +139,7 @@ export type ActionKind = "arrive" | "feed" | "leave";
  */
 export interface Action {
   seq: number;
-  atMs: number;             // arrive: (round - 1) × round_ms; feed/leave: that + flower.ms
+  atMs: number;             // arrive: (round - 1) × round_ms; feed/leave: that + the flower window
   round: number;
   turn: number;             // the bee's turn number: (bee, turn) identifies a turn
   bee: string;
@@ -141,6 +153,8 @@ export interface Action {
   rPreview?: string | null; // over 4 KB only: the first 4 KB of its JSON text
   pollen?: number | null;   // what the flower kept: (1 − percent/100) × E on a feed, 0 on a leave
   nectar?: number | null;   // feed only: percent/100 × E
+  price?: number | null;    // feed only: the feed price the bee paid out of its nectar (0 in games without one)
+  net?: number | null;      // feed only: nectar − price (can be negative)
   // public on a feed; on a leave the flower's team only (everyone after finish):
   percent?: number | null;
   energy?: number | null;   // E, node·ms·bytes (node·ms in games without the byte factor)
@@ -194,7 +208,9 @@ export interface TeamScore {
   teamId: string;
   pollination: number | null;      // Σ over bee teams of (pollen this flower kept from their feeds)^beta
   forage: number | null;           // Σ over flower teams of (nectar this bee got there)^alpha
-  pollinationShare: number | null; forageShare: number | null; fitness: number | null;
+  pollinationShare: number | null; forageShare: number | null;
+  fitness: number | null;          // with prevalence, the time-average of F × B; else N² × pollination share × forage share
+  flowerSuccess?: number | null; beeSuccess?: number | null; flowerP?: number | null; beeP?: number | null; // with prevalence: the latest sample's
   pollen: number | null;           // all this flower kept
   feedsReceived: number; feedsGiven: number; pollinators: number;
   nectarCollected: number | null; nectarGiven: number | null; nectarSources: number | null;
@@ -220,6 +236,8 @@ export interface GameView {
     id?: string; shortId: string; url: string; status: GameStatus; config: GameConfig;
     clockMs: number; endMs: number; round: number; lastSeq: number; version: number; lastError: string | null;
     createdAt?: string; startedAt: string | null; finishedAt: string | null; revealed: boolean; isOwner: boolean;
+    windowMs?: number;   // the flower window the game plays with
+    feedPrice?: number;  // the feed price the game plays with (0: free)
   };
   me: { id: string; name: string; teamId: string | null } | null;
   participants: string[] | null;

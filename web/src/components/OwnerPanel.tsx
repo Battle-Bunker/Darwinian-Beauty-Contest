@@ -1,10 +1,10 @@
 // Owner controls: game settings (lobby only), start, pause / resume and finish. Plus a settings summary for everyone.
 import { useEffect, useState, type FormEvent } from "react";
 import { api, errorText } from "../api";
-import { KINDS, byteCapOf, defaultMinMs, energyBytes, scoringOf, type GameConfig, type GameView, type Kind, type Team } from "../types";
+import { KINDS, byteCapOf, defaultMinMs, energyBytes, prevalenceOn, roundMsOf, scoringOf, windowMsOf, type GameConfig, type GameView, type Kind, type Team } from "../types";
 import { Alert, TeamChip } from "./ui";
 import { PauseIcon, PlayIcon } from "./Icons";
-import { fmtBytes, fmtClock, powText } from "../lib/format";
+import { fmtBytes, fmtClock, fmtE, powText } from "../lib/format";
 
 const TYPES = ["int", "float", "bool", "str", "any", "list[int]", "list[float]", "list[bool]", "list[str]", "tree[int]", "graph", "digraph", "graph[any]", "graph[int]", "digraph[any]"];
 
@@ -106,7 +106,10 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
     </select>
   );
   const seconds = Math.round(draft.minutes * 60);
-  const roundMs = draft.budgets.flower.ms + draft.budgets.bee.ms;
+  const roundMs = roundMsOf(draft), windowMs = windowMsOf(draft);
+  const prev = prevalenceOn(draft) ? draft.prevalence! : null;
+  const emax = draft.budgets.flower.size * draft.budgets.flower.ms * (energyBytes(draft) ? byteCapOf(draft) : 1);
+  const price = draft.feedPrice === null ? 0.05 * emax : draft.feedPrice ?? 0;
   const cap = draft.budgets.flower.size;
   const grain = draft.pollenGrain ?? { exponent: 1 / 3, scale: 1 };
   const grainLen = (p: number) => (Number.isFinite(grain.exponent) && Number.isFinite(grain.scale) ? Math.floor(grain.scale * Math.pow(p, grain.exponent)) : NaN);
@@ -124,6 +127,11 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
         </label>
         <label className="field"><span>Length (minutes)</span>{num(draft.minutes, (v) => set("minutes", v), 0.1, 1440, "Game length in minutes", "any")}</label>
         <label className="field"><span>Feed cost (rounds sat out)</span>{num(draft.feedCost, (v) => set("feedCost", v), 0, 1000, "Feed cost: rounds a bee sits out after it feeds")}</label>
+        <label className="field"><span>Feed price (blank: 5% of Emax)</span>
+          <input type="number" inputMode="decimal" value={draft.feedPrice === null || draft.feedPrice === undefined ? "" : draft.feedPrice} min={0} step="any" aria-label="Feed price: what a feed costs the bee out of its nectar; blank for 0.05 × Emax, 0 for free"
+            onChange={(e) => set("feedPrice", e.target.value === "" ? null : Number(e.target.value))} />
+        </label>
+        <label className="field"><span>Flower window (ms)</span>{num(windowMs, (v) => set("flowerWindowMs", v), 1, 10000, "Flower window: when every response is delivered")}</label>
         <label className="field"><span>Challenge type</span>{typeSelect(draft.challengeType, (v) => set("challengeType", v), "Challenge type")}</label>
         <label className="field"><span>Response type</span>{typeSelect(draft.responseType, (v) => set("responseType", v), "Response type")}</label>
         <label className="field"><span>Max string/list length</span>{num(draft.maxLen, (v) => set("maxLen", v), 1, 1024, "Max string or list length")}</label>
@@ -144,12 +152,15 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
       <p className="small muted settings-hint">
         {Number.isFinite(seconds) && Number.isFinite(roundMs) && roundMs > 0
           ? <>The game runs for <b>{fmtClock(seconds * 1000)}</b> of game time: <b>{Math.round((seconds * 1000) / roundMs).toLocaleString()}</b> rounds of <b>{roundMs} ms</b> (the clock stops while paused). </> : null}
-        Each round every bee that isn't feeding visits a random flower: the flower has a hidden time budget R, drawn each call from <b>{draft.budgets.flower.minMs ?? 50}</b> to <b>{draft.budgets.flower.ms} ms</b> of CPU time, to answer (every answer reaches the bee at {draft.budgets.flower.ms} ms, so timing hides R), then the bee has <b>{draft.budgets.bee.ms} ms</b> of CPU time to feed or leave.
-        A bee that feeds sits out the next <b>{Number.isFinite(draft.feedCost) ? draft.feedCost : "?"}</b> rounds.
+        {prev
+          ? <>Each round <b>ceil({prev.slots} × N)</b> bees visit, drawn by their recent success, each at a species drawn by its recent success (prevalence: half-life {prev.halfLifeS ?? "∞"} s, c from {prev.cStart} to {prev.cEnd}, cap {prev.cap ?? "none"}); the others' challenges wait. </>
+          : <>Each round every bee that isn't feeding visits a random flower. </>}
+        The flower has a hidden time budget R, drawn each call from <b>{draft.budgets.flower.minMs ?? 50}</b> to <b>{draft.budgets.flower.ms} ms</b> of CPU time, to answer (every answer reaches the bee at {windowMs} ms, so timing hides R), then the bee has <b>{draft.budgets.bee.ms} ms</b> of CPU time to feed or leave.
+        {" "}A feed costs the bee <b>{Number.isFinite(price) ? fmtE(price) : "?"}</b> of its nectar{draft.feedCost > 0 ? <> and sits it out the next <b>{draft.feedCost}</b> rounds</> : null}.
         Each team's flower is a species; every visit is a bee meeting one of its flowers, which spends its budget on its size and compute{bytesOn ? " and the bytes of its answer" : ""} and, if the bee feeds, gives it nectar and pollen from what's left: E = ({Number.isFinite(cap) ? cap.toLocaleString() : "?"} − its size) × max(0, R − its CPU ms){bytesOn ? <> × ({byteCap.toLocaleString()} − its response's bytes)</> : null}, so a {Number.isFinite(cap) ? Math.round(cap / 2).toLocaleString() : "?"}-node flower answering in 10 ms {bytesOn ? "with 24 bytes " : ""}at R = {draft.budgets.flower.ms} ms has {Number.isFinite(cap) && Number.isFinite(byteCap) ? Math.round(Math.round(cap / 2) * Math.max(0, draft.budgets.flower.ms - 10) * (bytesOn ? Math.max(0, byteCap - 24) : 1)).toLocaleString() : "?"} {bytesOn ? "node·ms·bytes" : "node·ms"} to give.
         {" "}Bees run fresh for every turn and keep only their MEMORY, a key–value store of at most <b>{(draft.budgets.bee.memory ?? 50).toLocaleString()}</b> bytes (each entry: its key's bytes plus its value's JSON bytes).
         {" "}On every feed, {(draft.grains ?? "feeder") === "off" ? "no pollen grain is given (grains are off)" : <>the bee's team gets a pollen grain: ⌊{grain.scale} × pollen^{+grain.exponent.toFixed(3)}⌋ characters of the flower's minified code from a random start ({Number.isFinite(grainLen(27000)) ? `27,000 pollen gives ${grainLen(27000)}, 100,000 gives ${grainLen(100000)}` : "?"}), seen {(draft.grains ?? "feeder") === "public" ? "by everyone as it happens" : "by that team only until the game ends"}</>}.
-        {" "}Scores: a team's forage is the sum over flower teams of {Number.isFinite(sc.alpha) ? powText("the nectar its bee got there", sc.alpha) : "(the nectar its bee got there)^?"}, its pollination the sum over bee teams of {Number.isFinite(sc.beta) ? powText("the pollen its species gave that team's bee", sc.beta) : "(the pollen its species gave that team's bee)^?"} (exponents in (0, 1]: below 1, spreading beats the same amount from one team); fitness = N² × pollination share × forage share.
+        {" "}{prev ? "Fitness is the time-average of flower success × bee success. Without prevalence, scores:" : "Scores:"} a team's forage is the sum over flower teams of {Number.isFinite(sc.alpha) ? powText("the nectar its bee got there", sc.alpha) : "(the nectar its bee got there)^?"}, its pollination the sum over bee teams of {Number.isFinite(sc.beta) ? powText("the pollen its species gave that team's bee", sc.beta) : "(the pollen its species gave that team's bee)^?"} (exponents in (0, 1]: below 1, spreading beats the same amount from one team); fitness = N² × pollination share × forage share.
         {" "}String and list lengths and tree and graph sizes limit challenges; a response may be up to <b>{fmtBytes(byteCap)}</b> of JSON (over that it counts as no answer{bytesOn ? "; at exactly that it is an answer with E = 0" : ""}), and one over 4 KB is shown on the page as its first 4 KB.
       </p>
       <div className="settings-checks">
@@ -196,11 +207,12 @@ export function SettingsSummary({ cfg }: { cfg: GameConfig }) {
       <div className="chips">
         <span className="chip">{cfg.language === "python" ? "Python" : "TypeScript"}</span>
         <span className="chip">{fmtClock(cfg.minutes * 60000)} of game time</span>
-        <span className="chip" title={`Each round every bee that isn't feeding visits a random flower: it answers within ${cfg.budgets.flower.ms} ms, then the bee decides within ${cfg.budgets.bee.ms} ms`}>rounds of {cfg.budgets.flower.ms + cfg.budgets.bee.ms} ms</span>
+        <span className="chip" title={`Each round the visiting bees meet a flower: it answers by ${windowMsOf(cfg)} ms, then the bee decides within ${cfg.budgets.bee.ms} ms`}>rounds of {roundMsOf(cfg)} ms</span>
         <span className="chip" title="Each flower call's hidden time budget R is drawn uniformly from this range">flower R {cfg.budgets.flower.minMs ?? 50}–{cfg.budgets.flower.ms} ms · bee {cfg.budgets.bee.ms} ms</span>
-        <span className="chip">a feed costs {cfg.feedCost} rounds</span>
-        <span className="chip" title="forage = Σ over flower teams of nectar^α; pollination = Σ over bee teams of pollen^β; fitness = N² × pollination share × forage share">
-          score: {powText("nectar", scoringOf(cfg).alpha)}, {powText("pollen", scoringOf(cfg).beta)}
+        {(cfg.feedPrice === null || (cfg.feedPrice ?? 0) > 0) && <span className="chip" title="What every feed costs the bee, out of its nectar: net = nectar − price">feed price {cfg.feedPrice === null ? "5% of Emax" : fmtE(cfg.feedPrice!)}</span>}
+        {cfg.feedCost > 0 && <span className="chip">a feed costs {cfg.feedCost} rounds</span>}
+        <span className="chip" title={prevalenceOn(cfg) ? "fitness = the time-average of flower success × bee success (each N × a share of Σ pollen^β, Σ net nectar^α)" : "forage = Σ over flower teams of nectar^α; pollination = Σ over bee teams of pollen^β; fitness = N² × pollination share × forage share"}>
+          {prevalenceOn(cfg) ? "fitness: avg F × B" : "score"}: {powText("nectar", scoringOf(cfg).alpha)}, {powText("pollen", scoringOf(cfg).beta)}
         </span>
         <span className="chip" title={`E = (flower size cap − flower size) × max(0, R − CPU ms)${energyBytes(cfg) ? ` × (${byteCapOf(cfg)} − response bytes), in node·ms·bytes` : ", in node·ms"}, R each call's hidden time budget`}>energy cap {cfg.budgets.flower.size.toLocaleString()} nodes</span>
         <span className="chip mono">{cfg.challengeType} → {cfg.responseType}</span>
@@ -212,9 +224,9 @@ export function SettingsSummary({ cfg }: { cfg: GameConfig }) {
           pollen grains: {{ feeder: "the feeding team's", public: "public", off: "off" }[cfg.grains ?? "feeder"]}
         </span>
         <span className="chip">{cfg.revealOnFinish ? "code and prints revealed at the end" : "code stays secret"}</span>
-        {cfg.prevalence?.on
-          ? <span className="chip" title={`Each turn's species is drawn with p = (c + P) / Σ (c + P): P its recent ${cfg.prevalence.basis} (N × its share${cfg.prevalence.halfLifeS ? `, half-life ${cfg.prevalence.halfLifeS} s` : ", whole game"}${cfg.prevalence.cap != null ? `, capped at ${cfg.prevalence.cap}` : ""}), c from ${cfg.prevalence.cStart} to ${cfg.prevalence.cEnd} over the game`}>species prevalence: {cfg.prevalence.basis}</span>
-          : <span className="chip" title="Each turn's flower is drawn uniformly among all species">species drawn uniformly</span>}
+        {prevalenceOn(cfg)
+          ? <span className="chip" title={`Each round ceil(${cfg.prevalence!.slots} × N) bees visit, drawn by c + B (bee success); each visits a species drawn by c + F (flower success). Recent: ${cfg.prevalence!.halfLifeS ? `half-life ${cfg.prevalence!.halfLifeS} s` : "whole game"}${cfg.prevalence!.cap != null ? `, capped at ${cfg.prevalence!.cap}` : ""}; c from ${cfg.prevalence!.cStart} to ${cfg.prevalence!.cEnd} over the game`}>prevalence: {Math.round(cfg.prevalence!.slots * 100)}% of bees a round</span>
+          : <span className="chip" title="Every bee visits every round, at a flower drawn uniformly among all species">every bee every round, uniform draws</span>}
       </div>
       <div className="table-scroll">
         <table className="data-table budgets compact">

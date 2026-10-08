@@ -3,7 +3,7 @@
 // entry's size is its key's UTF-8 bytes plus its value's JSON bytes. Only the bee writes it (nobody can
 // edit it here or anywhere); its team reads it during play, everyone once the game is over. A new bee
 // version starts it afresh, so "cleared" is when the version it belongs to went live.
-import type { BeeMemory, GameView, MemoryValue, Team } from "../types";
+import { roundMsOf, type BeeMemory, type GameView, type MemoryValue, type Team } from "../types";
 import { fmtClock } from "../lib/format";
 import { Meter } from "./ui";
 
@@ -55,7 +55,7 @@ export function MemoryEntries({ value, label }: { value: unknown; label: string 
 }
 
 export function MemoryView({ memory, team, view, own = false }: { memory: BeeMemory; team: Team; view: GameView; own?: boolean }) {
-  const roundMs = view.game.config.budgets.flower.ms + view.game.config.budgets.bee.ms;
+  const roundMs = roundMsOf(view.game.config);
   const version = team.programs?.bee?.find((v) => v.version === memory.version);
   const cleared = version
     ? version.atMs > 0 ? `cleared at ${fmtClock(version.atMs)} (round ${(Math.floor(version.atMs / roundMs) + 1).toLocaleString()}), when bee v${memory.version} went live` : `bee v${memory.version}'s, since the start`

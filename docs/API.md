@@ -6,14 +6,17 @@ unique when the record was created (any longer prefix, up to the full 26-charact
 and so does lowercase). Pages live at `/room/<roomShortId>/game/<gameShortId>`.
 
 RULES.md has the game itself. In short: each team has one **flower** and one **bee**; every 200 ms round,
-each bee that isn't feeding takes one **turn**: the engine draws a flower at random (own included), the
-flower answers `[response, percent]` within its R (at most 150 ms of CPU time), and the bee decides `["feed" | "leave", next]` within
-50 ms of CPU time; after a feed, the bee's optional `fed(nectar)` runs in the same program instance. Excess energy E = (flower size cap − flower size) × max(0, R − flower CPU ms) × (byte cap − response bytes), in node·ms·bytes, R the call's hidden time budget (3–150 ms by default) and the byte cap `maxResponseBytes` (1,024 by default); a feed pays
-nectar = percent/100 × E and pollen = the rest to the bee (pollen is what the flower wants carried); a
-turn without a feed pays
-nobody (its energy is lost). fitness = N² × pollination share × forage share, where pollination is Σ over bee
-teams of pollen^β (the pollen a team's flower species gave that team's bee) and forage Σ over flower teams of
-nectar^α (the nectar a team's bee got there); α = β = 0.85 by default.
+ceil(0.25 × N) bees (drawn without replacement, weighted by their bee success B) each take one **turn**:
+the engine draws a flower species weighted by its flower success F (own included), the flower answers
+`[response, percent]` within its R (at most 50 ms of CPU time; delivered at 150 ms), and the bee decides
+`["feed" | "leave", next]` within 50 ms of CPU time; after a feed, the bee's optional `fed(nectar)` runs in
+the same program instance. Excess energy E = (flower size cap − flower size) × max(0, R − flower CPU ms) ×
+(byte cap − response bytes), in node·ms·bytes, R the call's hidden time budget (1–50 ms by default) and the
+byte cap `maxResponseBytes` (1,024 by default); a feed pays nectar = percent/100 × E and pollen = the rest
+to the bee, and the bee pays the feed price out of its nectar (net = nectar − price); a turn without a feed
+pays nobody (its energy is lost). fitness = the time-average of F × B (see `prevalence` below). Games from
+before (no `prevalence` in their config) play every bee every round with uniform draws and free feeds, and
+score N² × pollination share × forage share.
 
 ## Auth
 
@@ -44,12 +47,12 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 | Method | Path | Who | Body / query | Returns |
 |---|---|---|---|---|
 | GET | `base` | anyone | | the **game view** (below), filtered for the viewer |
-| GET | `base/actions` | anyone | `?after=<seq>&limit=<n ≤ 5000>`, or `?before=<seq>&limit=<n>`; `&mine=1` (team members) for only turns of your bee or at your flower | `{ actions: [action], lastSeq, clockMs, round, status, prevalence? }` (`prevalence`: the latest species prevalence sample, in games that have it): the actions after `after`, oldest first; or the last `limit` before `before`, oldest first (`before = lastSeq + 1` gives the latest) |
+| GET | `base/actions` | anyone | `?after=<seq>&limit=<n ≤ 5000>`, or `?before=<seq>&limit=<n>`; `&mine=1` (team members) for only turns of your bee or at your flower | `{ actions: [action], lastSeq, clockMs, round, status, prevalence? }` (`prevalence`: the latest prevalence sample, in games that have it): the actions after `after`, oldest first; or the last `limit` before `before`, oldest first (`before = lastSeq + 1` gives the latest) |
 | GET | `base/ledger` | anyone | `?after=<seq>&limit=<n ≤ 5000>` | `{ participants, team, entries: [entry], lastSeq, round, status }`: the **team ledger** (below): every finished turn as your team may see it. `team` is your team's index in `participants` (null for a spectator, who gets the public fields only) |
 | GET | `base/responses/:seq` | anyone | | the whole response of the turn whose `feed`/`leave` action is `seq`, as its JSON text (`application/json`; responses are public). For responses over 4 KB, which actions, ledger entries, live feeds and query rows show only as a preview, size and hash; **404** if that turn has no response |
-| GET | `base/scores` | anyone | | `{ status, clockMs, endMs, round, lastSeq, participants, scores, ledgers, prevalence }`: the live scoreboard, ledgers and species prevalence (public; `prevalence` as in the game view); cheap enough to poll every second |
-| GET | `base/prevalence` | anyone | `?after=<round>&limit=<n ≤ 5000>` | `{ prevalence, samples: [sample] }`: the game's species prevalence settings (null: uniform draws) and its samples after round `after`, oldest first (public; see "Species prevalence") |
-| GET | `base/events` | anyone | `?after=<seq>` | Server-Sent Events: `{version}` when the view should be refetched; `{programs: true}` when your own team's programs changed (refetch too); `{actions, lastSeq, clockMs, round, status}` as the garden writes them (from `after`, in order, page after page until caught up); `{lastSeq, clockMs, round, status}` when there is nothing new; either carries `prevalence` (a species prevalence sample) whenever there is a new one, about once a second of game time |
+| GET | `base/scores` | anyone | | `{ status, clockMs, endMs, round, lastSeq, participants, scores, ledgers, prevalence }`: the live scoreboard, ledgers and prevalence (public; `prevalence` as in the game view); cheap enough to poll every second |
+| GET | `base/prevalence` | anyone | `?after=<round>&limit=<n ≤ 5000>` | `{ prevalence, samples: [sample] }`: the game's prevalence settings (null: a game without) and its samples after round `after`, oldest first (public; see "Prevalence samples") |
+| GET | `base/events` | anyone | `?after=<seq>` | Server-Sent Events: `{version}` when the view should be refetched; `{programs: true}` when your own team's programs changed (refetch too); `{actions, lastSeq, clockMs, round, status}` as the garden writes them (from `after`, in order, page after page until caught up); `{lastSeq, clockMs, round, status}` when there is nothing new; either carries `prevalence` (a prevalence sample) whenever there is a new one, about once a second of game time |
 | GET (WebSocket) | `base/ws` | anyone | `?after=<seq>` | The same feed as `base/events` over a WebSocket: exactly the same messages, one JSON text frame each, filtered for the viewer the same way (a session cookie or `Authorization: Bearer` token for a team member's private fields). Server to client only; reconnect with `?after=` the last `seq` you got. `ws://`, or `wss://` behind https |
 | PATCH | `base/config` | owner, in the lobby | `{ config: {...partial} }` | `{ config, clearedPrograms }` (changing the language or types, or shrinking a size budget, clears the programs written so far) |
 | POST | `base/start` | owner, in the lobby | | `{ status: "running", participants }`. Teams with both programs play; at least 2 |
@@ -65,37 +68,49 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 ```json
 {
   "language": "python",
-  "minutes": 2, "feedCost": 20,
+  "minutes": 2, "feedCost": 0, "flowerWindowMs": 150, "feedPrice": null,
   "challengeType": "int", "responseType": "int", "maxLen": 64, "maxNodes": 512, "maxResponseBytes": 1024,
   "revealOnFinish": true,
   "grains": "feeder", "pollenGrain": { "exponent": 0.3333333333333333, "scale": 0.1 },
   "scoring": { "alpha": 0.85, "beta": 0.85 }, "energy": { "bytes": true },
-  "prevalence": { "on": true, "basis": "pollination", "halfLifeS": 90, "cStart": 1, "cEnd": 0.1, "prior": null, "cap": 4 },
+  "prevalence": { "on": true, "halfLifeS": 90, "cStart": 1, "cEnd": 0.1, "cap": 4, "slots": 0.25, "prior": null },
   "budgets": {
-    "flower": { "size": 1100,  "perMinute": 220,  "cap": 220,  "ms": 150, "minMs": 3 },
-    "bee":    { "size": 11000, "perMinute": 2200, "cap": 2200, "ms": 50, "memory": 50 }
+    "flower": { "size": 1100,  "perMinute": 60,  "cap": 300,  "ms": 50, "minMs": 1 },
+    "bee":    { "size": 11000, "perMinute": 600, "cap": 3000, "ms": 50, "memory": 50 }
   }
 }
 ```
 
 - `minutes`: game time the garden runs for (it stops while paused). Fractions are fine (`0.5` = 30 s).
-- **Rounds** last `round_ms = flower.ms + bee.ms` (200 ms) of game time; game time is rounds × `round_ms`.
-  Live games pace rounds to real time. At a round's start each bee with a challenge queued and not
-  feeding takes a turn (a bee with nothing queued loses it): a flower is drawn at random among all N
-  (`arrive`), weighted by species prevalence (below; uniformly in games without it), and called with the
-  challenge. At `flower.ms` its response is delivered and the bee has
-  `bee.ms` to decide (`feed` or `leave`, recorded as the turn's end). Turn details: RULES.md.
+- **Rounds** last `round_ms = flowerWindowMs + bee.ms` (200 ms) of game time; game time is rounds ×
+  `round_ms`. Live games pace rounds to real time. At a round's start the bees that can visit (a challenge
+  queued, no call in flight, not sitting out) are the candidates; with `prevalence`, ceil(`slots` × N) of
+  them are drawn without replacement, weighted by bee success, and the rest wait (their challenges stay
+  queued); without it, every candidate visits. Each visitor's flower is drawn among all N (`arrive`):
+  weighted by flower success with `prevalence`, else uniformly. At `flowerWindowMs` its response is
+  delivered and the bee has `bee.ms` to decide (`feed` or `leave`, recorded as the turn's end). Turn
+  details: RULES.md.
+- `flowerWindowMs` (default 150, never less than `budgets.flower.ms`): when every response is delivered.
+  A config stored without it is from before: its window is `budgets.flower.ms`. The game view's
+  `game.windowMs` is the window the game plays with.
 - **Versions are pinned per turn**: a turn keeps the bee's and the flower's versions from its arrival to
   its end. A new bee takes over when its turn in progress is over, dropping the old bee's queued
   challenge (it is asked `first` at once); a bee between turns switches at once.
-- `feedCost` (default 20): a bee that feeds has no turn for the next `feedCost` rounds.
+- `feedCost` (default 0; 20 in games from before): a bee that feeds has no turn for the next `feedCost` rounds.
+- `feedPrice` (E's unit, node·ms·bytes by default): what every feed costs the bee, out of its nectar: net
+  nectar = nectar − feedPrice (it can be negative). `null` (the default): 0.05 × Emax, where Emax =
+  `budgets.flower.size` × `budgets.flower.ms` × `maxResponseBytes` (1,100 × 50 × 1,024 = 56,320,000, so
+  2,816,000), following those settings; `0`: free. A config stored without it is from before: free. The
+  game view's `game.feedPrice` is the price the game plays with; programs get it as `GAME.feed_price`.
+  `fed(nectar)` gets the gross nectar.
 - `budgets.flower.size` is also the size cap in the energy formula. Each flower call gets a hidden time
-  budget **R**, drawn uniformly at random from `budgets.flower.minMs` to `budgets.flower.ms` (default 150).
-  `minMs` defaults to 2% of `ms`, rounded, at least 1 (3 of 150); left out, it follows `ms`, and a value you set
+  budget **R**, drawn uniformly at random from `budgets.flower.minMs` to `budgets.flower.ms` (default 50).
+  `minMs` defaults to 2% of `ms`, rounded, at least 1 (1 of 50); left out, it follows `ms`, and a value you set
   is kept (never above `ms`). R is the call's hard limit, in CPU time, the flower is told it as `GAME.ms`, and E counts down from
   R, so E = (size cap − size) × max(0, R − CPU ms) × (`maxResponseBytes` − response bytes), in node·ms·bytes
-  (the last factor with `energy.bytes`; without it, node·ms). The response is still delivered at `flower.ms` (150)
-  whatever R was, so timing hides R. R is the flower team's secret during play (`budgetMs` below).
+  (the last factor with `energy.bytes`; without it, node·ms). The response is still delivered at
+  `flowerWindowMs` (150) whatever R was, so timing hides R. R is the flower team's secret during play
+  (`budgetMs` below).
 - `budgets.<kind>.size`: size limit in weighted nodes of the minified program (vendor/measure.js).
 - `budgets.<kind>.perMinute`, `cap`: change budget earned per minute of game time, and the most that can be
   banked. A team's budget for a program at game time `t` is `min(cap, bank + perMinute × (t − atMs) / 60000)`,
@@ -144,22 +159,26 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
   = Σ over flower teams of nectar^`alpha`, pollination = Σ over bee teams of pollen^`beta` (see "Scores"). A
   game stored without `scoring` was created before it existed and is scored with √ (0.5 and 0.5), as it was
   then; the game view's `config.scoring` is always the pair the game is scored with.
-- `prevalence`: **species prevalence** (server/lib/prevalence.js). With `on`, each turn's flower is of species
-  s with probability p_s = w_s / Σ_k w_k, w_s = c(t) + P_s:
-  - D_{b,s}, one cell per (bee team b, species s): by `basis`, the pollen s gave b's bee (`"pollination"`, the
-    default, and `"fitness"`, which also keeps the nectar) or the times b's bee fed at s (`"feeds"`). Every
-    cell starts at `prior` (null: the basis's default, 20,000,000 node·ms·bytes of pollen, ÷ 1,024 in a
-    node·ms game, or 1 feed; 0 to 10^15) and, as each round begins, is multiplied by 2^(−round_ms / 1000 /
-    `halfLifeS`) (90 by default, 1 to 86,400; null: cumulative), before that round's feeds are added.
-    Rounds are game time, so a paused game doesn't decay.
-  - Q_s = Σ_b D_{b,s}^β (β = `scoring.beta`); with `"fitness"`, Q_s = pollination share × forage share of the
-    decayed ledgers (forage_s = Σ_f nectar_{s,f}^α), the scoreboard's fitness but recent.
-  - P_s = N × Q_s / Σ_k Q_k (1 for every species when that sum is 0), at most `cap` (4 by default, at least 1;
-    null: no cap). Par 1.
+- `prevalence`: **prevalence on both sides** (server/lib/prevalence.js). With `on`:
+  - D^F_{s,b}: the pollen species s gave bee team b; D^B_{b,s}: the net nectar (nectar − feedPrice per feed)
+    bee b got at species s. Every cell starts at `prior` (null: 0.12 × Emax, 6,758,400 at the defaults; 0
+    to 10^15) and, as each round begins, is multiplied by 2^(−round_ms / 1000 / `halfLifeS`) (90 by default,
+    1 to 86,400; null: cumulative), before that round's feeds are added. Rounds are game time, so a paused
+    game doesn't decay.
+  - **F_s** = N × Q^F_s / Σ_k Q^F_k, Q^F_s = Σ_b (D^F_{s,b})^β; **B_b** = N × Q^B_b / Σ_k Q^B_k, Q^B_b =
+    max(0, Σ_s sign(D^B_{b,s}) |D^B_{b,s}|^α) (α, β = `scoring`). Each is 1 for everyone when its Σ Q is 0,
+    and at most `cap` (4 by default, at least 1; null: no cap). Par 1.
   - c(t) runs linearly from `cStart` (1) at game time 0 to `cEnd` (0.1) at `minutes` (each 0 to 100).
-  Without a cap Σ w = N (c + 1), so p_s = (c + P_s) / (N (c + 1)). A game stored without `prevalence` is from
-  before it existed and draws uniformly (`on` false); the game view's `config.prevalence` always has every
-  key. Programs never see prevalence (it is not in `GAME`).
+  - Each round, K = ceil(`slots` × N) (`slots` 0.25 by default, 0.01 to 1) distinct bees are drawn, one
+    after another without replacement, with weights c + B_b (among the bees that can visit); each draws a
+    species with weights c + F_s, with replacement, its own included. Published: p^F_s = (c + F_s) / Σ (c +
+    F) and p^B_b = (c + B_b) / Σ (c + B) (the chance of filling a given slot first).
+  - A team's **fitness** is the time-average over the rounds played of F_s × B_s (its species' and its
+    bee's; 1 before the first round).
+  A game stored without `prevalence`, or with the earlier one-sided form (no `slots`), is from before: every
+  bee visits every round, species are drawn uniformly, and it is scored with pollination × forage (`on`
+  false; the game view's `config.prevalence` always has every key). Programs never see prevalence (it is
+  not in `GAME`).
 
 Types: `int`, `float`, `bool`, `str`, `any`, `list[T]`, `tree[T]`, `graph`, `digraph`, `graph[T]`,
 `digraph[T]` (RULES.md). Languages: `python`, `typescript`.
@@ -180,7 +199,7 @@ Types: `int`, `float`, `bool`, `str`, `any`, `list[T]`, `tree[T]`, `graph`, `dig
 | program versions, sizes, costs, change budgets, problems | own team | everyone |
 | the bee's `MEMORY` (`teams[i].memory`; query `teams.memory`, `teams.memoryBytes`, `teams.memoryError`) | own team, read only | everyone |
 | the scoreboard (every team's totals, shares and fitness) and `ledgers` (feeds, nectar, pollen) | everyone, live | everyone |
-| species prevalence (every species' p_s and P_s, about once a second) | everyone, live | everyone |
+| prevalence (every team's F, B, p^F, p^B and fitness so far, about once a second) and every feed's price and net | everyone, live | everyone |
 
 A field you may not see is **absent** from actions, and **null** in ledger entries and query rows.
 Every way of reading actions (pages, `before=`, `mine=1`, the SSE and WebSocket streams) and the team
@@ -197,6 +216,8 @@ don't bump the public `game.version`, so other teams can't tell when a team chan
             "endMs",          // config.minutes in ms
             "round",          // rounds played so far (counting the one in progress)
             "lastSeq",        // the latest action's seq
+            "windowMs",       // the flower window the game plays with (config.flowerWindowMs, or flower.ms in old games)
+            "feedPrice",      // the feed price the game plays with (0: free)
             "version", "lastError", "startedAt", "finishedAt", "revealed", "isOwner" },
   "me": { "id", "name", "teamId" } | null,
   "participants": [teamId, ...] | null,   // fixed at the start: team index i in programs and ledgers is participants[i]
@@ -212,11 +233,11 @@ don't bump the public `game.version`, so other teams can't tell when a team chan
   "interface": { "flower", "bee", "types": { "challenge", "response", "challengeMeans", "responseMeans", "rules": [..] } },
   "scores": [teamScore] | null,
   "ledgers": { "feeds": [[int]], "nectar": [[number]], "pollen": [[number]] } | null,
-  "prevalence": { "on": true, "basis", "halfLifeS", "cStart", "cEnd",
-                  "prior",                  // resolved: the basis's default when the config's is null
-                  "cap",
-                  "round", "atMs", "c", "species": [{ "team", "index", "p", "P" }] } | null   // the latest sample
-                                          // (round, atMs, c null and species [] before the first); null: uniform draws
+  "prevalence": { "on": true, "halfLifeS", "cStart", "cEnd", "cap", "slots",
+                  "prior",                  // resolved: 0.12 × Emax when the config's is null
+                  "feedPrice",              // resolved
+                  "sample": sample | null } | null   // the latest sample (below; null before the first);
+                                          // null: a game without prevalence
 }
 ```
 
@@ -229,24 +250,28 @@ only where you may see it.
 (times b's bee fed at f's flower), `nectar[b][f]` (nectar b's bee got there) and `pollen[b][f]` (what f's
 flower kept from b's bee's feeds).
 
-### Species prevalence
+### Prevalence samples
 
-The garden samples every species' prevalence as a round begins, every ⌈1000 / round_ms⌉ rounds (rounds 1, 6,
-11, … at 200 ms: once a second of game time). A **sample**, wherever it is published (the game view's and
-`base/scores`' `prevalence`, the `prevalence` of `base/actions` and of stream messages, `base/prevalence`):
+The garden samples every team's prevalence as a round begins, every ⌈1000 / round_ms⌉ rounds (rounds 1, 6,
+11, … at 200 ms: once a second of game time). A **sample**, wherever it is published (`prevalence.sample` in
+the game view and `base/scores`, `prevalence` on `base/actions` pages and stream messages, `base/prevalence`):
 
 ```jsonc
 { "round",     // the round whose draws it gave
   "atMs",      // game time that round began: (round - 1) × round_ms
   "c",         // c(t)
-  "species": [{ "team",    // team id
-                "index",   // its index in participants
-                "p",       // p_s: the chance a turn's flower is of this species
-                "P" }] }   // P_s: its recent success, par 1 (capped)
+  "slots",     // bees visiting each round: ceil(slots × N)
+  "species": [{ "team",            // team id
+                "index",           // its index in participants
+                "flowerSuccess",   // F_s, par 1 (capped)
+                "beeSuccess",      // B_b, par 1 (capped)
+                "flowerP",         // p^F_s: the chance a visit is to this species
+                "beeP",            // p^B_b: this bee's share of the bee weights
+                "fitness" }] }     // its fitness so far: the time-average of F × B
 ```
 
 All public, as it happens. The history queries have every sample as the `prevalence` entity, one row per
-species per sample (`p`, and P_s as `success`).
+team per sample, with the same field names.
 
 ## Actions
 
@@ -255,7 +280,7 @@ A turn makes two actions: its **arrival**, written to the stream at once, and it
 
 ```jsonc
 { "seq", "atMs", "round",        // order, game time, round. arrive: atMs = (round - 1) × round_ms;
-                                 // feed/leave: atMs = (round - 1) × round_ms + flower.ms
+                                 // feed/leave: atMs = (round - 1) × round_ms + the flower window
   "turn",                        // the bee's turn number (1, 2, ...): (bee, turn) identifies a turn
   "bee", "flower",               // team ids: whose bee, whose flower
   "action": "arrive|feed|leave", // feed = the bee fed; leave = it didn't (left, was late, or broke)
@@ -267,12 +292,14 @@ A turn makes two actions: its **arrival**, written to the stream at once, and it
                                  // GET base/responses/:seq
   "pollen",                      // what the flower kept: (1 − percent/100) × E on a feed, 0 on a leave
   "nectar",                      // feed only: what the bee got, percent/100 × E
+  "price",                       // feed only: the feed price the bee paid out of it (0 in games without one)
+  "net",                         // feed only: nectar − price (can be negative)
   // on a feed public; on a leave the flower's team only (everyone after finish):
   "percent",                     // 0–100 (null if the flower failed)
   "energy",                      // E, node·ms·bytes (node·ms without the byte factor; 0 if the flower failed)
   // the flower's team (everyone after finish):
   "ms",                          // the flower's CPU time for the call
-  "budgetMs",                    // R, the call's hidden time budget (3–150 ms by default): its hard limit, and E's ceiling
+  "budgetMs",                    // R, the call's hidden time budget (1–50 ms by default): its hard limit, and E's ceiling
   "flowerError",                 // why the response is null (too slow for R, an error, a malformed return)
   "flowerVersion",               // also on arrive
   // the bee's team (everyone after finish):
@@ -356,9 +383,9 @@ function decide(challenge: Challenge, response: Response | null): ["feed" | "lea
 function fed(nectar: number): Challenge | void  // optional: may return the next challenge
 ```
 
-Programs see only their arguments and `GAME` (`team`, `teams`, `feed_cost`, `challenge_type`,
+Programs see only their arguments and `GAME` (`team`, `teams`, `feed_cost`, `feed_price`, `challenge_type`,
 `response_type`, `max_len`, `max_nodes`, `max_response_bytes`, `round_ms`, `ms` (its own limit),
-`flower_ms` (150), `flower_size_cap`; a flower's `ms` is this call's hidden budget R (3–150 ms of CPU by default) and `size`
+`flower_ms` (50, R's most), `flower_window_ms` (150), `flower_size_cap`; a flower's `ms` is this call's hidden budget R (1–50 ms of CPU by default) and `size`
 its own; a bee's `ms` is 50 (ms of CPU) and it also gets `memory`, its memory cap): no
 history, no round or game time. Every flower call and every bee turn runs a fresh program, and its clock
 starts at 0 (Python's `time`, TypeScript's `Date`, `Intl` and `performance` read the time since the call
@@ -381,13 +408,18 @@ signatures for the game's language and types.
 
 ```jsonc
 { "teamId",
-  "pollination", "forage",
-  "pollinationShare", "forageShare", "fitness",
+  "fitness",
+  "flowerSuccess", "beeSuccess", "flowerP", "beeP",   // with prevalence: the latest sample's (null before it, and without)
+  "pollination", "forage", "pollinationShare", "forageShare",
   "pollen", "feedsReceived", "feedsGiven", "pollinators", "nectarCollected", "nectarGiven", "nectarSources" }
 ```
 
 The scoreboard is live and public: every team's numbers, for everyone (spectators included), during play
 and after.
+
+- With `prevalence` (new games): `fitness` = the time-average over the rounds played of F_s × B_s (stored on
+  the game as `{ sum, rounds }`, written with the ledgers; 1 before the first round). The rest is information.
+- Without it (games from before): `fitness` = N² × pollinationShare × forageShare, as below.
 
 - `pollination` = Σ over bee teams b of pollen[b][me]^β: the pollen your flower kept from each bee team's feeds.
 - `forage` = Σ over flower teams f of nectar[me][f]^α: the nectar your bee got at each flower.

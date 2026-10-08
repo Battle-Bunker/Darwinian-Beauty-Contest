@@ -2,14 +2,10 @@
 // Lineup entries: [source, model] where source is a founder slug ("tess" or "founder:tess") or "from:<persona id>"
 // (a persona from an earlier arena: same prompt and team name, plus its last notebook). Models: opus, sonnet, haiku
 // (never a Fable model).
-// Config keys left out take the server's defaults (server/lib/gameConfig.js): 2-minute games, a feeding bee's rounds out
-// (now 0; 20, then 10, before), change budgets of one minute's worth, a 50-byte bee MEMORY, the R floor (now 2% of ms; 50 ms
-// before), the score exponents (now 0.85; √ before), the response cap and the energy formula (now 1,024 bytes with the
-// byte factor; 64 KiB without it before), and since metagame v2 prevalence on both sides with the F × B score, a feed
-// price of 0.05 × Emax and a 150 ms flower window (none of them before): a preset that leaves those keys out plays v2's
-// rules on a v2 engine. Every preset up to adapt sets maxResponseBytes, grains, pollenGrain and the flower's budget range
-// (MAX_RESPONSE_BYTES, GRAINS, POLLEN_GRAIN, FLOWER_MIN_MS, FLOWER_MAX_MS: 64 KiB and R from 50 to 150 ms); adapt-hi took
-// the engine's defaults of its day (HI_CONFIG) and checks them (HI_EXPECT); coop-eq sets v2's rules and checks them all.
+// Every preset sets its game rules explicitly and checks every one of them on each new game (expectConfig), so a change of
+// the engine's defaults (server/lib/gameConfig.js) can never silently change a preset: the presets up to adapt play the
+// rules they ran under (OLD_RULES), adapt-hi the ones it was built for (HI_RULES), coop-eq metagame v2's (COOP_RULES).
+// Only the game's length is left to the runner (minutesByGame) or the server's default.
 //
 //   minutesByGame  game N lasts minutesByGame[N-1] minutes (the last entry repeats); else config.minutes
 //   session        warmupSeconds: the first in-game sessions start this long before the game does;
@@ -36,17 +32,33 @@
 //   scaffold       limits of the teams' scaffolds (lib/scaffold.js SCAFFOLD_LIMITS: cpuShare, memMB, cpuSeconds, ...)
 
 // The most UTF-8 bytes of a flower's response (its JSON text): set explicitly in every preset so it is one place to change.
-// 64 KiB, the server's default (a garden of big responses can store tens of MB per game-second at a megabyte).
+// 64 KiB in the old presets (a garden of big responses can store tens of MB per game-second at a megabyte).
 export const MAX_RESPONSE_BYTES = 65536;
 // Pollen grains, set explicitly in every preset: who sees a feed's grain during play ("feeder": the feeding bee's team;
 // "public"; "off"), and its length, ⌊scale × pollen^exponent⌋ characters of the answering flower's minified code (the
 // server's defaults).
 export const GRAINS = "feeder";
-// Each flower call's hidden time budget R, uniform on [minMs, ms] (the server's defaults: 50 to 150 ms). Every preset's
-// flower budget gets these two (FLOWER_BUDGET), so the range is one place to change.
+// Each flower call's hidden time budget R, uniform on [minMs, ms]: 50 to 150 ms in the old presets (FLOWER_R).
 export const FLOWER_MIN_MS = 50, FLOWER_MAX_MS = 150;
 const FLOWER_R = { ms: FLOWER_MAX_MS, minMs: FLOWER_MIN_MS };
 export const POLLEN_GRAIN = Object.freeze({ exponent: 1 / 3, scale: 1 });
+/** { "a.b": value } for every leaf of an object: the keys a preset's expectConfig checks. */
+const leaves = (o, at = "") => Object.entries(o).flatMap(([k, v]) => (v && typeof v === "object" ? leaves(v, `${at}${k}.`) : [[`${at}${k}`, v]]));
+const expectOf = (rules) => Object.fromEntries(leaves(rules));
+
+// The rules every arena up to adapt ran under (pilot, signals and adapt: kiln-a, fen-a to fen-d and mesa-a all stored
+// exactly these), every key set so that no change of the engine's defaults can change an old preset: a feed takes the
+// bee out for 10 rounds and costs nothing, responses reach the bee at 150 ms with R from 50 to 150 ms, change budgets of
+// one minute's worth (flower 220 a minute, banking 220; bee 2,200 and 2,200), E in node·ms (no byte factor) with 64 KiB
+// responses, √ scores (exponents 0.5: exactly the legacy √), grains of ⌊pollen^(1/3)⌋ characters, and no prevalence
+// (every bee each round, species drawn uniformly). OLD_EXPECT checks them all on each new game (a metagame v2 engine
+// stores feedPrice and flowerWindowMs; one from before it fails the check on those two).
+const OLD_RULES = { feedCost: 10, feedPrice: 0, flowerWindowMs: FLOWER_MAX_MS, maxResponseBytes: MAX_RESPONSE_BYTES, maxLen: 64, maxNodes: 512,
+  revealOnFinish: true, grains: GRAINS, pollenGrain: POLLEN_GRAIN, energy: { bytes: false }, scoring: { alpha: 0.5, beta: 0.5 }, prevalence: { on: false },
+  budgets: { flower: { size: 1100, perMinute: 220, cap: 220, ...FLOWER_R }, bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 50, memory: 50 } } };
+const OLD_EXPECT = expectOf(OLD_RULES);
+/** An old preset's game config: its language and types, on the old rules. */
+const oldConfig = (responseType) => ({ language: "python", challengeType: "int", responseType, ...OLD_RULES });
 
 // The adapt lineup. Veterans: the best instance of each distinct persona over the pilot and signals arenas, by mean
 // fitness percentile over its games ((N − rank) / (N − 1)): Mallory fen-d 1.00 (3 games), Kenji fen-a 0.87, Ada fen-a
@@ -89,15 +101,16 @@ const ADAPT_HI_LINEUP = [
   ["ines", "opus", HI_HONEST], ["marcus", "opus", HI_HONEST], ["sofia", "opus", HI_HONEST], ["tobi", "opus", HI_HONEST], ["amara", "opus", HI_HONEST],
   ["rex", "opus", { role: "defector" }], ["vik", "opus", { role: "defector" }],
 ];
-// adapt-hi's game config: the engine's defaults for what changed (the R floor, 2% of 150 ms; a feed costs 20 rounds; the
-// score exponents; energy with the byte factor and a 1,024-byte response cap; pollen grains of ⌊0.1 × pollen^(1/3)⌋
-// characters, about their old length now that E is in node·ms·bytes), so none of them is set here.
-const HI_CONFIG = { language: "python", challengeType: "int", responseType: "graph[any]", grains: GRAINS, budgets: { flower: { ms: FLOWER_MAX_MS } } };
-// ...and checked on the first game, before any session (an old server would play the old rules). On a metagame v2 engine
-// the check fails (feedCost 0, not 20; minMs 3 holds) and "prevalence.on" would be v2's two-sided prevalence with a feed
-// price: adapt-hi as it ran needs its rules set here first.
-const HI_EXPECT = { "budgets.flower.minMs": 3, feedCost: 20, "scoring.alpha": 0.85, "scoring.beta": 0.85, maxResponseBytes: 1024, "energy.bytes": true,
-  "pollenGrain.scale": 0.1, "prevalence.on": true };
+// adapt-hi's rules: the engine's defaults it was built for (before metagame v2), every key set: the R floor 3 ms (2% of
+// 150), a feed takes the bee out for 20 rounds and costs nothing, responses at 150 ms, the old change budgets, the score
+// exponents 0.85, E with the byte factor and a 1,024-byte response cap, grains of ⌊0.1 × pollen^(1/3)⌋ characters. It was
+// built with the one-sided species prevalence, which a v2 engine no longer has (it reads that form as off): prevalence is
+// off. HI_EXPECT checks every key on each new game.
+const HI_RULES = { feedCost: 20, feedPrice: 0, flowerWindowMs: FLOWER_MAX_MS, maxResponseBytes: 1024, maxLen: 64, maxNodes: 512, revealOnFinish: true,
+  grains: GRAINS, pollenGrain: { exponent: 1 / 3, scale: 0.1 }, energy: { bytes: true }, scoring: { alpha: 0.85, beta: 0.85 }, prevalence: { on: false },
+  budgets: { flower: { size: 1100, perMinute: 220, cap: 220, ms: FLOWER_MAX_MS, minMs: 3 }, bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 50, memory: 50 } } };
+const HI_CONFIG = { language: "python", challengeType: "int", responseType: "graph[any]", ...HI_RULES };
+const HI_EXPECT = expectOf(HI_RULES);
 
 // coop-eq: can complex cooperation become a stable equilibrium that is hard to displace? 10 teams in one continuous
 // 40-minute game: 7 pinned cooperators (adapt-hi's five honest specialists and two more, the same mandate and start
@@ -116,22 +129,21 @@ const COOP_LINEUP = [
 // every ledger cell's prior 0.12 × Emax), the score the time-average of F × B; a feed price of 0.05 × Emax (feedPrice
 // null: 2,816,000 node·ms·bytes) out of the bee's nectar and no rounds out; responses delivered at 150 ms (rounds stay
 // 200 ms) while R runs from 1 to 50 ms; change budgets of 1 node a second for flowers (banking 300) and 10 for bees
-// (3,000); E with the byte factor, a 1,024-byte response cap, exponents 0.85.
-const COOP_RULES = { feedCost: 0, flowerWindowMs: 150, feedPrice: null, maxResponseBytes: 1024, energy: { bytes: true },
-  scoring: { alpha: 0.85, beta: 0.85 }, prevalence: { on: true, halfLifeS: 90, cStart: 1, cEnd: 0.1, cap: 4, slots: 0.25, prior: null },
+// (3,000); E with the byte factor, a 1,024-byte response cap, exponents 0.85, grains of ⌊0.1 × pollen^(1/3)⌋ characters.
+const COOP_RULES = { feedCost: 0, flowerWindowMs: 150, feedPrice: null, maxResponseBytes: 1024, maxLen: 64, maxNodes: 512, revealOnFinish: true,
+  grains: GRAINS, pollenGrain: { exponent: 1 / 3, scale: 0.1 }, energy: { bytes: true }, scoring: { alpha: 0.85, beta: 0.85 }, prevalence: { on: true, halfLifeS: 90, cStart: 1, cEnd: 0.1, cap: 4, slots: 0.25, prior: null },
   budgets: { flower: { size: 1100, perMinute: 60, cap: 300, ms: 50, minMs: 1 }, bee: { size: 11000, perMinute: 600, cap: 3000, ms: 50, memory: 50 } } };
-const COOP_CONFIG = { language: "python", challengeType: "int", responseType: "graph[any]", grains: GRAINS, ...COOP_RULES };
-/** { "a.b": value } for every leaf of an object (the keys expectConfig checks). */
-const leaves = (o, at = "") => Object.entries(o).flatMap(([k, v]) => (v && typeof v === "object" ? leaves(v, `${at}${k}.`) : [[`${at}${k}`, v]]));
-// ...every one of them checked on the game (an engine without v2 would drop or default some), with the grain scale.
-const COOP_EXPECT = { ...Object.fromEntries(leaves(COOP_RULES)), "pollenGrain.scale": 0.1 };
+const COOP_CONFIG = { language: "python", challengeType: "int", responseType: "graph[any]", ...COOP_RULES };
+// ...every one of them checked on the game (an engine without v2 would drop or default some).
+const COOP_EXPECT = expectOf(COOP_RULES);
 
 export const DEFAULT_SESSION = { warmupSeconds: 8, gapSeconds: 5, maxIdleGapSeconds: 20, endMarginSeconds: 10, maxMinutes: 6 };
 
 export const PRESETS = {
   pilot: {
     description: "Pilot: one flower per team, python, int→int, 3 teams (sonnet/haiku), games of 30 s, 1 and 2 minutes",
-    config: { language: "python", challengeType: "int", responseType: "int", maxResponseBytes: MAX_RESPONSE_BYTES, grains: GRAINS, pollenGrain: POLLEN_GRAIN, budgets: { flower: FLOWER_R } },
+    config: oldConfig("int"),
+    expectConfig: OLD_EXPECT,
     minutesByGame: [0.5, 1, 2],
     lineup: [["luna", "sonnet"], ["grace", "haiku"], ["tess", "sonnet"]],
     maxModel: "sonnet",
@@ -141,7 +153,8 @@ export const PRESETS = {
   },
   graphs: {
     description: "One flower per team, python, int→graph[any], 4 teams (2 opus, 2 sonnet), games of 2, 5 and 10 minutes, scaffolds",
-    config: { language: "python", challengeType: "int", responseType: "graph[any]", maxResponseBytes: MAX_RESPONSE_BYTES, grains: GRAINS, pollenGrain: POLLEN_GRAIN, budgets: { flower: FLOWER_R } },
+    config: oldConfig("graph[any]"),
+    expectConfig: OLD_EXPECT,
     minutesByGame: [2, 5, 10],
     lineup: [["mallory", "opus"], ["kenji", "opus"], ["rosalind", "sonnet"], ["priya", "sonnet"]],
     session: { warmupSeconds: 10, gapSeconds: 15, maxIdleGapSeconds: 120, endMarginSeconds: 20, maxMinutes: 6 },
@@ -152,7 +165,8 @@ export const PRESETS = {
   },
   cohort6: {
     description: "One flower per team, python, int→graph[any], 6 teams (3 opus, 3 sonnet), 5-minute games, scaffolds, retirement and breeding",
-    config: { language: "python", challengeType: "int", responseType: "graph[any]", maxResponseBytes: MAX_RESPONSE_BYTES, grains: GRAINS, pollenGrain: POLLEN_GRAIN, budgets: { flower: FLOWER_R } },
+    config: oldConfig("graph[any]"),
+    expectConfig: OLD_EXPECT,
     minutesByGame: [5],
     lineup: [["mallory", "opus"], ["kenji", "opus"], ["ada", "opus"], ["rosalind", "sonnet"], ["priya", "sonnet"], ["theo", "sonnet"]],
     session: { warmupSeconds: 10, gapSeconds: 15, maxIdleGapSeconds: 120, endMarginSeconds: 20, maxMinutes: 6 },
@@ -164,7 +178,8 @@ export const PRESETS = {
   // games, so cycles of innovation and imitation have time to happen; the csig founders.
   cohort10: {
     description: "python, int→graph[any], 6 teams (3 opus, 3 sonnet), 10-minute games, scaffolds, retirement and breeding",
-    config: { language: "python", challengeType: "int", responseType: "graph[any]", maxResponseBytes: MAX_RESPONSE_BYTES, grains: GRAINS, pollenGrain: POLLEN_GRAIN, budgets: { flower: FLOWER_R } },
+    config: oldConfig("graph[any]"),
+    expectConfig: OLD_EXPECT,
     minutesByGame: [10],
     lineup: [["mallory", "opus"], ["kenji", "opus"], ["ada", "opus"], ["rosalind", "sonnet"], ["priya", "sonnet"], ["theo", "sonnet"]],
     session: { warmupSeconds: 10, gapSeconds: 15, maxIdleGapSeconds: 120, endMarginSeconds: 20, maxMinutes: 6 },
@@ -178,7 +193,8 @@ export const PRESETS = {
   // a private role brief; the honest ones get arena/priming/honest-signals/). Fixed membership, 4 games.
   adapt14: {
     description: "adapt: 7 veterans of the cheap-signalling arenas, 5 honesty and 2 defection specialists; python, int→graph[any], 10-minute games, fixed membership",
-    config: { language: "python", challengeType: "int", responseType: "graph[any]", maxResponseBytes: MAX_RESPONSE_BYTES, grains: GRAINS, pollenGrain: POLLEN_GRAIN, budgets: { flower: FLOWER_R } },
+    config: oldConfig("graph[any]"),
+    expectConfig: OLD_EXPECT,
     minutesByGame: [10],
     lineup: ADAPT_LINEUP,
     session: { warmupSeconds: 10, gapSeconds: 15, maxIdleGapSeconds: 120, endMarginSeconds: 20, maxMinutes: 6 },
@@ -211,7 +227,7 @@ export const PRESETS = {
   // server (expectConfig), so a dry run on an old server stops at once.
   "dry-adapt-hi": {
     description: "dry run of adapt-hi: the same 14 teams with the stub claude, 1-minute games, fixed membership",
-    config: { ...HI_CONFIG, feedCost: 20, maxResponseBytes: 1024, budgets: { flower: { ms: FLOWER_MAX_MS, minMs: 3 } } },
+    config: HI_CONFIG,
     expectConfig: HI_EXPECT,
     minutesByGame: [1],
     lineup: ADAPT_HI_LINEUP,
@@ -262,7 +278,8 @@ export const PRESETS = {
   // their R in CPU).
   "dry-adapt": {
     description: "dry run of adapt: the same 14 teams with the stub claude, 1-minute games, fixed membership",
-    config: { language: "python", challengeType: "int", responseType: "graph[any]", maxResponseBytes: MAX_RESPONSE_BYTES, grains: GRAINS, pollenGrain: POLLEN_GRAIN, budgets: { flower: FLOWER_R } },
+    config: oldConfig("graph[any]"),
+    expectConfig: OLD_EXPECT,
     minutesByGame: [1],
     lineup: ADAPT_LINEUP,
     session: { warmupSeconds: 3, gapSeconds: 2, maxIdleGapSeconds: 4, endMarginSeconds: 3, maxMinutes: 2 },
@@ -273,7 +290,8 @@ export const PRESETS = {
   // The same shape for dry runs with the stub `claude` (no model calls): graph responses, 30-second games.
   "dry-cohort": {
     description: "dry run of the cohort experiment: python, int→graph[any], 6 teams, 30-second games, retirement and breeding",
-    config: { language: "python", challengeType: "int", responseType: "graph[any]", maxResponseBytes: MAX_RESPONSE_BYTES, grains: GRAINS, pollenGrain: POLLEN_GRAIN, budgets: { flower: FLOWER_R } },
+    config: oldConfig("graph[any]"),
+    expectConfig: OLD_EXPECT,
     minutesByGame: [0.5],
     lineup: [["mallory", "sonnet"], ["kenji", "sonnet"], ["ada", "sonnet"], ["rosalind", "haiku"], ["priya", "haiku"], ["theo", "haiku"]],
     session: { warmupSeconds: 3, gapSeconds: 2, maxIdleGapSeconds: 4, endMarginSeconds: 3, maxMinutes: 2 },
@@ -283,7 +301,8 @@ export const PRESETS = {
   // For dry runs with the stub `claude` (no model calls): int→int, 20-second games, evolution on.
   dry: {
     description: "dry run: one flower per team, python, int→int, 4 teams, 20-second games, retirement and breeding",
-    config: { language: "python", challengeType: "int", responseType: "int", maxResponseBytes: MAX_RESPONSE_BYTES, grains: GRAINS, pollenGrain: POLLEN_GRAIN, budgets: { flower: FLOWER_R } },
+    config: oldConfig("int"),
+    expectConfig: OLD_EXPECT,
     minutesByGame: [0.34],
     lineup: [["mallory", "sonnet"], ["kenji", "sonnet"], ["rosalind", "haiku"], ["priya", "haiku"]],
     session: { warmupSeconds: 3, gapSeconds: 2, maxIdleGapSeconds: 4, endMarginSeconds: 3, maxMinutes: 2 },

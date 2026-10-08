@@ -36,7 +36,8 @@ export function timingText(config, n = null) {
   const b = config.budgets, fl = b.flower, bee = b.bee, minR = rFloor(config), co = coopRules(config, n);
   const feedText = config.feedCost > 0 ? `A feed takes the bee\n  out for ${config.feedCost} rounds.` : `A feed doesn't take the bee out of play.`;
   const price = co.price > 0 ? `\n  A feed costs the bee a price of ${priceText(config)}\n  (GAME["feed_price"]), out of its nectar: its net nectar is nectar − price, which can be negative.` : "";
-  const windowKey = config.flowerWindowMs != null ? `, GAME["flower_window_ms"] ${co.windowMs}` : "";
+  // (named only where it differs from R's most: the old presets' window is their flower ms, as their briefs had it)
+  const windowKey = co.windowMs !== fl.ms ? `, GAME["flower_window_ms"] ${co.windowMs}` : "";
   return `- Rounds of ${co.roundMs} ms of game time: a ${durationText(config.minutes)} game is about ${Math.round((config.minutes * 60000) / co.roundMs)} rounds. ${co.on
     ? `Each round ${co.perRound ? `${co.perRound} of the ${n} bees` : `⌈${co.slots} × N⌉ of the N bees`}\n  are drawn by bee success (below), and each takes one turn.` : "Every bee that isn't feeding gets\n  one turn per round, all bees in lockstep."}
 - Each team's flower program is its flower species. A turn: the bee's queued challenge goes to one flower of a species
@@ -90,8 +91,8 @@ ${KINDS.map((k) => `| ${k} | ${n0(b[k].size)} | ${n0(b[k].perMinute)} | ${n0(b[k
   Change budget starts at 0 when the game starts and grows with game time, up to its cap. The bee's MEMORY holds at most
   ${n0(b.bee.memory ?? 50)} bytes. A response may be at most ${n0(config.maxResponseBytes ?? 65536)} bytes of JSON.${exponentsText(config)}`;
 }
-/** The score exponents, when the game sets them (games before they were configurable used square roots, and their
- * briefs don't mention them); with prevalence, the score is F × B's time-average (prevalenceText) and the exponents are
+/** The score exponents, when the game sets them (games stored before they were configurable used square roots, and their
+ * briefs don't mention them; the old presets now set 0.5 explicitly, and say so); with prevalence, the score is F × B's time-average (prevalenceText) and the exponents are
  * in F and B. */
 function exponentsText(config) {
   if (config?.scoring?.alpha == null) return "";
