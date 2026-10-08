@@ -27,15 +27,18 @@ const safeName = (s) => String(s).replace(/[^A-Za-z0-9_-]+/g, "_");
 // ---------------------------------------------------------------- the files
 
 /** The documents a primed cohort shares as common knowledge (arena.settings.common = { dir }), or, for a persona with a
- * role that has its own documents (arena.settings.roles[slug].common), those: { dir, files, scope: "all" | "role" } or
- * null. */
+ * role that has its own documents (arena.settings.roles[slug].common: a folder, or several merged in order), those:
+ * { dir, dirs, files, scope: "all" | "role" } or null. */
 export function commonFiles(arena, persona = null) {
   const r = persona ? arena?.settings?.roles?.[persona.slug] : null;
-  if (r?.common) return { ...commonFiles({ settings: { common: { dir: r.common } } }), scope: "role" };
+  if (r?.common) {
+    const parts = [r.common].flat().map((d) => commonFiles({ settings: { common: { dir: d } } }));
+    return { dir: parts[0].dir, dirs: parts.map((x) => x.dir), files: [...new Set(parts.flatMap((x) => x.files))].sort(), scope: "role" };
+  }
   const c = arena?.settings?.common;
   if (!c?.dir) return null;
   const dir = path.resolve(ARENA_DIR, "..", c.dir);
-  return { dir, files: fs.readdirSync(dir).filter((f) => !f.startsWith(".") && fs.statSync(path.join(dir, f)).isFile()).sort(), scope: "all" };
+  return { dir, dirs: [dir], files: fs.readdirSync(dir).filter((f) => !f.startsWith(".") && fs.statSync(path.join(dir, f)).isFile()).sort(), scope: "all" };
 }
 
 export function readme({ ext, apiBase, examples, common = null, commonScope = "all" }) {
@@ -233,7 +236,10 @@ export async function prepareWorkspace({ arena, gameRow, persona, view, stream, 
   write(path.join(dir, "README.md"), readme({ ext, apiBase, examples, common: common?.files, commonScope: common?.scope }));
   // Common knowledge (a primed cohort): restored at every game, so every team, new ones included, has the same copy.
   fs.rmSync(path.join(dir, "common"), { recursive: true, force: true });
-  if (common) fs.cpSync(common.dir, path.join(dir, "common"), { recursive: true });
+  // (several folders merge in order; Python's caches and dot files stay behind)
+  for (const d of common?.dirs ?? (common ? [common.dir] : [])) {
+    fs.cpSync(d, path.join(dir, "common"), { recursive: true, filter: (src) => src === d || !/(^|\/)(__pycache__|\.[^/]*)$/.test(path.relative(d, src)) });
+  }
   if (examples) {
     fs.rmSync(path.join(dir, "examples"), { recursive: true, force: true });
     fs.cpSync(path.resolve(ARENA_DIR, "..", arena.settings.examples), path.join(dir, "examples"), { recursive: true });

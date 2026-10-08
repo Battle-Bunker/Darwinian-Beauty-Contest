@@ -1,7 +1,7 @@
 """Resolution of the fingerprint: levels at R = 3, 20, 76 and 150 ms, how well directions can be told apart,
 and what the bee's check costs.
 
-    python3 arena/priming/honest-signals/resolution.py [--calls 40]
+    python3 arena/priming/fingerprints/resolution.py [--calls 40]
 
 Runs the flower's fingerprint() offline, with the game's per-call clock imitated (process_time and perf_counter
 start at 0 every call), for several splits W, and the bee's levels() on each response. Reports per R: mean and
@@ -9,6 +9,8 @@ spread of the magnitude U, per-dimension spread, the angle by which one directio
 of responses whose nearest prototype (by cosine) is the split that made them, check time and response size.
 Run it on an idle machine.
 """
+import sys
+sys.dont_write_bytecode = True     # keep __pycache__ out of the priming folder
 import importlib.util, json, math, os, statistics, sys, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))

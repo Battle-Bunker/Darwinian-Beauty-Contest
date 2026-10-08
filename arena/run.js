@@ -568,7 +568,7 @@ async function runExperiment(name) {
   const ids = exp.cohorts.map((c) => c.id);
   // Every cohort's common knowledge must be there before anything starts (a missing folder would stop the experiment
   // in the middle of a game).
-  const roleDirs = (PRESETS[exp.preset]?.lineup || []).map(([, , o = {}]) => o.common).filter(Boolean);
+  const roleDirs = (PRESETS[exp.preset]?.lineup || []).flatMap(([, , o = {}]) => [o.common ?? []].flat());
   for (const c of [...exp.cohorts, ...[...new Set(roleDirs)].map((dir) => ({ id: "a role", common: { dir } }))]) {
     if (!c.common) continue;
     const dir = path.resolve(ARENA_DIR, "..", c.common.dir);

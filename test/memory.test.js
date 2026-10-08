@@ -1,7 +1,8 @@
 // A bee's MEMORY (server/engine.js, the runners): a key-value store, the only thing that carries over from
 // one turn to the next; capped in bytes (Σ key bytes + value JSON bytes), cleared by a new version, kept
 // across crashes and restarts, written by nobody but the bee. And fed(nectar): after a feed, in the same
-// program instance as that decision, with MEMORY saved after it.
+// program instance as that decision, with MEMORY saved after it; a valid challenge it returns replaces the
+// one decide queued.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -219,6 +220,72 @@ test("try a bee: fed() runs there too, and the test bee starts from the MEMORY g
   assert.deepEqual(r.memory, { value: { start: 40, fed: r.feeds }, bytes: 5 + 2 + 3 + String(r.feeds).length, cap: 50, error: null });
   assert.ok(r.feeds >= 9);
 });
+
+// ---------- fed(nectar) may queue the next challenge
+
+const fedQueues = {
+  // fed's k-th call: 1000 × k when k is odd; None (explicitly, or by returning nothing) when it is even.
+  python: `def first():\n    MEMORY["f"] = MEMORY.get("f", 0) + 1\n    return 1\ndef decide(c, r):\n    return "feed", c + 1\n` +
+    `def fed(nectar):\n    k = MEMORY["k"] = MEMORY.get("k", 0) + 1\n    if k % 2:\n        return 1000 * k\n    if k % 4 == 2:\n        return None\n`,
+  typescript: `function first() { MEMORY.f = ((MEMORY.f as number) ?? 0) + 1; return 1; }\n` +
+    `function decide(c: number, r: any): ["feed", number] { return ["feed", c + 1]; }\n` +
+    `function fed(nectar: number): number | null | void { const k = ((MEMORY.k as number) ?? 0) + 1; MEMORY.k = k; if (k % 2) return 1000 * k; if (k % 4 === 2) return null; }`,
+};
+
+for (const language of ["python", "typescript"]) {
+  test(`${language}: fed() may return the next challenge: it replaces decide's; None or nothing keeps decide's`, async () => {
+    for (const feedCost of [1, 0]) {
+      const config = normalizeConfig({ language, feedCost });
+      const out = await play(config, [{ flower: language === "python" ? flower : tsFlower, bee: fedQueues[language] }], 8 * (feedCost + 1));
+      const cs = ends(out.actions).map((a) => a.c);
+      assert.ok(cs.length >= 7, `feedCost ${feedCost}: ${cs}`);
+      // Turn i (from 0) plays fed's 1000 × i after an odd call of fed, else decide's c + 1.
+      const expected = cs.map((_, i) => 0);
+      for (let i = 0; i < cs.length; i++) expected[i] = i === 0 ? 1 : i % 2 ? 1000 * i : expected[i - 1] + 1;
+      assert.deepEqual(cs, expected, `feedCost ${feedCost}`);
+      const m = JSON.parse(out.memories.at(-1).memory);
+      assert.equal(m.k, cs.length, "fed ran after every feed, and MEMORY was saved after it");
+      assert.equal(m.f, 1, "first() was asked once, at the start");
+      assert.deepEqual(out.problems, []);
+    }
+  });
+}
+
+test("fed() gives the challenge when decide gave none; first() is asked only when neither did", async () => {
+  const bee = `def first():\n    MEMORY["f"] = MEMORY.get("f", 0) + 1\n    return 1\ndef decide(c, r):\n    return "feed"\n` +
+    `def fed(nectar):\n    k = MEMORY["k"] = MEMORY.get("k", 0) + 1\n    if k != 3:\n        return 7 * k\n`;
+  const out = await play(normalizeConfig({ feedCost: 1 }), [{ flower, bee }], 14);
+  const cs = ends(out.actions).map((a) => a.c);
+  assert.deepEqual(cs.slice(0, 6), [1, 7, 14, 1, 28, 35], `${cs}`);
+  assert.equal(JSON.parse(out.memories.at(-1).memory).f, 2, "first() at the start, and after the fed that returned nothing");
+});
+
+for (const language of ["python", "typescript"]) {
+  test(`${language}: a bad challenge from fed() keeps decide's and is shown to the team; a fed() that crashes or is stopped keeps decide's challenge and MEMORY`, async () => {
+    // fed after the turn with challenge c: 1 a string, 2 a crash, 3 stopped at 50 ms, 4 an int beyond the
+    // limits, 5 not plain data; from 6 on, nothing. It appends c to MEMORY["f"] first.
+    const bee = language === "python"
+      ? `def first():\n    return 1\ndef decide(c, r):\n    MEMORY["c"] = c\n    return "feed", c + 1\n` +
+        `def fed(nectar):\n    c = MEMORY["c"]\n    MEMORY["f"] = MEMORY.get("f", "") + str(c)\n    if c == 1:\n        return "nope"\n    if c == 2:\n        return 1 // 0\n` +
+        `    if c == 3:\n        while True:\n            pass\n    if c == 4:\n        return 2 ** 60\n    if c == 5:\n        return {1, 2}\n`
+      : `function first() { return 1; }\nfunction decide(c: number, r: any): ["feed", number] { MEMORY.c = c; return ["feed", c + 1]; }\n` +
+        `function fed(n: number): any {\n  const c = MEMORY.c as number;\n  MEMORY.f = String(MEMORY.f ?? "") + c;\n  if (c === 1) return "nope";\n  if (c === 2) throw new Error("boom");\n` +
+        `  if (c === 3) { while (true) {} }\n  if (c === 4) return 2 ** 60;\n  if (c === 5) { const o: any = {}; o.o = o; return o; }\n}`;
+    const config = normalizeConfig({ language, feedCost: 1 });
+    const out = await play(config, [{ flower: language === "python" ? flower : tsFlower, bee }], 14);
+    const cs = ends(out.actions).map((a) => a.c);
+    assert.deepEqual(cs, [1, 2, 3, 4, 5, 6, 7], "decide's challenge every time");
+    assert.equal(JSON.parse(out.memories.at(-1).memory).f, "14567", "MEMORY saved after every fed but the crashed and the stopped one");
+    const errors = out.problems.map((x) => x.error);
+    const has = (re, what) => assert.ok(errors.some((e) => re.test(e)), `${what}: ${JSON.stringify(errors)}`);
+    has(/fed\(\) returned a bad next challenge .*decide's stays queued/, "a string for an int");
+    has(/fed\(\) failed \((ZeroDivisionError|.*boom)/, "a crash");
+    has(/fed\(\) failed \(Timeout/, "stopped at 50 ms");
+    assert.equal(errors.filter((e) => /fed\(\) returned a bad next challenge/.test(e)).length, 2, "the string and the int beyond the limits");
+    has(/fed returned something that is not plain data.*decide's challenge stays queued/, "not plain data");
+    assert.ok(out.problems.every((x) => x.kind === "bee"));
+  });
+}
 
 test("no operator write path: only the garden writes bee_memories, and the API has no field for it", () => {
   const files = ["server/games.js", "server/routes/api.js", "server/live.js", "server/realtime.js", "server/sockets.js", "server/query/sql.js"];

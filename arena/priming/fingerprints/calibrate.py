@@ -1,6 +1,6 @@
 """Calibrate the fingerprint dimensions: CPU per certified unit, its spread, and the bee's cost to check one.
 
-    python3 arena/priming/honest-signals/calibrate.py [--target 1.0] [--seconds 0.4]
+    python3 arena/priming/fingerprints/calibrate.py [--target 1.0] [--seconds 0.4]
 
 For every candidate (n, z, k, h) of each dimension it solves instances in order (as a flower does, giving up at
 CAP tries) for --seconds of CPU and reports: ms per certified unit, the share of instances certified, the
@@ -8,6 +8,8 @@ coefficient of variation of the time per certified unit, and the bee's check tim
 graph and checking the certificate). It then picks, per dimension, the candidate closest to --target ms per
 unit. Run it on an idle machine: it measures CPU speed.
 """
+import sys
+sys.dont_write_bytecode = True     # keep __pycache__ out of the priming folder
 import importlib.util, json, os, statistics, sys, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))

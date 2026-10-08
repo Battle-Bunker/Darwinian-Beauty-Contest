@@ -822,6 +822,10 @@ export class Garden {
         return;
       }
       this.#saveMemory(b, res);
+      if (res.aError) { // not plain data, or far too large: MEMORY is saved, decide's challenge stays
+        this.#problem(b.ti, "bee", b.version, `${String(res.aError).slice(0, 200)}: decide's challenge stays queued`);
+        return;
+      }
       if (res.a === undefined || res.a === null) return; // nothing returned: decide's challenge stays
       const bad = checkValue(this.cType, res.a, this.limits, "next challenge");
       if (bad) this.#problem(b.ti, "bee", b.version, `fed() returned a bad next challenge (${String(bad).slice(0, 200)}): decide's stays queued`);

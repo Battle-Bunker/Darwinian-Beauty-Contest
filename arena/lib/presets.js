@@ -59,11 +59,13 @@ const ADAPT_LINEUP = [
 // adapt (carried over from fen and kiln, not from mesa-a); the four kids without their coding limits (personas.js
 // CODING_LIMITS). The honest specialists' flowers are on a fixed contract (prompts.js honest60: 60% of R on costly
 // signalling, percent 50, only their signalling strategy changing, and only to escape imitators); their bees play to win
-// and start as the reference fingerprint-checking bee, bee.py in the honest teams' folder (ARENA_HONEST_HI_DIR: another
-// folder; ARENA_HONEST_START_BEE: another bee, for a dry run).
-const HONEST_HI_DIR = process.env.ARENA_HONEST_HI_DIR || HONEST_DIR;
-const HONEST_START_BEE = process.env.ARENA_HONEST_START_BEE || `${HONEST_HI_DIR}/bee.py`;
-const HI_HONEST = { role: "honest", brief: "r60", common: HONEST_HI_DIR, start: { bee: HONEST_START_BEE } };
+// and start as the reference fingerprint-checking bee, bee.py of arena/priming/fingerprints/. Their common/ holds
+// honest-signals/ and fingerprints/ merged (ARENA_HONEST_HI_DIRS: other folders, comma-separated; ARENA_HONEST_START_BEE:
+// another bee, for a dry run).
+const FINGERPRINT_DIR = "arena/priming/fingerprints";
+const HONEST_HI_DIRS = process.env.ARENA_HONEST_HI_DIRS ? process.env.ARENA_HONEST_HI_DIRS.split(",") : [HONEST_DIR, FINGERPRINT_DIR];
+const HONEST_START_BEE = process.env.ARENA_HONEST_START_BEE || `${FINGERPRINT_DIR}/bee.py`;
+const HI_HONEST = { role: "honest", brief: "r60", common: HONEST_HI_DIRS, start: { bee: HONEST_START_BEE } };
 const HI_KID = { seed: true, uncap: true };
 const ADAPT_HI_LINEUP = [
   ["from:fen-d/mallory", "opus", VETERAN], ["from:fen-a/kenji", "opus", HI_KID], ["from:fen-a/ada", "opus", VETERAN],
