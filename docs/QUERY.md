@@ -34,7 +34,7 @@ of truth: entities, fields, types, indexes, scopes and each field's visibility r
 | `versions` | program version | game, team, kind, version | |
 | `teams` | team playing (with its bee's MEMORY: value, size, version, last error) | game, index | |
 | `pairs` | (bee team, flower team): the score ledgers | game, bee, flower | |
-| `scores` | team: the scoreboard | game, team | |
+| `scores` | team: the scoreboard (each game with its own `scoring` exponents; √ in games from before them) | game, team | |
 
 Fields, types and visibility are in the schema (and in `vendor/query/schema.json`). Teams are numbered by
 **index** (0 to N − 1, `GAME.team` in programs), as in the team ledger. `game` is the game's short id.

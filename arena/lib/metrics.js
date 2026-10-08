@@ -308,7 +308,7 @@ export function computeMetrics({ game, teams: teamRows, turns: turnRows, version
     copies: { matches: copies.length, copies: att.length, medianLatencyMs: median(att.map((x) => x.latencyMs)), byCopier },
     changes, final, memory, ecology, grains, wealth,
     config: { minutes: config.minutes, feedCost: config.feedCost, challengeType: config.challengeType, responseType: config.responseType, budgets: config.budgets,
-      grains: config.grains ?? null, pollenGrain: config.pollenGrain ?? null, maxResponseBytes: config.maxResponseBytes ?? null },
+      grains: config.grains ?? null, pollenGrain: config.pollenGrain ?? null, maxResponseBytes: config.maxResponseBytes ?? null, scoring: config.scoring ?? null },
     clockMs: Number(game.clockMs) || 0, round: Number(game.round) || 0,
   };
 }

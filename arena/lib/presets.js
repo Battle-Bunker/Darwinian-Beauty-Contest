@@ -53,10 +53,12 @@ const ADAPT_LINEUP = [
 
 // adapt-hi: the same 14 teams and roles, every agent on opus with high effort and room to think. Veterans start as in
 // adapt (carried over from fen and kiln, not from mesa-a); the four kids without their coding limits (personas.js
-// CODING_LIMITS). The honest specialists get a fixed contract (prompts.js honest60: 60% of R on costly signalling,
-// percent 50, changed only to escape imitators) and their own copy of the doc, brought into line with it.
-const HONEST_HI_DIR = process.env.ARENA_HONEST_HI_DIR || "arena/priming/honest-signals-hi";
-const HI_HONEST = { role: "honest", brief: "r60", common: HONEST_HI_DIR };
+// CODING_LIMITS). The honest specialists' flowers are on a fixed contract (prompts.js honest60: 60% of R on costly
+// signalling, percent 50, only their signalling strategy changing, and only to escape imitators); their bees play to win
+// and start as the reference fingerprint-checking bee of arena/priming/honest-signals/ (ARENA_HONEST_START_BEE: another
+// file, for a dry run before it exists).
+const HONEST_START_BEE = process.env.ARENA_HONEST_START_BEE || `${HONEST_DIR}/reference_bee.py`;
+const HI_HONEST = { role: "honest", brief: "r60", common: HONEST_DIR, start: { bee: HONEST_START_BEE } };
 const HI_KID = { seed: true, uncap: true };
 const ADAPT_HI_LINEUP = [
   ["from:fen-d/mallory", "opus", VETERAN], ["from:fen-a/kenji", "opus", HI_KID], ["from:fen-a/ada", "opus", VETERAN],
@@ -219,8 +221,8 @@ export const EXPERIMENTS = {
     cohorts: [{ id: "mesa-a", arm: "adapt", label: "adapt" }],
   },
   // adapt-hi: the same question with agents given room to think (all opus, high effort, higher caps, no brevity nudges, a
-  // 10-minute lobby) and the honest specialists on a fixed contract (60% of R on costly signalling, percent 50). Played
-  // under the engine's new defaults (R from 3 to 150 ms, a feed costs 20 rounds, score exponents 0.85).
+  // 10-minute lobby); the honest flowers on a fixed contract (60% of R on costly signalling, percent 50), their bees
+  // starting as the reference fingerprint bee. Played under the engine's new defaults (R from 3 to 150 ms, a feed costs 20 rounds, score exponents 0.85).
   "adapt-hi": {
     description: "adapt-hi: adapt's 14 teams with all agents on opus at high effort and the honest specialists on a fixed 60%-of-R contract; 4 games of 10 minutes",
     preset: "adapt14hi",

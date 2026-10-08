@@ -151,7 +151,7 @@ Programs run fresh for every call: flower(challenge), first(), decide(challenge,
 fed(nectar), which runs after a feed it decided in time, in the same instance as that decide. The bee's only state from one
 turn to the next is MEMORY, a flat key-value store of 50 bytes (key bytes + value JSON bytes) that only the bee writes and
 that empties when its code changes. A program's clock reads 0 when each call starts: it can time its own work, nothing
-more. Each flower call has a hidden time budget R (50-150 ms, uniform, fresh every call; its hard limit, which it reads as
+more. Each flower call has a hidden time budget R (uniform from the game's floor, 50 or 3 ms, to 150 ms, fresh every call; its hard limit, which it reads as
 GAME["ms"]) and E = (1100 - size) x max(0, R - CPU ms): work a flower shows can signal how rich this call is. On every feed the bee's team gets
 a pollen grain: a random piece of the answering flower's minified code (programs never get grains).`;
 

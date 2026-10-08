@@ -11,7 +11,7 @@ A flower now *chooses* how much to pay, out of energy it can only have by being 
 | a team's answering program | **flower** | |
 | a team's asking program | **bee** | |
 | one bee's challenge, one flower's response, one decision | **turn** | at most one per bee per round |
-| each flower call's time budget, uniform in 50–150 ms | **R** | hidden from the bee: this flower instance's reserve this turn |
+| each flower call's time budget, uniform in 3–150 ms | **R** | hidden from the bee: this flower instance's reserve this turn |
 | (flower size cap − size) × max(0, R − CPU ms) | **excess energy** E (node·ms) | what a flower saved this turn by being small and quick |
 | the share of E a flower offers | **percent** | 0–100, clamped |
 | percent/100 × E, to the bee if it feeds | **nectar** | |
@@ -22,9 +22,9 @@ A flower now *chooses* how much to pay, out of energy it can only have by being 
 | a bee's call after an in-time feed, in the instance that decided | **fed(nectar)** | the bee keeps what it worked out that turn long enough to store some of it |
 | ⌊pollen^(1/3)⌋ characters of the answering flower's minified code, to the feeding bee's team | **pollen grain** | pollen carries genes |
 | each call's clock, reading 0 as the call's time starts | **the game's clock** | programs can time themselves, not the world |
-| Σ√xᵢ | **rootsum** | the diversity-weighted size of an earnings vector |
-| rootsum of a flower's pollen column | **pollination** | how widely, and how profitably, the flower is pollinated |
-| rootsum of a bee's nectar row | **forage** | how widely the bee eats |
+| Σ xᵢ^p, 0 < p ≤ 1 | **power sum** | the diversity-weighted size of an earnings vector (p = 0.5: Σ√xᵢ, the old **rootsum**) |
+| power sum of a flower's pollen column, p = β | **pollination** | how widely, and how profitably, the flower is pollinated |
+| power sum of a bee's nectar row, p = α | **forage** | how widely the bee eats |
 | value ÷ Σ value over teams (1/N when Σ = 0) | **share** | par 1/N |
 | N² × pollination share × forage share | **fitness** | par 1.0 for any N |
 
@@ -32,7 +32,7 @@ A flower now *chooses* how much to pay, out of energy it can only have by being 
 
 Each team has one flower species and one bee. Every 200 ms round, each bee that isn't feeding takes one
 turn. Its challenge must already be queued. The engine draws a flower uniformly at random among all N
-species (its own included), calls `flower(challenge)`, and the flower has its hidden budget R (50–150
+species (its own included), calls `flower(challenge)`, and the flower has its hidden budget R (3–150
 ms, drawn per call) to return `[response, percent]`. The runner measures the call's CPU time, which gives E. At 150 ms the response
 reaches the bee, `decide(challenge, response)`, which has 50 ms to return `["feed" | "leave", next]`. On a
 feed the flower gives the bee nectar and pollen, the bee sits out `feedCost` rounds, and its optional
@@ -42,8 +42,10 @@ MEMORY is the only thing that carries over. No program sees any history.
 
 ## A hidden budget per call: R
 
-Every flower call gets its own time budget **R**, drawn uniformly from `budgets.flower.minMs` (50) to
-`budgets.flower.ms` (150), independently each time. R is the call's hard limit (the runner stops the flower at
+Every flower call gets its own time budget **R**, drawn uniformly from `budgets.flower.minMs` (3) to
+`budgets.flower.ms` (150), independently each time. `minMs` is 2% of `ms` by default (at least 1 ms; a set value
+is kept), so R ranges 50-fold rather than 3-fold as with the earlier floor of 50 ms: a poor instance has almost
+nothing to give. R is the call's hard limit (the runner stops the flower at
 R, as it stopped it at 150 before) and the ceiling its energy counts down from: E = (cap − size) × max(0, R −
 CPU ms). The flower is told R as `GAME.ms`; the bee never is, and the response still reaches it at the fixed
 150 ms, so timing tells it nothing about R.
@@ -291,15 +293,21 @@ At most one turn per bee per round: with 6 teams, at most 30 turns (60 actions) 
 - `server/realtime.js`, `server/sockets.js`: the per-viewer feed over SSE and WebSocket, fed by Postgres
   `LISTEN/NOTIFY`.
 
-## Why rootsum
+## Why a power sum
 
-A vector of earnings `v` from N sources has rootsum `Σ√vᵢ`. For a fixed total `T`, rootsum is largest
-when earnings are spread evenly (`√(N·T)`) and smallest when they all come from one source (`√T`).
-Diminishing returns per source (`d√k/dk = 1/(2√k)`) mean the k-th feed from the same team is worth
-less and less, so a bee can't farm one friendly flower and a flower can't rely on one loyal bee. Own-team
-entries count like any other source: a team can always earn from itself, but only as one of N columns.
+A vector of earnings `v` from N sources has power sum `Σ vᵢ^p`, with 0 < p ≤ 1. For p < 1 and a fixed total
+`T`, it is largest when earnings are spread evenly (`N^(1−p) · T^p`) and smallest when they all come from one
+source (`T^p`). Diminishing returns per source (`d(k^p)/dk = p·k^(p−1)`) mean the k-th feed from the same team
+is worth less and less, so a bee can't farm one friendly flower and a flower can't rely on one loyal bee.
+Own-team entries count like any other source: a team can always earn from itself, but only as one of N columns.
 
-Pollination is the rootsum of the pollen a flower kept per bee team: one term that rewards both being fed
+The exponents are per game: forage takes α (`scoring.alpha`) and pollination β (`scoring.beta`), both 0.85 by
+default. Games used to be scored with √ (p = 0.5): there, four sources are worth twice one source of the same
+total; at 0.85, about 1.23 times, so how much a source pays counts for more against how many sources there
+are. A game whose stored config has no `scoring` is from before the exponents and is still scored with √
+(`scoringOf` in server/lib/scoring.js), so its scores, replays and analyses don't change.
+
+Pollination is the power sum of the pollen a flower kept per bee team: one term that rewards both being fed
 at (no feed, no pollen) and keeping something when fed, spread over many teams' bees. (An earlier version
 had separate allure (from feed counts) and surplus terms; they merged into this one, and surplus was renamed pollen.) Fitness is
 N² × pollination share × forage share, so a perfectly even game scores 1 for everyone.
@@ -310,7 +318,7 @@ N² × pollination share × forage share, so a perfectly even game scores 1 for 
 |---|---|---|
 | size | 1,100 nodes | 11,000 nodes |
 | change | 220 a minute, banking a minute's worth | 2,200 a minute, banking a minute's worth |
-| time | R: 50–150 ms, drawn per call (`minMs`..`ms`) | 50 ms |
+| time | R: 3–150 ms, drawn per call (`minMs`..`ms`) | 50 ms |
 | memory | none | 50 bytes (Σ key bytes + value JSON bytes) |
 
 The flower keeps the cosmos's limits: small and slow to change. Its size cap is also the size cap of the

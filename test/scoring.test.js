@@ -1,7 +1,10 @@
-// Darwinian fitness = N² × pollination share × forage share (server/lib/scoring.js).
+// Darwinian fitness = N² × pollination share × forage share (server/lib/scoring.js), with forage = Σ nectar^alpha
+// and pollination = Σ pollen^beta: the game's config.scoring (0.85 and 0.85 by default), or √ (0.5) for a game
+// stored without them. score() without exponents is √, so the tests from before the exponents still hold.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { rootsum, score } from "../server/lib/scoring.js";
+import { LEGACY_SCORING, powsum, rootsum, score, scoringOf } from "../server/lib/scoring.js";
+import { DEFAULT_CONFIG, normalizeConfig } from "../server/lib/gameConfig.js";
 
 const close = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} != ${b}`);
 const fill = (n, x) => Array.from({ length: n }, () => new Array(n).fill(x));
@@ -70,4 +73,75 @@ test("a term whose total is 0 gives every team a share of 1/N", () => {
   assert.deepEqual(t.map((x) => x.forageShare), [0.5, 0.5]);
   assert.deepEqual(t.map((x) => x.pollinationShare), [1, 0]);
   assert.deepEqual(t.map((x) => x.fitness), [2, 0]);
+});
+
+test("exponents: forage = Σ nectar^alpha over the row, pollination = Σ pollen^beta over the column", () => {
+  const feeds = [[2, 1, 0], [0, 0, 4], [1, 1, 1]];
+  const nectar = [[100, 25, 0], [0, 0, 400], [9, 0, 0]];
+  const pollen = [[64, 81, 0], [0, 0, 100], [1, 0, 25]];
+  const [alpha, beta] = [0.85, 0.7];
+  const s = score(["a", "b", "c"], feeds, nectar, pollen, { alpha, beta });
+  close(s[0].forage, 100 ** alpha + 25 ** alpha);
+  close(s[1].forage, 400 ** alpha);
+  close(s[2].forage, 9 ** alpha);
+  close(s[0].pollination, 64 ** beta + 0 + 1 ** beta);
+  close(s[1].pollination, 81 ** beta);
+  close(s[2].pollination, 100 ** beta + 25 ** beta);
+  const tot = (k) => s.reduce((x, t) => x + t[k], 0);
+  for (const t of s) {
+    close(t.pollinationShare, t.pollination / tot("pollination"));
+    close(t.forageShare, t.forage / tot("forage"));
+    close(t.fitness, 9 * t.pollinationShare * t.forageShare);
+  }
+  // The rest is unchanged by the exponents.
+  const root = score(["a", "b", "c"], feeds, nectar, pollen);
+  for (const k of ["pollen", "feedsReceived", "feedsGiven", "pollinators", "nectarCollected", "nectarGiven", "nectarSources"]) {
+    assert.deepEqual(s.map((t) => t[k]), root.map((t) => t[k]), k);
+  }
+  // An even game is still par 1 for everyone, and a zero total still gives 1/N.
+  for (const t of score([0, 1, 2], fill(3, 1), fill(3, 500), fill(3, 900), { alpha, beta })) close(t.fitness, 1);
+  for (const t of score(["a", "b"], fill(2, 0), fill(2, 0), fill(2, 0), { alpha, beta })) close(t.fitness, 1);
+  // At 0.85, spreading still beats the same total from one source, by less than at 0.5.
+  close(powsum([400, 0, 0, 0], 0.85), 400 ** 0.85);
+  close(powsum([100, 100, 100, 100], 0.85) / powsum([400, 0, 0, 0], 0.85), 4 ** 0.15);
+  close(powsum([1, 2, 3], 1), 6);
+});
+
+test("new games are scored with 0.85 and 0.85; a game stored without exponents is scored with √, exactly as before", () => {
+  assert.deepEqual(DEFAULT_CONFIG.scoring, { alpha: 0.85, beta: 0.85 });
+  const fresh = normalizeConfig({});
+  assert.deepEqual(fresh.scoring, { alpha: 0.85, beta: 0.85 });
+  assert.deepEqual(scoringOf(fresh), { alpha: 0.85, beta: 0.85 });
+  // A config stored before the exponents existed has no `scoring`: √.
+  const { scoring: _, ...old } = fresh;
+  assert.deepEqual(scoringOf(old), { alpha: 0.5, beta: 0.5 });
+  assert.deepEqual(scoringOf(old), LEGACY_SCORING);
+  assert.deepEqual(scoringOf(null), LEGACY_SCORING);
+  // Its scores are bit for bit the ones the old Σ√ gave (the same Math.sqrt), so results don't move.
+  const feeds = [[3, 1, 2], [0, 5, 1], [2, 2, 2]];
+  const nectar = [[1234.5, 17.25, 980.125], [0, 4410.75, 3.5], [77.7, 61.1, 1e6 / 3]];
+  const pollen = [[333.3, 12, 7e4 / 9], [0, 1.5, 999.99], [2.2, 5555.5, 0.01]];
+  const oldRoot = (v) => v.reduce((s, x) => s + Math.sqrt(Math.max(0, x)), 0);
+  const was = (b, f) => [oldRoot(pollen.map((r) => r[f])), oldRoot(nectar[b])];
+  const legacy = score([0, 1, 2], feeds, nectar, pollen, scoringOf(old));
+  for (const [i, t] of legacy.entries()) assert.deepEqual([t.pollination, t.forage], was(i, i));
+  assert.deepEqual(legacy, score([0, 1, 2], feeds, nectar, pollen), "score() without exponents is √ too");
+  const now = score([0, 1, 2], feeds, nectar, pollen, scoringOf(fresh));
+  assert.ok(now.every((t, i) => t.forage > legacy[i].forage && t.pollination > legacy[i].pollination));
+});
+
+test("the exponents are config: each in (0, 1], kept from the base when left out (a √ base stays √)", () => {
+  assert.deepEqual(normalizeConfig({ scoring: { alpha: 0.6 } }).scoring, { alpha: 0.6, beta: 0.85 });
+  assert.deepEqual(normalizeConfig({ scoring: { alpha: 1, beta: "0.3" } }).scoring, { alpha: 1, beta: 0.3 });
+  assert.deepEqual(normalizeConfig({ scoring: { alpha: null, beta: "" } }).scoring, { alpha: 0.85, beta: 0.85 });
+  for (const bad of [0, -0.5, 1.01, 2, "x", NaN, Infinity, true, [0.5], {}]) {
+    assert.throws(() => normalizeConfig({ scoring: { alpha: bad } }), /scoring\.alpha must be a number in \(0, 1\]/, String(bad));
+    assert.throws(() => normalizeConfig({ scoring: { beta: bad } }), /scoring\.beta must be a number in \(0, 1\]/, String(bad));
+  }
+  // Updating a lobby game's settings keeps its exponents unless they are given.
+  const base = normalizeConfig({ scoring: { alpha: 0.7, beta: 0.9 } });
+  assert.deepEqual(normalizeConfig({ minutes: 3 }, base).scoring, { alpha: 0.7, beta: 0.9 });
+  assert.deepEqual(normalizeConfig({ scoring: { beta: 0.4 } }, base).scoring, { alpha: 0.7, beta: 0.4 });
+  const { scoring: _, ...old } = base;
+  assert.deepEqual(normalizeConfig({ minutes: 3 }, old).scoring, { alpha: 0.5, beta: 0.5 }, "a config stored without them stays √");
 });

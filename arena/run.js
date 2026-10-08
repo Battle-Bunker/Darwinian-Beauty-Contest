@@ -75,10 +75,12 @@ async function ensureArena(id, presetName, games, extra = {}) {
   // programs, its notebook, and the files it wrote in its workspace).
   settings.roles = {};
   settings.seeds = {};
+  settings.starts = {}; // start: { bee: file }: a new persona's first programs (the honest teams' reference bee in adapt-hi)
   for (const [source, , opts = {}] of preset.lineup) {
     const slug = source.startsWith("from:") ? source.slice(5).split("/").pop() : source.replace(/^founder:/, "");
     if (opts.role) settings.roles[slug] = { role: opts.role, common: opts.common || null, ...(opts.brief ? { brief: opts.brief } : {}) };
     if (opts.seed && source.startsWith("from:")) settings.seeds[slug] = source.slice(5);
+    if (opts.start) settings.starts[slug] = opts.start;
   }
   await q("INSERT INTO arena.arenas (id, preset, settings, owner_name, room_short_id, room_url) VALUES ($1,$2,$3,$4,$5,$6)",
     [id, presetName, settings, owner, room.shortId, room.url]);
@@ -164,6 +166,9 @@ async function carryOver(arena, generation, personaId) {
   const prev = await one(`SELECT g.game_short_id, e.team_id FROM arena.entries e JOIN arena.games g ON g.id = e.game_id
                            WHERE g.arena_id = $1 AND g.generation < $2 AND e.persona_id = $3 AND NOT e.sat_out ORDER BY g.generation DESC LIMIT 1`, [arena.id, generation, personaId]);
   if (prev) return (await finalPrograms(gamePath(arena.room_short_id, prev.game_short_id)))[prev.team_id]?.code || null;
+  // A persona with start programs (settings.starts): those, in its first game.
+  const start = arena.settings.starts?.[personaId.split("/").pop()];
+  if (start) return startPrograms(start);
   // A seeded persona's first game: its final programs from its last game in its source arena.
   const src = arena.settings.seeds?.[personaId.split("/").pop()];
   if (!src) return null;
@@ -171,6 +176,11 @@ async function carryOver(arena, generation, personaId) {
                            WHERE e.persona_id = $1 AND NOT e.sat_out ORDER BY g.generation DESC LIMIT 1`, [src]);
   if (!last) return null;
   return (await finalPrograms(gamePath(last.room_short_id, last.game_short_id)))[last.team_id]?.code || null;
+}
+
+/** Start programs ({ kind: file under the repo }) as code; a missing file stops the runner (checked before an experiment). */
+function startPrograms(start) {
+  return Object.fromEntries(Object.entries(start).map(([k, f]) => [k, fs.readFileSync(path.resolve(ARENA_DIR, "..", f), "utf8")]));
 }
 
 /** The files a seeded persona wrote in its source arena's workspace (its scripts, scaffold, data), copied into its new
@@ -557,6 +567,10 @@ async function runExperiment(name) {
     const dir = path.resolve(ARENA_DIR, "..", c.common.dir);
     const files = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => !f.startsWith(".") && fs.statSync(path.join(dir, f)).isFile()) : [];
     if (!files.length) throw new Error(`${c.id}: its common knowledge ${c.common.dir} is missing or empty`);
+  }
+  // So must every start program (the honest teams' reference bee in adapt-hi).
+  for (const [, , o = {}] of PRESETS[exp.preset]?.lineup || []) {
+    for (const f of Object.values(o.start || {})) if (!fs.existsSync(path.resolve(ARENA_DIR, "..", f))) throw new Error(`start program ${f} is missing`);
   }
   const started = [];
   // The experiment's own cap: each cohort gets an equal share (--budget overrides it per cohort).

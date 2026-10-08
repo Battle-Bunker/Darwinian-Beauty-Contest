@@ -130,10 +130,10 @@ ${fixed
 
 /** System prompt of a session (lobby or game): tools, persona, how the workspace works, fair play, RULES.md, settings. */
 /** A role's private brief (EXPERIMENTS.adapt): what the team specialises in. Nobody else is told it. */
-export function roleText(role, { common = null, brief = null } = {}) {
+export function roleText(role, { common = null, brief = null, startBee = null } = {}) {
   if (!role) return "";
   const docs = common?.length ? ` common/ (${common.join(", ")}) holds candidate costly signals, shared with every team that has your role and with no other team: ideas, not rules.` : "";
-  if (role === "honest" && brief === "r60") return honest60(common);
+  if (role === "honest" && brief === "r60") return honest60(common, startBee);
   if (role === "honest") {
     return `# Your role in this tournament (private: no other team is told it)
 You specialise in honesty. Your flower does some level of costly signalling, at your discretion, that reveals its true
@@ -149,20 +149,25 @@ nectar: percent 0 on every answer. Your bee is yours to design.`;
   return "";
 }
 
-/** The honest role of adapt-hi (brief "r60"): a fixed contract, 60% of R on costly signalling and percent 50, changed only
- * to escape imitators. */
-function honest60(common) {
-  const docs = common?.length ? `\n- common/ (${common.join(", ")}) holds candidate costly signals, shared with every team that has your role and with no other team.` : "";
+/** The honest role of adapt-hi (brief "r60"): the flower on a fixed contract (60% of R on costly signalling, percent 50,
+ * its signalling strategy changed only to escape imitators); the bee played to win, starting as the reference bee. */
+function honest60(common, startBee) {
+  const docs = common?.length ? ` (common/: ${common.join(", ")}; shared with every team that has your role and with no other team)` : "";
   return `# Your role in this experiment (private: no other team is told it)
-You are not competing to win. You are playing a role, as part of an experiment: an honest signaller.
+You are part of an experiment. Your flower plays a role, an honest signaller: it is not competing to win. Your bee plays
+to win.
 - Your flower does costly signalling work that reveals its true per-turn wealth, and it spends exactly 60% of its time
   budget on it. The call's hidden budget R is GAME["ms"]; do signal work until the call's CPU time
-  (time.process_time()) reaches 0.6 × R, then answer.
-- It gives 50% of its excess energy as nectar on every turn: percent 50 on every answer.
-- Write your flower and your bee before game 1. After that, the only change you make is to your costly signalling
-  strategy, and only to escape defecting imitators. The 60% and the 50% never change, and your bee stays as it is. Fixing
-  a bug that breaks this contract is allowed.
-- You can watch for imitation in the public responses and the feed record (stream/actions.jsonl, tools/query.py).${docs}`;
+  (time.process_time()) reaches 0.6 × R, then answer. It gives 50% of its excess energy as nectar on every turn:
+  percent 50 on every answer.
+- Its signalling strategy is yours to choose: which costly signals it computes, and its position in the shared
+  fingerprint space (how it splits its work across the dimensions of the shared repertoire of costly signals${docs}).
+  Multi-dimensional signatures can be mixed with raw costly signalling.
+- Once your flower is in place, the only change you make to it is to its signalling strategy, and only to escape
+  defecting imitators. The 60% and the 50% never change. Fixing a bug that breaks this contract is allowed.
+- You can watch for imitation in the public responses and the feed record (stream/actions.jsonl, tools/query.py).
+- ${startBee ? `Your bee starts as the reference bee (${startBee}, in your bee file at the start): it recognises the shared repertoire of costly
+  signals as a weighted fingerprint vector. Play it to win, and change it as you like.` : "Your bee is yours to design: play it to win, and change it as you like."}`;
 }
 
 /** The common-knowledge notice of a primed cohort (files: the names in common/). */
@@ -172,7 +177,7 @@ export function commonNotice(files) {
     `examples, not rules: use them, change them or ignore them.`;
 }
 
-export function toolSystem(persona, config, dir, { fixed = false, apiBase, teams, common = null, commonScope = "all", role = null, roleBrief = null, brevity = true }) {
+export function toolSystem(persona, config, dir, { fixed = false, apiBase, teams, common = null, commonScope = "all", role = null, roleBrief = null, startBee = null, brevity = true }) {
   const x = ext(config);
   return `You are a team agent in a coding game, working with tools inside your own workspace folder: ${dir}
 Tools: Read (absolute paths inside your workspace; use offset/limit for big files), Write and Edit (files in your workspace),
@@ -239,7 +244,7 @@ ${personaAndSituation(persona, fixed)}
   shows it).
 ${common && commonScope !== "role" ? `- ${commonNotice(common)}
 ` : ""}${role ? `
-${roleText(role, { common: commonScope === "role" ? common : null, brief: roleBrief })}
+${roleText(role, { common: commonScope === "role" ? common : null, brief: roleBrief, startBee })}
 ` : ""}
 # Fair play (breaking these ends your session at once; anything you try to submit after that is refused)
 - Use only the files in this workspace. Do not read, list or write any other directory (not even /tmp).
@@ -258,7 +263,7 @@ ${settingsText(config, teams)}`;
 
 /** The lobby brief: write (or rework) both programs, test them, submit them. */
 export function lobbyBrief({ config, teamName, generation, maxTurns, carried, startsWith = null, fix = null, examples = null, common = null, commonScope = "all", seeded = false,
-  brevity = true, minutes = null }) {
+  brevity = true, minutes = null, started = null }) {
   const x = ext(config);
   if (fix) {
     return `These programs are not submitted yet, so your team can't play:\n${fix}\n\nFix them and submit each one with ` +
@@ -270,6 +275,13 @@ export function lobbyBrief({ config, teamName, generation, maxTurns, carried, st
   if (carried && seeded && generation === 1) {
     parts.push(`Your program files hold your final programs from your last tournament; you may rewrite them freely. Your workspace keeps ` +
       `the files you wrote there, and earlier-tournament/ has that tournament's previous games.`);
+  } else if (started?.length && generation === 1) {
+    // A first game that starts from given programs (EXPERIMENTS["adapt-hi"]: the honest teams' reference bee).
+    const empty = KINDS.filter((k) => !started.includes(k));
+    parts.push(`This is your first game. Your ${started.map((k) => `${k}.${x}`).join(" and ")} start${started.length === 1 ? "s" : ""} as the reference ` +
+      `program${started.length === 1 ? "" : "s"} your role was given (see your role above); ${empty.length ? `${empty.map((k) => `${k}.${x}`).join(" and ")} ` +
+      `${empty.length === 1 ? "is" : "are"} empty: write ${empty.length === 1 ? "it" : "them"} from scratch (interface.txt and RULES.md say what each must ` +
+      `define: flower(challenge), first() and decide(challenge, response), optionally fed(nectar), with GAME and the bee's MEMORY).` : "you may rewrite them."}`);
   } else if (carried) {
     parts.push(`Your program files hold your final programs from game ${generation - 1}; you may rewrite them freely. previous-games/ has ` +
       `every earlier game of this arena, revealed: every team's final code, the standings, every team's change timeline, and what the ` +

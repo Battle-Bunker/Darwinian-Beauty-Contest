@@ -406,7 +406,8 @@ export async function runTeamSession({ desk, arena, gameRow, persona, entry, gPa
   const teams = (view.participants || view.teams.map((t) => t.id)).length;
   const cf = commonFiles(arena, persona);
   const system = toolSystem(persona, config, dir, { fixed: !!arena.settings.noEvolution, apiBase, teams, common: cf?.files, commonScope: cf?.scope,
-    role: arena.settings.roles?.[persona.slug]?.role ?? null, roleBrief: arena.settings.roles?.[persona.slug]?.brief ?? null, brevity: arena.settings.prompts?.brevity !== false });
+    role: arena.settings.roles?.[persona.slug]?.role ?? null, roleBrief: arena.settings.roles?.[persona.slug]?.brief ?? null,
+    startBee: arena.settings.starts?.[persona.slug]?.bee ? path.basename(arena.settings.starts[persona.slug].bee) : null, brevity: arena.settings.prompts?.brevity !== false });
   const scripts = fs.readdirSync(dir).filter((f) => f.endsWith(".py") && !KINDS.includes(f.replace(/\.py$/, "")));
   const prompt = buildPrompt({ view, drafts, status, maxTurns, scripts, dir, brevity: arena.settings.prompts?.brevity !== false });
   const tag = `${arena.id}:${persona.slug}:g${gameRow.generation}:s${sessionNo}${attempt ? `a${attempt}` : ""}:${crypto.randomBytes(3).toString("hex")}`;
@@ -488,7 +489,8 @@ export async function lobby({ desk, arena, gameRow, persona, entry, gPath, strea
       ...(minutes ? { timeoutMs: minutes * 60_000 } : {}),
       buildPrompt: ({ view, maxTurns, brevity }) => lobbyBrief({ config: view.game.config, teamName: entry.team_name, generation: gameRow.generation, maxTurns,
         carried: !!carry && Object.values(carry).some(Boolean), fix, examples, common: commonFiles(arena, persona)?.files, commonScope: commonFiles(arena, persona)?.scope,
-        seeded: !!arena.settings.seeds?.[persona.slug], brevity, minutes: attempt ? null : minutes }),
+        seeded: !!arena.settings.seeds?.[persona.slug], brevity, minutes: attempt ? null : minutes,
+        started: gameRow.generation === 1 ? Object.keys(arena.settings.starts?.[persona.slug] || {}) : null }),
     });
     if (s.violation) { violation = true; break; }
     const have = await submitted(api, tok, gPath, entry.team_id);

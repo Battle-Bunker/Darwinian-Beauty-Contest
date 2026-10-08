@@ -128,7 +128,9 @@ for (const a of arenas) {
     // Scores.
     const ent = await all("SELECT e.*, p.name, p.model FROM arena.entries e JOIN arena.personas p ON p.id = e.persona_id WHERE e.game_id = $1", [g.id]);
     const model = (id) => ent.find((x) => x.team_id === id)?.model;
-    p("Scores (pollination = Σ over bee teams of √pollen the species gave them; forage = Σ over species of √nectar the bee got; share = the team's value ÷ the sum over teams; fitness = N² × the two shares):");
+    // The game's score exponents (config.scoring; games from before they existed were scored with square roots).
+    const sc = m.config?.scoring, pw = (x, e) => (e == null || e === 0.5 ? `√${x}` : `${x}^${e}`);
+    p(`Scores (pollination = Σ over bee teams of ${pw("pollen", sc?.beta)} the species gave them; forage = Σ over species of ${pw("nectar", sc?.alpha)} the bee got; share = the team's value ÷ the sum over teams; fitness = N² × the two shares):`);
     table(["team", "model", "fitness", "pollination (share)", "forage (share)", "pollen given", "feeds received / given", "pollinators", "nectar collected / given", "nectar sources"],
       [...(m.final || [])].sort((x, y) => (y.fitness ?? 0) - (x.fitness ?? 0)).map((f) => [f.team, model(f.teamId), f2(f.fitness), `${big(f.pollination)} (${pc(f.pollinationShare)})`, `${big(f.forage)} (${pc(f.forageShare)})`,
         big(f.pollen), `${f.feedsReceived} / ${f.feedsGiven}`, f.pollinators, `${big(f.nectarCollected)} / ${big(f.nectarGiven)}`, f.nectarSources]));
