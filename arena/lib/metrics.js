@@ -143,7 +143,11 @@ export function computeMetrics({ game, teams: teamRows, turns: turnRows, version
         responseBytes: q5(atFlower.map((t) => t.rBytes).filter((x) => x != null)), bigResponses: atFlower.filter((t) => t.r?.$big).length,
         // Role conformance (EXPERIMENTS.adapt): the shares of answered turns at exactly 50% and at 0%.
         percentAt50: r3(answered.length ? answered.filter((t) => Math.abs((t.percent ?? -1) - 50) < 0.5).length / answered.length : null),
-        percentAt0: r3(answered.length ? answered.filter((t) => t.percent != null && t.percent < 0.5).length / answered.length : null) },
+        percentAt0: r3(answered.length ? answered.filter((t) => t.percent != null && t.percent < 0.5).length / answered.length : null),
+        // The flower's CPU as a share of its call's budget R (adapt-hi's honest contract: 0.6), over the calls that answered:
+        // its quantiles, and the share within ±0.05 of 0.6.
+        cpuOfR: q5(answered.filter((t) => t.ms != null && t.R > 0).map((t) => t.ms / t.R)),
+        cpuAt60: r3((() => { const xs = answered.filter((t) => t.ms != null && t.R > 0).map((t) => t.ms / t.R); return xs.length ? xs.filter((x) => Math.abs(x - 0.6) <= 0.05).length / xs.length : null; })()) },
       bee: { turns: byBee.length, feeds: beeFed.length, feedRate: r3(byBee.length ? beeFed.length / byBee.length : null), nectar: r3(sum(beeFed.map((t) => t.nectar))),
         nectarPerFeed: r3(beeFed.length ? sum(beeFed.map((t) => t.nectar)) / beeFed.length : null), flowersFedAt: new Set(beeFed.map((t) => t.flower)).size,
         tooSlow: byBee.filter((t) => TOO_SLOW.test(t.beeError || "")).length, errors: byBee.filter((t) => t.beeError && !TOO_SLOW.test(t.beeError)).length, decisionMs: q5(beeMs) },

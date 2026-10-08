@@ -2,6 +2,7 @@
 // types. Deliberately no behaviour: no starter code, so there's no shared starting point to converge on.
 import { parseType } from "./types.js";
 import { RESPONSE_DEPTH, limitsOf, roundMs } from "./gameConfig.js";
+import { scoringOf } from "./scoring.js";
 
 function describe(t) {
   switch (t.kind) {
@@ -68,7 +69,9 @@ function flowerNotes(ts, config) {
     `${c} If the bee feeds, it gets nectar = percent/100 × E and pollen = the rest; no feed, nothing is given.\n` +
     `${c} E = (${G("flower_size_cap")} - ${G("size")}) * max(0, ${G("ms")} - CPU ms of this call, writing the response as JSON included).\n` +
     `${c} The bee is never told R: the response reaches it at ${G("flower_ms")} ms whatever R was.\n` +
-    `${c} Programs see only their arguments and GAME: no history.`;
+    `${c} Programs see only their arguments and GAME: no history.\n` +
+    `${c} Your team scores pollination = Σ over bee teams of (the pollen your species gave that team's bee)^${scoringOf(config).beta};\n` +
+    `${c} fitness = N² × pollination share × forage share.`;
 }
 
 // How a bee runs.
@@ -77,13 +80,15 @@ function beeNotes(ts, config) {
   return `${c} Rounds of ${G("round_ms")} = ${roundMs(config)} ms. As each round starts, a bee with a challenge queued (and not feeding)\n` +
     `${c} takes its turn: a flower of a species drawn at random among all ${G("teams")} (your own included) answers within\n` +
     `${c} ${config.budgets.flower.ms} ms; then decide has ${G("ms")} = ${config.budgets.bee.ms} ms. You are never told whose flower it is, nor its percent.\n` +
-    `${c} A feed sits your bee out ${G("feed_cost")} rounds. A late reply never feeds; only a late ["leave", c] queues c. After any\n` +
+    `${c} A feed sits your bee out ${G("feed_cost")} = ${config.feedCost} rounds. A late reply never feeds; only a late ["leave", c] queues c. After any\n` +
     `${c} other late reply, or a reply with no usable next challenge, first() is called at once. A call is stopped after 2 s.\n` +
     `${c} fed(nectar), optional, runs after a feed decided in time, in the same instance as that decide (its globals\n` +
     `${c} intact), within ${G("ms")}. Otherwise every turn runs fresh. Only MEMORY carries over: a key-value store ({} at\n` +
     `${c} first; string keys; string, number, ${ts ? "boolean or null" : "bool or None"} values) you change in place or reassign. It is saved after\n` +
     `${c} each first, decide or fed that returns, if Σ (key bytes + value JSON bytes) ≤ ${G("memory")} = ${config.budgets.bee.memory}.\n` +
-    `${c} response is ${nul} if the flower failed. Programs get no history; each call's clock reads 0 as it starts.`;
+    `${c} response is ${nul} if the flower failed. Programs get no history; each call's clock reads 0 as it starts.\n` +
+    `${c} Your team scores forage = Σ over flower teams of (the nectar your bee got there)^${scoringOf(config).alpha};\n` +
+    `${c} fitness = N² × pollination share × forage share.`;
 }
 
 export function programInterface(config) {

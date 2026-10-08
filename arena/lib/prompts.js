@@ -18,9 +18,9 @@ export const durationText = (minutes) => minutes < 1 ? `${Math.round(minutes * 6
 /** The floor of a flower call's hidden budget R: the game's own (budgets.flower.minMs), else the engine's default, 2% of
  * the most R can be (3 ms of 150). */
 export const rFloor = (config) => { const fl = config?.budgets?.flower || {}; return fl.minMs ?? Math.max(1, Math.round(0.02 * (fl.ms ?? 150))); };
-/** The score exponents: forage sums nectar^alpha over species, pollination pollen^beta over bee teams. Games from before
- * the exponents were configurable used square roots (0.5). */
-export const scoreExponents = (config) => ({ alpha: config?.alpha ?? config?.scoring?.alpha ?? 0.5, beta: config?.beta ?? config?.scoring?.beta ?? 0.5 });
+/** The score exponents (config.scoring): forage sums nectar^alpha over species, pollination pollen^beta over bee teams.
+ * A game stored without them is from before they existed and was scored with square roots (0.5), as the server has it. */
+export const scoreExponents = (config) => ({ alpha: config?.scoring?.alpha ?? 0.5, beta: config?.scoring?.beta ?? 0.5 });
 
 export const sizeText = () => `Size is measured in nodes of your program's syntax tree after the game minifies it: comments, spacing and the ` +
   `lengths of names you define are free, and every literal (a string or a number) counts one node per byte.`;
@@ -79,7 +79,15 @@ ${timingText(config)}
 ${KINDS.map((k) => `| ${k} | ${n0(b[k].size)} | ${n0(b[k].perMinute)} | ${n0(b[k].cap)} | ${k === "flower" ? `R: ${rFloor(config)} to ${b[k].ms}` : b[k].ms} |`).join("\n")}
 
   Change budget starts at 0 when the game starts and grows with game time, up to its cap. The bee's MEMORY holds at most
-  ${n0(b.bee.memory ?? 50)} bytes. A response may be at most ${n0(config.maxResponseBytes ?? 65536)} bytes of JSON.`;
+  ${n0(b.bee.memory ?? 50)} bytes. A response may be at most ${n0(config.maxResponseBytes ?? 65536)} bytes of JSON.${exponentsText(config)}`;
+}
+/** The score exponents, when the game sets them (games before they were configurable used square roots, and their
+ * briefs don't mention them). */
+function exponentsText(config) {
+  if (config?.scoring?.alpha == null) return "";
+  const { alpha, beta } = scoreExponents(config);
+  return `\n  Scores: forage sums nectar^${alpha} over the species your bee fed at, pollination sums pollen^${beta} over the bee teams your
+  species fed (RULES.md).`;
 }
 
 // ---------------------------------------------------------------- team agents
@@ -249,12 +257,13 @@ ${settingsText(config, teams)}`;
 }
 
 /** The lobby brief: write (or rework) both programs, test them, submit them. */
-export function lobbyBrief({ config, teamName, generation, maxTurns, carried, startsWith = null, fix = null, examples = null, common = null, commonScope = "all", seeded = false }) {
+export function lobbyBrief({ config, teamName, generation, maxTurns, carried, startsWith = null, fix = null, examples = null, common = null, commonScope = "all", seeded = false,
+  brevity = true, minutes = null }) {
   const x = ext(config);
   if (fix) {
     return `These programs are not submitted yet, so your team can't play:\n${fix}\n\nFix them and submit each one with ` +
       `\`python3 tools/submit.py <kind>\` (check first with tools/check.py; its --json output shows the minified program the errors ` +
-      `refer to). Be quick: at most ${maxTurns} tool calls. Finish with a one-line summary.`;
+      `refer to). ${brevity ? `Be quick: at most ${maxTurns} tool calls. Finish with a one-line summary.` : "Finish with a summary of what you changed."}`;
   }
   const b = config.budgets;
   const parts = [`# Game ${generation}: the lobby. You are team "${teamName}".`];
@@ -283,13 +292,19 @@ export function lobbyBrief({ config, teamName, generation, maxTurns, carried, st
     `themselves, and your scaffold (scaffold.py, using tools/garden.py), which you can start now with ` +
     `\`python3 tools/scaffold.py start scaffold.py\`: it keeps running through the whole game and can submit changes by itself ` +
     `while you are not there. Check that it starts cleanly (\`tools/scaffold.py status\` and \`logs\`).`);
-  parts.push(`Update notebook.md (it carries over to your next sessions and games), then end with a one-paragraph summary of what you ` +
-    `wrote and why. You have at most about ${maxTurns} tool calls.`);
+  if (minutes) parts.push(`This lobby session has about ${durationText(minutes)} of wall time; then it is stopped, and the game starts once every ` +
+    `team is done or out of time. What your team can study meanwhile: ${generation > 1 ? `previous-games/ (every earlier game of this arena, ` +
+    `fully revealed), \`python3 tools/query.py --room '...'\` (queries across this arena's finished games, fully revealed), ` : ""}` +
+    `${seeded ? "earlier-tournament/ (your last tournament's games), " : ""}your notebook, and your own files.`);
+  parts.push(brevity
+    ? `Update notebook.md (it carries over to your next sessions and games), then end with a one-paragraph summary of what you ` +
+      `wrote and why. You have at most about ${maxTurns} tool calls.`
+    : `Update notebook.md (it carries over to your next sessions and games), then end with a summary of what you wrote and why.`);
   return parts.join("\n\n");
 }
 
 /** The brief of a session while the game runs (or is about to start): headline numbers only. */
-export function gameBrief({ config, teamName, teamId = null, generation, sessionNo, status, clockMs, budgets, scores = null, names = {}, head, memory = null, drafts = [], maxTurns, scripts = [], scaffold = null, automatic = 0 }) {
+export function gameBrief({ config, teamName, teamId = null, generation, sessionNo, status, clockMs, budgets, scores = null, names = {}, head, memory = null, drafts = [], maxTurns, scripts = [], scaffold = null, automatic = 0, brevity = true }) {
   const x = ext(config);
   const endMs = config.minutes * 60000;
   const parts = [];
@@ -323,7 +338,7 @@ export function gameBrief({ config, teamName, teamId = null, generation, session
   if (scripts.length) parts.push(`Python files in your workspace: ${scripts.join(", ")}.`);
   parts.push(`Submit whenever you like: \`python3 tools/submit.py <kind>\` goes live at once and pays its change cost. Nothing is submitted ` +
     `for you. When the game ends this session is stopped, and so is everything it started. Update notebook.md as you go (it ` +
-    `carries over to the next game), and end with a one-paragraph summary. At most about ${maxTurns} tool calls.`);
+    `carries over to the next game), and end with a ${brevity ? `one-paragraph summary. At most about ${maxTurns} tool calls.` : "summary."}`);
   return parts.join("\n\n");
 }
 

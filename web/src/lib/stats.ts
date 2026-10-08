@@ -44,6 +44,8 @@ export function recFromEntry(e: LedgerEntry, roundMs: number): TurnRec {
 export interface EnergyModel {
   cap: number;          // the flower size budget, also the energy cap
   window: number;       // the flower window, ms
+  /** The game's scoring exponents (scoringOf(config)): forage = Σ nectar^alpha, pollination = Σ pollen^beta. Left out, √. */
+  alpha?: number; beta?: number;
   /** A flower version's size (participant index, version), where the viewer may know it. */
   sizeOf?: (flower: number, version: number) => number | undefined;
 }
@@ -128,7 +130,10 @@ export function binTurns(recs: Iterable<TurnRec>, n: number, endMs: number, binM
     }
   }
 
-  // Score components at the end of every bin: rootsums over the running pair totals.
+  // Score components at the end of every bin: sums of powers over the running pair totals (as the server's
+  // scoring.js: exactly √ at 0.5).
+  const powOf = (p: number) => (p === 0.5 ? Math.sqrt : (x: number) => Math.pow(x, p));
+  const powP = powOf(model.beta ?? 0.5), powN = powOf(model.alpha ?? 0.5);
   const P = new Float64Array(n * n), N = new Float64Array(n * n);
   const poll = new Float64Array(n), forage = new Float64Array(n);
   for (let k = 0; k < bins; k++) {
@@ -136,8 +141,8 @@ export function binTurns(recs: Iterable<TurnRec>, n: number, endMs: number, binM
     if (dp) for (let i = 0; i < n * n; i++) { P[i] += dp[i]; N[i] += dn[i]; }
     poll.fill(0); forage.fill(0);
     for (let bb = 0; bb < n; bb++) for (let ff = 0; ff < n; ff++) {
-      poll[ff] += Math.sqrt(Math.max(0, P[bb * n + ff]));
-      forage[bb] += Math.sqrt(Math.max(0, N[bb * n + ff]));
+      poll[ff] += powP(Math.max(0, P[bb * n + ff]));
+      forage[bb] += powN(Math.max(0, N[bb * n + ff]));
     }
     const tp = poll.reduce((s, x) => s + x, 0), tf = forage.reduce((s, x) => s + x, 0);
     for (let i = 0; i < n; i++) {
@@ -168,8 +173,8 @@ export interface Metric {
 
 export const METRICS: Metric[] = [
   { key: "fitness", label: "Fitness", unit: "N² × pollination share × forage share, so far (par 1)", mode: "level", value: (t, k) => [t.fitness[k], 1], format: "score", par: 1 },
-  { key: "pollination", label: "Pollination", unit: "Σ √(pollen kept from each bee team), so far", mode: "level", value: (t, k) => [t.pollination[k], 1], format: "score" },
-  { key: "forage", label: "Forage", unit: "Σ √(nectar got at each flower), so far", mode: "level", value: (t, k) => [t.forage[k], 1], format: "score" },
+  { key: "pollination", label: "Pollination", unit: "Σ (pollen kept from each bee team)^β, so far", mode: "level", value: (t, k) => [t.pollination[k], 1], format: "score" },
+  { key: "forage", label: "Forage", unit: "Σ (nectar got at each flower)^α, so far", mode: "level", value: (t, k) => [t.forage[k], 1], format: "score" },
   { key: "pollen", label: "Pollen kept by the flower", unit: "node·ms, so far", mode: "cumulative", value: (t, k) => [t.pollen[k], 1], format: "energy" },
   { key: "nectar", label: "Nectar collected by the bee", unit: "node·ms, so far", mode: "cumulative", value: (t, k) => [t.nectar[k], 1], format: "energy" },
   { key: "paid", label: "Nectar paid by the flower", unit: "node·ms, so far", mode: "cumulative", value: (t, k) => [t.paid[k], 1], format: "energy" },

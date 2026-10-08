@@ -56,7 +56,7 @@ const bool = (v, dflt) => (typeof v === "boolean" ? v : v === "true" ? true : v 
 /** A scoring exponent: in (0, 1], else an error; left out, `dflt`. */
 const exponent = (v, name, dflt) => {
   if (v === null || v === undefined || v === "") return dflt;
-  const x = Number(v);
+  const x = typeof v === "number" || typeof v === "string" ? Number(v) : NaN;
   if (!Number.isFinite(x) || x <= 0 || x > 1) throw new Error(`scoring.${name} must be a number in (0, 1]`);
   return x;
 };

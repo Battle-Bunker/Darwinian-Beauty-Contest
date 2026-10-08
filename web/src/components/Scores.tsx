@@ -2,29 +2,35 @@
 // behind it, the breakdown team by team, and the whole-game ledgers (who fed where, the nectar each bee got
 // at each flower, and the pollen each flower gave each bee). A value the server holds back shows "–".
 import { useMemo } from "react";
-import type { GameView, Team, TeamScore } from "../types";
-import { fmt2, fmt3, fmtClock, fmtE, fmtEExact, pct, poss } from "../lib/format";
+import { scoringOf, type GameView, type Scoring, type Team, type TeamScore } from "../types";
+import { fmt2, fmt3, fmtClock, fmtE, fmtEExact, pct, poss, powText } from "../lib/format";
 import { InfoTip, TeamChip } from "./ui";
 import { TrophyIcon } from "./Icons";
 
-const TERMS = {
+/** times × x^p, rounded to a whole number. */
+const fmtPow = (x: number, p: number, times = 1) => Math.round(times * Math.pow(x, p)).toLocaleString();
+
+/** The scoring words, with the game's exponents (alpha for forage, beta for pollination). */
+const termsOf = ({ alpha, beta }: Scoring) => ({
   fitness: "N² × pollination share × forage share. Par is 1.0 however many teams play: above 1, you're out-evolving the average team.",
-  pollination: "Σ over bee teams of √(the pollen your flower gave that team's bee). Bees carry pollen to other flowers: how widely, and how much, your flower is pollinated.",
-  forage: "Σ over flower teams of √(the nectar your bee got there). How widely your bee eats.",
+  pollination: `Σ over bee teams of ${powText("the pollen your flower gave that team's bee", beta)}. Bees carry pollen to other flowers: how widely, and how much, your flower is pollinated.`,
+  forage: `Σ over flower teams of ${powText("the nectar your bee got there", alpha)}. How widely your bee eats.`,
   pollen: "Everything your flower gave as pollen: (1 − percent/100) × E on every feed at it. A visit without a feed gives nothing.",
   share: "Your value ÷ everyone's added up. Par is 1/N.",
   pollinators: "How many different teams' bees fed at your flower.",
   nectarSources: "How many different teams' flowers gave your bee nectar.",
-  rootsum: "Add up the square root of each entry: rootsum(400, 0, 0, 0) = 20 but rootsum(100, 100, 100, 100) = 40. Giving to (or getting from) many teams beats the same amount from one.",
-};
+  exponents: `Each entry is raised to a power before adding up: ${+beta.toFixed(3)} for pollination, ${+alpha.toFixed(3)} for forage. ${powText("400", beta)} = ${fmtPow(400, beta)} but 4 × ${powText("100", beta)} = ${fmtPow(100, beta, 4)}: below 1, giving to (or getting from) many teams beats the same amount from one.`,
+});
 
-/** A rootsum: two decimals while small, whole numbers once it's big (they sum roots of node·ms). */
+/** A score term (a sum of powers of node·ms): two decimals while small, whole numbers once it's big. */
 const fmtRoot = (x: number) => (x < 100 ? fmt2(x) : Math.round(x).toLocaleString());
 const num = (x: number | null | undefined): x is number => typeof x === "number" && Number.isFinite(x);
 const shareText = (x: number | null) => (num(x) ? pct(x) : "–");
 
 export function Scores({ view }: { view: GameView }) {
   const g = view.game;
+  const sc = scoringOf(g.config);
+  const TERMS = termsOf(sc);
   const teams = useMemo(() => Object.fromEntries(view.teams.map((t) => [t.id, t])), [view.teams]);
   const myTeamId = view.me?.teamId ?? null;
   const n = view.participants?.length ?? 0;
@@ -103,10 +109,10 @@ export function Scores({ view }: { view: GameView }) {
         <div className="ledgers" style={{ ["--heat-min" as string]: `${Math.min(1100, 190 + n * 54)}px` }}>
           <Heat title="Who fed where" hint="Feeds each bee (row) made at each flower (column)."
             matrix={view.ledgers.feeds} order={view.participants} teams={teams} myTeamId={myTeamId} tone="feed" fmt={(v) => compact(v)} verb={(v) => `fed ${v.toLocaleString()} time${v === 1 ? "" : "s"}`} />
-          <Heat title="Nectar each bee got where" hint="Nectar each bee (row) got at each flower (column). A row's rootsum is that bee's forage."
+          <Heat title="Nectar each bee got where" hint={`Nectar each bee (row) got at each flower (column). Σ ${powText("nectar", sc.alpha)} over a row is that bee's forage.`}
             matrix={view.ledgers.nectar} order={view.participants} teams={teams} myTeamId={myTeamId} tone="nectar" fmt={fmtE} verb={(v) => `got ${fmtEExact(v)} of nectar`} />
           {Array.isArray(view.ledgers.pollen?.[0]) && (
-            <Heat title="Pollen each flower gave each bee" hint="Pollen each flower (column) gave each bee (row) on its feeds. A column's rootsum is that flower's pollination."
+            <Heat title="Pollen each flower gave each bee" hint={`Pollen each flower (column) gave each bee (row) on its feeds. Σ ${powText("pollen", sc.beta)} over a column is that flower's pollination.`}
               matrix={view.ledgers.pollen} order={view.participants} teams={teams} myTeamId={myTeamId} tone="kept" fmt={fmtE} verb={(v) => `was given ${fmtEExact(v)} of pollen`} />
           )}
         </div>
@@ -115,7 +121,7 @@ export function Scores({ view }: { view: GameView }) {
       <details className="legend-box">
         <summary>How scoring works</summary>
         <dl>
-          <dt>Rootsum</dt><dd>{TERMS.rootsum}</dd>
+          <dt>Exponents</dt><dd>{TERMS.exponents}</dd>
           <dt>Pollination</dt><dd>{TERMS.pollination}</dd>
           <dt>Forage</dt><dd>{TERMS.forage}</dd>
           <dt>Pollen</dt><dd>{TERMS.pollen}</dd>

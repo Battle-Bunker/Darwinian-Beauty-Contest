@@ -2,7 +2,7 @@
 // over), the garden replays it at any speed and can be scrubbed to any round, the round inspector shows
 // every field of every turn in the round on screen, and the charts show each team over the game.
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { GameView, Team } from "../types";
+import { scoringOf, type GameView, type Team } from "../types";
 import { gameBase } from "../api";
 import type { HistoryStore } from "../lib/history";
 import { useLiveTick, type Ticking } from "../lib/live";
@@ -249,7 +249,8 @@ function ReplayCharts({ view, history, teams, mine, focus, setFocus, cursor, onS
   const roundMs = cfg.budgets.flower.ms + cfg.budgets.bee.ms;
   const endMs = Math.max(roundMs, view.game.clockMs);
   const [metric, setMetric] = useState<MetricKey>("fitness");
-  const model = useMemo(() => ({ cap: cfg.budgets.flower.size, window: cfg.budgets.flower.ms, sizeOf: sizeLookup(teams) }), [cfg.budgets.flower.size, cfg.budgets.flower.ms, teams]);
+  const { alpha, beta } = scoringOf(cfg);
+  const model = useMemo(() => ({ cap: cfg.budgets.flower.size, window: cfg.budgets.flower.ms, alpha, beta, sizeOf: sizeLookup(teams) }), [cfg.budgets.flower.size, cfg.budgets.flower.ms, alpha, beta, teams]);
   const data = useMemo(() => {
     const recs: TurnRec[] = [];
     for (const list of history.turns.bees) for (const t of list) { const r = recFromTurn(t); if (r) recs.push(r); }

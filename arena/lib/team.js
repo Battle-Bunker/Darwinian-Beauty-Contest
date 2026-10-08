@@ -9,7 +9,7 @@ import path from "node:path";
 import { Api, gamePath, login, publicGameUrl } from "./api.js";
 import { all, one, q } from "./db.js";
 import { BudgetError, callModel, capModel, extractTag, runSession } from "./llm.js";
-import { gameBrief, interviewPrompt, interviewSystem, lobbyBrief, mmss, toolSystem } from "./prompts.js";
+import { gameBrief, interviewPrompt, interviewSystem, lobbyBrief, mmss, rFloor, toolSystem } from "./prompts.js";
 import { Broker } from "./broker.js";
 import { Scaffold } from "./scaffold.js";
 import { definesFed } from "./mechanisms.js";
@@ -149,7 +149,7 @@ export function statusOf(view, teamId, { afford = null, code = false, memory = f
     lines.push(`Your programs ${g.status === "lobby" ? "submitted" : "playing"}: ${parts.join(", ")}.`);
     const fl = out.versions.flower, cap = config.budgets?.flower?.size, fms = config.budgets?.flower?.ms;
     if (fl && cap && fms) lines.push(`Your flower's size ${n0(fl.size)} of ${n0(cap)}: its excess energy per turn is (${n0(cap)} − ${n0(fl.size)}) × (R − CPU ms), R the call's hidden budget ` +
-      `(${config.budgets.flower.minMs ?? 50} to ${fms} ms): at most ${n0((cap - fl.size) * fms)} node·ms, less ${n0(cap - fl.size)} for every ms of compute or of R below ${fms}.`);
+      `(${rFloor(config)} to ${fms} ms): at most ${n0((cap - fl.size) * fms)} node·ms, less ${n0(cap - fl.size)} for every ms of compute or of R below ${fms}.`);
   }
   // The bee's MEMORY: read only (only the deployed bee writes it; it starts as {} with every new bee version).
   const mem = mine?.memory;
@@ -219,7 +219,7 @@ export function requestHandler(ctx) {
         const out = { ok: !errors.length, kind, size: c.size, budget: c.budget?.size, distance: c.distance, cost: c.cost, available: c.available, minified: c.minified, errors };
         const cap = config.budgets?.flower?.size, fms = config.budgets?.flower?.ms;
         out.text = [`${kind}: ${n0(c.size)} of ${n0(c.budget?.size ?? 0)} nodes.` + (c.available != null ? ` Submitting now would cost ${n0(c.cost)} of the ${n0(c.available)} you have.` : " (lobby: submitting is free)") +
-          (kind === "flower" && cap && fms && c.size != null ? ` Excess energy per turn (${n0(cap)} − ${n0(c.size)}) × (R − CPU ms), R the call's hidden budget (${config.budgets.flower.minMs ?? 50} to ${fms} ms): ` +
+          (kind === "flower" && cap && fms && c.size != null ? ` Excess energy per turn (${n0(cap)} − ${n0(c.size)}) × (R − CPU ms), R the call's hidden budget (${rFloor(config)} to ${fms} ms): ` +
             `at most ${n0(Math.max(0, cap - c.size) * fms)} node·ms, less ${n0(Math.max(0, cap - c.size))} per ms of compute or of R below ${fms}.` : ""),
           errors.length ? `Problems:\n- ${errors.join("\n- ")}` : "No problems found.", refusalHint(errors)].filter(Boolean).join("\n");
         if (refusalHint(errors)) out.refused = true;
@@ -233,7 +233,7 @@ export function requestHandler(ctx) {
           // The call's hidden budget R: a number (ms), "random" (a fresh one per challenge, as in a game; the default), or one
           // per challenge. The server runs each call with its R as the limit and GAME.ms; a server that doesn't yet takes
           // none, and then E is recomputed here at the R asked for (its limit stays the maximum).
-          const fb = config.budgets?.flower || {}, lo = fb.minMs ?? 50, hi = fb.ms ?? 150;
+          const fb = config.budgets?.flower || {}, lo = rFloor(config), hi = fb.ms ?? 150;
           const want = Array.isArray(req.budget) ? req.budget : req.budget === undefined || req.budget === null || req.budget === "random" ? "random" : Number(req.budget);
           if (typeof want === "number" && !(want >= lo && want <= hi)) return { ok: false, error: `budget must be from ${lo} to ${hi} ms`, text: `error: --budget must be a number from ${lo} to ${hi} (ms), or random` };
           const t = await api.tryFlower(tok, gPath, req.code, challenges, want);
@@ -393,6 +393,7 @@ export class TeamDesk {
  * { sessionId, cost, violation, killed, requests, submitted }.
  */
 export async function runTeamSession({ desk, arena, gameRow, persona, entry, gPath, stream, phase, sessionNo, attempt = 0, buildPrompt, log, control = {}, timeoutMs, carry = null, api = Api }) {
+  const S = arena.settings.session || {};
   const tok = await login(entry.login_name);
   const view = await api.view(tok, gPath);
   const config = view.game.config;
@@ -405,9 +406,9 @@ export async function runTeamSession({ desk, arena, gameRow, persona, entry, gPa
   const teams = (view.participants || view.teams.map((t) => t.id)).length;
   const cf = commonFiles(arena, persona);
   const system = toolSystem(persona, config, dir, { fixed: !!arena.settings.noEvolution, apiBase, teams, common: cf?.files, commonScope: cf?.scope,
-    role: arena.settings.roles?.[persona.slug]?.role ?? null });
+    role: arena.settings.roles?.[persona.slug]?.role ?? null, roleBrief: arena.settings.roles?.[persona.slug]?.brief ?? null, brevity: arena.settings.prompts?.brevity !== false });
   const scripts = fs.readdirSync(dir).filter((f) => f.endsWith(".py") && !KINDS.includes(f.replace(/\.py$/, "")));
-  const prompt = buildPrompt({ view, drafts, status, maxTurns, scripts, dir });
+  const prompt = buildPrompt({ view, drafts, status, maxTurns, scripts, dir, brevity: arena.settings.prompts?.brevity !== false });
   const tag = `${arena.id}:${persona.slug}:g${gameRow.generation}:s${sessionNo}${attempt ? `a${attempt}` : ""}:${crypto.randomBytes(3).toString("hex")}`;
   const transcript = path.join(TRANSCRIPTS, arena.id, persona.slug, `g${gameRow.generation}-s${sessionNo}${attempt ? `-a${attempt}` : ""}.jsonl`);
   const row = await one(`INSERT INTO arena.sessions (arena_id, game_id, persona_id, no, attempt, phase, model, clock_start, transcript, prompt_chars)
@@ -433,6 +434,7 @@ export async function runTeamSession({ desk, arena, gameRow, persona, entry, gPa
     s = await runSession({
       model: persona.model, cwd: dir, appendSystem: system, prompt, maxTurns, python: true, maxBudgetUsd: attempt ? lim.usd / 3 : lim.usd,
       transcriptFile: transcript, timeoutMs: timeoutMs || 40 * 60_000, control, env: { ARENA_SESSION: tag }, holdOnLimit: phase === "lobby",
+      effort: S.effort ?? null, ...(S.nice != null ? { nice: S.nice } : {}),
       ctx: { purpose: phase === "lobby" ? (attempt ? "lobby-fix" : "lobby") : "session", arenaId: arena.id, gameId: gameRow.id, personaId: persona.id },
     });
   } catch (e) {
@@ -478,11 +480,15 @@ export async function lobby({ desk, arena, gameRow, persona, entry, gPath, strea
   const tok = await login(entry.login_name);
   let fix = null, violation = false;
   for (let attempt = 0; attempt <= MAX_LOBBY_FIXES; attempt++) {
+    // A preset's lobbyMinutes: the lobby session's wall time (a fix attempt gets a third of it, at least two minutes).
+    const lobbyMinutes = arena.settings.session?.lobbyMinutes ?? null;
+    const minutes = lobbyMinutes ? (attempt ? Math.max(2, lobbyMinutes / 3) : lobbyMinutes) : null;
     const s = await runTeamSession({
       desk, arena, gameRow, persona, entry, gPath, stream, phase: "lobby", sessionNo: 0, attempt, log, carry: attempt ? null : carry, api,
-      buildPrompt: ({ view, maxTurns }) => lobbyBrief({ config: view.game.config, teamName: entry.team_name, generation: gameRow.generation, maxTurns,
+      ...(minutes ? { timeoutMs: minutes * 60_000 } : {}),
+      buildPrompt: ({ view, maxTurns, brevity }) => lobbyBrief({ config: view.game.config, teamName: entry.team_name, generation: gameRow.generation, maxTurns,
         carried: !!carry && Object.values(carry).some(Boolean), fix, examples, common: commonFiles(arena, persona)?.files, commonScope: commonFiles(arena, persona)?.scope,
-        seeded: !!arena.settings.seeds?.[persona.slug] }),
+        seeded: !!arena.settings.seeds?.[persona.slug], brevity, minutes: attempt ? null : minutes }),
     });
     if (s.violation) { violation = true; break; }
     const have = await submitted(api, tok, gPath, entry.team_id);

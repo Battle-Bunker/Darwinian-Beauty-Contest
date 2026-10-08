@@ -8,11 +8,12 @@ and so does lowercase). Pages live at `/room/<roomShortId>/game/<gameShortId>`.
 RULES.md has the game itself. In short: each team has one **flower** and one **bee**; every 200 ms round,
 each bee that isn't feeding takes one **turn**: the engine draws a flower at random (own included), the
 flower answers `[response, percent]` within 150 ms, and the bee decides `["feed" | "leave", next]` within
-50 ms; after a feed, the bee's optional `fed(nectar)` runs in the same program instance. Excess energy E = (flower size cap − flower size) × max(0, 150 − flower CPU ms); a feed pays
+50 ms; after a feed, the bee's optional `fed(nectar)` runs in the same program instance. Excess energy E = (flower size cap − flower size) × max(0, R − flower CPU ms), R the call's hidden time budget (3–150 ms by default); a feed pays
 nectar = percent/100 × E and pollen = the rest to the bee (pollen is what the flower wants carried); a
 turn without a feed pays
-nobody (its energy is lost). fitness = N² × pollination share × forage share, where pollination is the
-rootsum of the pollen a team's flower species gave per bee team and forage the rootsum of the nectar a bee got per flower team.
+nobody (its energy is lost). fitness = N² × pollination share × forage share, where pollination is Σ over bee
+teams of pollen^β (the pollen a team's flower species gave that team's bee) and forage Σ over flower teams of
+nectar^α (the nectar a team's bee got there); α = β = 0.85 by default.
 
 ## Auth
 
@@ -63,12 +64,13 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 ```json
 {
   "language": "python",
-  "minutes": 2, "feedCost": 10,
+  "minutes": 2, "feedCost": 20,
   "challengeType": "int", "responseType": "int", "maxLen": 64, "maxNodes": 512, "maxResponseBytes": 65536,
   "revealOnFinish": true,
   "grains": "feeder", "pollenGrain": { "exponent": 0.3333333333333333, "scale": 1 },
+  "scoring": { "alpha": 0.85, "beta": 0.85 },
   "budgets": {
-    "flower": { "size": 1100,  "perMinute": 220,  "cap": 220,  "ms": 150, "minMs": 50 },
+    "flower": { "size": 1100,  "perMinute": 220,  "cap": 220,  "ms": 150, "minMs": 3 },
     "bee":    { "size": 11000, "perMinute": 2200, "cap": 2200, "ms": 50, "memory": 50 }
   }
 }
@@ -83,10 +85,11 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 - **Versions are pinned per turn**: a turn keeps the bee's and the flower's versions from its arrival to
   its end. A new bee takes over when its turn in progress is over, dropping the old bee's queued
   challenge (it is asked `first` at once); a bee between turns switches at once.
-- `feedCost`: a bee that feeds has no turn for the next `feedCost` rounds.
+- `feedCost` (default 20): a bee that feeds has no turn for the next `feedCost` rounds.
 - `budgets.flower.size` is also the size cap in the energy formula. Each flower call gets a hidden time
-  budget **R**, drawn uniformly at random from `budgets.flower.minMs` (default 50) to `budgets.flower.ms`
-  (default 150): R is the call's hard time limit, the flower is told it as `GAME.ms`, and E counts down from
+  budget **R**, drawn uniformly at random from `budgets.flower.minMs` to `budgets.flower.ms` (default 150).
+  `minMs` defaults to 2% of `ms`, rounded, at least 1 (3 of 150); left out, it follows `ms`, and a value you set
+  is kept (never above `ms`). R is the call's hard time limit, the flower is told it as `GAME.ms`, and E counts down from
   R, so E = (size cap − size) × max(0, R − CPU ms). The response is still delivered at `flower.ms` (150)
   whatever R was, so timing hides R. R is the flower team's secret during play (`budgetMs` below).
 - `budgets.<kind>.size`: size limit in weighted nodes of the minified program (vendor/measure.js).
@@ -114,6 +117,10 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
   pollen gives 30; `exponent` 0.01 to 1, `scale` 0 to 1,000). It is that many characters of the minified
   code of the flower version that answered, from a uniformly random start, wrapping past the end (the whole
   code if it is no longer than that). No pollen, no grain.
+- `scoring`: `{ alpha, beta }`, each in (0, 1] (anything else is an error), 0.85 and 0.85 by default: forage
+  = Σ over flower teams of nectar^`alpha`, pollination = Σ over bee teams of pollen^`beta` (see "Scores"). A
+  game stored without `scoring` was created before it existed and is scored with √ (0.5 and 0.5), as it was
+  then; the game view's `config.scoring` is always the pair the game is scored with.
 
 Types: `int`, `float`, `bool`, `str`, `any`, `list[T]`, `tree[T]`, `graph`, `digraph`, `graph[T]`,
 `digraph[T]` (RULES.md). Languages: `python`, `typescript`.
@@ -201,7 +208,7 @@ A turn makes two actions: its **arrival**, written to the stream at once, and it
   "energy",                      // E, node·ms (0 if the flower failed)
   // the flower's team (everyone after finish):
   "ms",                          // the flower's CPU time for the call
-  "budgetMs",                    // R, the call's hidden time budget (50–150 ms): its hard limit, and E's ceiling
+  "budgetMs",                    // R, the call's hidden time budget (3–150 ms by default): its hard limit, and E's ceiling
   "flowerError",                 // why the response is null (too slow for R, an error, a malformed return)
   "flowerVersion",               // also on arrive
   // the bee's team (everyone after finish):
@@ -287,7 +294,7 @@ function fed(nectar: number): void          // optional
 
 Programs see only their arguments and `GAME` (`team`, `teams`, `feed_cost`, `challenge_type`,
 `response_type`, `max_len`, `max_nodes`, `max_response_bytes`, `round_ms`, `ms` (its own limit),
-`flower_ms` (150), `flower_size_cap`; a flower's `ms` is this call's hidden budget R (50–150) and `size`
+`flower_ms` (150), `flower_size_cap`; a flower's `ms` is this call's hidden budget R (3–150 by default) and `size`
 its own; a bee's `ms` is 50 and it also gets `memory`, its memory cap): no
 history, no round or game time. Every flower call and every bee turn runs a fresh program, and its clock
 starts at 0 (Python's `time`, TypeScript's `Date`, `Intl` and `performance` read the time since the call
@@ -314,8 +321,10 @@ signatures for the game's language and types.
 The scoreboard is live and public: every team's numbers, for everyone (spectators included), during play
 and after.
 
-- `pollination` = Σ over bee teams b of √pollen[b][me]: the pollen your flower kept from each bee team's feeds.
-- `forage` = Σ over flower teams f of √nectar[me][f]: the nectar your bee got at each flower.
+- `pollination` = Σ over bee teams b of pollen[b][me]^β: the pollen your flower kept from each bee team's feeds.
+- `forage` = Σ over flower teams f of nectar[me][f]^α: the nectar your bee got at each flower.
+- α and β are the game's `config.scoring.alpha` and `beta` (0.85 by default). A game stored without `scoring` is
+  from before it existed and is scored with √ (α = β = 0.5); the game view's `config.scoring` says which.
 - each share = your value ÷ the sum over all teams (1/N when that sum is 0).
 - `fitness` = N² × pollinationShare × forageShare. Par is 1.0.
 - Information only: `pollen` (all your flower kept), `feedsReceived` / `feedsGiven`, `pollinators` (bee

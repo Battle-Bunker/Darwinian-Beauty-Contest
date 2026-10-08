@@ -5,26 +5,47 @@
 //   nectar[b][f]  — nectar (node·ms) team b's bee got from team f's flower: percent/100 × E per feed
 //   pollen[b][f]  — energy team f's flower kept from team b's bee's feeds: (1 − percent/100) × E per feed
 //
-// rootsum(v) = Σ √v_i rewards spreading earnings across sources: 4 from one source = 2,
-// 1 from each of four sources = 4. Own-team entries count like any other.
+// powsum(v, p) = Σ v_i^p, with 0 < p ≤ 1. Below 1 it rewards spreading earnings across sources: at p = 0.5,
+// 4 from one source = 2, 1 from each of four sources = 4. Own-team entries count like any other.
 //
-//   pollination_f = rootsum of column f of `pollen`  (how widely, and how profitably, the flower is pollinated)
-//   forage_b      = rootsum of row b of `nectar`      (how widely the bee finds nectar)
+//   pollination_f = powsum of column f of `pollen`, p = beta  (how widely, and how profitably, the flower is pollinated)
+//   forage_b      = powsum of row b of `nectar`, p = alpha    (how widely the bee finds nectar)
 //   each share    = value / Σ value over teams (1/N when that sum is 0)
 //   fitness       = N² × pollination share × forage share  (par 1)
+//
+// The exponents are the game's config.scoring (0.85 and 0.85 by default). Games stored without them are from
+// before they existed and were scored with √: scoringOf gives them 0.5, so their scores never change.
 
-export const rootsum = (v) => v.reduce((s, x) => s + Math.sqrt(Math.max(0, x)), 0);
+/** The exponents of games whose config has none: they were scored with √. */
+export const LEGACY_SCORING = Object.freeze({ alpha: 0.5, beta: 0.5 });
+
+/** A game's scoring exponents { alpha (forage), beta (pollination) }, from its stored config. */
+export const scoringOf = (config) => ({
+  alpha: config?.scoring?.alpha ?? LEGACY_SCORING.alpha,
+  beta: config?.scoring?.beta ?? LEGACY_SCORING.beta,
+});
+
+/** Σ max(0, v_i)^p. At p = 0.5 it is exactly Σ √v_i, as games were scored before the exponents. */
+export function powsum(v, p) {
+  const pow = p === 0.5 ? Math.sqrt : (x) => Math.pow(x, p);
+  return v.reduce((s, x) => s + pow(Math.max(0, x)), 0);
+}
+export const rootsum = (v) => powsum(v, 0.5);
 
 export const zeroLedger = (n) => Array.from({ length: n }, () => new Array(n).fill(0));
 
 const column = (m, j) => m.map((row) => row[j]);
 const sum = (v) => v.reduce((a, b) => a + b, 0);
 
-/** teamIds[i] labels row/column i. Returns each team's score, in teamIds order. */
-export function score(teamIds, feeds, nectar, pollen) {
+/**
+ * teamIds[i] labels row/column i; `scoring` is the game's exponents (scoringOf(config); left out, √).
+ * Returns each team's score, in teamIds order.
+ */
+export function score(teamIds, feeds, nectar, pollen, scoring = LEGACY_SCORING) {
+  const { alpha, beta } = scoring;
   const n = teamIds.length;
-  const pollination = teamIds.map((_, f) => rootsum(column(pollen, f)));
-  const forage = teamIds.map((_, b) => rootsum(nectar[b]));
+  const pollination = teamIds.map((_, f) => powsum(column(pollen, f), beta));
+  const forage = teamIds.map((_, b) => powsum(nectar[b], alpha));
   const share = (v) => { const tot = sum(v); return v.map((x) => (tot > 0 ? x / tot : 1 / n)); };
   const [pS, fS] = [share(pollination), share(forage)];
   return teamIds.map((teamId, i) => ({

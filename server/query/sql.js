@@ -6,7 +6,7 @@
 import { createRequire } from "node:module";
 import { tx } from "../db/pool.js";
 import { SCHEMA } from "./schema.js";
-import { score } from "../lib/scoring.js";
+import { score, scoringOf } from "../lib/scoring.js";
 
 const require = createRequire(import.meta.url);
 const History = require("../../vendor/query/history.js");
@@ -188,13 +188,13 @@ export async function runQuery(input, where) {
 /** Every team's score in the games queried (public), as rows of the scores entity. */
 async function scoreRows(c, { gameId = null, roomId = null }) {
   const { rows } = await c.query(
-    `SELECT substr(code, 1, prefix_len) AS short, participants, feeds, nectar, pollen FROM games
+    `SELECT substr(code, 1, prefix_len) AS short, config, participants, feeds, nectar, pollen FROM games
       WHERE ${gameId ? "id = $1" : "room_id = $1 AND status = 'finished'"} AND participants IS NOT NULL`, [gameId ?? roomId]);
   const out = [];
   for (const g of rows) {
     const n = g.participants.length;
     const zero = () => Array.from({ length: n }, () => new Array(n).fill(0));
-    score(g.participants, g.feeds ?? zero(), g.nectar ?? zero(), g.pollen ?? zero()).forEach((s, team) => {
+    score(g.participants, g.feeds ?? zero(), g.nectar ?? zero(), g.pollen ?? zero(), scoringOf(g.config)).forEach((s, team) => {
       const { teamId, ...rest } = s;
       out.push({ game: g.short, team, ...rest });
     });

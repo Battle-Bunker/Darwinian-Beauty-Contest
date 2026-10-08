@@ -9,8 +9,12 @@
 //   minutesByGame  game N lasts minutesByGame[N-1] minutes (the last entry repeats); else config.minutes
 //   session        warmupSeconds: the first in-game sessions start this long before the game does;
 //                  gapSeconds: pause between one team's sessions, doubling after each session that submitted nothing
-//                  (up to maxIdleGapSeconds; back to gapSeconds after a submission); endMarginSeconds: no new session with less game
-//                  time left than this; maxMinutes: wall-clock cap of one session (the game ending stops it anyway)
+//                  (up to maxIdleGapSeconds; back to gapSeconds after a submission; idleBackoff false: always gapSeconds);
+//                  endMarginSeconds: no new session with less game time left than this; maxMinutes: wall-clock cap of one
+//                  session (the game ending stops it anyway); lobbyMinutes: wall-clock cap of a lobby session (told to the
+//                  team); effort: the CLI's --effort for every team session; nice: the sessions' CPU priority (default 5)
+//   prompts        { brevity: false }: no "be quick", "at most N tool calls" or "short summary" lines in the briefs
+//   concurrency    model sessions and calls at once (ARENA_CONCURRENCY overrides it; default 8)
 //   limits         per-model session limits (turns, usd), optionally per phase: { lobby: {...}, game: {...} }
 //   maxModel       "sonnet": calls that would use opus (judges, breeders) use sonnet instead
 //   reserveUsd     no new team session once the spend is within this of the cap (keeps money for interviews and judges)
@@ -46,6 +50,25 @@ const ADAPT_LINEUP = [
   ["amara", "opus", { role: "honest", common: HONEST_DIR }],
   ["rex", "opus", { role: "defector" }], ["vik", "opus", { role: "defector" }],
 ];
+
+// adapt-hi: the same 14 teams and roles, every agent on opus with high effort and room to think. Veterans start as in
+// adapt (carried over from fen and kiln, not from mesa-a); the four kids without their coding limits (personas.js
+// CODING_LIMITS). The honest specialists get a fixed contract (prompts.js honest60: 60% of R on costly signalling,
+// percent 50, changed only to escape imitators) and their own copy of the doc, brought into line with it.
+const HONEST_HI_DIR = process.env.ARENA_HONEST_HI_DIR || "arena/priming/honest-signals-hi";
+const HI_HONEST = { role: "honest", brief: "r60", common: HONEST_HI_DIR };
+const HI_KID = { seed: true, uncap: true };
+const ADAPT_HI_LINEUP = [
+  ["from:fen-d/mallory", "opus", VETERAN], ["from:fen-a/kenji", "opus", HI_KID], ["from:fen-a/ada", "opus", VETERAN],
+  ["from:kiln-a/theo", "opus", HI_KID], ["from:fen-c/rosalind", "opus", VETERAN], ["from:fen-a/priya", "opus", HI_KID],
+  ["from:fen-c/bao-12", "opus", HI_KID],
+  ["ines", "opus", HI_HONEST], ["marcus", "opus", HI_HONEST], ["sofia", "opus", HI_HONEST], ["tobi", "opus", HI_HONEST], ["amara", "opus", HI_HONEST],
+  ["rex", "opus", { role: "defector" }], ["vik", "opus", { role: "defector" }],
+];
+// adapt-hi's game config: the engine's defaults for what changed (the R floor, 2% of 150 ms; a feed costs 20 rounds; the
+// score exponents), so none of them is set here.
+const HI_CONFIG = { language: "python", challengeType: "int", responseType: "graph[any]", maxResponseBytes: MAX_RESPONSE_BYTES, grains: GRAINS, pollenGrain: POLLEN_GRAIN,
+  budgets: { flower: { ms: FLOWER_MAX_MS } } };
 
 export const DEFAULT_SESSION = { warmupSeconds: 8, gapSeconds: 5, maxIdleGapSeconds: 20, endMarginSeconds: 10, maxMinutes: 6 };
 
@@ -108,6 +131,36 @@ export const PRESETS = {
     reserveUsd: 4,
     noEvolution: true, // the composition stays fixed: no retirement, no breeding (interviews and judges still run)
   },
+  // adapt-hi (EXPERIMENTS["adapt-hi"]): the same arena with everyone on opus at high effort, no brevity nudges, caps of
+  // $6 / 100 turns in the lobby and $3 / 60 turns a session in play, a 10-minute lobby, a constant 5-second gap between
+  // sessions, sessions at nice 10, and as many sessions at once as there are teams (and two for interviews and judges).
+  adapt14hi: {
+    description: "adapt-hi: adapt's 14 teams, all on opus at high effort; the honest specialists on a fixed 60%-of-R contract; python, int→graph[any], 10-minute games, fixed membership",
+    config: HI_CONFIG,
+    minutesByGame: [10],
+    lineup: ADAPT_HI_LINEUP,
+    session: { warmupSeconds: 10, gapSeconds: 5, idleBackoff: false, maxIdleGapSeconds: 5, endMarginSeconds: 20, maxMinutes: 10, lobbyMinutes: 10, effort: "high", nice: 10 },
+    limits: { lobby: { opus: { turns: 100, usd: 6 } }, game: { opus: { turns: 60, usd: 3 } } },
+    prompts: { brevity: false },
+    concurrency: 16,
+    scaffold: { cpuShare: 0.05 },
+    reserveUsd: 10,
+    noEvolution: true,
+  },
+  // Its capacity check with the stub `claude` (stub honest flowers burn 0.6 × R): 1-minute games, a 1-minute lobby. The
+  // R floor and the feed cost are set to the engine's new defaults here, so the check holds before the engine has them.
+  "dry-adapt-hi": {
+    description: "dry run of adapt-hi: the same 14 teams with the stub claude, 1-minute games, fixed membership",
+    config: { ...HI_CONFIG, feedCost: 20, budgets: { flower: { ms: FLOWER_MAX_MS, minMs: 3 } } },
+    minutesByGame: [1],
+    lineup: ADAPT_HI_LINEUP,
+    session: { warmupSeconds: 3, gapSeconds: 2, idleBackoff: false, maxIdleGapSeconds: 2, endMarginSeconds: 3, maxMinutes: 2, lobbyMinutes: 1, effort: "high", nice: 10 },
+    prompts: { brevity: false },
+    concurrency: 16,
+    scaffold: { cpuShare: 0.05 },
+    reserveUsd: 0,
+    noEvolution: true,
+  },
   // Its capacity check with the stub `claude`: the same 14 teams, 1-minute games (the stub's honest flowers burn most of
   // their R in CPU).
   "dry-adapt": {
@@ -164,6 +217,24 @@ export const EXPERIMENTS = {
     gameUsd: 25, // a game starts only if this much more fits under the cap (an estimate of one 10-minute game of 14 teams)
     capUsd: 120,
     cohorts: [{ id: "mesa-a", arm: "adapt", label: "adapt" }],
+  },
+  // adapt-hi: the same question with agents given room to think (all opus, high effort, higher caps, no brevity nudges, a
+  // 10-minute lobby) and the honest specialists on a fixed contract (60% of R on costly signalling, percent 50). Played
+  // under the engine's new defaults (R from 3 to 150 ms, a feed costs 20 rounds, score exponents 0.85).
+  "adapt-hi": {
+    description: "adapt-hi: adapt's 14 teams with all agents on opus at high effort and the honest specialists on a fixed 60%-of-R contract; 4 games of 10 minutes",
+    preset: "adapt14hi",
+    games: 4,
+    gameUsd: 100, // a game starts only if this much more fits under the cap (14 opus teams: lobby up to $6 and play up to $3 a session)
+    capUsd: 600,
+    cohorts: [{ id: "mesa-b", arm: "adapt-hi", label: "adapt-hi" }],
+  },
+  "adapt-hi-dry": {
+    description: "capacity check of adapt-hi with the stub claude: 14 teams, 1-minute games, honest flowers at 0.6 × R",
+    preset: "dry-adapt-hi",
+    games: 2,
+    gameUsd: 0,
+    cohorts: [{ id: "dry-h", arm: "adapt-hi", label: "adapt-hi" }],
   },
   "adapt-dry": {
     description: "capacity check of adapt with the stub claude: 14 teams, 1-minute games",

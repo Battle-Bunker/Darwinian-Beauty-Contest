@@ -1,10 +1,10 @@
 // Owner controls: game settings (lobby only), start, pause / resume and finish. Plus a settings summary for everyone.
 import { useEffect, useState, type FormEvent } from "react";
 import { api, errorText } from "../api";
-import { KINDS, type GameConfig, type GameView, type Kind, type Team } from "../types";
+import { KINDS, defaultMinMs, scoringOf, type GameConfig, type GameView, type Kind, type Team } from "../types";
 import { Alert, TeamChip } from "./ui";
 import { PauseIcon, PlayIcon } from "./Icons";
-import { fmtBytes, fmtClock } from "../lib/format";
+import { fmtBytes, fmtClock, powText } from "../lib/format";
 
 const TYPES = ["int", "float", "bool", "str", "any", "list[int]", "list[float]", "list[bool]", "list[str]", "tree[int]", "graph", "digraph", "graph[any]", "graph[int]", "digraph[any]"];
 
@@ -74,7 +74,14 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
 
   const set = <K extends keyof GameConfig>(k: K, v: GameConfig[K]) => setDraft((d) => ({ ...d, [k]: v }));
   const setBudget = (kind: Kind, k: "size" | "perMinute" | "cap" | "ms" | "memory" | "minMs", v: number) =>
-    setDraft((d) => ({ ...d, budgets: { ...d.budgets, [kind]: { ...d.budgets[kind], [k]: v } } }));
+    setDraft((d) => {
+      const b = { ...d.budgets[kind], [k]: v };
+      // R's floor follows the flower's time limit (2% of it) while it is at that default, as on the server.
+      const f = d.budgets.flower, saved = cfg.budgets.flower;
+      const auto = f.minMs === undefined || f.minMs === defaultMinMs(f.ms) || (f.minMs === saved.minMs && saved.minMs === defaultMinMs(saved.ms));
+      if (kind === "flower" && k === "ms" && Number.isFinite(v) && auto) b.minMs = defaultMinMs(v);
+      return { ...d, budgets: { ...d.budgets, [kind]: b } };
+    });
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
@@ -103,6 +110,7 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
   const cap = draft.budgets.flower.size;
   const grain = draft.pollenGrain ?? { exponent: 1 / 3, scale: 1 };
   const grainLen = (p: number) => (Number.isFinite(grain.exponent) && Number.isFinite(grain.scale) ? Math.floor(grain.scale * Math.pow(p, grain.exponent)) : NaN);
+  const sc = scoringOf(draft);
 
   return (
     <form className="settings" onSubmit={save}>
@@ -129,6 +137,8 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
         </label>
         <label className="field"><span>Grain exponent</span>{num(grain.exponent, (v) => set("pollenGrain", { ...grain, exponent: v }), 0.01, 1, "Pollen grain exponent", "any")}</label>
         <label className="field"><span>Grain scale</span>{num(grain.scale, (v) => set("pollenGrain", { ...grain, scale: v }), 0, 1000, "Pollen grain scale", "any")}</label>
+        <label className="field"><span>Forage exponent α</span>{num(sc.alpha, (v) => set("scoring", { ...sc, alpha: v }), 0.01, 1, "Forage exponent alpha: forage is the sum of nectar to this power, in (0, 1]", "any")}</label>
+        <label className="field"><span>Pollination exponent β</span>{num(sc.beta, (v) => set("scoring", { ...sc, beta: v }), 0.01, 1, "Pollination exponent beta: pollination is the sum of pollen to this power, in (0, 1]", "any")}</label>
       </div>
       <p className="small muted settings-hint">
         {Number.isFinite(seconds) && Number.isFinite(roundMs) && roundMs > 0
@@ -138,6 +148,7 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
         Each team's flower is a species; every visit is a bee meeting one of its flowers, which spends its budget on its size and compute and, if the bee feeds, gives it nectar and pollen from what's left: E = ({Number.isFinite(cap) ? cap.toLocaleString() : "?"} − its size) × max(0, {draft.budgets.flower.ms} − its CPU ms), so a {Number.isFinite(cap) ? Math.round(cap / 2).toLocaleString() : "?"}-node flower answering in 10 ms has up to {Number.isFinite(cap) ? (Math.round(cap / 2) * Math.max(0, draft.budgets.flower.ms - 10)).toLocaleString() : "?"} node·ms to give.
         {" "}Bees run fresh for every turn and keep only their MEMORY, a key–value store of at most <b>{(draft.budgets.bee.memory ?? 50).toLocaleString()}</b> bytes (each entry: its key's bytes plus its value's JSON bytes).
         {" "}On every feed, {(draft.grains ?? "feeder") === "off" ? "no pollen grain is given (grains are off)" : <>the bee's team gets a pollen grain: ⌊{grain.scale} × pollen^{+grain.exponent.toFixed(3)}⌋ characters of the flower's minified code from a random start ({Number.isFinite(grainLen(27000)) ? `27,000 pollen gives ${grainLen(27000)}, 100,000 gives ${grainLen(100000)}` : "?"}), seen {(draft.grains ?? "feeder") === "public" ? "by everyone as it happens" : "by that team only until the game ends"}</>}.
+        {" "}Scores: a team's forage is the sum over flower teams of {Number.isFinite(sc.alpha) ? powText("the nectar its bee got there", sc.alpha) : "(the nectar its bee got there)^?"}, its pollination the sum over bee teams of {Number.isFinite(sc.beta) ? powText("the pollen its species gave that team's bee", sc.beta) : "(the pollen its species gave that team's bee)^?"} (exponents in (0, 1]: below 1, spreading beats the same amount from one team); fitness = N² × pollination share × forage share.
         {" "}String and list lengths and tree and graph sizes limit challenges; a response may be up to <b>{fmtBytes(draft.maxResponseBytes ?? 65536)}</b> of JSON (over that it counts as no answer), and one over 4 KB is shown on the page as its first 4 KB.
       </p>
       <div className="settings-checks">
@@ -152,7 +163,7 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
               The flower's size is also the cap in its energy formula and its time is the flower window; the bee's time is its decision window. A round is the two windows together.
             </span>
           </caption>
-          <thead><tr><th className="left">Program</th><th>Size (nodes)</th><th>Change per minute</th><th>Change cap</th><th title="Flower: the most a call's hidden time budget R can be, and the flower window (every answer is delivered at its end). Bee: the decision window.">Time limit (ms)</th><th title="Flower: the least a call's hidden time budget R can be (R is drawn uniformly from this to the time limit)">Min time (ms)</th><th title="The most bytes a bee's MEMORY may hold: a key–value store, each entry its key's bytes plus its value's JSON bytes. The only thing a bee keeps from one turn to the next.">Memory (bytes)</th></tr></thead>
+          <thead><tr><th className="left">Program</th><th>Size (nodes)</th><th>Change per minute</th><th>Change cap</th><th title="Flower: the most a call's hidden time budget R can be, and the flower window (every answer is delivered at its end). Bee: the decision window.">Time limit (ms)</th><th title="Flower: the least a call's hidden time budget R can be (R is drawn uniformly from this to the time limit). By default 2% of the time limit (at least 1 ms), following it.">Min time (ms)</th><th title="The most bytes a bee's MEMORY may hold: a key–value store, each entry its key's bytes plus its value's JSON bytes. The only thing a bee keeps from one turn to the next.">Memory (bytes)</th></tr></thead>
           <tbody>
             {KINDS.map((k) => (
               <tr key={k}>
@@ -186,6 +197,9 @@ export function SettingsSummary({ cfg }: { cfg: GameConfig }) {
         <span className="chip" title={`Each round every bee that isn't feeding visits a random flower: it answers within ${cfg.budgets.flower.ms} ms, then the bee decides within ${cfg.budgets.bee.ms} ms`}>rounds of {cfg.budgets.flower.ms + cfg.budgets.bee.ms} ms</span>
         <span className="chip" title="Each flower call's hidden time budget R is drawn uniformly from this range">flower R {cfg.budgets.flower.minMs ?? 50}–{cfg.budgets.flower.ms} ms · bee {cfg.budgets.bee.ms} ms</span>
         <span className="chip">a feed costs {cfg.feedCost} rounds</span>
+        <span className="chip" title="forage = Σ over flower teams of nectar^α; pollination = Σ over bee teams of pollen^β; fitness = N² × pollination share × forage share">
+          score: {powText("nectar", scoringOf(cfg).alpha)}, {powText("pollen", scoringOf(cfg).beta)}
+        </span>
         <span className="chip" title="E = (flower size cap − flower size) × max(0, R − CPU ms), R each call's hidden time budget">energy cap {cfg.budgets.flower.size.toLocaleString()} nodes</span>
         <span className="chip mono">{cfg.challengeType} → {cfg.responseType}</span>
         {[cfg.challengeType, cfg.responseType].some((t) => /str|list|any/i.test(t)) && <span className="chip">max length {cfg.maxLen}</span>}

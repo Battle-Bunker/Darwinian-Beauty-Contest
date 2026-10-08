@@ -28,6 +28,12 @@ export const fmtEExact = (x: number | null | undefined) =>
 export const fmtMs = (x: number | null | undefined) =>
   x === null || x === undefined || !Number.isFinite(x) ? "–" : x < 10 ? x.toFixed(1) : String(Math.round(x));
 
+/** x raised to a scoring exponent, in words: "√(x)" at 0.5, else "(x)^p" (no brackets around a single word). */
+export function powText(x: string, p: number): string {
+  const base = /^\w+$/.test(x) ? x : `(${x})`;
+  return p === 0.5 ? `√${base}` : `${base}^${+p.toFixed(3)}`;
+}
+
 export const fmt2 = (x: number) => (Number.isFinite(x) ? x.toFixed(2) : "–");
 export const fmt3 = (x: number) => (Number.isFinite(x) ? x.toFixed(3) : "–");
 export const pct = (x: number) => (Number.isFinite(x) ? `${Math.round(x * 1000) / 10}%` : "–");

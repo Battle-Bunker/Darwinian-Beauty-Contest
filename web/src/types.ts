@@ -22,8 +22,19 @@ export interface GameConfig {
   revealOnFinish: boolean;  // all code and every bee's prints become public when the game ends
   grains?: "feeder" | "public" | "off";            // who sees a feed's pollen grain during play
   pollenGrain?: { exponent: number; scale: number }; // a grain is ⌊scale × pollen^exponent⌋ characters
+  /** forage = Σ nectar^alpha, pollination = Σ pollen^beta, each in (0, 1] (0.85 by default; a game without them: √). */
+  scoring?: Scoring;
   budgets: Record<Kind, Budget>;
 }
+
+export interface Scoring { alpha: number; beta: number }
+
+/** The exponents a game is scored with. A config without them is from before they existed: √ (0.5). */
+export const scoringOf = (cfg: { scoring?: Scoring } | null | undefined): Scoring =>
+  ({ alpha: cfg?.scoring?.alpha ?? 0.5, beta: cfg?.scoring?.beta ?? 0.5 });
+
+/** The 2% floor the server gives R when minMs is left out (at least 1 ms), as a function of the flower's ms. */
+export const defaultMinMs = (ms: number) => Math.max(1, Math.round(ms * 0.02));
 
 export interface User { id: string; name: string }
 export interface AuthInfo { provider: string; kind: "name-form" | "redirect" | string; loginUrl: string }
@@ -160,8 +171,8 @@ export interface LedgerPage {
  */
 export interface TeamScore {
   teamId: string;
-  pollination: number | null;      // Σ over bee teams of √(pollen this flower kept from their feeds)
-  forage: number | null;           // Σ over flower teams of √(nectar this bee got there)
+  pollination: number | null;      // Σ over bee teams of (pollen this flower kept from their feeds)^beta
+  forage: number | null;           // Σ over flower teams of (nectar this bee got there)^alpha
   pollinationShare: number | null; forageShare: number | null; fitness: number | null;
   pollen: number | null;           // all this flower kept
   feedsReceived: number; feedsGiven: number; pollinators: number;

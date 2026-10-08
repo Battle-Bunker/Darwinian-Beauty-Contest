@@ -166,8 +166,8 @@ export const SCHEMA = {
       fields: [
         f("game", "str", "public", "the game's short id"),
         f("team", "int", "public", "the team's index"),
-        f("pollination", "float", "public", "Σ over bee teams of √(pollen this species gave their bee)"),
-        f("forage", "float", "public", "Σ over flower teams of √(nectar this bee got there)"),
+        f("pollination", "float", "public", "Σ over bee teams of (pollen this species gave their bee)^beta (the game's scoring.beta; √ in games without one)"),
+        f("forage", "float", "public", "Σ over flower teams of (nectar this bee got there)^alpha (the game's scoring.alpha; √ in games without one)"),
         f("pollinationShare", "float", "public", "pollination ÷ everyone's (1/N if that is 0)"),
         f("forageShare", "float", "public", "forage ÷ everyone's (1/N if that is 0)"),
         f("fitness", "float", "public", "N² × pollination share × forage share (par 1)"),

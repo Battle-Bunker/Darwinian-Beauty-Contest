@@ -18,13 +18,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { Api, ApiError, gamePath, login } from "./lib/api.js";
 import { ARENA_DIR, all, migrate, one, pool, q } from "./lib/db.js";
-import { BudgetError, GLOBAL_CAP, PAUSE_FILE, isPaused, llmStats, pause, setArenaCap, spend, waitIfPaused } from "./lib/llm.js";
+import { BudgetError, GLOBAL_CAP, PAUSE_FILE, isPaused, llmStats, pause, setArenaCap, setConcurrency, spend, waitIfPaused } from "./lib/llm.js";
 import { WS_ROOT, diskBytes, killLeftovers, wsDir } from "./lib/workspace.js";
 import { publicGameUrl } from "./lib/api.js";
 import { GameStream, readMemorySamples } from "./lib/stream.js";
 import { syncPause } from "./lib/gamecontrol.js";
 import { computeGameMetrics, scaffoldsOf, submitsOf } from "./lib/metrics.js";
-import { FOUNDERS, ROLE_PERSONAS } from "./lib/personas.js";
+import { FOUNDERS, ROLE_PERSONAS, withoutCodingLimits } from "./lib/personas.js";
 import { breed, decideRetirements, retire, seedBreeders } from "./lib/population.js";
 import { DEFAULT_SESSION, EXPERIMENTS, PRESETS } from "./lib/presets.js";
 import { gameBrief, mmss } from "./lib/prompts.js";
@@ -66,6 +66,7 @@ async function ensureArena(id, presetName, games, extra = {}) {
   const settings = {
     config: preset.config, minutesByGame: preset.minutesByGame || null, teams: preset.lineup.length, games, description: preset.description,
     session: { ...DEFAULT_SESSION, ...(preset.session || {}) }, limits: preset.limits || null, maxModel: preset.maxModel || null,
+    prompts: preset.prompts || null, concurrency: preset.concurrency || null,
     reserveUsd: preset.reserveUsd ?? 5, noEvolution: !!preset.noEvolution, examples: preset.examples || null, scaffold: preset.scaffold || null, budgetUsd: args.budget ? Number(args.budget) : null,
     ...extra,
   };
@@ -76,7 +77,7 @@ async function ensureArena(id, presetName, games, extra = {}) {
   settings.seeds = {};
   for (const [source, , opts = {}] of preset.lineup) {
     const slug = source.startsWith("from:") ? source.slice(5).split("/").pop() : source.replace(/^founder:/, "");
-    if (opts.role) settings.roles[slug] = { role: opts.role, common: opts.common || null };
+    if (opts.role) settings.roles[slug] = { role: opts.role, common: opts.common || null, ...(opts.brief ? { brief: opts.brief } : {}) };
     if (opts.seed && source.startsWith("from:")) settings.seeds[slug] = source.slice(5);
   }
   await q("INSERT INTO arena.arenas (id, preset, settings, owner_name, room_short_id, room_url) VALUES ($1,$2,$3,$4,$5,$6)",
@@ -90,7 +91,8 @@ async function ensureArena(id, presetName, games, extra = {}) {
       // A seeded persona keeps its notes as they were (the same rules); else they come with a caveat.
       const nb = !src.notebook ? "" : opts.seed ? `(Your notes from your last tournament.)\n${src.notebook}`
         : `(Your notes from an earlier tournament, possibly under older rules. Some of it may not apply any more.)\n${src.notebook}`;
-      row = { slug: src.slug, name: src.name, teamName: src.team_name, archetype: src.archetype, isKid: src.is_kid, prompt: src.persona_prompt, notebook: nb, source: src.id };
+      // uncap: the persona without its coding limits (a kid's "only things you understand"); the rest of it as it was.
+      row = { slug: src.slug, name: src.name, teamName: src.team_name, archetype: src.archetype, isKid: src.is_kid, prompt: opts.uncap ? withoutCodingLimits(src.slug, src.persona_prompt) : src.persona_prompt, notebook: nb, source: src.id };
     } else {
       const slug = source.replace(/^founder:/, "");
       const f = FOUNDERS.find((x) => x.slug === slug) || ROLE_PERSONAS.find((x) => x.slug === slug);
@@ -101,7 +103,7 @@ async function ensureArena(id, presetName, games, extra = {}) {
     await q(`INSERT INTO arena.personas (id, arena_id, slug, name, team_name, model, archetype, is_kid, persona_prompt, generation_born, notebook, source)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,1,$10,$11)`, [pid, id, row.slug, row.name, row.teamName, model, row.archetype, row.isKid, row.prompt, row.notebook, row.source]);
     await q("INSERT INTO arena.population_events (arena_id, generation, persona_id, event, reason, details) VALUES ($1,1,$2,'born',$3,$4)",
-      [id, pid, row.source === "founder" ? "founder" : `seeded from ${row.source}`, { role: opts.role || null, seed: !!opts.seed }]);
+      [id, pid, row.source === "founder" ? "founder" : `seeded from ${row.source}`, { role: opts.role || null, brief: opts.brief || null, seed: !!opts.seed, uncapped: !!opts.uncap }]);
     if (opts.seed && row.source !== "founder") seedWorkspace(row.source, id, row.slug);
   }
   return one("SELECT * FROM arena.arenas WHERE id = $1", [id]);
@@ -324,15 +326,17 @@ async function playGame(arena, ctx, log) {
         const desk = desks.get(p.id);
         const s = await runTeamSession({
           desk, arena, gameRow, persona: p, entry: e, gPath, stream, phase: "game", sessionNo: no, control, log, timeoutMs: S.maxMinutes * 60_000,
-          buildPrompt: ({ view: v, drafts, status, maxTurns, scripts }) => gameBrief({ config: v.game.config, teamName: e.team_name, teamId: e.team_id, generation: gen,
+          buildPrompt: ({ view: v, drafts, status, maxTurns, scripts, brevity }) => gameBrief({ config: v.game.config, teamName: e.team_name, teamId: e.team_id, generation: gen,
             sessionNo: no, status: v.game.status, clockMs: v.game.clockMs, budgets: status.budgets, scores: v.game.clockMs > 0 ? v.scores : null,
             names: Object.fromEntries(v.teams.map((t) => [t.id, t.name])), head: v.game.clockMs > 0 ? head : null, memory: status.memory, drafts, maxTurns, scripts,
-            scaffold: desk.scaffold.status(), automatic: autoCount(p.id) }),
+            scaffold: desk.scaffold.status(), automatic: autoCount(p.id), brevity }),
         });
         log(`  ${p.name}: session ${no} ${s.killed ? `stopped (${s.killed})` : "ended"} at ${mmss(stream.clockMs)}: $${s.cost.toFixed(2)}${s.cost && s.killed ? " (estimated)" : ""}, ${s.requests} requests, ` +
           `${s.submitted.length ? `submitted ${s.submitted.map((x) => `${x.kind} v${x.version}`).join(", ")}` : "nothing submitted"}`);
         if (s.violation) penaltyUntil = Date.now() + S.maxMinutes * 60_000; // a violation costs the team its next session
-        idle = s.submitted.length ? 0 : idle + 1; // sessions that change nothing come less often
+        // Sessions that change nothing come less often, unless the preset says otherwise (session.idleBackoff false: a
+        // constant gap).
+        idle = s.submitted.length || S.idleBackoff === false ? 0 : idle + 1;
       } catch (err) {
         if (err instanceof BudgetError) { budgetStop = err.message; log(`  no more sessions: ${err.message}`); break; }
         log(`  ${p.name}: session ${no} failed: ${err.stack || err.message}`);
@@ -415,8 +419,12 @@ async function analyseGame(arena, ctx, log) {
       const p = personas.find((x) => x.id === e.persona_id), r = roles[p?.slug]?.role, f = m.teams?.[e.team_id]?.flower;
       if (!r || !f) continue;
       const share = r === "honest" ? f.percentAt50 : r === "defector" ? f.percentAt0 : null;
-      m.roles[e.team_id] = { role: r, persona: p.name, conform: share, medianPercent: f.percent?.p50 ?? null };
+      // adapt-hi's honest contract also fixes the work: CPU at 0.6 × R (within ±0.05).
+      const r60 = roles[p.slug]?.brief === "r60";
+      m.roles[e.team_id] = { role: r, brief: roles[p.slug]?.brief ?? null, persona: p.name, conform: share, medianPercent: f.percent?.p50 ?? null,
+        ...(r60 ? { cpuAt60: f.cpuAt60 ?? null, cpuOfR: f.cpuOfR ?? null } : {}) };
       if (share != null && share < 0.99) log(`  ROLE DRIFT: ${p.name} (${r}) answered at its role's percent on ${Math.round(100 * share)}% of turns (median percent ${f.percent?.p50 ?? "-"})`);
+      if (r60 && f.cpuAt60 != null && f.cpuAt60 < 0.9) log(`  ROLE DRIFT: ${p.name} (${r}) spent 0.6 × R (±0.05) of CPU on ${Math.round(100 * f.cpuAt60)}% of its answered turns (median CPU ÷ R ${f.cpuOfR?.p50 ?? "-"})`);
     }
   }
   await q("UPDATE arena.games SET metrics = $2 WHERE id = $1", [gameRow.id, m]);
@@ -509,7 +517,10 @@ async function startArena(id, presetName, games, extra = {}) {
   arena.settings.games = games;
   await q("UPDATE arena.arenas SET settings = $2, status = 'running' WHERE id = $1", [id, arena.settings]);
   setArenaCap(id, arena.settings.budgetUsd);
-  log(`arena ${id} (${arena.preset}): room ${arena.room_url}, ${games} games${arena.settings.common ? `, common knowledge from ${arena.settings.common.dir}` : ""}`);
+  // A preset's concurrency (as many sessions at once as it has teams, say), unless ARENA_CONCURRENCY sets it.
+  if (arena.settings.concurrency && !process.env.ARENA_CONCURRENCY) setConcurrency(arena.settings.concurrency);
+  log(`arena ${id} (${arena.preset}): room ${arena.room_url}, ${games} games${arena.settings.common ? `, common knowledge from ${arena.settings.common.dir}` : ""}` +
+    `; ${JSON.stringify(llmStats())}`);
   return { arena, log };
 }
 

@@ -4,11 +4,11 @@
 // from the turns, and the painter (gardenPainter.ts) moves the SVG without React. The flowers and labels
 // underneath are ordinary React, redrawn only when they change.
 import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
-import type { Action, GameStatus, GameView, Team, TeamScore } from "../types";
+import { scoringOf, type Action, type GameStatus, type GameView, type Scoring, type Team, type TeamScore } from "../types";
 import { useElementWidth } from "../hooks";
 import { useLiveTick, type LiveStore } from "../lib/live";
 import { TurnIndex } from "../lib/turns";
-import { fmtClock, fmtE, plural, poss } from "../lib/format";
+import { fmtClock, fmtE, plural, poss, powText } from "../lib/format";
 import { computeFrame, HEAD_Y, layoutGarden, PATCH_AT, PATCH_SCALE, TOP_PAD, type Layout, type Pt } from "./gardenModel";
 import { GardenPainter } from "./gardenPainter";
 import { DropIcon } from "./Icons";
@@ -333,7 +333,7 @@ export function LiveGarden({ view, store, wasted }: { view: GameView; store: Liv
       {status !== "lobby" && focus !== null && teams[focus] && (
         <FocusStrip team={teams[focus]} own={focus === mine} score={view.scores?.find((s) => s.teamId === teams[focus].id) ?? null}
           fedHere={counts.fedHere[focus]} fedBy={counts.fedBy[focus]} wasted={focus === mine ? wasted : null}
-          lastGrain={lastGrainOf(store.actions, teams[focus].id)} teams={teamsById} />
+          lastGrain={lastGrainOf(store.actions, teams[focus].id)} teams={teamsById} scoring={scoringOf(view.game.config)} />
       )}
       {status !== "lobby" && <GardenLegend own={mine >= 0} />}
     </div>
@@ -369,24 +369,25 @@ export function GardenControls({ teams, mine, focus, setFocus, bubbles, setBubbl
 const fmtScore = (x: number) => (x < 100 ? x.toFixed(2) : Math.round(x).toLocaleString());
 
 /** The followed team at a glance: its bee and its flower over the game so far. */
-export function FocusStrip({ team, own, score, fedHere, fedBy, wasted, lastGrain, teams }: {
+export function FocusStrip({ team, own, score, fedHere, fedBy, wasted, lastGrain, teams, scoring }: {
   team: Team; own: boolean; score: TeamScore | null; fedHere: number; fedBy: number; wasted: number | null;
-  lastGrain?: Action | null; teams?: Record<string, Team>;
+  lastGrain?: Action | null; teams?: Record<string, Team>; scoring?: Scoring;
 }) {
+  const { alpha, beta } = scoring ?? scoringOf(null);
   const who = own ? "Your" : poss(team.name);
   return (
     <div className="focus-strip" style={{ ["--team" as string]: team.color }}>
       <div className="focus-tile">
         <span className="focus-label"><span className="swatch" style={{ background: team.color }} /> {who} flower species</span>
         <span>fed at <b>{fedHere.toLocaleString()}×</b>{score ? <> by <b>{score.pollinators}</b> {score.pollinators === 1 ? "team" : "teams"}</> : null}</span>
-        {score && typeof score.pollination === "number" && <span title="Σ over bee teams of √(pollen given to that team's bee)">pollination <b>{fmtScore(score.pollination)}</b></span>}
+        {score && typeof score.pollination === "number" && <span title={`Σ over bee teams of ${powText("pollen given to that team's bee", beta)}`}>pollination <b>{fmtScore(score.pollination)}</b></span>}
         {score && (score.pollen !== null || score.nectarGiven !== null) && <span>gave pollen <b>{fmtE(score.pollen)}</b>, nectar <b>{fmtE(score.nectarGiven)}</b></span>}
         {wasted !== null && <span className="muted" title="Energy from visits where the bee didn't feed: nobody gets it. Only your team sees this until the game ends.">lost on unfed visits <b>{fmtE(wasted)}</b></span>}
       </div>
       <div className="focus-tile">
         <span className="focus-label"><span className="swatch" style={{ background: team.color }} /> {who} bee</span>
         <span>fed <b>{fedBy.toLocaleString()}×</b>{score && score.nectarSources !== null ? <> at <b>{score.nectarSources}</b> {score.nectarSources === 1 ? "flower" : "flowers"}</> : null}</span>
-        {score && typeof score.forage === "number" && <span title="Σ over flower teams of √(nectar got there)">forage <b>{fmtScore(score.forage)}</b></span>}
+        {score && typeof score.forage === "number" && <span title={`Σ over flower teams of ${powText("nectar got there", alpha)}`}>forage <b>{fmtScore(score.forage)}</b></span>}
         {score && score.nectarCollected !== null && <span><DropIcon size={14} /> nectar <b>{fmtE(score.nectarCollected)}</b></span>}
         {score && typeof score.fitness === "number" && <span title="N² × pollination share × forage share">fitness <b>{score.fitness.toFixed(3)}</b></span>}
         {lastGrain && typeof lastGrain.grain === "string" && (

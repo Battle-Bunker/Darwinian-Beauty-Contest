@@ -145,6 +145,32 @@ about data, honest when an experiment fails.`,
   },
 ];
 
+// adapt-hi: the kid personas carried over without their coding limits ("only things you actually understand", "nothing you
+// can't explain"); their names, personality, voice and notes stay. Keyed by the persona's slug; every edit must apply, or
+// the arena refuses to start. Earlier experiments keep the personas as they were.
+const CODING_LIMITS = {
+  kenji: [["You code like a very bright 12-year-old: compact and clever, but only using things you actually understand (loops, dicts, modulo, simple hashing).",
+    "Your code is compact and clever."]],
+  priya: [["You code like a bright, organised 12-year-old: simple functions, clear variable names, comments saying what each part is for, nothing you can't explain.",
+    "Your code is organised: clear variable names, and comments saying what each part is for."]],
+  theo: [["You code like a bright 12-year-old: careful, if/else, dictionaries, reading GAME settings.",
+    "Your code is careful, and it reads the GAME settings closely."]],
+  "bao-12": [["How you code: short, readable functions, a few comments, no clever tricks you cannot explain. Keep bee MEMORY tidy, with a couple of easy counters.",
+    "How you code: readable functions, a few comments."],
+    [" Always be able to teach every part of your code to a 10-year-old.", ""]],
+};
+const escRe = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** The persona prompt without its coding limits (CODING_LIMITS; a persona without any is returned as it is). */
+export function withoutCodingLimits(slug, prompt) {
+  let out = prompt;
+  for (const [from, to] of CODING_LIMITS[slug] || []) {
+    const re = new RegExp((from.startsWith(" ") ? "\\s+" : "") + from.trim().split(/\s+/).map(escRe).join("\\s+"));
+    if (!re.test(out)) throw new Error(`persona ${slug}: its coding limit "${from.trim().slice(0, 50)}…" isn't in its prompt`);
+    out = out.replace(re, to);
+  }
+  return out;
+}
+
 // Personas for role experiments (EXPERIMENTS.adapt): who they are only. A role (lib/prompts.js roleText) is a separate,
 // private brief; nothing here says how to play.
 export const ROLE_PERSONAS = [

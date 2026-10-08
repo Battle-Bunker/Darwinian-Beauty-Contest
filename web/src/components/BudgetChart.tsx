@@ -1,4 +1,4 @@
-// Each flower call's hidden time budget R (uniform in a range, 50–150 ms by default) against the work the
+// Each flower call's hidden time budget R (uniform in a range, 3–150 ms by default) against the work the
 // flower did (its CPU ms): one small scatter per species. A dot under the diagonal finished in time, and
 // what was left, R − CPU ms, became energy; on or over it the call ran out of budget and made nothing.
 import { useMemo, useState } from "react";
