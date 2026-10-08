@@ -281,6 +281,35 @@ test("room queries: across the room's finished games only, fully revealed, scope
     db.records.filter((t) => t.ms !== null).length, "fully revealed");
 });
 
+test("scores use each game's exponents: its config's (0.85 by default), or √ for a game stored without them, in SQL and the views", async () => {
+  const { score, scoringOf } = await import("../server/lib/scoring.js");
+  const { viewScores, viewGame } = await import("../server/games.js");
+  const pick = (rows) => rows.map((r) => [r.team ?? r.teamId, r.pollination, r.forage, r.pollinationShare, r.forageShare, r.fitness]);
+  const expect = (exps) => pick(score(db.teams, db.out.feeds, db.out.nectar, db.out.pollen, exps).map((s, team) => ({ ...s, team })));
+  const roomRow = (await pool.query("SELECT * FROM rooms WHERE id = $1", [db.room])).rows[0];
+  const check = async (exps, what) => {
+    same(pick(await sql({ from: "scores" }, db.users[N])), expect(exps), `${what}: the scores entity`);
+    same(pick((await viewScores({ id: db.game })).scores.map((s, team) => ({ ...s, team }))), expect(exps), `${what}: the live scoreboard`);
+    const view = await viewGame(roomRow, { id: db.game }, null);
+    assert.deepEqual(view.game.config.scoring, exps, `${what}: the view's config says which`);
+  };
+  try {
+    await setStatus("finished");
+    assert.deepEqual(scoringOf(db.config), { alpha: 0.85, beta: 0.85 });
+    await check({ alpha: 0.85, beta: 0.85 }, "a new game");
+    // The same game as stored before the exponents existed: √, exactly the old numbers.
+    await pool.query("UPDATE games SET config = config - 'scoring' WHERE id = $1", [db.game]);
+    await check({ alpha: 0.5, beta: 0.5 }, "a game from before");
+    const root = (v) => v.reduce((s, x) => s + Math.sqrt(Math.max(0, x)), 0);
+    const rows = await sql({ from: "scores" }, db.users[N]);
+    same(rows.map((r) => [r.pollination, r.forage]), rows.map((r) => [root(db.out.pollen.map((row) => row[r.team])), root(db.out.nectar[r.team])]), "Σ√, as before");
+    await pool.query("UPDATE games SET config = jsonb_set(config, '{scoring}', $2::jsonb) WHERE id = $1", [db.game, JSON.stringify({ alpha: 0.6, beta: 1 })]);
+    await check({ alpha: 0.6, beta: 1 }, "a game with its own exponents");
+  } finally {
+    await pool.query("UPDATE games SET config = $2 WHERE id = $1", [db.game, db.config]);
+  }
+});
+
 test("big responses: the record shows their size and hash; the whole text is stored apart, and served by seq", async () => {
   const { viewResponse } = await import("../server/games.js");
   const big = db.records.filter((t) => t.responseHash !== null);
