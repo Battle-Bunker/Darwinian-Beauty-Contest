@@ -193,6 +193,7 @@ changed from `adapt`:
 | team sessions | default effort | `--effort high` in the lobby and in play |
 | caps (opus) | lobby $2 / 40 turns; in play $0.50 / 20 turns | lobby $6 / 100 turns; in play $3 / 60 turns |
 | briefs | "be quick", "at most N tool calls", "stop with a short summary" | none of these (`prompts.brevity: false`); the facts stay (the garden moves faster than a session; scaffolds and adaptive bees react between sessions) |
+| interviews | "teach your code to a panel aged 10-14 … clever ideas a smart kid can follow beat obscure techniques" | only described: a panel scores the code, and nothing depends on it (`prompts.simpleCode: false`); interviews and judges still run |
 | between sessions | the gap doubles after each session that submits nothing (up to 2 minutes) | a constant 5 s (`session.idleBackoff: false`) |
 | lobby | as long as the session takes | about 10 minutes of wall time per team (`session.lobbyMinutes`), told to the team with what it can study: previous-games/, `tools/query.py --room`, earlier-tournament/ |
 | sessions at once | 8 (a stale `arena/runs/concurrency` file held it there) | 16 (`concurrency`); the control file now counts only when written while the runner runs |

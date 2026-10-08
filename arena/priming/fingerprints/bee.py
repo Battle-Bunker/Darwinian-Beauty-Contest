@@ -8,11 +8,11 @@
 # A failed certificate, a repeated (d, i), or more certificates than any flower can make: leave.
 import random, time
 
-# Must match the flowers' T exactly (fingerprint.py).
-T = ((30, 1, 6, 1), (30, 2, 5, 0), (30, 1, 7, 2), (30, 1, 6, 3), (24, 1, 6, 4))
+# Must match the flowers' T exactly (fingerprint.py; the five-dimension option adds (30, 1, 6, 3)).
+T = ((30, 1, 6, 1), (30, 2, 5, 0), (30, 1, 7, 2), (24, 1, 6, 4))
 K = len(T)
 KEYS = "abcde"            # MEMORY: the learned adjustment per dimension, in tenths (-9..9)
-WEIGHT = (1, 1, 1, 1, 1)  # the fingerprint weights: what this bee values in each dimension
+WEIGHT = (1,) * K         # the fingerprint weights: what this bee values in each dimension
 TAU = 30                  # feed when the weighted score reaches this (a feed costs 20 rounds)
 PER_UNIT = 2400           # nectar an honest 50% flower gives per certified unit (from calibration)
 LMAX = 160                # more certificates than R = 150 allows: implausible
@@ -52,6 +52,8 @@ def levels(c, response):
         for lab in labels:
             if time.perf_counter() * 1000 > CHECK_MS:
                 break
+            if lab[0] == -1 and len(lab) == 2:     # the flower's record of the share of 0.6 R it spent
+                continue
             d, i, x = lab
             if type(d) is not int or not 0 <= d < K or type(i) is not int or not 0 <= i < 4096 or (d, i) in seen:
                 return None

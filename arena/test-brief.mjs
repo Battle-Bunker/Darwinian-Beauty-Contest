@@ -101,6 +101,10 @@ const hiGame = gameBrief({ config, teamName: "Moonpetal", generation: 1, session
 check("adapt-hi: no brevity nudges in the system prompt, the lobby, a fix or a game session (they stay elsewhere)",
   ![hiSys, hiLobby, hiFix, hiGame].some((t) => NUDGES.test(t)) && /Work step by step, then stop with a short summary/.test(sysVet)
   && /at most about 30 tool calls/.test(lobbyBrief({ config, teamName: "M", generation: 2, maxTurns: 30, carried: true })), [hiSys, hiLobby, hiFix, hiGame].map((t) => t.match(NUDGES)?.[0]).join(" / "));
+const hiFixed = toolSystem(persona, config, "/w", { apiBase, teams: 14, fixed: true, brevity: false, simpleCode: false });
+check("adapt-hi: no steer toward simple code (with fixed teams the interview is only described); other arenas keep it",
+  !/smart kid|obscure techniques|aged 10-14|understand it/.test(hiFixed) && /Nothing in this\s+tournament depends on those scores/.test(hiFixed)
+  && /Clever ideas a smart kid can follow beat obscure techniques/.test(toolSystem(persona, config, "/w", { apiBase, teams: 14, fixed: true })), hiFixed.slice(0, 1500));
 check("adapt-hi lobby: its wall time, and what the team can study (the revealed earlier games, room queries)", /about 10 minutes of wall time/.test(hiLobby)
   && /previous-games\//.test(hiLobby) && /tools\/query\.py --room/.test(hiLobby), hiLobby);
 const startLobby = lobbyBrief({ config, teamName: "Wildmeadow Commons", generation: 1, maxTurns: 100, carried: true, started: ["bee"], brevity: false, minutes: 10 });
