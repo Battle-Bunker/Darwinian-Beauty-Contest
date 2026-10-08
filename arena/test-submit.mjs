@@ -23,6 +23,8 @@ const { Broker } = await import("./lib/broker.js");
 const { requestHandler, statusOf } = await import("./lib/team.js");
 const { installTools, audit, killLeftovers, sessionProcesses } = await import("./lib/workspace.js");
 const { runSession } = await import("./lib/llm.js");
+const { setupAgentCgroups, cgroupsOf } = await import("./lib/cgroups.js");
+const contained = setupAgentCgroups(() => {}).ok; // as the runner does at start (lib/cgroups.js)
 const { migrate, pool, q } = await import("./lib/db.js");
 await migrate();
 
@@ -238,14 +240,17 @@ async function stubSession(mode, { killAfterMs = null } = {}) {
     timeoutMs: 30000, control, env: { ARENA_SESSION: tag }, holdOnLimit: false, ctx: { purpose: "test", arenaId: "test-submit" } });
   await b.stop();
   const leftBefore = sessionProcesses(tag, null);
+  const groups = leftBefore.map((pid) => cgroupsOf(pid)).filter(Boolean);
   const killed = await killLeftovers(tag, ws);
-  return { s, leftBefore, killed, after: sessionProcesses(tag, null), out: fs.existsSync(path.join(ws, "submit-output.txt")) ? fs.readFileSync(path.join(ws, "submit-output.txt"), "utf8") : "" };
+  return { s, leftBefore, groups, killed, after: sessionProcesses(tag, null), out: fs.existsSync(path.join(ws, "submit-output.txt")) ? fs.readFileSync(path.join(ws, "submit-output.txt"), "utf8") : "" };
 }
 
 let x = await stubSession("ok");
 check("stub session: the submission made during the session went through the runner", /flower v2 submitted/.test(x.out), x.out);
 check("stub session: finished normally with the CLI's reported cost", !x.s.killed && Math.abs(x.s.cost - 0.0123) < 1e-9 && !x.s.estimated);
 check("stub session: what it left running carries its tag", x.leftBefore.length >= 1);
+check(`stub session: what it started runs in the agents' cgroups, cpuset and cpu dbc-agents${contained ? "" : " (skipped: no cgroups on this box)"}`,
+  !contained || (x.groups.length >= 1 && x.groups.every((g) => g.cpuset === "/dbc-agents" && g.cpu === "/dbc-agents")), JSON.stringify(x.groups));
 check("stub session: the runner stopped it afterwards", x.killed.length >= 1 && x.after.length === 0);
 x = await stubSession("violation");
 check("fair play, live: a submission after reading outside the workspace is refused", records.some((r) => r.op === "submit" && /fair-play violation/.test(r.refused || "")) && !/submitted/.test(x.out), x.out);

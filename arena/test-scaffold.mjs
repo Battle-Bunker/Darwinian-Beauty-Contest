@@ -17,7 +17,10 @@ const { TeamDesk } = await import("./lib/team.js");
 const { auditScaffold } = await import("./lib/scaffold.js");
 const { installTools, killLeftovers } = await import("./lib/workspace.js");
 const { migrate, pool, q, all } = await import("./lib/db.js");
+const { setupAgentCgroups, cgroupsOf } = await import("./lib/cgroups.js");
 await migrate();
+// The agents' cgroups (lib/cgroups.js), as the runner makes them at start; where the box can't, scaffolds run uncontained.
+const contained = setupAgentCgroups(() => {}).ok;
 
 let failed = 0;
 const check = (name, ok, extra = "") => { console.log(`${ok ? "ok  " : "FAIL"} ${name}${ok || !extra ? "" : `: ${String(extra).slice(0, 700)}`}`); if (!ok) failed++; };
@@ -182,6 +185,8 @@ r = await tool("tools/scaffold.py", "start", "busy.py");
 await sleep(3500);
 const st = desk.scaffold.status();
 check("a busy scaffold is throttled to its CPU share (paused while over it)", st.state === "running" && st.throttledMs > 1000 && st.cpuSeconds < 3.5 * 0.5, JSON.stringify(st));
+const cg = cgroupsOf(desk.scaffold.child?.pid);
+check(`a scaffold runs in the agents' cgroups, cpuset and cpu dbc-agents${contained ? "" : " (skipped: no cgroups on this box)"}`, !contained || (cg?.cpuset === "/dbc-agents" && cg?.cpu === "/dbc-agents"), JSON.stringify(cg));
 
 // 8. The game ends: the scaffold is stopped.
 const lastPid = desk.scaffold.child?.pid;

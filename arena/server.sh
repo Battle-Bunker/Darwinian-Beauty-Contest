@@ -40,9 +40,24 @@ fi
 
 umask 077
 [ -s "$SECRET_FILE" ] || openssl rand -hex 24 > "$SECRET_FILE"
-echo "=== start $(date +%T) port $PORT CPU_SLOTS=$CPU_SLOTS db ${DB##*/}" >> "$LOG"
-DATABASE_URL="$DB" DEV_LOGIN_SECRET="$(cat "$SECRET_FILE")" PORT="$PORT" CPU_SLOTS="$CPU_SLOTS" \
-  nohup node server/index.js >> "$LOG" 2>&1 &
+# Cores (docs/research/compute-budgets/REPORT.md §4.3): the agents run in cpuset/dbc-agents (cores 0-1, made by the arena
+# runner), the game's program runners in cpuset/dbc-runners (cores 2-3, made by the engine), and the server itself in
+# cpuset/dbc-rest (cores 0-1). The server goes there only once dbc-runners exists, so its runners have their own cores to
+# move to (ARENA_SERVER_CPUSET=0: leave it where it is). Postgres, a system service, is left where it is.
+CG=/sys/fs/cgroup/cpuset
+JOIN=""
+if [ "${ARENA_SERVER_CPUSET:-1}" != "0" ] && [ -d "$CG/dbc-runners" ]; then
+  if mkdir -p "$CG/dbc-rest" 2>/dev/null && echo 0-1 > "$CG/dbc-rest/cpuset.cpus" 2>/dev/null && echo 0 > "$CG/dbc-rest/cpuset.mems" 2>/dev/null; then
+    JOIN="$CG/dbc-rest/cgroup.procs"
+  else
+    echo "*** could not set up $CG/dbc-rest: the server runs on every core" | tee -a "$LOG" >&2
+  fi
+elif [ "${ARENA_SERVER_CPUSET:-1}" != "0" ]; then
+  echo "(no $CG/dbc-runners yet: the server and its runners stay on every core)" >> "$LOG"
+fi
+echo "=== start $(date +%T) port $PORT CPU_SLOTS=$CPU_SLOTS db ${DB##*/}${JOIN:+ cpuset dbc-rest}" >> "$LOG"
+DATABASE_URL="$DB" DEV_LOGIN_SECRET="$(cat "$SECRET_FILE")" PORT="$PORT" CPU_SLOTS="$CPU_SLOTS" JOIN="$JOIN" \
+  nohup sh -c 'if [ -n "$JOIN" ]; then echo $$ > "$JOIN" || echo "could not join $JOIN" >&2; fi; exec node server/index.js' >> "$LOG" 2>&1 &
 echo $! > "$PIDFILE"
 echo "server pid $! on :$PORT (log $LOG)"
 sleep 3

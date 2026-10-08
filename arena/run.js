@@ -25,6 +25,7 @@ import { GameStream, readMemorySamples } from "./lib/stream.js";
 import { syncPause } from "./lib/gamecontrol.js";
 import { computeGameMetrics, scaffoldsOf, submitsOf } from "./lib/metrics.js";
 import { FOUNDERS, ROLE_PERSONAS, withoutCodingLimits } from "./lib/personas.js";
+import { agentCgroups, setupAgentCgroups } from "./lib/cgroups.js";
 import { breed, decideRetirements, retire, seedBreeders } from "./lib/population.js";
 import { DEFAULT_SESSION, EXPERIMENTS, PRESETS } from "./lib/presets.js";
 import { gameBrief, mmss } from "./lib/prompts.js";
@@ -538,7 +539,7 @@ async function startArena(id, presetName, games, extra = {}) {
   // A preset's concurrency (as many sessions at once as it has teams, say), unless ARENA_CONCURRENCY sets it.
   if (arena.settings.concurrency && !process.env.ARENA_CONCURRENCY) setConcurrency(arena.settings.concurrency);
   log(`arena ${id} (${arena.preset}): room ${arena.room_url}, ${games} games${arena.settings.common ? `, common knowledge from ${arena.settings.common.dir}` : ""}` +
-    `; ${JSON.stringify(llmStats())}`);
+    `; ${JSON.stringify(llmStats())}; agents ${agentCgroups() ? `contained in ${agentCgroups().join(" and ")}` : "NOT contained (no cgroups)"}`);
   return { arena, log };
 }
 
@@ -649,6 +650,9 @@ async function shutdown(sig) {
 async function main() {
   if (isPaused()) console.log(`[arena] starting PAUSED (${PAUSE_FILE} exists): games resume from the database once it is deleted`);
   await migrate();
+  // Contain the agents (lib/cgroups.js): their sessions, tools and scaffolds in cpuset/cpu dbc-agents (ARENA_CONTAIN=0:
+  // don't; a failure is logged loudly and the runner carries on uncontained).
+  if (process.env.ARENA_CONTAIN !== "0") setupAgentCgroups((m) => console.log(`[arena] ${m}`));
   await seedJudges();
   await seedBreeders();
   for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => shutdown(sig));

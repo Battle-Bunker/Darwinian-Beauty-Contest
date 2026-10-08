@@ -19,6 +19,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ARENA_DIR, one, q } from "./db.js";
 import { codeFindings, installTools, otherWorkspaces, processTree, toolSource } from "./workspace.js";
+import { agentCgroups } from "./cgroups.js";
 
 const LAUNCHER = path.join(ARENA_DIR, "lib", "scaffold_launch.py");
 const BACKOFF = [1, 2, 4, 8, 15, 30];
@@ -151,7 +152,8 @@ export class Scaffold {
     fs.writeSync(fd, `\n==== scaffold ${this.file} starting (game time ${Math.round(this.ctx.clockMs() / 1000)} s)\n`);
     const token = crypto.randomBytes(12).toString("hex");
     this.tokens = new Set([token]);
-    const limits = JSON.stringify({ memMB: this.limits.memMB, cpuSeconds: this.limits.cpuSeconds, fileMB: this.limits.fileMB, nice: this.limits.nice });
+    // (it joins the agents' cgroups, when the runner made them, before it becomes the scaffold: lib/cgroups.js)
+    const limits = JSON.stringify({ memMB: this.limits.memMB, cpuSeconds: this.limits.cpuSeconds, fileMB: this.limits.fileMB, nice: this.limits.nice, cgroups: agentCgroups() || [] });
     const child = spawn("python3", [LAUNCHER, limits, this.file], {
       cwd: dir, detached: true, stdio: ["ignore", fd, fd],
       // tools/ is on its import path, so `import garden` works without sys.path tricks.

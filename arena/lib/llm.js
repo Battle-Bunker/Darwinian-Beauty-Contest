@@ -4,9 +4,9 @@
 // cool-down on rate limits, a spend guard, and a cost ledger (arena.llm_calls).
 import { spawn } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { ARENA_DIR, one, q } from "./db.js";
+import { agentSpawn } from "./cgroups.js";
 
 // No Fable model anywhere: team personas, judges, breeders and every other call use opus, sonnet or haiku.
 export const MODELS = ["opus", "sonnet", "haiku"];
@@ -72,7 +72,9 @@ function runCli({ model, system, prompt, effort, timeoutMs }) {
   return new Promise((resolve) => {
     const args = ["-p", "--model", model, "--tools", "", "--system-prompt", system, "--output-format", "json", "--no-session-persistence"];
     if (effort) args.push("--effort", effort);
-    const child = spawn(CLAUDE, args, { cwd: EMPTY_CWD, stdio: ["pipe", "pipe", "pipe"], env: process.env });
+    // (in the agents' cgroups too, when the runner made them: lib/cgroups.js)
+    const [cmd, argv] = agentSpawn(SESSION_NICE, CLAUDE, args);
+    const child = spawn(cmd, argv, { cwd: EMPTY_CWD, stdio: ["pipe", "pipe", "pipe"], env: process.env });
     let out = "", err = "", done = false;
     const timer = setTimeout(() => { if (!done) { err += "\n[arena] timeout"; child.kill("SIGKILL"); } }, timeoutMs);
     child.stdout.on("data", (d) => (out += d));
@@ -221,7 +223,6 @@ export function extractTag(text, tag) {
 // saved for auditing, and kept in memory (control.lines) so the runner can audit it while the session runs. Same
 // limiter, cost ledger and usage-limit pause as callModel.
 const SESSION_PATH = ["/opt/node22/bin", "/usr/local/bin", "/usr/bin", "/bin"].join(":");
-const NICE_BIN = "/usr/bin/nice";
 
 // Per-million-token prices, used only to estimate the cost of a session the runner had to stop before the CLI
 // reported its cost (stream-json reports usage per message). Conservative public list prices.
@@ -270,14 +271,12 @@ function runSessionCli({ model, cwd, appendSystem, prompt, maxTurns, maxBudgetUs
     if (effort) args.push("--effort", effort);
     fs.mkdirSync(path.dirname(transcriptFile), { recursive: true });
     const out = fs.createWriteStream(transcriptFile);
-    // A team's own scripts (tests, stream analysis) yield the CPU to the garden's programs, whose time limits are wall
-    // clock: the session and everything it starts run at a lower priority. Started through nice(1), so every thread of
-    // the CLI, and every process it starts, has it from the first instruction (nice 0 keeps the old way: no wrapper).
+    // A team's session, and everything it starts (tool shells, python, try runs, a busy loop), is contained: started
+    // through agent_exec.sh, which joins the agents' cgroups (cores 0-1, cpu.idle, at most 1.5 cores; lib/cgroups.js) and
+    // then becomes the CLI at `nice` (which orders processes within the group). Without the groups, nice alone.
     const env2 = { HOME: process.env.HOME || "/root", PATH: SESSION_PATH, LANG: "C.UTF-8", ...env };
-    const child = nice > 0 && fs.existsSync(NICE_BIN)
-      ? spawn(NICE_BIN, ["-n", String(nice), CLAUDE, ...args], { cwd, stdio: ["pipe", "pipe", "pipe"], env: env2 })
-      : spawn(CLAUDE, args, { cwd, stdio: ["pipe", "pipe", "pipe"], env: env2 });
-    if (nice > 0 && !fs.existsSync(NICE_BIN)) try { os.setPriority(child.pid, nice); } catch {}
+    const [cmd, argv] = agentSpawn(nice, CLAUDE, args);
+    const child = spawn(cmd, argv, { cwd, stdio: ["pipe", "pipe", "pipe"], env: env2 });
     const lines = [];
     let buf = "", last = null, err = "", limitText = null, killed = null, closed = false;
     if (control) {
