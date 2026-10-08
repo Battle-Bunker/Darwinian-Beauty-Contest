@@ -47,9 +47,11 @@ assert.deepEqual(fresh.prevalence, { on: true, halfLifeS: 90, cDecay: "sech", cS
 // 5 to 10 minutes, the end drawn at the start and hidden.
 const freshGame = (await api(owner, "GET", g)).game;
 assert.deepEqual([fresh.minutes, fresh.endFactor, freshGame.minMs, freshGame.maxMs, freshGame.endMs, freshGame.drawnEndMs], [5, 2, 300000, 600000, null, null]);
-// Half a minute of game time. Flowers earn change budget fast so the test needn't wait; feeding costs 2
-// rounds rather than 20, so bees take turns often. Responses can be any JSON, and big (a 64 KiB cap).
-await api(owner, "PATCH", `${g}/config`, { config: { minutes: 0.5, feedCost: 2, responseType: "any", maxResponseBytes: 65536, budgets: { flower: { perMinute: 600, cap: 100 } } } });
+// Half a minute to a minute of game time. Flowers earn change budget fast so the test needn't wait; feeding costs 2
+// rounds rather than 20, so bees take turns often. Responses can be any JSON, and big (a 64 KiB cap). c halves
+// at 60 s rather than at 0.2 × the shortest length (6 s here), so every species keeps being visited.
+await api(owner, "PATCH", `${g}/config`, { config: { minutes: 0.5, feedCost: 2, responseType: "any", maxResponseBytes: 65536, budgets: { flower: { perMinute: 600, cap: 100 } }, prevalence: { cHalfS: 60 } } });
+assert.deepEqual([(await api(owner, "GET", g)).game.config.prevalence.cHalfS, (await api(null, "GET", `${g}/scores`)).prevalence.cHalfS], [60, 60]);
 
 const players = [];
 for (const name of ["Ada", "Bo", "Cy", "Di"]) {
