@@ -448,9 +448,19 @@ def plain_memory(m):
     return out
 
 
+_ENCODER = json.JSONEncoder(ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+
+
 def dumps(v):
-    """Compact JSON text, UTF-8 as JavaScript writes it (no user code can run here: v is plain)."""
-    return json.dumps(v, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+    """Compact JSON text, UTF-8 as JavaScript writes it (no user code can run here: v is plain). One encoder,
+    made before any fork, so a call doesn't pay for building it (json.dumps would, every call)."""
+    return _ENCODER.encode(v)
+
+
+# Warm the reply path before any fork: a forked call then runs it as already specialised code, which saves
+# it (and the program's CPU budget) about 0.1 ms of first-run costs.
+for _ in range(2000):
+    dumps(plain([1.5, -2, "é", None, True, {"a": [1, 2.25]}, (3, 4)]))
 
 
 PROTO = os.fdopen(os.dup(1), "wb")  # protocol channel; programs' print() never reaches it

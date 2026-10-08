@@ -31,7 +31,9 @@
 // NOT a security sandbox: fresh contexts + timeouts + heap cap only.
 "use strict";
 const vm = require("node:vm");
+const fs = require("node:fs");
 const readline = require("node:readline");
+const { Worker } = require("node:worker_threads");
 const { stripTypeScriptTypes } = require("node:module");
 
 const out = (o) => process.stdout.write(JSON.stringify(o) + "\n");
@@ -56,12 +58,16 @@ const PRELUDE = (game) => `
   "use strict";
   const apply = Reflect.apply, construct = Reflect.construct, slice = String.prototype.slice, stringify = JSON.stringify;
   const floor = Math.floor, define = Object.defineProperty, describe = Object.getOwnPropertyDescriptor;
-  const hr = globalThis.__hr;
+  const hr = globalThis.__hr, cpu = globalThis.__cpu;
   delete globalThis.__hr;
-  let origin = hr();
+  delete globalThis.__cpu;
+  let origin = hr(), cpuOrigin = cpu();
   const now = () => hr() - origin;
   const nowMs = () => floor(hr() - origin);
-  define(globalThis, "__startClock", { value: () => { origin = hr(); } });
+  define(globalThis, "__startClock", { value: () => { origin = hr(); cpuOrigin = cpu(); } });
+  // Nothing to wait for: limits are CPU time, and waiting earns nothing. Atomics.wait returns at once.
+  const load = Atomics.load;
+  define(Atomics, "wait", { value: function wait(ta, i, v) { return load(ta, i) !== v ? "not-equal" : "timed-out"; }, writable: true, configurable: true });
   const RealDate = globalThis.Date, toString = RealDate.prototype.toString;
   const GameDate = function Date(...args) {
     if (new.target === undefined) return apply(toString, construct(RealDate, [nowMs()]), []);
@@ -76,7 +82,7 @@ const PRELUDE = (game) => `
   const DTF = Intl.DateTimeFormat.prototype, format = describe(DTF, "format").get, toParts = DTF.formatToParts;
   define(DTF, "format", { get() { const f = apply(format, this, []); return (d) => f(d === undefined ? nowMs() : d); }, configurable: true });
   define(DTF, "formatToParts", { value: function formatToParts(d) { return apply(toParts, this, [d === undefined ? nowMs() : d]); }, writable: true, configurable: true });
-  define(globalThis, "performance", { value: Object.freeze({ now() { return now(); }, timeOrigin: 0, toJSON() { return { timeOrigin: 0 }; } }), writable: true, configurable: true });
+  define(globalThis, "performance", { value: Object.freeze({ now() { return now(); }, cpuTime() { return cpu() - cpuOrigin; }, timeOrigin: 0, toJSON() { return { timeOrigin: 0 }; } }), writable: true, configurable: true });
   let text = "";
   Object.defineProperty(globalThis, "__takeOut", { value: () => { const o = text; text = ""; return o.length > 2000 ? apply(slice, o, [0, 2000]) : o; } });
   const log = (...a) => { if (text.length < 2000) text += a.map((x) => typeof x === "string" ? x : stringify(x)).join(" ") + "\\n"; };
@@ -88,7 +94,101 @@ const PRELUDE = (game) => `
 const EXPORTS = `;globalThis.__fns = { ${[...ENTRY, ...OPTIONAL].map((n) => `${n}: typeof ${n} === "function" ? ${n} : undefined`).join(", ")} };`;
 
 const newContext = () => vm.createContext(Object.create(null), { microtaskMode: "afterEvaluate", codeGeneration: { strings: true, wasm: false } });
-const cpuMs = (since) => { const u = process.cpuUsage(since); return (u.user + u.system) / 1000; };
+
+// CPU-time budgets (docs/research/compute-budgets/REPORT.md §4.2). A call's budget is the main thread's CPU
+// time (process.threadCpuUsage: V8's background compiler and GC threads aren't the program's). Every script
+// runs with breakOnSigint; a watchdog thread reads the main thread's CPU from /proc (stale by up to a tick, never
+// ahead) and, once the call's budget is used, sends SIGINT, again every 2 ms while the call goes on. The
+// vm `timeout` is only the wall-clock backstop. For a bee it also sends notices to the engine: "late" at its
+// ms of CPU, and at the judging wall time either "late" or "fault" (the call spent most of its time waiting
+// for a CPU). Main thread and watchdog share CTL; the watchdog only signals or writes while the state is
+// RUNNING, holding it at BUSY meanwhile, so nothing of one call reaches the next.
+const threadMs = () => { const u = process.threadCpuUsage(); return (u.user + u.system) / 1000; };
+const SCHEDSTAT = `/proc/self/task/${process.pid}/schedstat`;
+/** [CPU ms, ms spent runnable but waiting for a CPU] of the main thread, from /proc (tick-stale). */
+const schedstat = () => { try { const [c, w] = fs.readFileSync(SCHEDSTAT, "latin1").split(" "); return [Number(c) / 1e6, Number(w) / 1e6]; } catch { return [0, 0]; } };
+const wallMs = () => Number(process.hrtime.bigint()) / 1e6;
+const IDLE = 0, RUNNING = 1, BUSY = 2;
+const CTL = new SharedArrayBuffer(64);
+const I = new Int32Array(CTL, 0, 4);   // [state, SIGINTs sent, (unused), call number]
+const F = new Float64Array(CTL, 16, 6); // [stop at CPU ms, notice at CPU ms (0: none), start wall ms, judge at wall ms (0: none), wait ms at start, fault share]
+const WATCHDOG = `
+const { workerData } = require("node:worker_threads");
+const fs = require("node:fs");
+const I = new Int32Array(workerData.ctl, 0, 4), F = new Float64Array(workerData.ctl, 16, 6);
+const read = () => { try { const [c, w] = fs.readFileSync(workerData.path, "latin1").split(" "); return [Number(c) / 1e6, Number(w) / 1e6]; } catch { return [0, 0]; } };
+const wallMs = () => Number(process.hrtime.bigint()) / 1e6;
+const hold = () => Atomics.compareExchange(I, 0, 1, 2) === 1;          // RUNNING -> BUSY, if the call is still on
+const release = () => { Atomics.store(I, 0, 1); Atomics.notify(I, 0); };
+const notice = (kind) => { if (hold()) { try { fs.writeSync(1, '{"notice":"' + kind + '"}\\n'); } finally { release(); } } };
+let noticed = -1;
+for (;;) {
+  const call = Atomics.load(I, 3);
+  if (Atomics.load(I, 0) === 0) { Atomics.wait(I, 3, call, 1000); continue; }
+  const [cpu, wait] = read();
+  if (cpu >= F[0]) {                       // the budget is used: stop the script (and keep at it while the call goes on)
+    if (hold()) { try { process.kill(process.pid, "SIGINT"); Atomics.add(I, 1, 1); } finally { release(); } }
+    Atomics.wait(I, 3, call, 2);
+    continue;
+  }
+  // A bee: late at its ms of CPU; else judged at its wall time: the server's fault if it spent most of it
+  // waiting for a CPU, else late. One notice a call.
+  const wall = wallMs() - F[2];
+  if (F[1] && cpu >= F[1]) { F[1] = 0; F[3] = 0; if (noticed !== call) { noticed = call; notice("late"); } }
+  if (F[3] && wall >= F[3]) { F[3] = 0; if (noticed !== call) { noticed = call; notice((wait - F[4]) >= F[5] * wall ? "fault" : "late"); } }
+  // Wall time can't pass slower than CPU time: sleep for the CPU left (or until the judging time).
+  let next = F[0] - cpu;
+  if (F[1]) next = Math.min(next, F[1] - cpu);
+  if (F[3]) next = Math.min(next, F[3] - wall);
+  Atomics.wait(I, 3, call, Math.max(0.25, Math.min(next, 50)));
+}`;
+let watchdog = null;
+function startWatchdog() {
+  watchdog = new Worker(WATCHDOG, { eval: true, workerData: { ctl: CTL, path: SCHEDSTAT } });
+  watchdog.unref();
+  watchdog.on("error", () => { watchdog = null; });
+}
+process.on("SIGINT", () => {}); // a SIGINT that lands between scripts is harmless
+
+/** Start a call's budget: stop at `budget` ms of CPU; for a bee, a notice at `soft` ms of CPU and judged at `judge` ms of wall time. */
+function begin(budget, wallLimit, soft = 0, judge = 0) {
+  const c0 = threadMs(), [, wait0] = schedstat(), w0 = wallMs();
+  F[0] = c0 + budget; F[1] = soft ? c0 + soft : 0; F[2] = w0; F[3] = judge; F[4] = wait0; F[5] = setup.faultShare || 0.5;
+  Atomics.store(I, 0, RUNNING);
+  Atomics.add(I, 3, 1);
+  Atomics.notify(I, 3);
+  const call = { c0, budget, w0, wait0, wallLimit };
+  call.left = () => Math.max(1, Math.round(wallLimit - (wallMs() - w0)));          // the wall backstop still left
+  call.opts = () => ({ breakOnSigint: true, timeout: call.left() });
+  return call;
+}
+
+/** End a call's budget (waiting for the watchdog if it is mid-signal): its CPU time in ms. */
+function end(call) {
+  if (call.cpu !== undefined) return call.cpu;
+  while (Atomics.compareExchange(I, 0, RUNNING, IDLE) !== RUNNING) Atomics.wait(I, 0, BUSY, 5);
+  call.cpu = threadMs() - call.c0;
+  return call.cpu;
+}
+
+const interrupted = (e) => /interrupted/i.test(short(e));
+/** What a call that threw ends with: stopped at its CPU budget, the wall backstop (late or the server's fault), or an error. */
+function failure(e, call) {
+  const [cpuNow, waitNow] = schedstat();
+  const cpu = end(call);
+  if (interrupted(e)) {
+    if (cpu >= call.budget - 0.05) return { e: "Timeout: took too long", cpu };
+    return { e: "server fault: interrupted before its time was up", cpu, fault: true }; // (a stray SIGINT)
+  }
+  if (timedOut(e)) {
+    const wall = wallMs() - call.w0, wait = waitNow - call.wait0;
+    const fault = wait >= (setup.faultShare || 0.5) * wall && cpu < call.budget;
+    return fault
+      ? { e: `server fault: it waited ${Math.round(wait)} ms of ${Math.round(wall)} ms for a CPU, and ran ${cpu.toFixed(1)} ms`, cpu, backstop: true, fault: true }
+      : { e: `Timeout: still running after ${Math.round(wall)} ms of wall time (${cpu.toFixed(1)} ms of CPU)`, cpu, backstop: true, fault: false };
+  }
+  return { e: short(e), cpu };
+}
 
 let setup = null, script = null, loadError = null;
 let staged = null; // the next decide's context, its arguments already read in
@@ -101,6 +201,7 @@ const hostNow = () => performance.now();
 function fresh(game = setup.game) {
   const c = newContext();
   c.__hr = hostNow; // taken into the prelude's closure, and deleted from the context
+  c.__cpu = threadMs; // (this thread's CPU time, ms: the clock budgets and energy count)
   vm.runInContext(PRELUDE(game), c);
   return c;
 }
@@ -150,33 +251,33 @@ function load(req) {
 }
 
 /**
- * JSON text of a global of context c, encoded inside the context under `timeout` (hooks such as toJSON run
- * there, on the program's clock). Only a string comes out.
+ * JSON text of a global of context c, encoded inside the context under the call's limits (`opts`: hooks such
+ * as toJSON run there, on the program's clock). Only a string comes out.
  */
-function encode(c, name, what, timeout) {
+function encode(c, name, what, opts) {
   const s = vm.runInContext(`(() => { const r = globalThis.${name};
     if (r !== undefined && r !== null && typeof r === "object" && typeof r.then === "function") throw new Error("${what} must not be async");
     let s; try { s = JSON.stringify(r === undefined ? null : r); } catch (e) { throw new Error("${what} returned something that is not plain data"); }
-    return s === undefined ? "null" : s; })()`, c, { timeout });
+    return s === undefined ? "null" : s; })()`, c, opts);
   if (typeof s !== "string") throw new Error(`${what} returned something that is not plain data`);
   return s;
 }
 
 function callFlower(req) {
   if (loadError) return out({ e: "the program failed to load: " + loadError, cpu: 0 });
-  // R, this call's hidden time budget: its hard limit, and GAME.ms for the call (at most the flower window).
+  // R, this call's hidden time budget: its CPU limit, and GAME.ms for the call (at most the flower window).
   const budget = typeof req.ms === "number" && req.ms > 0 ? Math.min(setup.ms, req.ms) : setup.ms;
   const c = fresh({ ...setup.game, ms: budget });
   setGlobals(c, { __c: text(req.c) });
   startClock(c);
-  const t0 = performance.now(), cpu0 = process.cpuUsage();
-  const left = () => Math.max(1, Math.round(budget - (performance.now() - t0)));
+  const call = begin(budget, setup.wallMs || 400);
   try {
     // The flower's compute: its program, flower(challenge), and encoding the reply: all on the clock.
-    script.runInContext(c, { timeout: Math.max(1, Math.round(budget)) });
-    if (vm.runInContext("typeof __fns.flower", c, { timeout: left() }) !== "function") throw new Error(`program must define ${SIGNATURE}`);
-    vm.runInContext("globalThis.__r = __fns.flower(__c);", c, { timeout: left() });
-    const s = encode(c, "__r", "flower", left());
+    script.runInContext(c, call.opts());
+    if (vm.runInContext("typeof __fns.flower", c, call.opts()) !== "function") throw new Error(`program must define ${SIGNATURE}`);
+    vm.runInContext("globalThis.__r = __fns.flower(__c);", c, call.opts());
+    const s = encode(c, "__r", "flower", call.opts());
+    const cpu = end(call);
     // The response's size: s is "[" + response + "," + percent + "]" when the flower returned a pair (a
     // percent that isn't a number is refused by the engine anyway).
     let bytes = null;
@@ -184,23 +285,22 @@ function callFlower(req) {
       const comma = s.lastIndexOf(",");
       if (comma > 0) bytes = Buffer.byteLength(s) - 1 - Buffer.byteLength(s.slice(comma));
     }
-    const cpu = cpuMs(cpu0);
     const cap = setup.maxResponseBytes || 1048576;
     if (bytes !== null && bytes > cap) return out({ e: `the response is ${bytes} bytes of JSON, over the cap of ${cap}`, cpu });
     if (bytes === null && Buffer.byteLength(s) > cap + 64) return out({ e: `flower returned something too large (over ${cap} bytes)`, cpu });
     return send(`{"cpu":${cpu},"bytes":${bytes},"v":${s}}`);
   } catch (e) {
-    return out({ e: timedOut(e) ? "Timeout: took too long" : short(e), cpu: cpuMs(cpu0) });
+    return out(failure(e, call));
   }
 }
 
-/** MEMORY as JSON text, encoded in the context within `timeout`: { memory } or { memoryError }. */
-function encodeMemory(c, timeout) {
+/** MEMORY as JSON text, encoded in the context under the call's limits: { memory } or { memoryError }. */
+function encodeMemory(c, opts) {
   try {
-    const m = encode(c, "MEMORY", "MEMORY", timeout);
+    const m = encode(c, "MEMORY", "MEMORY", opts);
     return m.length > 1 << 20 ? { memoryError: "MEMORY is far too large" } : { memory: m };
   } catch (e) {
-    if (timedOut(e)) throw e;
+    if (timedOut(e) || interrupted(e)) throw e;
     return { memoryError: short(e).replace("MEMORY returned something", "MEMORY is something") };
   }
 }
@@ -223,24 +323,26 @@ function callBee(req) {
     return out({ e: "the bee's MEMORY could not be read", out: "" });
   }
   startClock(c);
-  const t0 = performance.now();
-  const rest = () => Math.max(1, Math.round(limit - (performance.now() - t0)));
+  // first and decide: late at ms of CPU (a notice), judged at wallMs, stopped at the hard limit (CPU) or hardWallMs.
+  const call = begin(limit, setup.hardWallMs || Math.max(4000, 2 * limit), setup.ms, setup.wallMs || 250);
   try {
-    script.runInContext(c, { timeout: limit });
-    if (ENTRY.some((n) => vm.runInContext(`typeof __fns.${n}`, c, { timeout: rest() }) !== "function")) throw new Error(`program must define ${SIGNATURE}`);
-    const call = req.op === "first" ? "__fns.first()" : "__fns.decide(__c, __r)";
-    vm.runInContext(`globalThis.__a = ${call};`, c, { timeout: rest() });
-    const s = encode(c, "__a", req.op, rest());
+    script.runInContext(c, call.opts());
+    if (ENTRY.some((n) => vm.runInContext(`typeof __fns.${n}`, c, call.opts()) !== "function")) throw new Error(`program must define ${SIGNATURE}`);
+    const fn = req.op === "first" ? "__fns.first()" : "__fns.decide(__c, __r)";
+    vm.runInContext(`globalThis.__a = ${fn};`, c, call.opts());
+    const s = encode(c, "__a", req.op, call.opts());
     if (s.length > maxChars()) throw new Error(`${req.op} returned something too large`);
     const a = JSON.parse(s);
-    const reply = { a, ...encodeMemory(c, rest()) };
-    reply.out = takeOut(c);
+    const reply = { a, ...encodeMemory(c, call.opts()) };
     // A feed decision keeps its context for fed(nectar), if the program defines it.
-    if (req.op === "decide" && (a === "feed" || (Array.isArray(a) && a.length === 2 && a[0] === "feed")) &&
-        vm.runInContext("typeof __fns.fed", c, { timeout: rest() }) === "function") kept = c;
+    const keep = req.op === "decide" && (a === "feed" || (Array.isArray(a) && a.length === 2 && a[0] === "feed")) &&
+        vm.runInContext("typeof __fns.fed", c, call.opts()) === "function";
+    reply.cpu = end(call);
+    reply.out = takeOut(c);
+    if (keep) kept = c;
     return out(reply);
   } catch (e) {
-    return out({ e: timedOut(e) ? "Timeout: took too long" : short(e), out: takeOut(c) });
+    return out({ ...failure(e, call), out: takeOut(c) });
   }
 }
 
@@ -249,28 +351,28 @@ function callFed(req) {
   kept = null;
   if (!c) return out({ skipped: true });
   try { startClock(c); } catch { return out({ e: "the bee's clock could not be started", out: "" }); }
-  const t0 = performance.now();
-  const rest = () => Math.max(1, Math.round(setup.ms - (performance.now() - t0)));
+  const call = begin(setup.ms, setup.wallMs || 250); // fed: stopped at ms of CPU
   try {
     // The context has run the program's code, so nothing of it is trusted now: the nectar goes in as a literal.
     const nectar = typeof req.nectar === "number" && Number.isFinite(req.nectar) ? req.nectar : 0;
-    vm.runInContext(`globalThis.__a = __fns.fed(${JSON.stringify(nectar)});`, c, { timeout: rest() });
+    vm.runInContext(`globalThis.__a = __fns.fed(${JSON.stringify(nectar)});`, c, call.opts());
     const reply = { ok: true };
-    if (!vm.runInContext("globalThis.__a === undefined || globalThis.__a === null", c, { timeout: rest() })) {
+    if (!vm.runInContext("globalThis.__a === undefined || globalThis.__a === null", c, call.opts())) {
       try {
-        const s = encode(c, "__a", "fed", rest());
+        const s = encode(c, "__a", "fed", call.opts());
         if (s.length > maxChars()) reply.aError = "fed returned something too large";
         else reply.a = JSON.parse(s);
       } catch (e) {
-        if (timedOut(e)) throw e;
+        if (timedOut(e) || interrupted(e)) throw e;
         reply.aError = short(e);
       }
     }
-    Object.assign(reply, encodeMemory(c, rest()));
+    Object.assign(reply, encodeMemory(c, call.opts()));
+    reply.cpu = end(call);
     reply.out = takeOut(c);
     return out(reply);
   } catch (e) {
-    return out({ e: timedOut(e) ? "Timeout: took too long" : short(e), out: takeOut(c) });
+    return out({ ...failure(e, call), out: takeOut(c) });
   }
 }
 
@@ -284,17 +386,24 @@ function stage(line) {
   return out({ ok: true });
 }
 
-const lines = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
-lines.on("line", (line) => {
+// One request at a time. Before a call's scripts start, any SIGINT sent for an earlier call is let through
+// (to the listener above), so it can't stop this one.
+let drained = 0;
+const settle = () => new Promise((r) => setTimeout(r, 1));
+async function handle(line) {
+  if (setup && Atomics.load(I, 1) !== drained) { await settle(); await settle(); drained = Atomics.load(I, 1); }
   if (setup && role === "bee" && line.startsWith('{"op":"stage",')) { // (the engine writes it so)
     kept = null;
     try { return stage(line); } catch (e) { staged = null; return out({ e: short(e) }); }
   }
   let req;
   try { req = JSON.parse(line); } catch { return out({ e: "unreadable request", out: "" }); }
-  if (!setup) return load(req);
+  if (!setup) { startWatchdog(); return load(req); }
   if (role === "flower") return callFlower(req);
   if (req.op === "fed") return callFed(req);
   kept = null;
   return callBee(req);
-});
+}
+let queue = Promise.resolve();
+const lines = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+lines.on("line", (line) => { queue = queue.then(() => handle(line)).catch((e) => out({ e: short(e), out: "" })); });
