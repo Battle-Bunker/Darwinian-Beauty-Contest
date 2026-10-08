@@ -4,8 +4,8 @@
 #
 # Level vector z: one entry per property. Its size U = sum(z) shows how far the flower got: its wealth this turn
 # (an honest flower spends 60% of R on the search); read it back with the reference curve below. Its
-# direction z / U is the flower's signature (its W). A response that isn't an arrangement of the n nodes: leave.
-# The bee never sees the percent: only fed(nectar), after a feed, tells it what a signature paid.
+# direction z / U is the flower's profile (its W). A response that isn't an arrangement of the n nodes: leave.
+# The bee never sees the percent: only fed(nectar), after a feed, tells it what a profile paid.
 import math, random, time
 
 n, M = 48, 96             # must match the flowers (integrated.py)
@@ -110,13 +110,13 @@ def decide(challenge, response):
     m = tally(challenge, response)
     if m is None:                      # a forged tally: leave
         return "leave", random.getrandbits(52)
-    # The signature's weighted score, plus the tally's count (each clique is about UNIT_MS of honest work).
+    # The profile's weighted score, plus the tally's count (each clique is about UNIT_MS of honest work).
     score = sum((WEIGHT[d] + MEMORY.get(KEYS[d], 0) / 10) * z[d] for d in range(K)) + m
     return ("feed" if score >= TAU else "leave"), random.getrandbits(52)
 
 
 def fed(nectar):
-    # Did this signature pay what an honest flower of this wealth would? (fed may also return the next
+    # Did this profile pay what an honest flower of this wealth would? (fed may also return the next
     # challenge, replacing decide's; None keeps it.)
     if U <= 0:
         return None

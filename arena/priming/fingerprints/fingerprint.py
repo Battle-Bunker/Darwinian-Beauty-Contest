@@ -8,7 +8,7 @@
 # graph[any]: one node per certificate, labelled [d, i, nodes], and a last node labelled [-1, f], f = the share
 # of 0.6 R it actually spent. At percent 50.
 #
-# Paste the whole file as your flower. Change W to move your signature: each character is a dimension, and the
+# Paste the whole file as your flower. Change W to move your profile: each character is a dimension, and the
 # flower cycles through W, so "0012" gives dimension 0 half of its work. (fingerprint_compact.py is a smaller
 # option whose dimensions are cliques at three scales.)
 import random, time

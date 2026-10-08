@@ -4,8 +4,8 @@
 #
 # Level vector L: per dimension, how many instances the flower solved in an unbroken run from index 0 (a gap
 # ends the run: skipping hard instances earns nothing). Its size U = sum(L) shows the flower's wealth this
-# turn: an honest flower spends 60% of R on the work. Its direction L / U is the flower's signature.
-# The bee never sees the percent: only fed(nectar), after a feed, tells it what a signature paid.
+# turn: an honest flower spends 60% of R on the work. Its direction L / U is the flower's profile.
+# The bee never sees the percent: only fed(nectar), after a feed, tells it what a profile paid.
 # Any certificate that fails, or a repeated (d, i): forged, leave.
 import random, time
 
@@ -78,7 +78,7 @@ def decide(challenge, response):
 
 
 def fed(nectar):
-    # Did this signature pay what an honest flower of this wealth would? Shift each dimension's adjustment by
+    # Did this profile pay what an honest flower of this wealth would? Shift each dimension's adjustment by
     # its share of the vector. fed may also return the next challenge (it replaces the one decide queued);
     # None keeps decide's.
     if not U:

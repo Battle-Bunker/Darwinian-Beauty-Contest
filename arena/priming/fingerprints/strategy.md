@@ -1,7 +1,7 @@
 # Fingerprints under the three-part energy rule: theory and proposal
 
 Draft for the next honest-specialist experiment (adapt-hi). The numbers here are arithmetic and quick single
-checks. Measurements will follow on an idle machine.
+checks; measured numbers will be added.
 
 ## The rule, and what one unit of each resource costs
 
@@ -29,7 +29,7 @@ work, as a tally of certificates does.
 
 ## How bytes should be split between work and identity
 
-- **Identity should cost no extra bytes.** In the integrated arrangement the signature, the direction of the four
+- **Identity should cost no extra bytes.** In the integrated arrangement the profile, the direction of the four
   property levels, is read from the same object as the work. Bytes spent on a separate identity proof, such as a
   second object or extra labels, buy nothing an imitator can't also buy for the same bytes.
 - **Wealth should cost a fixed number of bytes, not bytes in proportion to wealth.**
@@ -75,7 +75,7 @@ from the flower team's own ledger, which records each call's CPU ms and R.
 - **Bee: `integrated_bee.py`.**
   - Decode positions as ord(S[v]) − 35, and check they form an arrangement of 0..47.
   - Score the four properties as exact z-scores against a random arrangement (about 1 ms).
-  - The signature is the direction of z, and wealth is U = Σz read through the calibrated curve.
+  - The profile is the direction of z, and wealth is U = Σz read through the calibrated curve.
   - Feed when the weighted score passes the threshold, and learn per-property adjustments in `fed()`, which may also
     return the next challenge.
 - **Per feed at equal R, in node·ms·bytes per ms of R:**
@@ -99,10 +99,3 @@ from the flower team's own ledger, which records each call's CPU ms and R.
 - **The hybrid tally is out,** because its bytes grow with wealth.
 - **If the arrangement's concavity or optimiser headroom is too large,** the fallbacks for wealth are a one-witness
   ladder (about 10 bytes, logarithmic and coarse) or a small tally of a few units.
-
-## To measure in the idle window
-
-1. Concavity, spread and the read-back of R, for the integrated flower.
-2. Headroom: CPU saved by a stronger annealer at R = 20, 76 and 150, and the same for the exact tally search.
-3. The selective-feeding numbers against veterans, and the burn × nectar sensitivity grid.
-4. If needed, the ladder witness's resolution.

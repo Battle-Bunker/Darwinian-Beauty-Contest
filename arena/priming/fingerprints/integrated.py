@@ -12,10 +12,10 @@
 # All four are hard to push far (each alone is NP-hard; together they pull the one arrangement in different
 # directions), and cheap to score. The flower runs one simulated annealing on the weighted sum for 60% of its
 # budget R of CPU time (stopping at 90% of R of wall time), so its answer is always a valid arrangement and
-# gets better the longer it runs. W chooses where on the trade-off the flower lands: its signature. How far it
+# gets better the longer it runs. W chooses where on the trade-off the flower lands: its profile. How far it
 # gets shows its wealth.
 #
-# Paste the whole file as your flower. Change W to move your signature. W holds each property's weight
+# Paste the whole file as your flower. Change W to move your profile. W holds each property's weight
 # divided by its natural scale per pair (11, 11, 0.5, 9), so (0.09, 0.09, 2, 0.11) weighs all four equally.
 import random, time
 
