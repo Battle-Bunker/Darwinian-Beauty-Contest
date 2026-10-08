@@ -43,7 +43,7 @@ assert.deepEqual([fresh.feedCost, fresh.budgets.flower.minMs, fresh.budgets.flow
 assert.deepEqual([fresh.budgets.flower.perMinute, fresh.budgets.flower.cap, fresh.budgets.bee.perMinute, fresh.budgets.bee.cap], [60, 300, 600, 3000]);
 assert.deepEqual([fresh.feedPrice, (await api(owner, "GET", g)).game.feedPrice], [null, 2816000], "the feed price: 0.05 × Emax");
 assert.deepEqual([fresh.scoring, fresh.energy], [{ alpha: 0.85, beta: 0.85 }, { bytes: true }]);
-assert.deepEqual(fresh.prevalence, { on: true, halfLifeS: 90, cStart: 1, cEnd: 0.1, cap: 4, slots: 0.25, prior: null }, "prevalence, on by default");
+assert.deepEqual(fresh.prevalence, { on: true, halfLifeS: 90, cStart: 1, cEnd: 0.1, cap: 4, slots: 0.25, prior: null, pools: true, endowment: null }, "prevalence, on by default, with the bee nectar pool");
 // Half a minute of game time. Flowers earn change budget fast so the test needn't wait; feeding costs 2
 // rounds rather than 20, so bees take turns often. Responses can be any JSON, and big (a 64 KiB cap).
 await api(owner, "PATCH", `${g}/config`, { config: { minutes: 0.5, feedCost: 2, responseType: "any", maxResponseBytes: 65536, budgets: { flower: { perMinute: 600, cap: 100 } } } });
@@ -171,7 +171,7 @@ for (const a of ends) {
   assert.equal("ms" in a, a.flower === bo, "the flower's CPU time: its own team only");
   assert.equal("budgetMs" in a, a.flower === bo, "the flower's hidden time budget R: its own team only");
   if (a.flower === bo) assert.ok(a.budgetMs >= 1 && a.budgetMs <= 50, `R ${a.budgetMs}`);
-  if (a.action === "feed") assert.ok(a.price === seenPrice && Math.abs(a.net - (a.nectar - a.price)) < 1e-6, "a feed shows its price and net");
+  if (a.action === "feed") assert.ok(a.price === seenPrice && Math.abs(a.net - (a.nectar - a.price)) < 1e-6 && typeof a.balance === "number", "a feed shows its price, net and the bee's balance after it");
   assert.equal("beeMs" in a, a.bee === bo, "the bee's decision time: its own team only");
   assert.ok(a.bee === bo || !("log" in a), "what a bee prints stays with its team");
 }

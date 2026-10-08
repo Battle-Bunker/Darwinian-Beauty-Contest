@@ -83,7 +83,7 @@ test("the team ledger over the API: the viewer's own view during play, every fie
   const t = turnOf(leave, idx, opts);
   const priv = { ms: null, budgetMs: null, flowerVersion: null, flowerError: null, beeMs: null, beeVersion: null, beeError: null, grain: null, grainVersion: null, grainCodeLength: null };
   const pub = { game: "g", seq: 9, round: 3, atMs: 400, turn: 2, bee: 0, flower: 1, challenge: 5, response: 7, responseBytes: 1, responseHash: null,
-    fed: false, percent: null, energy: null, nectar: null, price: null, net: null, pollen: 0, ...priv };
+    fed: false, percent: null, energy: null, nectar: null, price: null, net: null, balance: null, pollen: 0, ...priv };
   assert.deepEqual(mask("turns", t, 2), pub);
   assert.deepEqual(mask("turns", t, null), pub, "a spectator gets the public fields");
   assert.deepEqual(mask("turns", t, 1), { ...pub, percent: 60, energy: 800, ms: 12.5, budgetMs: 97.25, flowerVersion: 4 });

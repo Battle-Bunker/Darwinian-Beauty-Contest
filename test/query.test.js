@@ -356,16 +356,16 @@ test("prevalence: one row per team per sample, the garden's own; public to every
     assert.equal(rows.length, samples.length * N, v.name);
     same(rows, samples.flatMap((x) => x.F.map((F, team) => ({
       game: db.short, round: x.round, atMs: x.atMs, team, flowerSuccess: F, beeSuccess: x.B[team], flowerP: x.pF[team], beeP: x.pB[team],
-      fitness: x.fitness[team], c: x.c, slots: x.slots,
+      fitness: x.fitness[team], balance: x.balance[team], c: x.c, slots: x.slots,
     }))), `${v.name}: the samples`);
   }
   const totals = await sql({ from: "prevalence", groupBy: ["round"], aggregates: [{ fn: "sum", field: "flowerP", as: "f" }, { fn: "sum", field: "beeP", as: "b" }] }, db.users[N]);
   assert.ok(totals.every((r) => Math.abs(r.f - 1) < 1e-5 && Math.abs(r.b - 1) < 1e-5), JSON.stringify(totals));
-  // Feeds show the price and the net.
-  const feeds = await sql({ from: "turns", where: [W("fed", "eq", true)], select: ["nectar", "price", "net"], limit: MAX_LIMIT }, db.users[N]);
+  // Feeds show the price, the net and the bee's balance after the feed (pools).
+  const feeds = await sql({ from: "turns", where: [W("fed", "eq", true)], select: ["nectar", "price", "net", "balance"], limit: MAX_LIMIT }, db.users[N]);
   const { feedPriceOf } = await import("../server/lib/gameConfig.js");
   assert.equal(feedPriceOf(db.config), 0.05 * 1100 * 50 * 65536, "0.05 × Emax (this game's byte cap is 64 KiB)");
-  assert.ok(feeds.length > 10 && feeds.every((t) => t.price === feedPriceOf(db.config) && Math.abs(t.net - (t.nectar - t.price)) < 1e-6), JSON.stringify(feeds[0]));
+  assert.ok(feeds.length > 10 && feeds.every((t) => t.price === feedPriceOf(db.config) && Math.abs(t.net - (t.nectar - t.price)) < 1e-6 && typeof t.balance === "number"), JSON.stringify(feeds[0]));
   assert.ok((await sql({ from: "turns", where: [W("fed", "eq", false)], select: ["price", "net"], limit: 5 }, db.users[N])).every((t) => t.price === null && t.net === null));
 });
 

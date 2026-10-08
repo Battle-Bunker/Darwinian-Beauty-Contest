@@ -301,9 +301,9 @@ test("GAME's keys: the game's settings, nothing about other teams", async () => 
 
 test("turn records (the ledger's, and the query schema's): every turn's public fields, plus the team's own private details", () => {
   const base = { game: "g", seq: 9, round: 5, atMs: 800, turn: 2, budgetMs: 88.5, flowerVersion: 3, flowerError: null, beeMs: 1.5, beeVersion: 4, beeError: null };
-  const fed = { ...base, bee: 0, flower: 1, challenge: 3, response: 4, responseBytes: 1, responseHash: null, fed: true, percent: 25, energy: 1000, nectar: 250, price: 100, net: 150, pollen: 750, ms: 12,
+  const fed = { ...base, bee: 0, flower: 1, challenge: 3, response: 4, responseBytes: 1, responseHash: null, fed: true, percent: 25, energy: 1000, nectar: 250, price: 100, net: 150, balance: 400, pollen: 750, ms: 12,
     grain: "abc", grainVersion: 3, grainCodeLength: 9 };
-  const left = { ...base, bee: 2, flower: 1, challenge: 7, response: null, responseBytes: 5000, responseHash: "ab", fed: false, percent: 60, energy: 800, nectar: null, price: null, net: null, pollen: 0, ms: 3,
+  const left = { ...base, bee: 2, flower: 1, challenge: 7, response: null, responseBytes: 5000, responseHash: "ab", fed: false, percent: 60, energy: 800, nectar: null, price: null, net: null, balance: null, pollen: 0, ms: 3,
     grain: null, grainVersion: null, grainCodeLength: null };
   const names = SCHEMA.entities.turns.fields.map((f) => f.name);
   const view = (r, ti) => mask("turns", r, ti);
