@@ -1,8 +1,9 @@
 # Fingerprints for coop-eq: the rules, their arithmetic, and the starter
 
 For the coop-eq experiment: 7 pinned cooperators, 1 pinned defector and 2 veterans in one continuous 40-minute
-game. Everything below is arithmetic from the rules, except where it says it was measured. How the starter's
-wealth and profile read on the real runner is still to be measured.
+game. Everything below is arithmetic from the rules, except where it says it was measured. Measurements are on the
+game's real runner (engine v2, coop-eq's rules, 2 CPU slots, idle machine, 30 calls per cell), in
+`analysis/fingerprints/results/coop_eq_check.txt`.
 
 ## The rules that matter here
 
@@ -30,7 +31,8 @@ Cooperators choose their own spend and generosity, within two floors:
 - **PERCENT**, the nectar percent, is at least 20.
 
 Both are constants at the top of `integrated.py`, next to the profile T. The starter has BURN 0.6, PERCENT 50
-and T = (8, 32). The starter flower doesn't stop itself short of R, so keep BURN below 0.9.
+and T = (8, 32). The starter flower doesn't stop itself short of R, so keep BURN below 0.9. Its start-up takes
+about 1.0 ms of CPU (measured), so a BURN × R below that gets no search at all.
 
 ## What one turn is worth
 
@@ -51,8 +53,11 @@ With CPU = BURN × R, a turn pays PERCENT/100 × (1100 − size) × (1 − BURN)
 | 0.6 | 35 | 112k | 2.9M | +0.0M | 25 ms | 51% | +1.4M |
 | 0.6 | 50 | 160k | 4.1M | +1.3M | 18 ms | 66% | +2.6M |
 
-- The last column is an upper bound: a bee that reads R exactly and feeds only above R_be. How close a real bee
-  gets depends on how well the starter's wealth reads, which is still to be measured.
+- The last column is an upper bound: a bee that reads R exactly and feeds only above R_be. Measured, the starter's
+  wealth reads R only coarsely above about 8 ms of CPU (see below), so a real bee falls between the blind column
+  and the last one.
+- Measured, the starter's CPU is BURN × R once that passes about 1 ms, and the 1.0 ms start-up below it, so small
+  turns pay slightly less than the formula. The energy the engine records matched E on every call.
 - **Veterans**, taking a 40-node, 50-byte veteran's CPU as negligible, pay PERCENT/100 × 1,032,000 per ms of R.
   Their turns show no wealth, so a bee there gets the blind figure:
   - −0.2M per feed at 10%
@@ -77,7 +82,7 @@ With CPU = BURN × R, a turn pays PERCENT/100 × (1100 − size) × (1 − BURN)
   - Editing a constant costs the byte edit of its literal. BURN 0.6 → 0.4 is 1 node, PERCENT 50 → 35 is 2, and
     T (8, 32) → (12, 40) is 4.
   - Rewriting the 250-node starter takes most of a full 300-node bank, which takes 5 minutes to refill.
-  - A bee's 3,000-node bank holds the 849-node starter bee about 3.5 times over.
+  - A bee's 3,000-node bank holds the 939-node starter bee about 3 times over.
 
 ## The profile, T
 
@@ -90,9 +95,12 @@ With CPU = BURN × R, a turn pays PERCENT/100 × (1100 − size) × (1 − BURN)
   |---|---|---|---|---|
   | average distance from t | 10.6 | 9.3 | 16.9 | 30.7 |
 
-  So far targets start further from random's distances, and have more room to show a change.
-- **How the starter bee groups profiles:** two flowers whose T are at most NEAR = 4 apart, measured as a
-  distance in (t1, t2), are one profile to it. To that bee they share one learned rate, honest or not.
+  So far targets start further from random's distances. Measured, though, they read less precisely: one
+  response's reading of a target up to 20 is off by 0.6 to 2.4 (standard deviation), and of 32 to 47 by 2.8 to 4.5,
+  with 47 read about 3.6 low on average.
+- **How the starter bee groups profiles:** two flowers whose T are at most NEAR = 6 apart, measured as a
+  distance in (t1, t2), are one profile to it. To that bee they share one learned rate, honest or not. Measured
+  from R = 8 at BURN 0.2 and 0.6, 81% of readings land within 4 of the true T, 87% within 6 and 94% within 8.
 
 ## Imitation, as arithmetic
 
@@ -120,13 +128,11 @@ With CPU = BURN × R, a turn pays PERCENT/100 × (1100 − size) × (1 − BURN)
   - no self-reported spend record. A bee can't check that record anyway, and the ledger keeps each call's CPU
     ms and R.
 
-**Bee: `integrated_bee.py`, 849 nodes.**
+**Bee: `integrated_bee.py`, 939 nodes.**
 - It replays the pairs from the challenge. For each class it finds the target t that the pairs beat random by the
   most standard deviations, and that pair of t values is the profile.
 - Its wealth reading q is the share of random's distance the flower removed at those targets: 0 for random, 1 for
-  perfect. q is read as CPU ms through CURVE.
-- **CURVE is a placeholder line** until it is measured on the real runner. Meanwhile the learned rates take up its
-  scale.
+  perfect. q is read as CPU ms through CURVE, the measured mean q at each CPU (below).
 - It never sees BURN, PERCENT or T. It learns per profile, from fed(nectar), what a feed pays per ms of CPU.
   - **MEMORY** has one entry per profile, up to 50 bytes. The key is chr(40 + t) per class; the value is the
     rate in thousands.
@@ -135,13 +141,62 @@ With CPU = BURN × R, a turn pays PERCENT/100 × (1100 − size) × (1 − BURN)
     near nothing drops that profile's rate near the floor, so the bee isn't fooled twice by the same profile.
 - **Feeding:** it feeds when the predicted nectar, rate × CPU, is at least MARGIN × the price (MARGIN = 1.5, so
   4.2M), and on 2% of other arrangements so that a rate learned too low can recover.
-  - For the starter at its prior rate, that means CPU of at least 15.9 ms, so R ≥ 26.5 ms.
+  - For the starter at its prior rate, that means a reading of at least 15.9 ms, q ≥ 0.41. Measured, the starter
+    at BURN 0.6 reads 0.40 at R = 20 and 0.426 at R = 50, with 0.045 of spread, so near that threshold the
+    decision follows the spread more than R.
   - Each exploring feed costs the price.
 
-**Still to measure on the real runner, once the engine lands:**
-- q against CPU over R ∈ [1, 50] at BURN 0.2–0.6, which gives CURVE;
-- how often T reads right at those burns;
-- the bee's decision time.
+## Measured on the real runner
+
+**Calls.**
+- Every response was 84 bytes, and the engine's energy matched E on every call.
+- At R = 1 ms, 151 of 360 calls (42%) ran out of CPU, at every BURN, because start-up alone takes about 1.0 ms. At
+  R = 2, 1 of 360 did. None did above that.
+- Start-up breaks down as about 0.35 ms for the runner and the program, and about 0.65 ms for drawing the 192
+  pairs with sample().
+
+**How T reads.** The share of responses read within 4 of the true T, and in parentheses the share read nearest to
+it among the four profiles tried: (8, 32), (0, 47), (40, 4) and (14, 20), which were far apart.
+
+| BURN | R = 2 | 3 | 5 | 8 | 12 | 20 | 50 |
+|---|---|---|---|---|---|---|---|
+| 0.2 | 3% (29%) | 3% (28%) | 17% (65%) | 38% (78%) | 73% (95%) | 80% (96%) | 88% (99%) |
+| 0.4 | 3% (17%) | 23% (70%) | 68% (95%) | 67% (97%) | 81% (97%) | 86% (98%) | 93% (99%) |
+| 0.6 | 31% (81%) | 66% (88%) | 75% (94%) | 88% (100%) | 93% (99%) | 88% (100%) | 97% (100%) |
+
+- T reads once the search gets about 1 to 1.5 ms beyond start-up. That means R ≥ 12 at BURN 0.2, R ≥ 5 at 0.4 and
+  R ≥ 3 at 0.6. Below that it barely reads.
+- With R uniform on [1, 50], the turns below that line are 22% at BURN 0.2, 8% at 0.4 and 4% at 0.6.
+- Of the four profiles, (14, 20) read best and (0, 47) worst.
+
+**How q reads.** CPU of the whole call, then q, its mean over the four profiles. A random arrangement reads about
+0.07, and one response's q varies by about 0.045.
+
+| BURN | R = 5 | 12 | 20 | 50 |
+|---|---|---|---|---|
+| 0.2 | 1.1 ms, 0.12 | 2.5 ms, 0.29 | 4.2 ms, 0.33 | 10.2 ms, 0.40 |
+| 0.4 | 2.1 ms, 0.26 | 5.0 ms, 0.36 | 8.2 ms, 0.38 | 20.2 ms, 0.42 |
+| 0.6 | 3.1 ms, 0.32 | 7.4 ms, 0.38 | 12.2 ms, 0.40 | 30.2 ms, 0.43 |
+
+- q depends on CPU, not on BURN: the three burns agree at equal CPU, so one CURVE serves them all.
+- It climbs steeply over the first 4 ms or so of CPU, then flattens: from 5 to 30 ms it rises from 0.355 to 0.426,
+  about 1.6 times one response's spread.
+- So one response separates poor turns from the rest well, but rich turns from each other only coarsely.
+
+**The bee.**
+- Each decision takes 2.0 ms of CPU at the median, 3.5 ms at the 99th percentile and 3.6 ms at most, against a
+  50 ms limit.
+- In 300 rounds against the starter flower (BURN 0.6, 50%), with the measured CURVE, it fed 18 times and got 4.6M
+  per feed on average, against the 2.8M price. Its MEMORY ended at 15 bytes.
+- That run still had NEAR = 4, and it split the starter's profile over three entries (its second target read as
+  28, 32 and 37). NEAR has since been raised to 6; that hasn't been re-run.
+
+**The four-property version (267 nodes), for comparison.**
+- Its start-up takes 1.5 ms of CPU at the median and up to 2.2 ms, because it draws 384 pairs.
+- It ran out of CPU on all 30 calls at R = 1.
+- At R = 5 and BURN 0.6 its search gets about 1.5 ms, against 2.1 ms for the starter, and each of its swaps
+  scores twice as many pairs.
+- So at small R it would read worse than the starter, not better.
 
 The tally files (fingerprint.py, fingerprint_compact.py, bee.py) are older fallbacks and haven't been updated for
 these rules.

@@ -20,12 +20,15 @@
 import math, random
 
 n, K, M = 48, 2, 96       # nodes, classes of pairs, pairs per class (must match integrated.py)
-# (CPU ms, q) for the starter flower. PROVISIONAL: a straight line until it is measured on the real runner; the
-# learned rates take up its scale meanwhile.
-CURVE = ((0, 0.0), (30, 1.0))
+# (CPU ms of the whole call, mean q) for the starter flower, measured on the real runner under coop-eq's rules (mean
+# over four profiles and BURN 0.2, 0.4 and 0.6, which agree at equal CPU). The first ms is start-up, before the
+# search. One response's q varies by about 0.045, so above about 8 ms the reading is coarse.
+CURVE = ((0, 0.0), (1.0, 0.07), (1.3, 0.17), (1.9, 0.25), (2.5, 0.29), (3.2, 0.32), (5, 0.355), (8.2, 0.384),
+         (12.2, 0.401), (18.2, 0.415), (24.2, 0.422), (30.2, 0.426))
 RATE = 266                # prior rate: a 250-node, 84-byte flower, BURN 0.6, 50%: 0.5 × 850 × 940 × 0.4 / 0.6 / 1000
 MARGIN = 1.5              # feed when the predicted nectar is at least MARGIN × the feed price
-NEAR = 4.0                # readings closer than this (in target units) count as the same profile
+NEAR = 6.0                # readings closer than this (in target units) count as the same profile (87% of readings
+                          # land within 6 of the true T on the real runner from R = 8; 81% within 4)
 LEARN = 0.5               # how far one feed moves its profile's rate toward what it paid (in log terms)
 EXPLORE = 0.02            # the share of other arrangements fed anyway (each costs the price), so a rate can recover
 CAP = 50                  # MEMORY bytes: keys plus values

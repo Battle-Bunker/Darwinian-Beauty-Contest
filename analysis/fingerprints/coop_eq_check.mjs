@@ -11,18 +11,21 @@ import fs from "node:fs";
 import { spawnSync } from "node:child_process";
 const ROOT = new URL("../../", import.meta.url);
 const { tryFlower, tryBee } = await import(new URL("server/engine.js", ROOT));
-const { normalizeConfig } = await import(new URL("server/lib/gameConfig.js", ROOT));
+const { normalizeConfig, feedPriceOf } = await import(new URL("server/lib/gameConfig.js", ROOT));
 const P = new URL("arena/priming/fingerprints/", ROOT);
 const flower = fs.readFileSync(new URL("integrated.py", P), "utf8"), bee = fs.readFileSync(new URL("integrated_bee.py", P), "utf8");
 const arg = (k, d) => (process.argv.includes(k) ? Number(process.argv[process.argv.indexOf(k) + 1]) : d);
 const CALLS = Math.min(50, arg("--calls", 30));
-const config = normalizeConfig({ language: "python", challengeType: "int", responseType: "graph[any]", maxResponseBytes: 1024,
-  budgets: { flower: { ms: 50, minMs: 1 } } });
+// coop-eq's rules (arena/lib/presets.js COOP_RULES), as far as a flower call and a bee's decision see them.
+const config = normalizeConfig({ language: "python", challengeType: "int", responseType: "graph[any]", feedCost: 0, flowerWindowMs: 150,
+  feedPrice: null, maxResponseBytes: 1024, maxLen: 64, maxNodes: 512, energy: { bytes: true }, scoring: { alpha: 0.85, beta: 0.85 },
+  prevalence: { on: true, halfLifeS: 90, cStart: 1, cEnd: 0.1, cap: 4, slots: 0.25, prior: null },
+  budgets: { flower: { size: 1100, perMinute: 60, cap: 300, ms: 50, minMs: 1 }, bee: { size: 11000, perMinute: 600, cap: 3000, ms: 50, memory: 50 } } });
 const BURNS = [0.2, 0.4, 0.6], PROFILES = [[8, 32], [0, 47], [40, 4], [14, 20]], RS = [1, 2, 3, 5, 8, 12, 20, 30, 40, 50];
 const q = (xs, p) => { const s = [...xs].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; };
 const mean = (xs) => xs.reduce((a, b) => a + b, 0) / Math.max(1, xs.length);
 const sd = (xs) => Math.sqrt(mean(xs.map((x) => (x - mean(xs)) ** 2)));
-console.log(`CPU_SLOTS=${process.env.CPU_SLOTS}, flower ms ${config.budgets.flower.ms} (min ${config.budgets.flower.minMs}), maxResponseBytes ${config.maxResponseBytes}, calls ${CALLS}`);
+console.log(`CPU_SLOTS=${process.env.CPU_SLOTS}, feed price ${feedPriceOf(config)}, flower ms ${config.budgets.flower.ms} (min ${config.budgets.flower.minMs}), maxResponseBytes ${config.maxResponseBytes}, calls ${CALLS}`);
 
 // 1. The flower on the real runner.
 const rows = [];

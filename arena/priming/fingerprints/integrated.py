@@ -12,8 +12,11 @@
 #            of a version (a fixed share of R is what lets a bee read your wealth), and below 0.9, because the
 #            flower doesn't stop itself short of R.
 #   PERCENT  the nectar percent: at least 20.
-#   T        two target distances, each from 0 to 47. Under a random arrangement the median pair distance is
-#            about 14, so targets far from 14 stand out more on poor turns.
+#   T        two target distances, each from 0 to 47. Measured on the real runner, a bee reads targets up to
+#            about 20 within 1 to 2.5 (one response's spread) and larger ones within 3 to 4.5.
+#
+# Start-up (the program, the seed and the 192 pairs) takes about 1.0 ms of CPU before the search begins, so a
+# BURN × R below about 1 ms gets no search, and at R near 1 ms about 4 calls in 10 run out of CPU.
 #
 # R is CPU time: the call is stopped when its CPU reaches R, and time.sleep does nothing. Budget with
 # process_time(), which reads 0 as the call starts (the program's own start-up included), never with the wall
