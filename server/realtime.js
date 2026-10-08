@@ -39,12 +39,13 @@ export function roomStream(req, res, roomId) {
  * What one viewer hears about one game, whatever carries it (SSE or WebSocket): {version} whenever the
  * view should be refetched, {programs: true} when the viewer's own team's programs changed, and
  * {actions, lastSeq, clockMs, round, status} as the garden writes them, starting after `after` (without
- * actions when there's nothing new). fetchActions(after) returns the viewer's filtered page of actions
+ * actions when there's nothing new), with `prevalence` (a species prevalence sample, games.js sampleView)
+ * whenever there is a new one. fetchActions(after) returns the viewer's filtered page of actions
  * after a seq. send(message) delivers one message; isOpen() says whether anyone is still listening.
  * Returns stop(), which unsubscribes.
  */
 export function gameFeed({ gameId, teamId, version, after, fetchActions, send, isOpen }) {
-  let last = after, busy = false, again = false;
+  let last = after, busy = false, again = false, sampled = null;
   const pump = async () => {
     if (busy) { again = true; return; }
     busy = true;
@@ -54,6 +55,8 @@ export function gameFeed({ gameId, teamId, version, after, fetchActions, send, i
         const page = await fetchActions(last);
         if (!isOpen()) return;
         const live = { lastSeq: page.lastSeq, clockMs: page.clockMs, round: page.round, status: page.status };
+        // A new species prevalence sample (about once a second of game time), once.
+        if (page.prevalence && page.prevalence.round !== sampled) { sampled = page.prevalence.round; live.prevalence = page.prevalence; }
         if (page.actions.length) {
           last = page.actions[page.actions.length - 1].seq;
           send({ actions: page.actions, ...live });

@@ -44,11 +44,12 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 | Method | Path | Who | Body / query | Returns |
 |---|---|---|---|---|
 | GET | `base` | anyone | | the **game view** (below), filtered for the viewer |
-| GET | `base/actions` | anyone | `?after=<seq>&limit=<n ≤ 5000>`, or `?before=<seq>&limit=<n>`; `&mine=1` (team members) for only turns of your bee or at your flower | `{ actions: [action], lastSeq, clockMs, round, status }`: the actions after `after`, oldest first; or the last `limit` before `before`, oldest first (`before = lastSeq + 1` gives the latest) |
+| GET | `base/actions` | anyone | `?after=<seq>&limit=<n ≤ 5000>`, or `?before=<seq>&limit=<n>`; `&mine=1` (team members) for only turns of your bee or at your flower | `{ actions: [action], lastSeq, clockMs, round, status, prevalence? }` (`prevalence`: the latest species prevalence sample, in games that have it): the actions after `after`, oldest first; or the last `limit` before `before`, oldest first (`before = lastSeq + 1` gives the latest) |
 | GET | `base/ledger` | anyone | `?after=<seq>&limit=<n ≤ 5000>` | `{ participants, team, entries: [entry], lastSeq, round, status }`: the **team ledger** (below): every finished turn as your team may see it. `team` is your team's index in `participants` (null for a spectator, who gets the public fields only) |
 | GET | `base/responses/:seq` | anyone | | the whole response of the turn whose `feed`/`leave` action is `seq`, as its JSON text (`application/json`; responses are public). For responses over 4 KB, which actions, ledger entries, live feeds and query rows show only as a preview, size and hash; **404** if that turn has no response |
-| GET | `base/scores` | anyone | | `{ status, clockMs, endMs, round, lastSeq, participants, scores, ledgers }`: the live scoreboard and ledgers (public); cheap enough to poll every second |
-| GET | `base/events` | anyone | `?after=<seq>` | Server-Sent Events: `{version}` when the view should be refetched; `{programs: true}` when your own team's programs changed (refetch too); `{actions, lastSeq, clockMs, round, status}` as the garden writes them (from `after`, in order, page after page until caught up); `{lastSeq, clockMs, round, status}` when there is nothing new |
+| GET | `base/scores` | anyone | | `{ status, clockMs, endMs, round, lastSeq, participants, scores, ledgers, prevalence }`: the live scoreboard, ledgers and species prevalence (public; `prevalence` as in the game view); cheap enough to poll every second |
+| GET | `base/prevalence` | anyone | `?after=<round>&limit=<n ≤ 5000>` | `{ prevalence, samples: [sample] }`: the game's species prevalence settings (null: uniform draws) and its samples after round `after`, oldest first (public; see "Species prevalence") |
+| GET | `base/events` | anyone | `?after=<seq>` | Server-Sent Events: `{version}` when the view should be refetched; `{programs: true}` when your own team's programs changed (refetch too); `{actions, lastSeq, clockMs, round, status}` as the garden writes them (from `after`, in order, page after page until caught up); `{lastSeq, clockMs, round, status}` when there is nothing new; either carries `prevalence` (a species prevalence sample) whenever there is a new one, about once a second of game time |
 | GET (WebSocket) | `base/ws` | anyone | `?after=<seq>` | The same feed as `base/events` over a WebSocket: exactly the same messages, one JSON text frame each, filtered for the viewer the same way (a session cookie or `Authorization: Bearer` token for a team member's private fields). Server to client only; reconnect with `?after=` the last `seq` you got. `ws://`, or `wss://` behind https |
 | PATCH | `base/config` | owner, in the lobby | `{ config: {...partial} }` | `{ config, clearedPrograms }` (changing the language or types, or shrinking a size budget, clears the programs written so far) |
 | POST | `base/start` | owner, in the lobby | | `{ status: "running", participants }`. Teams with both programs play; at least 2 |
@@ -69,6 +70,7 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
   "revealOnFinish": true,
   "grains": "feeder", "pollenGrain": { "exponent": 0.3333333333333333, "scale": 0.1 },
   "scoring": { "alpha": 0.85, "beta": 0.85 }, "energy": { "bytes": true },
+  "prevalence": { "on": true, "basis": "pollination", "halfLifeS": 90, "cStart": 1, "cEnd": 0.1, "prior": null, "cap": 4 },
   "budgets": {
     "flower": { "size": 1100,  "perMinute": 220,  "cap": 220,  "ms": 150, "minMs": 3 },
     "bee":    { "size": 11000, "perMinute": 2200, "cap": 2200, "ms": 50, "memory": 50 }
@@ -79,8 +81,9 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 - `minutes`: game time the garden runs for (it stops while paused). Fractions are fine (`0.5` = 30 s).
 - **Rounds** last `round_ms = flower.ms + bee.ms` (200 ms) of game time; game time is rounds × `round_ms`.
   Live games pace rounds to real time. At a round's start each bee with a challenge queued and not
-  feeding takes a turn (a bee with nothing queued loses it): a flower is drawn uniformly at random among
-  all N (`arrive`), and called with the challenge. At `flower.ms` its response is delivered and the bee has
+  feeding takes a turn (a bee with nothing queued loses it): a flower is drawn at random among all N
+  (`arrive`), weighted by species prevalence (below; uniformly in games without it), and called with the
+  challenge. At `flower.ms` its response is delivered and the bee has
   `bee.ms` to decide (`feed` or `leave`, recorded as the turn's end). Turn details: RULES.md.
 - **Versions are pinned per turn**: a turn keeps the bee's and the flower's versions from its arrival to
   its end. A new bee takes over when its turn in progress is over, dropping the old bee's queued
@@ -141,6 +144,22 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
   = Σ over flower teams of nectar^`alpha`, pollination = Σ over bee teams of pollen^`beta` (see "Scores"). A
   game stored without `scoring` was created before it existed and is scored with √ (0.5 and 0.5), as it was
   then; the game view's `config.scoring` is always the pair the game is scored with.
+- `prevalence`: **species prevalence** (server/lib/prevalence.js). With `on`, each turn's flower is of species
+  s with probability p_s = w_s / Σ_k w_k, w_s = c(t) + P_s:
+  - D_{b,s}, one cell per (bee team b, species s): by `basis`, the pollen s gave b's bee (`"pollination"`, the
+    default, and `"fitness"`, which also keeps the nectar) or the times b's bee fed at s (`"feeds"`). Every
+    cell starts at `prior` (null: the basis's default, 20,000,000 node·ms·bytes of pollen, ÷ 1,024 in a
+    node·ms game, or 1 feed; 0 to 10^15) and, as each round begins, is multiplied by 2^(−round_ms / 1000 /
+    `halfLifeS`) (90 by default, 1 to 86,400; null: cumulative), before that round's feeds are added.
+    Rounds are game time, so a paused game doesn't decay.
+  - Q_s = Σ_b D_{b,s}^β (β = `scoring.beta`); with `"fitness"`, Q_s = pollination share × forage share of the
+    decayed ledgers (forage_s = Σ_f nectar_{s,f}^α), the scoreboard's fitness but recent.
+  - P_s = N × Q_s / Σ_k Q_k (1 for every species when that sum is 0), at most `cap` (4 by default, at least 1;
+    null: no cap). Par 1.
+  - c(t) runs linearly from `cStart` (1) at game time 0 to `cEnd` (0.1) at `minutes` (each 0 to 100).
+  Without a cap Σ w = N (c + 1), so p_s = (c + P_s) / (N (c + 1)). A game stored without `prevalence` is from
+  before it existed and draws uniformly (`on` false); the game view's `config.prevalence` always has every
+  key. Programs never see prevalence (it is not in `GAME`).
 
 Types: `int`, `float`, `bool`, `str`, `any`, `list[T]`, `tree[T]`, `graph`, `digraph`, `graph[T]`,
 `digraph[T]` (RULES.md). Languages: `python`, `typescript`.
@@ -161,6 +180,7 @@ Types: `int`, `float`, `bool`, `str`, `any`, `list[T]`, `tree[T]`, `graph`, `dig
 | program versions, sizes, costs, change budgets, problems | own team | everyone |
 | the bee's `MEMORY` (`teams[i].memory`; query `teams.memory`, `teams.memoryBytes`, `teams.memoryError`) | own team, read only | everyone |
 | the scoreboard (every team's totals, shares and fitness) and `ledgers` (feeds, nectar, pollen) | everyone, live | everyone |
+| species prevalence (every species' p_s and P_s, about once a second) | everyone, live | everyone |
 
 A field you may not see is **absent** from actions, and **null** in ledger entries and query rows.
 Every way of reading actions (pages, `before=`, `mine=1`, the SSE and WebSocket streams) and the team
@@ -191,7 +211,12 @@ don't bump the public `game.version`, so other teams can't tell when a team chan
   "myTeam": { "id", "name", "joinCode", "index" } | null,
   "interface": { "flower", "bee", "types": { "challenge", "response", "challengeMeans", "responseMeans", "rules": [..] } },
   "scores": [teamScore] | null,
-  "ledgers": { "feeds": [[int]], "nectar": [[number]], "pollen": [[number]] } | null
+  "ledgers": { "feeds": [[int]], "nectar": [[number]], "pollen": [[number]] } | null,
+  "prevalence": { "on": true, "basis", "halfLifeS", "cStart", "cEnd",
+                  "prior",                  // resolved: the basis's default when the config's is null
+                  "cap",
+                  "round", "atMs", "c", "species": [{ "team", "index", "p", "P" }] } | null   // the latest sample
+                                          // (round, atMs, c null and species [] before the first); null: uniform draws
 }
 ```
 
@@ -203,6 +228,25 @@ only where you may see it.
 `ledgers` (row = bee team, column = flower team, participants order; whole game so far; public): `feeds[b][f]`
 (times b's bee fed at f's flower), `nectar[b][f]` (nectar b's bee got there) and `pollen[b][f]` (what f's
 flower kept from b's bee's feeds).
+
+### Species prevalence
+
+The garden samples every species' prevalence as a round begins, every ⌈1000 / round_ms⌉ rounds (rounds 1, 6,
+11, … at 200 ms: once a second of game time). A **sample**, wherever it is published (the game view's and
+`base/scores`' `prevalence`, the `prevalence` of `base/actions` and of stream messages, `base/prevalence`):
+
+```jsonc
+{ "round",     // the round whose draws it gave
+  "atMs",      // game time that round began: (round - 1) × round_ms
+  "c",         // c(t)
+  "species": [{ "team",    // team id
+                "index",   // its index in participants
+                "p",       // p_s: the chance a turn's flower is of this species
+                "P" }] }   // P_s: its recent success, par 1 (capped)
+```
+
+All public, as it happens. The history queries have every sample as the `prevalence` entity, one row per
+species per sample (`p`, and P_s as `success`).
 
 ## Actions
 
@@ -250,7 +294,7 @@ A queued challenge appears only when its turn ends: nothing shows a bee's next c
 
 ## Querying history
 
-docs/QUERY.md has the whole query interface: the schema (`turns`, `versions`, `teams`, `pairs`, `scores`),
+docs/QUERY.md has the whole query interface: the schema (`turns`, `versions`, `teams`, `pairs`, `prevalence`, `scores`),
 the JSON query AST, and the generated Python and TypeScript clients (`/vendor/query/history.py`,
 `/vendor/query/history.ts`) for teams, operators and agents. Programs can't query history.
 

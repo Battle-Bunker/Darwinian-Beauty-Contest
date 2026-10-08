@@ -129,6 +129,24 @@ var DbcHistory = (function () {
                           
  
 
+/** Species prevalence (games that have it): every species' chance of being drawn and its recent success, sampled about once a second of game time. (entity "prevalence") */
+                             
+                            
+                        
+                                                                   
+                         
+                                                           
+                        
+                                        
+                        
+                                                                                    
+                     
+                                                                                                   
+                           
+                                                                                               
+                     
+ 
+
 /** The scoreboard: each team's pollination, forage, shares and fitness over the whole game. (entity "scores") */
                         
                             
@@ -167,6 +185,7 @@ var DbcHistory = (function () {
                              
                        
                        
+                                  
                          
  
                                        
@@ -648,6 +667,65 @@ const SCHEMA         = {
         },
         {
           "name": "pollen",
+          "type": "float",
+          "nullable": false
+        }
+      ]
+    },
+    "prevalence": {
+      "record": "Prevalence",
+      "key": [
+        "game",
+        "round",
+        "team"
+      ],
+      "sortedBy": "round",
+      "index": [
+        [
+          "team"
+        ]
+      ],
+      "cells": [],
+      "scopes": {
+        "mine": [
+          "team"
+        ]
+      },
+      "owner": "team",
+      "program": false,
+      "fields": [
+        {
+          "name": "game",
+          "type": "str",
+          "nullable": false
+        },
+        {
+          "name": "round",
+          "type": "int",
+          "nullable": false
+        },
+        {
+          "name": "atMs",
+          "type": "int",
+          "nullable": false
+        },
+        {
+          "name": "team",
+          "type": "int",
+          "nullable": false
+        },
+        {
+          "name": "p",
+          "type": "float",
+          "nullable": false
+        },
+        {
+          "name": "success",
+          "type": "float",
+          "nullable": false
+        },
+        {
+          "name": "c",
           "type": "float",
           "nullable": false
         }

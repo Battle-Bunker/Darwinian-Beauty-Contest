@@ -62,6 +62,7 @@ To work on the web app with hot reload, run the server and then `API=http://loca
 | `server/realtime.js`, `server/sockets.js` | the live game feed for each viewer, over SSE and WebSocket (the same messages), fed by Postgres `LISTEN/NOTIFY` |
 | `server/runners/` | program runners: every call runs fresh. Python forks per call; TypeScript runs each call in a fresh `vm` context. A feed decision's instance is kept for `fed`. Flowers are CPU-timed, their response's size checked; replies and MEMORY are encoded on the program's clock, so no user code runs after it stops |
 | `server/lib/scoring.js` | Σ nectar^α and Σ pollen^β (the game's `scoring` exponents, 0.85 by default; √ for games stored without them) → forage / pollination → shares → fitness (N² × the two shares) |
+| `server/lib/prevalence.js` | species prevalence: decayed per-(bee, species) ledgers → P_s (N × share of recent success, capped) → each turn's species drawn with p_s = (c(t) + P_s) / Σ (c + P); rebuilt from the feeds when a garden is adopted |
 | `server/lib/shortid.js` | Crockford base32 codes and shortest-unique-prefix allocation |
 | `server/auth/` | pluggable login. `dev` = name only. Production adds e.g. Replit Auth in `replit.js` with the same shape |
 | `server/db/migrations/` | SQL schema, applied on boot |

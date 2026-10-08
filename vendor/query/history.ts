@@ -126,6 +126,24 @@ export interface Pair {
   readonly pollen: number;
 }
 
+/** Species prevalence (games that have it): every species' chance of being drawn and its recent success, sampled about once a second of game time. (entity "prevalence") */
+export interface Prevalence {
+  /** the game's short id */
+  readonly game: string;
+  /** the round whose draws it gave (sampled as the round began) */
+  readonly round: number;
+  /** game time that round began: (round - 1) × round_ms */
+  readonly atMs: number;
+  /** the species' (its team's) index */
+  readonly team: number;
+  /** p_s: the chance a turn's flower is of this species, (c + P_s) / Σ (c + P_k) */
+  readonly p: number;
+  /** P_s: N × its share of recent success (the game's prevalence basis, decayed), capped; par 1 */
+  readonly success: number;
+  /** c(t): the weight every species has whatever its success (cStart to cEnd over the game) */
+  readonly c: number;
+}
+
 /** The scoreboard: each team's pollination, forage, shares and fitness over the whole game. (entity "scores") */
 export interface Score {
   /** the game's short id */
@@ -164,6 +182,7 @@ export interface Records {
   readonly versions: Version;
   readonly teams: Team;
   readonly pairs: Pair;
+  readonly prevalence: Prevalence;
   readonly scores: Score;
 }
 export type EntityName = keyof Records;
@@ -645,6 +664,65 @@ export const SCHEMA: Schema = {
         },
         {
           "name": "pollen",
+          "type": "float",
+          "nullable": false
+        }
+      ]
+    },
+    "prevalence": {
+      "record": "Prevalence",
+      "key": [
+        "game",
+        "round",
+        "team"
+      ],
+      "sortedBy": "round",
+      "index": [
+        [
+          "team"
+        ]
+      ],
+      "cells": [],
+      "scopes": {
+        "mine": [
+          "team"
+        ]
+      },
+      "owner": "team",
+      "program": false,
+      "fields": [
+        {
+          "name": "game",
+          "type": "str",
+          "nullable": false
+        },
+        {
+          "name": "round",
+          "type": "int",
+          "nullable": false
+        },
+        {
+          "name": "atMs",
+          "type": "int",
+          "nullable": false
+        },
+        {
+          "name": "team",
+          "type": "int",
+          "nullable": false
+        },
+        {
+          "name": "p",
+          "type": "float",
+          "nullable": false
+        },
+        {
+          "name": "success",
+          "type": "float",
+          "nullable": false
+        },
+        {
+          "name": "c",
           "type": "float",
           "nullable": false
         }

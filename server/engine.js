@@ -6,8 +6,9 @@
 // paces rounds to real time (each lasts at least roundMs of wall time, longer if the machine is short of
 // cores: game time stays virtual, so that's still fair). Every bee that isn't feeding gets one TURN per round:
 //   0 ms   Each bee with a challenge QUEUED (and no call in flight) takes its turn; one with nothing
-//          queued loses it. The engine draws a flower uniformly at random among all N species, the bee's
-//          own included (a public `arrive`, flushed at once), pins both versions, and calls
+//          queued loses it. The engine draws a flower at random among all N species, the bee's own
+//          included: uniformly, or by species prevalence (server/lib/prevalence.js) when the game has it
+//          (a public `arrive`, flushed at once), pins both versions, and calls
 //          flower(challenge), which has its hidden budget R (drawn from [flower.minMs, flower.ms]) to
 //          return [response, percent]. The runner reports the CPU time of the call; excess energy E =
 //          (flower size cap − the flower's size) × max(0, R − CPU ms), and with energy.bytes × (maxResponseBytes
@@ -50,6 +51,7 @@ import { checkValue, parseType } from "./lib/types.js";
 import { zeroLedger } from "./lib/scoring.js";
 import { KINDS, drawBudget, excessEnergy, limitsOf, responseLimits, roundMs, wallLimits } from "./lib/gameConfig.js";
 import { size as measure } from "./lib/measure.js";
+import { Prevalence, drawWeighted } from "./lib/prevalence.js";
 
 export { KINDS };
 
@@ -303,9 +305,11 @@ export class Garden {
    * its bee's saved MEMORY, { version, memory (canonical JSON), error }, or null. game: the game's short id
    * (turn records' `game`). keepHistory: keep every finished turn's `turns` record in `history` (tests).
    * paced: rounds last at least roundMs of wall time (false: back to back, for tests and the "try" tool).
+   * feeds: the game's feeds so far ({ round, bee, flower, pollen, nectar }, team indices), from which an adopted
+   * garden rebuilds its species prevalence.
    */
   constructor({ config, teams, clockMs = 0, round = 0, endMs = config.minutes * 60000, maxRounds = Infinity, lastSeq = 0,
-    ledgers = null, lastFed = null, turns = null, memories = null, game = "", keepHistory = false, paced = true }) {
+    ledgers = null, lastFed = null, turns = null, memories = null, game = "", keepHistory = false, paced = true, feeds = [] }) {
     this.config = config;
     this.n = teams;
     this.cType = parseType(config.challengeType);
@@ -345,6 +349,12 @@ export class Garden {
     this.feeds = ledgers?.feeds ?? zeroLedger(teams);
     this.nectar = ledgers?.nectar ?? zeroLedger(teams);
     this.pollen = ledgers?.pollen ?? zeroLedger(teams); // pollen[b][f]: the pollen f's species gave b's bee
+    // Species prevalence (null: species are drawn uniformly). `weights` is the round's: its draws use it.
+    this.prevalence = Prevalence.rebuild(config, teams, round, feeds);
+    this.weights = null;
+    this.samples = [];                // prevalence samples not yet drained: { round, atMs, c, p, P }
+    this.sample = null;               // the latest
+    this.sampleEvery = Math.max(1, Math.round(1000 / this.roundMs)); // rounds: about once a second of game time
     this.out = [];                    // actions not yet drained
     this.problems = [];               // { team, kind, version, error }: the first error of each program version
     this.seenProblem = new Set();
@@ -421,6 +431,7 @@ export class Garden {
     return {
       actions: this.out.splice(0), problems: this.problems.splice(0), clockMs: Math.round(this.clockMs()), round: this.round,
       lastSeq: this.seq, feeds: this.feeds, nectar: this.nectar, pollen: this.pollen, memories,
+      samples: this.samples.splice(0), sample: this.sample,
     };
   }
 
@@ -454,6 +465,7 @@ export class Garden {
     // first() again.
     for (const b of this.bees) this.#boundary(b);
     if (!this.paced) await this.#awaitRequests();
+    this.#prevalenceAt(r, start);
     // Turns. Feeding bees sit out; a bee with nothing queued (or a call still in flight) loses its turn.
     const turns = [];
     for (const b of this.bees) {
@@ -505,10 +517,28 @@ export class Garden {
     }
   }
 
-  /** The flower for a turn: any of the N flowers, uniformly at random, every time. */
+  /**
+   * The flower for a turn: any of the N flowers, drawn at random every time: uniformly, or with species
+   * prevalence by the round's weights (among the species that have a flower).
+   */
   #draw() {
     const live = this.flowers.filter(Boolean);
-    return live.length ? live[Math.floor(Math.random() * live.length)] : null;
+    if (!live.length) return null;
+    if (!this.weights) return live[Math.floor(Math.random() * live.length)];
+    return this.flowers[drawWeighted(this.weights.w, live.map((f) => f.team))];
+  }
+
+  /** A round begins: species prevalence decays and gives the round's weights; sampled about once a second. */
+  #prevalenceAt(r, start) {
+    const m = this.prevalence;
+    if (!m) return;
+    m.decay();
+    this.weights = m.weights(start);
+    if ((r - 1) % this.sampleEvery === 0) {
+      const round6 = (x) => Math.round(x * 1e6) / 1e6;
+      this.sample = { round: r, atMs: Math.round(start), c: round6(this.weights.c), p: this.weights.p.map(round6), P: this.weights.P.map(round6) };
+      this.samples.push(this.sample);
+    }
   }
 
   /** New code for a bee between turns takes over now: the old bee's queued challenge goes with it. */
@@ -832,6 +862,7 @@ export class Garden {
       this.feeds[b.ti][f]++;
       this.nectar[b.ti][f] += t.nectar;
       this.pollen[b.ti][f] += t.pollen;
+      this.prevalence?.feed(b.ti, f, t.pollen, t.nectar);
       // Pollen carries genes: a grain of the code of the flower version that answered.
       const g = grainOf(t.flowerCode, grainLength(this.config, t.pollen));
       if (g.grain !== null) grain = { grain: g.grain, grainVersion: t.flowerVersion, grainCodeLength: g.grainCodeLength };

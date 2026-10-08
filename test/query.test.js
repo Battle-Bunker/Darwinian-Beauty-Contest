@@ -18,7 +18,7 @@ process.env.DATABASE_URL = TEST_DB;
 const { pool, tx } = await import("../server/db/pool.js");
 const { migrate } = await import("../server/db/migrate.js");
 const { runQuery, MAX_LIMIT } = await import("../server/query/sql.js");
-const { insertActions } = await import("../server/live.js");
+const { insertActions, insertSamples } = await import("../server/live.js");
 const { mask } = await import("../server/query/mask.js");
 const { SCHEMA } = await import("../server/query/schema.js");
 const { canonicalJson } = await import("../server/engine.js");
@@ -79,6 +79,7 @@ before(async () => {
         [db.game, db.teams[m.team], m.version, m.memory, m.bytes, m.error, out.round]);
     }
     await insertActions(c, db.game, out.actions, db.teams);
+    await insertSamples(c, db.game, out.samples);
   });
   db.records = out.history.map((t) => ({ ...t, game: db.short }));
 });
@@ -161,6 +162,12 @@ const OTHER_QUERIES = {
     { from: "pairs", scope: "myBee", orderBy: [{ field: "nectar", dir: "desc" }] },
     { from: "pairs", groupBy: ["flower"], aggregates: [{ fn: "sum", field: "feeds", as: "feeds" }, { fn: "sum", field: "pollen", as: "pollen" }] },
     { from: "pairs", where: [W("feeds", "gt", 0)], aggregates: [{ fn: "count", as: "n" }] },
+  ],
+  prevalence: [
+    { from: "prevalence" },
+    { from: "prevalence", scope: "mine", orderBy: [{ field: "round", dir: "desc" }], limit: 5 },
+    { from: "prevalence", where: [W("round", "ge", 40)], groupBy: ["team"], aggregates: [{ fn: "avg", field: "p", as: "p" }, { fn: "max", field: "success", as: "top" }] },
+    { from: "prevalence", groupBy: ["round"], aggregates: [{ fn: "sum", field: "p", as: "total" }, { fn: "min", field: "c", as: "c" }] },
   ],
   scores: [
     { from: "scores" },
@@ -308,6 +315,19 @@ test("scores use each game's exponents: its config's (0.85 by default), or √ f
   } finally {
     await pool.query("UPDATE games SET config = $2 WHERE id = $1", [db.game, db.config]);
   }
+});
+
+test("species prevalence: one row per species per sample, the garden's own; public to everyone; p sums to 1", async () => {
+  await setStatus("running");
+  const samples = db.out.samples;
+  assert.ok(samples.length >= 15, `${samples.length} samples in 80 rounds (one every 5)`);
+  for (const v of viewers()) {
+    const rows = await sql({ from: "prevalence", limit: MAX_LIMIT }, v.user);
+    assert.equal(rows.length, samples.length * N, v.name);
+    same(rows, samples.flatMap((x) => x.p.map((p, team) => ({ game: db.short, round: x.round, atMs: x.atMs, team, p, success: x.P[team], c: x.c }))), `${v.name}: the samples`);
+  }
+  const totals = await sql({ from: "prevalence", groupBy: ["round"], aggregates: [{ fn: "sum", field: "p", as: "t" }] }, db.users[N]);
+  assert.ok(totals.every((r) => Math.abs(r.t - 1) < 1e-5), JSON.stringify(totals));
 });
 
 test("big responses: the record shows their size and hash; the whole text is stored apart, and served by seq", async () => {

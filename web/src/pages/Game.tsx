@@ -92,7 +92,7 @@ export function GamePage({ room, game }: { room: string; game: string }) {
     if (!view || !live || live.lastSeq <= view.game.lastSeq || !live.scores) return view;
     return {
       ...view,
-      scores: live.scores, ledgers: live.ledgers,
+      scores: live.scores, ledgers: live.ledgers, prevalence: live.prevalence ?? view.prevalence,
       game: { ...view.game, clockMs: live.clockMs, round: live.round, lastSeq: live.lastSeq },
     };
   }, [view, live]);
@@ -132,7 +132,7 @@ function GameBody({ view, base, store }: { view: GameView; base: string; store: 
       </Section>
     ),
   } : null;
-  const scores = !lobby && view.scores ? { id: "scores", label: "Scores", node: <Section id="scores" title={over ? "Final scores" : "Scores, live"}><Scores view={view} /></Section> } : null;
+  const scores = !lobby && view.scores ? { id: "scores", label: "Scores", node: <Section id="scores" title={over ? "Final scores" : "Scores, live"}><Scores view={view} base={base} /></Section> } : null;
   const feed = !lobby && (!over || history) ? {
     id: "feed", label: over ? "Every turn" : "Live turns",
     node: <Section id="feed" title={over ? "Every turn" : "Live turns"}><Feed view={view} source={over && history ? history : store} base={base} /></Section>,

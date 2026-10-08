@@ -41,6 +41,7 @@ const g = `/rooms/${room.shortId}/games/${game.shortId}`;
 const fresh = (await api(owner, "GET", g)).game.config;
 assert.deepEqual([fresh.feedCost, fresh.budgets.flower.minMs, fresh.budgets.flower.ms, fresh.maxResponseBytes], [20, 3, 150, 1024]);
 assert.deepEqual([fresh.scoring, fresh.energy], [{ alpha: 0.85, beta: 0.85 }, { bytes: true }]);
+assert.deepEqual(fresh.prevalence, { on: true, basis: "pollination", halfLifeS: 90, cStart: 1, cEnd: 0.1, prior: null, cap: 4 }, "species prevalence, on by default");
 // Half a minute of game time. Flowers earn change budget fast so the test needn't wait; feeding costs 2
 // rounds rather than 20, so bees take turns often. Responses can be any JSON, and big (a 64 KiB cap).
 await api(owner, "PATCH", `${g}/config`, { config: { minutes: 0.5, feedCost: 2, responseType: "any", maxResponseBytes: 65536, budgets: { flower: { perMinute: 600, cap: 100 } } } });
@@ -253,7 +254,7 @@ assert.ok(publicLedger.entries.every((e) => e.ms === null && e.beeMs === null &&
 // Querying history: the same records, through the query endpoint, filtered for the viewer.
 const q = (token, body, roomLevel = false) => api(token, "POST", roomLevel ? `/rooms/${room.shortId}/query` : `${g}/query`, body, { allow: [400] });
 const schema = await api(null, "GET", "/query/schema");
-assert.deepEqual(Object.keys(schema.entities), ["turns", "versions", "teams", "pairs", "scores"]);
+assert.deepEqual(Object.keys(schema.entities), ["turns", "versions", "teams", "pairs", "prevalence", "scores"]);
 const boTurns = await q(players[1].token, { from: "turns", limit: 5000 });
 assert.ok(boTurns.rows.length >= boLedger.entries.length - 3 && boTurns.rows.every((t) => (t.ms === null) === (t.flower !== 1)));
 const boByFlower = await q(players[1].token, { from: "turns", scope: "myBee", where: [{ field: "fed", op: "eq", value: true }], groupBy: ["flower"],
@@ -308,6 +309,17 @@ assert.ok(board.scores.reduce((x, s) => x + s.pollen, 0) > 0);
 assert.ok(board.ledgers.nectar.flat().every((x) => typeof x === "number") && board.ledgers.pollen.flat().every((x) => typeof x === "number"));
 const sum = (m) => m.flat().reduce((x, y) => x + y, 0);
 assert.ok(sum(board.ledgers.feeds) > 0 && sum(board.ledgers.nectar) > 0);
+// Species prevalence is public: its latest sample on the scoreboard and the view, every sample at /prevalence.
+assert.equal(board.prevalence.basis, "pollination");
+assert.equal(board.prevalence.prior, 20000000);
+assert.ok(board.prevalence.round >= 1 && board.prevalence.species.length === 3, JSON.stringify(board.prevalence));
+assert.deepEqual(board.prevalence.species.map((x) => [x.team, x.index]), board.participants.map((id, i) => [id, i]));
+assert.ok(Math.abs(board.prevalence.species.reduce((x, s) => x + s.p, 0) - 1) < 1e-4, "p sums to 1");
+const prevAll = await api(null, "GET", `${g}/prevalence`);
+assert.ok(prevAll.samples.length >= 2 && prevAll.samples.every((x, i) => i === 0 || x.round > prevAll.samples[i - 1].round));
+assert.deepEqual(prevAll.samples.slice(0, 2).map((x) => [x.round, x.atMs]), [[1, 0], [6, 1000]], "about once a second of game time");
+const prevRows = (await q(null, { from: "prevalence", where: [{ field: "round", op: "eq", value: 6 }] })).rows;
+assert.deepEqual(prevRows.map((r) => [r.team, r.p, r.success]), prevAll.samples[1].species.map((x) => [x.index, x.p, x.P]), "the query entity: the same samples");
 
 // Changes cost change budget, which accrues with game time; a change goes live at once. During play a team
 // sees only its own versions and budgets.
@@ -348,6 +360,7 @@ while (!/"action":"(feed|leave)"/.test(text)) text += new TextDecoder().decode((
 reader.cancel();
 assert.match(text, /"action":"arrive"/, "arrivals come over the stream");
 assert.doesNotMatch(text, /"beeMs"|"ms":/, "a spectator's stream has no timings");
+assert.match(text, /"prevalence":\{"round":\d+,"atMs":\d+,"c":[\d.]+,"species":\[\{"team":"/, "the stream carries species prevalence samples");
 
 // The same feed over a WebSocket: the same messages, filtered for the viewer (a Bearer token here).
 const socketFeed = (query, token, enough) => new Promise((resolve, reject) => {

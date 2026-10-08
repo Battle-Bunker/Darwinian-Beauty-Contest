@@ -6,6 +6,7 @@ import { scoringOf, type GameView, type Scoring, type Team, type TeamScore } fro
 import { fmt2, fmt3, fmtClock, fmtE, fmtEExact, pct, poss, powText } from "../lib/format";
 import { InfoTip, TeamChip } from "./ui";
 import { TrophyIcon } from "./Icons";
+import { PrevalencePanel } from "./Prevalence";
 
 /** times × x^p, rounded to a whole number. */
 const fmtPow = (x: number, p: number, times = 1) => Math.round(times * Math.pow(x, p)).toLocaleString();
@@ -27,7 +28,7 @@ const fmtRoot = (x: number) => (x < 100 ? fmt2(x) : Math.round(x).toLocaleString
 const num = (x: number | null | undefined): x is number => typeof x === "number" && Number.isFinite(x);
 const shareText = (x: number | null) => (num(x) ? pct(x) : "–");
 
-export function Scores({ view }: { view: GameView }) {
+export function Scores({ view, base }: { view: GameView; base?: string }) {
   const g = view.game;
   const sc = scoringOf(g.config);
   const TERMS = termsOf(sc);
@@ -47,6 +48,7 @@ export function Scores({ view }: { view: GameView }) {
         {over ? "Final scores, over the whole game." : `Live, over the game so far (as of ${fmtClock(g.clockMs)} of game time, updated every second or so).`}
         {" "}Sorted by fitness. Shares are of the sum over all {n} teams; par is {pct(1 / Math.max(1, n))}.
       </p>
+      {base && view.prevalence && <PrevalencePanel view={view} base={base} />}
       <div className="table-scroll">
         <table className="data-table score-table">
           <caption className="sr-only">Scores, best fitness first</caption>

@@ -31,8 +31,8 @@ A flower now *chooses* how much to pay, out of energy it can only have by being 
 ## The game in one paragraph
 
 Each team has one flower species and one bee. Every 200 ms round, each bee that isn't feeding takes one
-turn. Its challenge must already be queued. The engine draws a flower uniformly at random among all N
-species (its own included), calls `flower(challenge)`, and the flower has its hidden budget R (3–150
+turn. Its challenge must already be queued. The engine draws a flower at random among all N species (its
+own included), weighted by species prevalence (see "Species prevalence"), calls `flower(challenge)`, and the flower has its hidden budget R (3–150
 ms of CPU time, drawn per call) to return `[response, percent]`. The runner measures the call's CPU time, which gives E. At 150 ms the response
 reaches the bee, `decide(challenge, response)`, which has 50 ms of CPU time to return `["feed" | "leave", next]`. On a
 feed the flower gives the bee nectar and pollen, the bee sits out `feedCost` rounds, and its optional
@@ -282,10 +282,39 @@ were 37 to 119 characters minified: about a third of the grains were whole flowe
 with a grain also tells the feeding team which version of that flower answered, which is otherwise the
 flower's team's business during play.
 
+## Species prevalence
+
+A species that does well becomes more common. Each turn draws species s with probability p_s = (c(t) +
+P_s) / Σ_k (c(t) + P_k), where P_s is N × s's share of recent success, capped at 4, and c(t) runs linearly
+from 1 to 0.1 over the game (server/lib/prevalence.js; RULES.md "Species prevalence"). Success is the
+scoreboard's pollination, Σ_b D_{b,s}^β, of decayed ledgers: every cell starts at a prior of 20,000,000
+node·ms·bytes and halves every 90 s of game time (rounds, so a pause doesn't decay), and each feed's pollen is
+added in its round. The owner can measure it by feeds (Σ_b F_{b,s}^β, F the decayed count of feeds, prior 1)
+or by fitness instead (pollination share × forage share of the decayed ledgers), or make it cumulative.
+
+Why these defaults: an agent-based model of 14-team games (analysis/prevalence/, results/final.txt) compared
+bases, half-lives, floors, priors and caps. Uniform draws make a species' success depend on nothing but its
+own programs; prevalence makes it compound, which rewards a flower bees seek out but risks lock-in. A floor
+c that falls from 1 to 0.1 keeps every species visible early and lets success matter late; a 90 s half-life
+lets a species recover from a bad minute; the prior halves the start-up spike (one lucky feed in the first
+seconds no longer makes a species dominant), and the cap at 4 (4× par) limits how far one species can pull
+ahead. In the model's recommended setting the top species' share of draws peaked at 0.19 (0.31 with the
+earlier proposal: pollination, 60 s, no prior, no cap) and no species died out.
+
+The engine keeps the decayed ledgers in the garden and multiplies them by d = 2^(−0.2 s / halfLifeS) as each
+round begins (scale-free: P only depends on shares, so the decay's timing within a round doesn't matter).
+They are not stored: a garden adopted after a crash rebuilds them exactly from the game's feed actions
+(prior × d^R + Σ pollen × d^(R − round)). Every ⌈1000 / round_ms⌉ rounds, as a round begins, the garden
+samples every species' p_s and P_s with c: the latest goes on the game row (`games.prevalence`), every
+sample into the `prevalence` table (server/db/migrations/007_prevalence.sql), written with the actions. The
+view, the scoreboard, the action stream (a message carries a new sample once), `GET .../prevalence` and the
+`prevalence` query entity publish them. Programs never see them: nothing about prevalence is in `GAME`, so
+a program can't condition on it; only its team can.
+
 ## What is public
 
 Arrivals, challenges, responses and every feed (with its percent, E, nectar and pollen) are public to
-everyone as they happen, spectators included, and so is the scoreboard. That was a deliberate change from
+everyone as they happen, spectators included, and so are the scoreboard and species prevalence. That was a deliberate change from
 "third-party turns are secret": any self-dealing scheme, such as a handshake between a team's own bee and
 flower, has to work in plain view, where every other team can study and copy it.
 
@@ -307,7 +336,7 @@ can't steer that turn.
 
 | Game time | What happens |
 |---|---|
-| 0 ms | A crashed bee's runner is restarted (its MEMORY kept); new code for a bee between turns takes over (with an empty MEMORY); a bee with nothing queued is asked `first` (at most once a round). Each bee with a challenge queued, no call in flight and no rounds left to sit out takes its turn: a flower is drawn at random, the arrival is recorded and flushed at once, both versions are pinned, and the flower is called. Each response goes to its bee's runner as soon as it is in. A bee with nothing queued loses the round. |
+| 0 ms | A crashed bee's runner is restarted (its MEMORY kept); new code for a bee between turns takes over (with an empty MEMORY); a bee with nothing queued is asked `first` (at most once a round). Each bee with a challenge queued, no call in flight and no rounds left to sit out takes its turn: a flower is drawn at random (by species prevalence, decayed and sampled as the round begins), the arrival is recorded and flushed at once, both versions are pinned, and the flower is called. Each response goes to its bee's runner as soon as it is in. A bee with nothing queued loses the round. |
 | 150 ms | Every response is delivered; each bee with a turn is called: `decide(challenge, response)`, with its MEMORY. |
 | 200 ms | Each reply is in, or its deadline has passed. Each bee's MEMORY is saved if it fits. Each turn is settled: nectar, pollen and the ledgers; the turn's end (`feed` or `leave`, carrying the whole turn) is recorded; a feed sits the bee out `feedCost` rounds and calls its `fed(nectar)` in the instance that decided (a challenge it returns replaces the queued one); new code for the bee takes over. |
 

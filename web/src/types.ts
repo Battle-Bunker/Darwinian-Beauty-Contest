@@ -26,8 +26,20 @@ export interface GameConfig {
   scoring?: Scoring;
   /** bytes: E = (cap − size) × max(0, R − CPU ms) × (maxResponseBytes − response bytes), in node·ms·bytes. Without it, no byte factor (node·ms). */
   energy?: { bytes: boolean };
+  /** Species prevalence: each turn's species drawn with p_s = (c + P_s) / Σ (c + P_k). The view always has every key (off: a game without it). */
+  prevalence?: PrevalenceConfig;
   budgets: Record<Kind, Budget>;
 }
+
+export type PrevalenceBasis = "pollination" | "feeds" | "fitness";
+/** As stored: halfLifeS null = cumulative, prior null = the basis's default, cap null = none. */
+export interface PrevalenceConfig { on: boolean; basis: PrevalenceBasis; halfLifeS: number | null; cStart: number; cEnd: number; prior: number | null; cap: number | null }
+/** One species in a sample: p (the chance a turn draws it) and P (its recent success, par 1). */
+export interface PrevalenceSpecies { team: string; index: number; p: number; P: number }
+/** A sample, about once a second of game time: the round whose draws it gave, and that round's start. */
+export interface PrevalenceSample { round: number; atMs: number; c: number; species: PrevalenceSpecies[] }
+/** The game's prevalence (settings with the prior resolved) and its latest sample (round null and species [] before the first). */
+export type PrevalenceView = Omit<PrevalenceConfig, "prior"> & { prior: number; round: number | null; atMs: number | null; c: number | null; species: PrevalenceSpecies[] };
 
 /** Whether a game's E has the byte factor (a config without `energy`: no, as games before it). */
 export const energyBytes = (cfg: { energy?: { bytes: boolean } } | null | undefined) => cfg?.energy?.bytes === true;
@@ -199,6 +211,7 @@ export interface Ledgers { feeds: number[][]; nectar: (number | null)[][]; polle
 export interface ScoresView {
   status: GameStatus; clockMs: number; endMs: number; round: number; lastSeq: number;
   participants: string[] | null; scores: TeamScore[] | null; ledgers: Ledgers | null;
+  prevalence?: PrevalenceView | null;
 }
 
 export interface GameView {
@@ -215,6 +228,8 @@ export interface GameView {
   interface: ProgramInterface;
   scores: TeamScore[] | null;
   ledgers: Ledgers | null;
+  /** Species prevalence (null: species are drawn uniformly). */
+  prevalence?: PrevalenceView | null;
 }
 
 /** POST check / programs. size and cost in nodes; available: whole nodes of change budget now (null in the lobby). */

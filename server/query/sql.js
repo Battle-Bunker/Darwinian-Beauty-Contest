@@ -65,6 +65,14 @@ const SOURCES = {
       pollen: "coalesce((g.pollen -> (lb.bo - 1)::int -> (lf.fo - 1)::int)::float8, 0)",
     },
   },
+  prevalence: {
+    from: `prevalence x JOIN gs ON gs.id = x.game_id, jsonb_array_elements(x.p) WITH ORDINALITY AS e(v, o)`,
+    roles: { owner: "(e.o - 1)::int" },
+    cols: {
+      game: "gs.short", round: "x.round::int", atMs: "x.at_ms::int", team: "(e.o - 1)::int",
+      p: "(e.v)::float8", success: "(x.success -> (e.o - 1)::int)::float8", c: "x.c",
+    },
+  },
   scores: {
     // Computed by server/lib/scoring.js (the one definition of the score) and passed in as a parameter.
     from: (param) => `jsonb_to_recordset(${param}::jsonb) AS s(${SCHEMA.entities.scores.fields.map((f) => `${q(f.name)} ${f.type === "str" ? "text" : f.type === "int" ? "int" : "float8"}`).join(", ")})

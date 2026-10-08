@@ -477,6 +477,65 @@
         }
       ]
     },
+    "prevalence": {
+      "record": "Prevalence",
+      "key": [
+        "game",
+        "round",
+        "team"
+      ],
+      "sortedBy": "round",
+      "index": [
+        [
+          "team"
+        ]
+      ],
+      "cells": [],
+      "scopes": {
+        "mine": [
+          "team"
+        ]
+      },
+      "owner": "team",
+      "program": false,
+      "fields": [
+        {
+          "name": "game",
+          "type": "str",
+          "nullable": false
+        },
+        {
+          "name": "round",
+          "type": "int",
+          "nullable": false
+        },
+        {
+          "name": "atMs",
+          "type": "int",
+          "nullable": false
+        },
+        {
+          "name": "team",
+          "type": "int",
+          "nullable": false
+        },
+        {
+          "name": "p",
+          "type": "float",
+          "nullable": false
+        },
+        {
+          "name": "success",
+          "type": "float",
+          "nullable": false
+        },
+        {
+          "name": "c",
+          "type": "float",
+          "nullable": false
+        }
+      ]
+    },
     "scores": {
       "record": "Score",
       "key": [
@@ -801,6 +860,40 @@
         },
         "pollen": {
           "doc": "the pollen this species gave this bee",
+          "visibility": "public"
+        }
+      }
+    },
+    "prevalence": {
+      "doc": "Species prevalence (games that have it): every species' chance of being drawn and its recent success, sampled about once a second of game time.",
+      "rows": null,
+      "fields": {
+        "game": {
+          "doc": "the game's short id",
+          "visibility": "public"
+        },
+        "round": {
+          "doc": "the round whose draws it gave (sampled as the round began)",
+          "visibility": "public"
+        },
+        "atMs": {
+          "doc": "game time that round began: (round - 1) × round_ms",
+          "visibility": "public"
+        },
+        "team": {
+          "doc": "the species' (its team's) index",
+          "visibility": "public"
+        },
+        "p": {
+          "doc": "p_s: the chance a turn's flower is of this species, (c + P_s) / Σ (c + P_k)",
+          "visibility": "public"
+        },
+        "success": {
+          "doc": "P_s: N × its share of recent success (the game's prevalence basis, decayed), capped; par 1",
+          "visibility": "public"
+        },
+        "c": {
+          "doc": "c(t): the weight every species has whatever its success (cStart to cEnd over the game)",
           "visibility": "public"
         }
       }

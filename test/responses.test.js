@@ -82,9 +82,10 @@ for (const language of ["python", "typescript"]) {
     const config = normalizeConfig({ language, responseType: "list[int]", maxResponseBytes: 1 << 20, feedCost: 0, budgets: { flower: { minMs: 150 } } }); // R held at 150
     const n = 150000; // about 0.94 MB of JSON (so a 1 MB cap, not the 64 KiB default)
     const list = language === "python" ? `list(range(${n}))` : `Array.from({ length: ${n} }, (_, i) => i)`;
-    const out = await play(config, [{ flower: P.flower(list), bee: P.bee }], 4, null, { paced: true });
+    // (5 paced rounds: three runners start at once, on the runners' two cores, so the bee may miss the first two.)
+    const out = await play(config, [{ flower: P.flower(list), bee: P.bee }], 5, null, { paced: true });
     const turns = ends(out.actions);
-    assert.ok(turns.length >= 3);
+    assert.ok(turns.length >= 3, `${turns.length} turns`);
     for (const a of turns) {
       assert.equal(a.flowerError, null);
       assert.ok(a.rBytes > 900000 && a.rBytes <= config.maxResponseBytes, `${a.rBytes}`);

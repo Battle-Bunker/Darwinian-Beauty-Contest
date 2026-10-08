@@ -3,7 +3,8 @@
 // to the game, and every few seconds), so a game survives its process dying (its bees start afresh, and
 // the rounds carry on from the stored round, clock, turn counts, sit-outs and bees' MEMORY). Live gardens
 // are paced: a round lasts at least its 200 ms of game time on the wall clock.
-// Every FLUSH_MS the garden's new actions, round, clock, ledgers and changed memories are written and
+// Every FLUSH_MS the garden's new actions, round, clock, ledgers, changed memories and species prevalence
+// samples are written and
 // announced (a response over INLINE_BYTES into `responses`, its action keeping its size, hash and preview);
 // arrivals are written at once. Submissions,
 // pauses and finishes are written to the database by whichever process got the request; the change
@@ -14,6 +15,7 @@ import { query, tx } from "./db/pool.js";
 import { Garden, KINDS } from "./engine.js";
 import { shortId } from "./lib/shortid.js";
 import { zeroLedger } from "./lib/scoring.js";
+import { prevalenceOf } from "./lib/gameConfig.js";
 import { bus } from "./realtime.js";
 
 const FLUSH_MS = 250;
@@ -95,10 +97,16 @@ async function adopt(g) {
   for (const r of (await query("SELECT bee_team, max(turn) AS n FROM actions WHERE game_id = $1 GROUP BY bee_team", [g.id])).rows) {
     if (index.has(r.bee_team)) turns[index.get(r.bee_team)] = Number(r.n);
   }
+  // Species prevalence is rebuilt from the feeds so far (exactly: its ledgers are sums of decayed feeds).
+  const feeds = prevalenceOf(g.config)
+    ? (await query("SELECT round, bee_team, flower_team, pollen, nectar FROM actions WHERE game_id = $1 AND action = 'feed' AND round <= $2", [g.id, g.round])).rows
+      .filter((r) => index.has(r.bee_team) && index.has(r.flower_team))
+      .map((r) => ({ round: Number(r.round), bee: index.get(r.bee_team), flower: index.get(r.flower_team), pollen: r.pollen, nectar: r.nectar }))
+    : [];
   const garden = new Garden({
     config: g.config, teams: g.participants.length, clockMs: Number(g.clock_ms), round: Number(g.round), lastSeq: Number(g.last_seq),
     ledgers: { feeds: g.feeds, nectar: g.nectar, pollen: g.pollen ?? zeroLedger(g.participants.length) },
-    lastFed, turns, memories, game, paced: true,
+    lastFed, turns, memories, game, paced: true, feeds,
   });
   if (g.status === "paused") garden.pause();
   const run = { id: g.id, room: g.room_id, participants: g.participants, index, garden, versions: new Map(), flushing: null, again: false, abandoned: false };
@@ -159,6 +167,18 @@ export async function insertActions(c, gameId, actions, ids) {
   }
 }
 
+/** Write prevalence samples ({ round, atMs, c, p, P }, arrays in participants order). */
+export async function insertSamples(c, gameId, samples) {
+  for (let i = 0; i < samples.length; i += 200) {
+    const chunk = samples.slice(i, i + 200), params = [];
+    const rows = chunk.map((x, j) => {
+      params.push(gameId, x.round, x.atMs, x.c, JSON.stringify(x.p), JSON.stringify(x.P));
+      return `(${[1, 2, 3, 4, 5, 6].map((k) => `$${j * 6 + k}`).join(",")})`;
+    });
+    await c.query(`INSERT INTO prevalence (game_id, round, at_ms, c, p, success) VALUES ${rows.join(",")} ON CONFLICT (game_id, round) DO NOTHING`, params);
+  }
+}
+
 /** Flush now, or as soon as the flush in progress is done. */
 function flushSoon(run) {
   if (run.abandoned) return;
@@ -170,13 +190,14 @@ async function flush(run) {
   if (run.flushing) return run.flushing;
   run.flushing = (async () => {
     const d = run.garden.drain();
-    if (!d.actions.length && !d.problems.length && !d.memories.length && d.clockMs === run.lastClock) return;
+    if (!d.actions.length && !d.problems.length && !d.memories.length && !d.samples.length && d.clockMs === run.lastClock) return;
     const ids = run.participants;
     try {
       await tx(async (c) => {
         await insertActions(c, run.id, d.actions, ids);
-        await c.query("UPDATE games SET clock_ms = $2, round = $3, last_seq = $4, feeds = $5, nectar = $6, pollen = $7 WHERE id = $1",
-          [run.id, d.clockMs, d.round, d.lastSeq, JSON.stringify(d.feeds), JSON.stringify(d.nectar), JSON.stringify(d.pollen)]);
+        await c.query("UPDATE games SET clock_ms = $2, round = $3, last_seq = $4, feeds = $5, nectar = $6, pollen = $7, prevalence = COALESCE($8, prevalence) WHERE id = $1",
+          [run.id, d.clockMs, d.round, d.lastSeq, JSON.stringify(d.feeds), JSON.stringify(d.nectar), JSON.stringify(d.pollen), d.sample ? JSON.stringify(d.sample) : null]);
+        await insertSamples(c, run.id, d.samples);
         for (const m of d.memories) {
           await c.query(
             `INSERT INTO bee_memories (game_id, team_id, bee_version, memory, bytes, error, at_round) VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -198,6 +219,7 @@ async function flush(run) {
       // Put them back for the next flush.
       run.garden.out.unshift(...d.actions);
       run.garden.problems.unshift(...d.problems);
+      run.garden.samples.unshift(...d.samples);
       for (const m of d.memories) run.garden.bees[m.team].memoryChanged = true;
       throw e;
     }

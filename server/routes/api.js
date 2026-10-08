@@ -52,6 +52,7 @@ export function apiRouter() {
     res.type("application/json").set("Cache-Control", "public, max-age=31536000, immutable").send(body);
   }));
   r.get(`${base}/scores`, wrap(async (req, res) => res.json(await G.viewScores(req.game))));
+  r.get(`${base}/prevalence`, wrap(async (req, res) => res.json(await G.viewPrevalence(req.game, { after: req.query.after, limit: req.query.limit }))));
   r.get(`${base}/events`, wrap(async (req, res) => gameStream(req, res, {
     gameId: req.game.id, teamId: await G.myTeamId(req.game, req.user), version: req.game.version,
     after: Number(req.query.after ?? req.game.last_seq) || 0,

@@ -212,6 +212,9 @@ export function SettingsSummary({ cfg }: { cfg: GameConfig }) {
           pollen grains: {{ feeder: "the feeding team's", public: "public", off: "off" }[cfg.grains ?? "feeder"]}
         </span>
         <span className="chip">{cfg.revealOnFinish ? "code and prints revealed at the end" : "code stays secret"}</span>
+        {cfg.prevalence?.on
+          ? <span className="chip" title={`Each turn's species is drawn with p = (c + P) / Σ (c + P): P its recent ${cfg.prevalence.basis} (N × its share${cfg.prevalence.halfLifeS ? `, half-life ${cfg.prevalence.halfLifeS} s` : ", whole game"}${cfg.prevalence.cap != null ? `, capped at ${cfg.prevalence.cap}` : ""}), c from ${cfg.prevalence.cStart} to ${cfg.prevalence.cEnd} over the game`}>species prevalence: {cfg.prevalence.basis}</span>
+          : <span className="chip" title="Each turn's flower is drawn uniformly among all species">species drawn uniformly</span>}
       </div>
       <div className="table-scroll">
         <table className="data-table budgets compact">

@@ -3,7 +3,7 @@
 import crypto from "node:crypto";
 import { query, tx } from "./db/pool.js";
 import { allocatePrefixLen, normalizeCode, shortId, uuidToCode } from "./lib/shortid.js";
-import { DEFAULT_CONFIG, KINDS, available, energyBytes, normalizeConfig } from "./lib/gameConfig.js";
+import { DEFAULT_CONFIG, KINDS, available, energyBytes, normalizeConfig, prevalenceConfig, prevalenceOf } from "./lib/gameConfig.js";
 import { changes, size } from "./lib/measure.js";
 import { score, scoringOf, zeroLedger } from "./lib/scoring.js";
 import { programInterface } from "./lib/interface.js";
@@ -356,6 +356,26 @@ export async function tryProgram(game, user, { kind, code, challenges, budgetMs,
 /** A game's whole-game ledgers (public). */
 const ledgersView = (g) => (g.participants ? { feeds: g.feeds, nectar: g.nectar, pollen: g.pollen } : null);
 
+/**
+ * A prevalence sample as published (view, scores, the action stream, GET .../prevalence): { round, atMs, c,
+ * species: [{ team (id), index, p, P }] } in participants order. Stored samples have p and P as arrays.
+ */
+export const sampleView = (x, participants) => ({
+  round: Number(x.round), atMs: Number(x.atMs ?? x.at_ms), c: x.c,
+  species: participants.map((team, index) => ({ team, index, p: x.p[index] ?? null, P: (x.P ?? x.success)[index] ?? null })),
+});
+
+/**
+ * A game's species prevalence (public): its settings and latest sample, { on, basis, halfLifeS, cStart, cEnd,
+ * prior, cap, round, atMs, c, species } (round, atMs and c null and species [] before the first sample); null
+ * when its species are drawn uniformly.
+ */
+function prevalenceView(g) {
+  const settings = prevalenceOf(g.config);
+  if (!settings) return null;
+  return { ...settings, ...(g.prevalence && g.participants ? sampleView(g.prevalence, g.participants) : { round: null, atMs: null, c: null, species: [] }) };
+}
+
 // Scored with the game's own exponents: a game stored without them was scored with √, and still is.
 const scoresOf = (g) => (g.participants ? score(g.participants, g.feeds, g.nectar, g.pollen, scoringOf(g.config)) : null);
 
@@ -401,7 +421,7 @@ export async function viewGame(room, game, user) {
       // The config as stored, with the scoring exponents it is scored with (√, 0.5, if it has none) and its
       // energy formula (no byte factor if it has none).
       id: g.id, shortId: shortId(g), url: `/room/${shortId(room)}/game/${shortId(g)}`, status: g.status,
-      config: { ...cfg, scoring: scoringOf(cfg), energy: { bytes: energyBytes(cfg) } },
+      config: { ...cfg, scoring: scoringOf(cfg), energy: { bytes: energyBytes(cfg) }, prevalence: prevalenceConfig(cfg) },
       clockMs: g.clock_ms, endMs: Math.round(cfg.minutes * 60000), round: g.round, lastSeq: g.last_seq, version: g.version, lastError: g.last_error,
       createdAt: g.created_at, startedAt: g.started_at, finishedAt: g.finished_at, revealed, isOwner,
     },
@@ -426,6 +446,8 @@ export async function viewGame(room, game, user) {
     scores: scoresOf(g),
     // feeds[bee team][flower team], nectar[..][..] and pollen[..][..] over the whole game, in participants order
     ledgers: ledgersView(g),
+    // species prevalence: its settings and latest sample (null: species are drawn uniformly)
+    prevalence: prevalenceView(g),
   };
 }
 
@@ -434,8 +456,22 @@ export async function viewScores(game) {
   const g = (await query("SELECT * FROM games WHERE id = $1", [game.id])).rows[0];
   return {
     status: g.status, clockMs: g.clock_ms, endMs: Math.round(g.config.minutes * 60000), round: g.round, lastSeq: g.last_seq,
-    participants: g.participants || null, scores: scoresOf(g), ledgers: ledgersView(g),
+    participants: g.participants || null, scores: scoresOf(g), ledgers: ledgersView(g), prevalence: prevalenceView(g),
   };
+}
+
+/**
+ * A game's species prevalence samples (public), oldest first: those of rounds after `after`, at most `limit`
+ * (default and most 5000). { prevalence (settings, as in the view, without a sample), samples: [sample] }.
+ */
+export async function viewPrevalence(game, { after = 0, limit = 5000 } = {}) {
+  const g = (await query("SELECT config, participants FROM games WHERE id = $1", [game.id])).rows[0];
+  const settings = prevalenceOf(g.config);
+  if (!settings || !g.participants) return { prevalence: settings, samples: [] };
+  const n = Math.max(1, Math.min(5000, Number(limit) || 5000));
+  const { rows } = await query("SELECT round, at_ms, c, p, success FROM prevalence WHERE game_id = $1 AND round > $2 ORDER BY round LIMIT $3",
+    [game.id, Math.max(0, Number(after) || 0), n]);
+  return { prevalence: settings, samples: rows.map((r) => sampleView(r, g.participants)) };
 }
 
 /**
@@ -445,7 +481,7 @@ export async function viewScores(game) {
  * WebSocket streams) goes through actionView.
  */
 export async function viewActions(game, user, { after = 0, before = null, limit = 1000, mine: onlyMine = false } = {}) {
-  const g = (await query("SELECT status, config, last_seq, clock_ms, round FROM games WHERE id = $1", [game.id])).rows[0];
+  const g = (await query("SELECT status, config, last_seq, clock_ms, round, participants, prevalence FROM games WHERE id = $1", [game.id])).rows[0];
   const mine = await myTeam(game.id, user?.id);
   const over = g.status === "finished", revealed = over && g.config.revealOnFinish;
   const n = Math.max(1, Math.min(5000, Number(limit) || 1000));
@@ -457,7 +493,11 @@ export async function viewActions(game, user, { after = 0, before = null, limit 
     ? await query(`SELECT * FROM (SELECT * FROM actions WHERE ${where} AND seq < $2 ORDER BY seq DESC LIMIT $3) t ORDER BY seq`, params(Number(before) || 0))
     : await query(`SELECT * FROM actions WHERE ${where} AND seq > $2 ORDER BY seq LIMIT $3`, params(Math.max(0, Number(after) || 0)));
   const grainsPublic = g.config.grains === "public";
-  return { actions: rows.map((a) => actionView(a, mine?.id, over, revealed, grainsPublic)), lastSeq: g.last_seq, clockMs: g.clock_ms, round: g.round, status: g.status };
+  return {
+    actions: rows.map((a) => actionView(a, mine?.id, over, revealed, grainsPublic)), lastSeq: g.last_seq, clockMs: g.clock_ms, round: g.round, status: g.status,
+    // the latest species prevalence sample (games with prevalence, once sampled)
+    ...(g.prevalence && g.participants && prevalenceOf(g.config) ? { prevalence: sampleView(g.prevalence, g.participants) } : {}),
+  };
 }
 
 /**

@@ -27,6 +27,15 @@ const BUDGETS = {
 
 export const KINDS = ["flower", "bee"];
 export const GRAINS = ["feeder", "public", "off"];
+// Species prevalence (server/lib/prevalence.js): what a species' success P_s is measured by.
+export const PREVALENCE_BASES = ["pollination", "feeds", "fitness"];
+/** The default basis for new games: the one place it is set. */
+export const PREVALENCE_BASIS = "pollination";
+/**
+ * The default prior of a prevalence ledger cell (prevalence.prior null): 20,000,000 node·ms·bytes of pollen (or
+ * nectar) for the pollination and fitness bases (a node·ms game: ÷ 1,024), 1 feed for the feeds basis.
+ */
+export const PREVALENCE_PRIOR = Object.freeze({ energy: 20000000, feeds: 1 });
 
 export const DEFAULT_CONFIG = Object.freeze({
   language: "python",          // "python" | "typescript"
@@ -49,8 +58,28 @@ export const DEFAULT_CONFIG = Object.freeze({
   // bytes: E has a third factor, (maxResponseBytes − response bytes), and is in node·ms·bytes. A config stored
   // without `energy` (or with bytes false) has the two-factor formula, in node·ms: E = (cap − size) × max(0, R − CPU ms).
   energy: Object.freeze({ bytes: true }),
+  // Species prevalence: each turn's flower species is drawn with probability p_s = w_s / Σ w, w_s = c(t) + P_s,
+  // where P_s is N × the species' share of recent success (`basis`, every ledger cell starting at `prior` and
+  // decaying with a half-life of `halfLifeS` seconds of game time; null: cumulative), capped at `cap` (null:
+  // none), and c(t) runs linearly from cStart to cEnd over the game. A config stored without `prevalence` is
+  // from before it existed: its species are drawn uniformly (on: false). server/lib/prevalence.js.
+  prevalence: Object.freeze({ on: true, basis: PREVALENCE_BASIS, halfLifeS: 90, cStart: 1, cEnd: 0.1, prior: null, cap: 4 }),
   budgets: BUDGETS,
 });
+
+/** A config's prevalence settings as stored, with every key (a config without them: off, the defaults otherwise). */
+export const prevalenceConfig = (config) => ({ ...DEFAULT_CONFIG.prevalence, on: false, ...(config?.prevalence ?? {}) });
+
+/**
+ * A config's prevalence settings, resolved (the prior's default filled in), or null when its species are drawn
+ * uniformly (no `prevalence`, or prevalence.on false).
+ */
+export function prevalenceOf(config) {
+  const p = prevalenceConfig(config);
+  if (p.on !== true) return null;
+  const prior = p.prior ?? (p.basis === "feeds" ? PREVALENCE_PRIOR.feeds : energyBytes(config) ? PREVALENCE_PRIOR.energy : PREVALENCE_PRIOR.energy / 1024);
+  return { on: true, basis: p.basis, halfLifeS: p.halfLifeS, cStart: p.cStart, cEnd: p.cEnd, prior, cap: p.cap };
+}
 
 const int = (v, lo, hi, dflt) => {
   const x = Number.parseInt(v, 10);
@@ -68,6 +97,22 @@ const exponent = (v, name, dflt) => {
   if (!Number.isFinite(x) || x <= 0 || x > 1) throw new Error(`scoring.${name} must be a number in (0, 1]`);
   return x;
 };
+
+/** A number, or null when the input is explicitly null (meaning "none"); left out, `dflt`. */
+const numOrNull = (v, lo, hi, dflt) => (v === null ? null : num(v, lo, hi, dflt));
+
+function normalizePrevalence(input, b) {
+  const p = input && typeof input === "object" ? input : {};
+  return {
+    on: bool(p.on, b.on),
+    basis: PREVALENCE_BASES.includes(p.basis) ? p.basis : PREVALENCE_BASES.includes(b.basis) ? b.basis : PREVALENCE_BASIS,
+    halfLifeS: numOrNull(p.halfLifeS, 1, 86400, b.halfLifeS),   // null: cumulative (no decay)
+    cStart: num(p.cStart, 0, 100, b.cStart),
+    cEnd: num(p.cEnd, 0, 100, b.cEnd),
+    prior: numOrNull(p.prior, 0, 1e15, b.prior),                // null: the basis's default (PREVALENCE_PRIOR)
+    cap: numOrNull(p.cap, 1, 1e6, b.cap),                       // null: no cap
+  };
+}
 
 /** Merge a partial config onto `base`, clamping everything to sane ranges. Throws on bad types. */
 export function normalizeConfig(input = {}, base = DEFAULT_CONFIG) {
@@ -91,6 +136,8 @@ export function normalizeConfig(input = {}, base = DEFAULT_CONFIG) {
     scoring: { alpha: exponent(c.scoring?.alpha, "alpha", scoringOf(base).alpha), beta: exponent(c.scoring?.beta, "beta", scoringOf(base).beta) },
     // Left out, the base's (a base stored without it has the two-factor formula, and keeps it).
     energy: { bytes: bool(c.energy?.bytes, energyBytes(base)) },
+    // Left out, the base's (a base stored without it draws uniformly, and keeps doing so unless it is turned on).
+    prevalence: normalizePrevalence(c.prevalence, prevalenceConfig(base)),
     budgets: {},
   };
   for (const kind of KINDS) {

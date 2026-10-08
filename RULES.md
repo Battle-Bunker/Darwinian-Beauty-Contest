@@ -36,8 +36,9 @@ Every bee that isn't busy feeding gets **one turn per round**: one challenge, on
 
 1. **0 ms.** Your bee's challenge must already be **queued** (it came with its previous decision, or from
    `first`). A bee with nothing queued as the round starts **loses its turn** this round.
-2. The engine draws a flower **uniformly at random from all N flowers**, your own included, independently
-   every time. This **arrival** (whose bee, whose flower) is public at once to people watching the game,
+2. The engine draws a flower **at random from all N species**, your own included, independently every
+   time, weighted by **species prevalence**: a species that has been pollinating well lately is drawn
+   more often (see "Species prevalence"). This **arrival** (whose bee, whose flower) is public at once to people watching the game,
    but neither program is told: a turn keeps the versions it started with, so nobody can pass it on.
 3. The flower is called: `flower(challenge)`. It has its **hidden time budget R** for this call (3 to 150
    ms, drawn at random every call; see "Energy") and returns
@@ -77,6 +78,29 @@ same program instance as the feed decision before it (see "After a feed"). Progr
 arguments, `GAME` and (the bee) `MEMORY`: no history, no other team's anything. Both can use randomness
 (freshly seeded every call) and the clock, which only tells how long the call has been running (see "The
 clock").
+
+### Species prevalence
+
+A species that does well becomes more common, as in an ecosystem. Each turn's flower is of species s with
+probability
+
+> **p_s = (c + P_s) / Σ_k (c + P_k)**
+
+- **P_s** is the species' **recent success**, on a par-1 scale: N × its share of Σ over bee teams of
+  (the pollen it gave that team's bee lately)^0.85, the scoreboard's pollination with old pollen fading.
+  Every pollen ledger cell (one per bee team and species) starts at a **prior** of 20,000,000 and, as each
+  round begins, is multiplied by 2^(−0.2 s / 90 s): pollen **halves every 90 s of game time** (a paused
+  game doesn't fade). Then the round's pollen is added. P_s is **capped at 4**. Before anyone has
+  pollinated, every P_s is 1. Your own bee's feeds count, as they do in the score.
+- **c** gives every species a share whatever its success: it runs **linearly from 1** at the start of the
+  game **to 0.1** at its end. Uncapped, Σ_k (c + P_k) = N (c + 1), so a species with no recent pollination
+  is drawn with probability c / (N (c + 1)): 1/(2N) at the start, about 1/(11N) at the end.
+- The owner sets it in the settings (`prevalence`): it can be off (uniform draws), measured by feeds (each
+  feed counting 1, with a prior of 1 feed) or by fitness instead of pollination, with another half-life
+  (or none: cumulative), c, prior or cap. A game from before this rule draws uniformly.
+- **Every species' p_s and P_s are public**, updated about once a second of game time: in the game view,
+  the scoreboard, the live action stream and the history queries. **Programs never see them**: nothing
+  about prevalence is in `GAME`.
 
 ### The clock
 
@@ -411,7 +435,8 @@ never can be: make it in steps.
 **Public to everyone, as it happens** (including spectators without a team): for every turn of every bee,
 the **arrival** (whose bee, whose flower), the **challenge**, the **response** and **whether the bee fed**
 (a bee that was late or broke simply didn't). On a **feed**, also the **percent**, the **energy**, and the
-**nectar** and **pollen** the flower gave the bee. The game's settings and the scoreboard are public too. So whatever two
+**nectar** and **pollen** the flower gave the bee. The game's settings, the scoreboard and every species'
+prevalence (p_s and P_s) are public too. So whatever two
 programs do together happens in plain view. (If the owner raises the cap, a response over 4 KB is streamed
 to the page as its first 4 KB, its size and its hash; the whole response is one click or one request away.)
 

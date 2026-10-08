@@ -130,6 +130,30 @@ class Pair(NamedTuple):
 PairField = Literal["game", "bee", "flower", "feeds", "nectar", "pollen"]
 
 
+class Prevalence(NamedTuple):
+    """Species prevalence (games that have it): every species' chance of being drawn and its recent success, sampled about once a second of game time. (entity "prevalence")"""
+    game: str  # the game's short id
+    round: int  # the round whose draws it gave (sampled as the round began)
+    at_ms: int  # game time that round began: (round - 1) × round_ms
+    team: int  # the species' (its team's) index
+    p: float  # p_s: the chance a turn's flower is of this species, (c + P_s) / Σ (c + P_k)
+    success: float  # P_s: N × its share of recent success (the game's prevalence basis, decayed), capped; par 1
+    c: float  # c(t): the weight every species has whatever its success (cStart to cEnd over the game)
+
+    @classmethod
+    def from_json(cls, d: dict) -> "Prevalence":
+        """From a dict with canonical (camelCase) field names."""
+        g = d.get
+        return cls(g("game"), g("round"), g("atMs"), g("team"), g("p"), g("success"), g("c"))
+
+    def to_json(self) -> dict:
+        """As a dict with canonical (camelCase) field names."""
+        return {"game": self.game, "round": self.round, "atMs": self.at_ms, "team": self.team, "p": self.p, "success": self.success, "c": self.c}
+
+
+PrevalenceField = Literal["game", "round", "at_ms", "team", "p", "success", "c"]
+
+
 class Score(NamedTuple):
     """The scoreboard: each team's pollination, forage, shares and fitness over the whole game. (entity "scores")"""
     game: str  # the game's short id
@@ -161,7 +185,7 @@ class Score(NamedTuple):
 ScoreField = Literal["game", "team", "pollination", "forage", "pollination_share", "forage_share", "fitness", "pollen", "feeds_received", "feeds_given", "pollinators", "nectar_collected", "nectar_given", "nectar_sources"]
 
 
-RECORDS = {"turns": Turn, "versions": Version, "teams": Team, "pairs": Pair, "scores": Score}
+RECORDS = {"turns": Turn, "versions": Version, "teams": Team, "pairs": Pair, "prevalence": Prevalence, "scores": Score}
 PROGRAM_ENTITY = "turns"
 # Python field names → canonical ones, per entity, and back.
 _NAMES = {
@@ -219,6 +243,15 @@ _NAMES = {
         "memory_error": "memoryError",
     },
     "pairs": {"game": "game", "bee": "bee", "flower": "flower", "feeds": "feeds", "nectar": "nectar", "pollen": "pollen"},
+    "prevalence": {
+        "game": "game",
+        "round": "round",
+        "at_ms": "atMs",
+        "team": "team",
+        "p": "p",
+        "success": "success",
+        "c": "c",
+    },
     "scores": {
         "game": "game",
         "team": "team",
@@ -358,6 +391,27 @@ SCHEMA = {
                 {"name": "pollen", "type": "float", "nullable": False},
             ],
         },
+        "prevalence": {
+            "record": "Prevalence",
+            "key": ["game", "round", "team"],
+            "sortedBy": "round",
+            "index": [
+                ["team"],
+            ],
+            "cells": [],
+            "scopes": {"mine": ["team"]},
+            "owner": "team",
+            "program": False,
+            "fields": [
+                {"name": "game", "type": "str", "nullable": False},
+                {"name": "round", "type": "int", "nullable": False},
+                {"name": "atMs", "type": "int", "nullable": False},
+                {"name": "team", "type": "int", "nullable": False},
+                {"name": "p", "type": "float", "nullable": False},
+                {"name": "success", "type": "float", "nullable": False},
+                {"name": "c", "type": "float", "nullable": False},
+            ],
+        },
         "scores": {
             "record": "Score",
             "key": ["game", "team"],
@@ -402,18 +456,20 @@ class ProgramHistory:
 
 class RemoteHistory:
     """Every entity, queried over HTTP (see connect)."""
-    __slots__ = ("turns", "versions", "teams", "pairs", "scores")
+    __slots__ = ("turns", "versions", "teams", "pairs", "prevalence", "scores")
     turns: "Query[Turn, TurnField]"
     versions: "Query[Version, VersionField]"
     teams: "Query[Team, TeamField]"
     pairs: "Query[Pair, PairField]"
+    prevalence: "Query[Prevalence, PrevalenceField]"
     scores: "Query[Score, ScoreField]"
 
-    def __init__(self, turns, versions, teams, pairs, scores):
+    def __init__(self, turns, versions, teams, pairs, prevalence, scores):
         object.__setattr__(self, "turns", turns)
         object.__setattr__(self, "versions", versions)
         object.__setattr__(self, "teams", teams)
         object.__setattr__(self, "pairs", pairs)
+        object.__setattr__(self, "prevalence", prevalence)
         object.__setattr__(self, "scores", scores)
 
     def __setattr__(self, k: str, v: Any) -> None:
