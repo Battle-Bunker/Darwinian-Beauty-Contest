@@ -1,19 +1,25 @@
-"""Resolution of the fingerprint: levels at R = 3, 20, 76 and 150 ms, how well directions can be told apart,
-and what the bee's check costs.
+"""Resolution and worth of the fingerprint, measured on this machine.
 
-    python3 arena/priming/fingerprints/resolution.py [--calls 40]
+    python3 -B arena/priming/fingerprints/resolution.py [--flower fingerprint] [--calls 40] [--size 302]
 
-Runs the flower's fingerprint() offline, with the game's per-call clock imitated (process_time and perf_counter
-start at 0 every call), for several splits W, and the bee's levels() on each response. Reports per R: mean and
-spread of the magnitude U, per-dimension spread, the angle by which one direction's estimates scatter, the share
-of responses whose nearest prototype (by cosine) is the split that made them, check time and response size.
-Run it on an idle machine.
+1. Per R (3, 20, 76, 150 ms) and per split W: the level vector's size U (mean, spread), the spread per
+   dimension, how far a response's direction lands from its split (degrees), how often the nearest split (by
+   cosine) is the right one, the bee's check time, response bytes, and the flower's own record f (the share of
+   0.6 R it actually spent: conformance).
+2. Selective feeding: R drawn uniformly from 3..150 as in a game; the bee reads U and feeds only when U is at
+   least a threshold. For each threshold: the share of turns fed, the mean R of fed turns, nectar per feed and
+   per round (a feed costs 20 rounds, a leave 1) for an honest flower of --size nodes at 50%, against feeding
+   blindly at a 40-node veteran giving 15% or 25%.
+The game's per-call clock is imitated (process_time and perf_counter start at 0 every call). Run it on an
+idle machine.
 """
 import sys
-sys.dont_write_bytecode = True     # keep __pycache__ out of the priming folder
-import importlib.util, json, math, os, statistics, sys, time
+sys.dont_write_bytecode = True          # keep __pycache__ out of the priming folder
+import importlib.util, json, math, os, random, statistics, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+arg = lambda k, d: sys.argv[sys.argv.index(k) + 1] if k in sys.argv else d
+FLOWER, CALLS, SIZE = arg("--flower", "fingerprint"), int(arg("--calls", 40)), int(arg("--size", 302))
 
 
 def load(name):
@@ -23,12 +29,7 @@ def load(name):
     return m
 
 
-fp, bee = load("fingerprint"), load("bee")
-CALLS = int(sys.argv[sys.argv.index("--calls") + 1]) if "--calls" in sys.argv else 40
-
-
 class Clock:
-    """The game's per-call clock: both counters start at zero when a call starts."""
     def __init__(self):
         self.p, self.w = time.process_time(), time.perf_counter()
     def process_time(self):
@@ -37,38 +38,62 @@ class Clock:
         return time.perf_counter() - self.w
 
 
+fp, bee = load(FLOWER), load("bee")
 K = len(fp.T)
-SPLITS = [tuple(1 for _ in range(K))] + [tuple(3 if e == d else 1 for e in range(K)) for d in range(K)]
-cos = lambda a, b: sum(x * y for x, y in zip(a, b)) / (math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b)) or 1)
+bee.T = tuple(t if len(t) == 3 else (t[0], t[1], 0) for t in fp.T)
+bee.K, bee.KEYS = K, "abcd"[:K]
+
+
+def call(c, R, W):
+    # One flower call with budget R and split W, then the bee's check: (L, check ms, bytes, f, cpu ms).
+    fp.GAME, fp.W, fp.time = {"ms": R}, W, Clock()
+    resp, _ = fp.flower(c)
+    cpu = fp.time.process_time() * 1000
+    bee.time = Clock()
+    t = time.perf_counter()
+    L = bee.levels(c, resp) or [0] * K
+    return L, (time.perf_counter() - t) * 1000, len(json.dumps(resp, separators=(",", ":"))), resp["labels"][-1][1], cpu
+
+
+splits = ["".join(map(str, range(K)))] + ["".join(str(e) for e in range(K) for _ in range(3 if e == d else 1)) for d in range(K)]
+vec = lambda W: [W.count(str(d)) for d in range(K)]
+cos = lambda a, b: sum(x * y for x, y in zip(a, b)) / ((math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b))) or 1)
 
 for R in (3, 20, 76, 150):
-    stats = {"R": R}
-    Us, hits, angles, checks, sizes, per_dim_sd = [], 0, [], [], [], []
-    for w in SPLITS:
-        vecs = []
+    Us, hits, ang, checks, sizes, fs, dsd = [], 0, [], [], [], [], []
+    for W in splits:
+        vs = []
         for j in range(CALLS):
-            c = 1000003 * j + 17 * R + sum(w)
-            fp.time = Clock()
-            resp = fp.fingerprint(c, w, R)
-            sizes.append(len(json.dumps(resp, separators=(",", ":"))))
-            bee.time = Clock()
-            t = time.perf_counter()
-            L = bee.levels(c, resp)
-            checks.append((time.perf_counter() - t) * 1000)
-            L = L or [0] * K
-            vecs.append(L)
-            Us.append(sum(L))
+            L, chk, b, f, _ = call(1000003 * j + 7 * R + len(W), R, W)
+            vs.append(L)
+            Us.append(sum(L)); checks.append(chk); sizes.append(b); fs.append(f)
             if sum(L):
-                best = max(SPLITS, key=lambda s: cos(s, L))
-                hits += best == w
-                angles.append(math.degrees(math.acos(min(1, cos(w, L)))))
-        per_dim_sd.append(statistics.mean(statistics.pstdev([v[d] for v in vecs]) for d in range(K)))
-    n = CALLS * len(SPLITS)
-    stats.update({"U_mean": round(statistics.mean(Us), 1), "U_sd": round(statistics.pstdev(Us), 1),
-                  "dim_sd": round(statistics.mean(per_dim_sd), 1),
-                  "angle_from_split_deg_median": round(statistics.median(angles), 1) if angles else None,
-                  "nearest_split_correct": round(hits / n, 2),
-                  "angle_between_splits_deg": round(math.degrees(math.acos(cos(SPLITS[0], SPLITS[1]))), 1),
-                  "check_ms_p50": round(statistics.median(checks), 2), "check_ms_max": round(max(checks), 2),
-                  "bytes_p50": int(statistics.median(sizes)), "bytes_max": max(sizes)})
-    print(json.dumps(stats), flush=True)
+                hits += max(splits, key=lambda s: cos(vec(s), L)) == W
+                ang.append(math.degrees(math.acos(min(1, cos(vec(W), L)))))
+        dsd.append(statistics.mean(statistics.pstdev(v[d] for v in vs) for d in range(K)))
+    n = CALLS * len(splits)
+    print(json.dumps({"R": R, "U_mean": round(statistics.mean(Us), 1), "U_sd": round(statistics.pstdev(Us), 1),
+                      "dim_sd": round(statistics.mean(dsd), 1), "angle_med_deg": round(statistics.median(ang), 1) if ang else None,
+                      "split_angle_deg": round(math.degrees(math.acos(cos(vec(splits[0]), vec(splits[1])))), 1),
+                      "nearest_split_right": round(hits / n, 2), "check_ms_p50": round(statistics.median(checks), 2),
+                      "check_ms_max": round(max(checks), 2), "bytes_max": max(sizes),
+                      "f_p50": round(statistics.median(fs), 3), "f_min": round(min(fs), 3), "f_max": round(max(fs), 3)}), flush=True)
+
+# Selective feeding.
+rnd = random.Random(5)
+turns = []
+for j in range(CALLS * 10):
+    R = rnd.uniform(3, 150)
+    L, _, _, _, cpu = call(5000011 * j + 3, R, splits[0])
+    turns.append((sum(L), R, 0.5 * (1100 - SIZE) * max(0.0, R - cpu)))
+vet = lambda pct: statistics.mean(pct * 1060 * max(0.0, R - 0.6) for _, R, _ in turns)
+print(json.dumps({"veteran_15_per_feed": round(vet(0.15)), "veteran_25_per_feed": round(vet(0.25)),
+                  "veteran_15_per_round": round(vet(0.15) / 21), "veteran_25_per_round": round(vet(0.25) / 21)}))
+for th in (0, 10, 20, 30, 40, 50, 60, 70, 80):
+    sel = [t for t in turns if t[0] >= th]
+    if not sel:
+        break
+    q = len(sel) / len(turns)
+    per_feed = statistics.mean(t[2] for t in sel)
+    print(json.dumps({"U_threshold": th, "fed_share": round(q, 2), "mean_R_fed": round(statistics.mean(t[1] for t in sel), 1),
+                      "honest_per_feed": round(per_feed), "honest_per_round": round(q * per_feed / (1 + 20 * q))}), flush=True)

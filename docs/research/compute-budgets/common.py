@@ -136,7 +136,7 @@ def cg_remove(ctrl, name):
 # --- workloads -----------------------------------------------------------------------------------------------
 
 
-def work_interp(n=60000):
+def work_interp(n=110000):
     """Interpreter-bound flower-like work: small data, hashing, dict and list operations. Deterministic."""
     import hashlib
     d = {}
@@ -153,7 +153,7 @@ def work_interp(n=60000):
     return acc, h.hexdigest()
 
 
-def work_memory(n=120000):
+def work_memory(n=70000):
     """Memory-bound work: a dict and lists of ~n entries (tens of MB touched), random access. Deterministic."""
     d = {}
     for i in range(n):
