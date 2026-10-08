@@ -325,6 +325,9 @@ export class Garden {
     this.feedPrice = feedPriceOf(config);     // what a feed costs the bee, out of its nectar
     this.beeMs = config.budgets.bee.ms;       // the bees' decision window: CPU time
     this.beeWallMs = wallLimits(config).bee; // when a decision with no reply is judged (wall)
+    // A bee busy this long (ms of wall time) has lost a reply: past the runner's hard wall limit, proc.js's
+    // backstop after it, and a fed() ahead of the call.
+    this.stuckMs = wallLimits(config).beeHard + 1500 + this.beeWallMs + 1500 + 2000;
     this.paced = paced;
     this.game = game;
     this.memoryCap = config.budgets.bee.memory;
@@ -343,6 +346,8 @@ export class Garden {
       turn: null,        // the turn in progress
       queued: null,      // the challenge for its next turn: { c }
       busy: false,       // a call is in flight (or the bee is in a turn): no other request goes to it
+      busySince: null,   // performance.now() its latest call (or turn) began: the stuck-bee watchdog's clock
+      inFlight: null,    // a late (or void) decision's reply, still to come
       asking: null,      // a request outside the round flow (loading, first()): { inTime }
       askedRound: -1,    // the round of its latest first() request (one new one a round)
       log: "",           // printed output not yet attached to an action
@@ -350,7 +355,7 @@ export class Garden {
       memory: memories?.[ti]?.memory ?? EMPTY_MEMORY, memoryVersion: memories?.[ti]?.version ?? null,
       memoryError: memories?.[ti]?.error ?? null, memoryChanged: false,
       fedDone: null,     // a fed() call in flight: the bee's next request waits for it (and its MEMORY)
-      fedNote: null,     // what went wrong in the last fed(), for the bee's next turn's beeError
+      fedNote: null,     // what went wrong in the last fed() (or a watchdog restart), for the bee's next turn's beeError
     }));
     this.feeds = ledgers?.feeds ?? zeroLedger(teams);
     this.nectar = ledgers?.nectar ?? zeroLedger(teams);
@@ -471,7 +476,11 @@ export class Garden {
     // The round boundary: new bees take over, crashed ones start afresh, bees with nothing queued are asked
     // first() again.
     for (const b of this.bees) this.#boundary(b);
-    if (!this.paced) await this.#awaitRequests();
+    if (!this.paced) {
+      await this.#awaitRequests();
+      // Never a round of microtasks only: replies (I/O) must get in between unpaced rounds.
+      await new Promise((resolve) => setImmediate(resolve));
+    }
     this.#prevalenceAt(r, start);
     // Turns. Feeding bees sit out; a bee with nothing queued (or a call still in flight) loses its turn. With
     // prevalence, the round's slots are filled from the others by bee success; the rest wait.
@@ -496,6 +505,7 @@ export class Garden {
       };
       b.queued = null;
       b.busy = true;
+      b.busySince = performance.now();
       b.turn = t;
       slot.pool.users++;
       this.#record(t, "arrive", {}, start);
@@ -598,6 +608,18 @@ export class Garden {
   }
 
   #boundary(b) {
+    // The stuck-bee watchdog: every call ends by the runner's backstop (proc.js kills a runner that stops
+    // answering, and its call is answered then), so a bee still busy well past that has lost its reply. It
+    // must never sit out the rest of the game: its runner is restarted (MEMORY kept), and its team told.
+    if (b.busy && !b.loading && !b.turn && b.busySince !== null && b.proc && performance.now() - b.busySince > this.stuckMs) {
+      const note = `the bee's call got no reply in ${Math.round((performance.now() - b.busySince) / 1000)} s: its runner was restarted`;
+      this.#problem(b.ti, "bee", b.version, note); // (a version's first problem only)
+      const { code, version } = b.pending ?? b;
+      b.pending = null;
+      this.#startBee(b, code, version);
+      b.fedNote = note; // shows with its next turn, as a fed() problem does
+      return;
+    }
     if (b.proc && !b.broken && b.proc.dead) { // crashed or hung: it starts afresh (with its new code, if any)
       const { code, version } = b.pending ?? b;
       b.pending = null;
@@ -612,6 +634,7 @@ export class Garden {
     b.log = "";
     b.proc?.kill(); // its call in flight, if any, ends at once (and frees its core); the reply is ignored
     b.gen++;
+    b.inFlight = null;
     b.fedDone = null;
     b.fedNote = null;
     b.code = code;
@@ -653,11 +676,13 @@ export class Garden {
       return withCpu(async () => {
         const t0 = performance.now();
         began(t0);
+        if (b.proc === proc) b.busySince = t0; // (the watchdog counts from when it got its core)
         const res = await proc.call({ ...req, memory: b.memory }, undefined, onNotice); // MEMORY as saved after its last call
         return { res, ms: performance.now() - t0 };
       });
     })();
     b.busy = true;
+    b.busySince = performance.now();
     return { gen: b.gen, started, done };
   }
 
@@ -688,7 +713,11 @@ export class Garden {
     const waited = new Set();
     for (;;) {
       const asks = this.bees.map((b) => b.asking).filter((a) => a && !waited.has(a))
-        .concat(this.bees.filter((b) => b.fedDone && b.sitOut === 0 && !waited.has(b.fedDone)).map((b) => ({ key: b.fedDone, inTime: b.fedDone })));
+        .concat(this.bees.filter((b) => b.fedDone && b.sitOut === 0 && !waited.has(b.fedDone)).map((b) => ({ key: b.fedDone, inTime: b.fedDone })))
+        // A late (or void) decision still running: wait for its reply (at most the runner's backstop), so an
+        // unpaced garden doesn't run its rounds past a bee that is only slow.
+        .concat(this.bees.filter((b) => b.busy && b.inFlight && !waited.has(b.inFlight))
+          .map((b) => ({ key: b.inFlight, inTime: Promise.race([b.inFlight, sleep(Math.max(0, b.busySince + this.stuckMs - performance.now()) + 10)]) })));
       if (!asks.length) return;
       for (const a of asks) waited.add(a.key ?? a);
       await Promise.all(asks.map((a) => a.inTime));
@@ -769,7 +798,7 @@ export class Garden {
       // the bee asks the same challenge again.
       t.beeError = "server fault: the bee waited for a CPU most of its time; the turn is void";
       t.energy = 0; // nothing given, and nothing lost
-      logged(call.done.then(({ res: late }) => {
+      b.inFlight = logged(call.done.then(({ res: late }) => {
         if (call.gen !== b.gen || this.closed) return;
         b.busy = false;
         this.#onVoided(b, late, t.c);
@@ -779,7 +808,7 @@ export class Garden {
     // Late: used its CPU time (or no word by the backstop). Settled as no feed; the call runs on.
     t.beeError = `too slow: used over ${this.beeMs} ms of CPU`;
     this.#problem(b.ti, "bee", b.version, t.beeError);
-    logged(call.done.then(({ res: late }) => {
+    b.inFlight = logged(call.done.then(({ res: late }) => {
       if (call.gen !== b.gen || this.closed) return;
       b.busy = false;
       this.#onLate(b, late);

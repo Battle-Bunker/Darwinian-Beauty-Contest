@@ -7,6 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Garden, tryBee, tryFlower } from "../server/engine.js";
+import { ProgramProcess } from "../server/runners/proc.js";
 import { mask } from "../server/query/mask.js";
 import { starters } from "./fixtures/programs.js";
 import { play } from "./fixtures/garden.js";
@@ -769,4 +770,39 @@ test("try a bee: unpaced, in a garden of its own flower, with a simulated MEMORY
   assert.ok(r.actions.length > 20 && r.feeds > 0 && r.nectar > 0 && r.pollen > 0);
   assert.ok(r.memory.value.turns > 41 && r.memory.cap === 50, JSON.stringify(r.memory));
   assert.equal(ends(r.actions)[0].action, "leave", "it started from the memory it was given (41 turns: the next is even)");
+});
+
+test("unpaced: a bee whose decision runs over its 50 ms is late once, then plays on (its rounds don't run past it)", async () => {
+  // (A try or an analysis garden used to run all its remaining rounds while the late call ran, without letting
+  // its reply in: the bee seemed to stall for the rest of the run.)
+  const bee = `import time\ndef first():\n    return 1\ndef decide(c, r):\n    if c == 5:\n        while time.process_time() < 0.08:\n            pass\n    return "leave", c + 1\n`;
+  for (const config of [normalizeConfig({}), classic()]) {
+    const out = await play(config, [{ flower: flower("c"), bee }], 60);
+    const turns = ends(out.actions);
+    assert.equal(turns.filter((a) => /too slow/.test(a.beeError ?? "")).length, 1, "late once");
+    assert.ok(turns.length >= 58, `${turns.length} turns in 60 rounds`);
+    assert.ok(turns.at(-1).round >= 59, "it plays to the end");
+  }
+});
+
+test("the stuck-bee watchdog: a bee whose reply never comes is restarted, its team told, and it plays on", async () => {
+  const real = ProgramProcess.prototype.call;
+  let decides = 0;
+  ProgramProcess.prototype.call = function (obj, ...rest) {
+    // The third decision's reply is lost (it comes back only long after the watchdog).
+    if (obj && typeof obj === "object" && obj.op === "decide" && ++decides === 3) {
+      return new Promise((resolve) => { const t = setTimeout(() => resolve({ e: "lost", out: "" }), 8000); t.unref?.(); });
+    }
+    return real.call(this, obj, ...rest);
+  };
+  try {
+    const bee = `def first():\n    return 1\ndef decide(c, r):\n    MEMORY["n"] = MEMORY.get("n", 0) + 1\n    return "leave", c + 1\n`;
+    const out = await play(normalizeConfig({}), [{ flower: flower("c"), bee }], 30, async (garden) => { garden.stuckMs = 1500; });
+    const turns = ends(out.actions);
+    assert.match(turns[2].beeError, /too slow/, "the lost decision is settled as late");
+    const told = turns.find((a) => /got no reply in \d+ s: its runner was restarted/.test(a.beeError ?? ""));
+    assert.ok(told && told.round > turns[2].round, "the team is told, with the bee's next turn");
+    assert.ok(turns.length >= 20 && turns.at(-1).round >= 29, `it plays on: ${turns.length} turns, the last in round ${turns.at(-1).round}`);
+    assert.ok(JSON.parse(out.memories.at(-1).memory).n >= 15, "with its MEMORY");
+  } finally { ProgramProcess.prototype.call = real; }
 });
