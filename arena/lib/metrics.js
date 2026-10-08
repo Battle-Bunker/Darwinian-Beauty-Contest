@@ -40,6 +40,7 @@
 // (computeGameMetrics fetches them from GET .../responses/:seq); past that, a response's shape is its hash.
 import { Api } from "./api.js";
 import { autarky, energySplit, imitation, percentOverTime, predictions, rotation, shapeOf } from "./ecology.js";
+import { excessEnergy } from "./energy.js";
 import { grainMetrics } from "./grains.js";
 import { wealthMetrics } from "./wealth.js";
 
@@ -191,11 +192,14 @@ export function computeMetrics({ game, teams: teamRows, turns: turnRows, version
     const [team, version] = k.split(":");
     const fed = ts.filter((t) => t.action === "feed"), ms = ts.map((t) => t.ms).filter((x) => x != null);
     const size = sizeOf.get(`${team}:${version}`) ?? null;
+    // Its most energy per turn: at R = the window and no compute, and (in a game with the byte factor) at its median
+    // response's bytes.
+    const medBytes = median(ts.map((t) => t.rBytes).filter((x) => x != null));
     versions.push({ team: name[team], teamId: team, version: version === "?" ? null : Number(version), atMs: liveAt.get(`${team}:flower:${version}`) ?? null, size,
-      maxEnergy: size != null ? (cap - size) * flowerMs : null, turns: ts.length, feeds: fed.length, feedRate: r3(ts.length ? fed.length / ts.length : null),
+      maxEnergy: size != null ? excessEnergy(config, { size, ms: 0, R: flowerMs, bytes: medBytes ?? 0 }) : null, turns: ts.length, feeds: fed.length, feedRate: r3(ts.length ? fed.length / ts.length : null),
       meanMs: r3(mean(ms)), p90Ms: r3(quantile(ms, 0.9)), meanEnergy: r3(mean(ts.map((t) => t.energy || 0))), meanPercent: r3(mean(ts.map((t) => t.percent).filter((x) => x != null))),
       nectarPerFeed: r3(fed.length ? sum(fed.map((t) => t.nectar)) / fed.length : null), pollen: r3(sum(fed.map((t) => t.pollen))), failures: ts.filter((t) => t.r == null).length,
-      medianResponseBytes: median(ts.map((t) => t.rBytes).filter((x) => x != null)) });
+      medianResponseBytes: medBytes });
   }
   versions.sort((a, b) => String(a.team).localeCompare(String(b.team)) || (a.version ?? 0) - (b.version ?? 0));
 
@@ -308,7 +312,8 @@ export function computeMetrics({ game, teams: teamRows, turns: turnRows, version
     copies: { matches: copies.length, copies: att.length, medianLatencyMs: median(att.map((x) => x.latencyMs)), byCopier },
     changes, final, memory, ecology, grains, wealth,
     config: { minutes: config.minutes, feedCost: config.feedCost, challengeType: config.challengeType, responseType: config.responseType, budgets: config.budgets,
-      grains: config.grains ?? null, pollenGrain: config.pollenGrain ?? null, maxResponseBytes: config.maxResponseBytes ?? null, scoring: config.scoring ?? null },
+      grains: config.grains ?? null, pollenGrain: config.pollenGrain ?? null, maxResponseBytes: config.maxResponseBytes ?? null, scoring: config.scoring ?? null,
+      energy: config.energy ?? null },
     clockMs: Number(game.clockMs) || 0, round: Number(game.round) || 0,
   };
 }

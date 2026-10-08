@@ -1,7 +1,8 @@
 // What a team's programs do (one flower per team): deterministic keyword checks on the code, and a haiku classifier (cached
 // on disk by program skeleton) that reads a team's flower and bee versions of one game together. In this variant a costly
-// signal costs the flower energy (E = (size cap − size) × max(0, 150 − CPU ms)), so the labels say both what a flower
-// proves and how it pays for it: its signalling mechanism and its percent policy. Never a Fable model.
+// signal costs the flower energy (E = (size cap − size) × max(0, R − CPU ms), R the call's hidden budget, times
+// (byte cap − response bytes) / byte cap in games with the byte factor: lib/energy.js), so the labels say both what a
+// flower proves and how it pays for it: its signalling mechanism and its percent policy. Never a Fable model.
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
