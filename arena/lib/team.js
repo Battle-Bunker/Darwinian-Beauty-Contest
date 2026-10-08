@@ -176,11 +176,12 @@ export function statusOf(view, teamId, { afford = null, code = false, memory = f
   const prev = prevalenceOf(config) ? currentOf(view) : null;
   if (prev?.length) {
     const teamOf = (t) => (name[t] ? { id: t, name: name[t] } : view.teams.find((x) => x.index === Number(t)) ?? view.teams[Number(t)] ?? { id: null, name: String(t) });
-    out.prevalence = prev.map((x) => { const t = teamOf(x.team); return { species: t.name, teamId: t.id, F: x.F, B: x.B, pF: x.pF, pB: x.pB, fitness: x.fitness }; });
+    out.prevalence = prev.map((x) => { const t = teamOf(x.team); return { species: t.name, teamId: t.id, F: x.F, B: x.B, pF: x.pF, pB: x.pB, fitness: x.fitness, balance: x.balance }; });
+    const bal = out.prevalence.some((x) => x.balance != null);
     const f = (v, d = 2) => (v == null ? "-" : Number(v).toFixed(d));
-    lines.push(`Prevalence now (F: the species' flower success, pF: the chance a visit is to it; B: the bee's success, pB: its share of the bee weights; par 1; fitness: F × B's time-average so far):\n` +
+    lines.push(`Prevalence now (F: the species' flower success, pF: the chance a visit is to it; B: the bee's success, pB: its share of the bee weights; par 1;${bal ? " the bee's nectar balance;" : ""} fitness: F × B's time-average so far):\n` +
       [...out.prevalence].sort((a, b) => (b.fitness ?? 0) - (a.fitness ?? 0))
-        .map((x) => `  ${x.species}${x.teamId === teamId ? " (you)" : ""}: F ${f(x.F)} (pF ${f(x.pF, 3)}), B ${f(x.B)} (pB ${f(x.pB, 3)}), fitness ${f(x.fitness)}`).join("\n"));
+        .map((x) => `  ${x.species}${x.teamId === teamId ? " (you)" : ""}: F ${f(x.F)} (pF ${f(x.pF, 3)}), B ${f(x.B)} (pB ${f(x.pB, 3)})${bal ? `, balance ${x.balance == null ? "-" : n0(x.balance)}` : ""}, fitness ${f(x.fitness)}`).join("\n"));
   }
   out.text = lines.join("\n");
   return out;

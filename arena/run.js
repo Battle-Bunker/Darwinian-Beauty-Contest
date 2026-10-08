@@ -94,7 +94,8 @@ async function ensureArena(id, presetName, games, extra = {}) {
       const src = await one("SELECT * FROM arena.personas WHERE id = $1", [source.slice(5)]);
       if (!src) throw new Error(`unknown source persona ${source}`);
       // A seeded persona keeps its notes as they were (the same rules); else they come with a caveat.
-      const nb = !src.notebook ? "" : opts.seed ? `(Your notes from your last tournament.)\n${src.notebook}`
+      // (olderRules: carried over as it was, but from a tournament with older rules: its notes get the caveat.)
+      const nb = !src.notebook ? "" : opts.seed && !opts.olderRules ? `(Your notes from your last tournament.)\n${src.notebook}`
         : `(Your notes from an earlier tournament, possibly under older rules. Some of it may not apply any more.)\n${src.notebook}`;
       // uncap: the persona without its coding limits (a kid's "only things you understand"); the rest of it as it was.
       row = { slug: src.slug, name: src.name, teamName: src.team_name, archetype: src.archetype, isKid: src.is_kid, prompt: opts.uncap ? withoutCodingLimits(src.slug, src.persona_prompt) : src.persona_prompt, notebook: nb, source: src.id };

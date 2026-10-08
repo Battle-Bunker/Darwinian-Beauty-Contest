@@ -131,11 +131,34 @@ const COOP_LINEUP = [
 // 200 ms) while R runs from 1 to 50 ms; change budgets of 1 node a second for flowers (banking 300) and 10 for bees
 // (3,000); E with the byte factor, a 1,024-byte response cap, exponents 0.85, grains of ⌊0.1 × pollen^(1/3)⌋ characters.
 const COOP_RULES = { feedCost: 0, flowerWindowMs: 150, feedPrice: null, maxResponseBytes: 1024, maxLen: 64, maxNodes: 512, revealOnFinish: true,
-  grains: GRAINS, pollenGrain: { exponent: 1 / 3, scale: 0.1 }, energy: { bytes: true }, scoring: { alpha: 0.85, beta: 0.85 }, prevalence: { on: true, halfLifeS: 90, cStart: 1, cEnd: 0.1, cap: 4, slots: 0.25, prior: null },
+  grains: GRAINS, pollenGrain: { exponent: 1 / 3, scale: 0.1 }, energy: { bytes: true }, scoring: { alpha: 0.85, beta: 0.85 }, prevalence: { on: true, halfLifeS: 90, cStart: 1, cEnd: 0.1, cap: 4, slots: 0.25, prior: null, pools: false, endowment: null },
   budgets: { flower: { size: 1100, perMinute: 60, cap: 300, ms: 50, minMs: 1 }, bee: { size: 11000, perMinute: 600, cap: 3000, ms: 50, memory: 50 } } };
+// (pools false: coop-eq ran v2's per-cell bee success; the engine's default is v3's balance since 35b3b5d.)
 const COOP_CONFIG = { language: "python", challengeType: "int", responseType: "graph[any]", ...COOP_RULES };
 // ...every one of them checked on the game (an engine without v2 would drop or default some).
 const COOP_EXPECT = expectOf(COOP_RULES);
+
+// explore-1 (mesa-d): the first of a series looking for settings where trust-signalling sophistication keeps growing. 10
+// teams on opus at high effort in one continuous 60-minute game: 5 pinned cooperators (coop-eq's mandate, floors 20%),
+// 3 pinned defectors (Rex, Vikram and a new persona, Joel) and 2 veterans (Mallory, Priya). Every team that played mesa-c
+// carries over from it (final programs, notebook, workspace files such as its scaffold) so the metagame continues;
+// Vikram carries over from mesa-a (its notes come with the older-rules caveat: mesa-a played before prevalence); Joel
+// starts fresh. The cooperators keep fingerprints/ as their common folder and start from their own carried programs.
+const EXPLORE_HONEST = { role: "honest", brief: "contract", common: HONEST_HI_DIRS, seed: true };
+const EXPLORE_DEFECTOR = { role: "defector", brief: "pinned" };
+const EXPLORE_LINEUP = [
+  ["from:mesa-c/tobi", "opus", EXPLORE_HONEST], ["from:mesa-c/sofia", "opus", EXPLORE_HONEST], ["from:mesa-c/ines", "opus", EXPLORE_HONEST],
+  ["from:mesa-c/hana", "opus", EXPLORE_HONEST], ["from:mesa-c/marcus", "opus", EXPLORE_HONEST],
+  ["from:mesa-c/rex", "opus", { ...EXPLORE_DEFECTOR, seed: true }], ["from:mesa-a/vik", "opus", { ...EXPLORE_DEFECTOR, seed: true, olderRules: true }],
+  ["joel", "opus", EXPLORE_DEFECTOR],
+  ["from:mesa-c/mallory", "opus", VETERAN], ["from:mesa-c/priya", "opus", HI_KID],
+];
+// Its rules: metagame v3 (prevalence.pools: the bee's single linear nectar balance, starting at the endowment, null =
+// 10 × the feed price = 28,160,000, relaxing toward it with the half-life; no feeding below the price; flowers keep
+// per-bee-team pollen cells with ^0.85), everything else as coop-eq; every key set and checked.
+const EXPLORE_RULES = { ...COOP_RULES, prevalence: { ...COOP_RULES.prevalence, pools: true, endowment: null } };
+const EXPLORE_CONFIG = { language: "python", challengeType: "int", responseType: "graph[any]", ...EXPLORE_RULES };
+const EXPLORE_EXPECT = expectOf(EXPLORE_RULES);
 
 export const DEFAULT_SESSION = { warmupSeconds: 8, gapSeconds: 5, maxIdleGapSeconds: 20, endMarginSeconds: 10, maxMinutes: 6 };
 
@@ -259,6 +282,37 @@ export const PRESETS = {
     social: false,
   },
   // Its dry-run twin with the stub `claude`: a 3-minute game after a 1-minute lobby.
+  explore10: {
+    description: "explore-1: 5 pinned cooperators, 3 pinned defectors and 2 veterans carried over from mesa-c (Vikram from mesa-a, Joel new), all on opus at high effort; one 60-minute game, metagame v3",
+    config: EXPLORE_CONFIG,
+    minutesByGame: [60],
+    lineup: EXPLORE_LINEUP,
+    session: { warmupSeconds: 10, gapSeconds: 5, idleBackoff: false, maxIdleGapSeconds: 5, endMarginSeconds: 20, maxMinutes: 10, penaltyMinutes: 6, lobbyMinutes: 10, effort: "high", nice: 15 },
+    limits: { lobby: { opus: { turns: 100, usd: 6 } }, game: { opus: { turns: 60, usd: 3 } } },
+    prompts: { brevity: false, simpleCode: false },
+    honest: HI_CONTRACT,
+    concurrency: 16,
+    expectConfig: EXPLORE_EXPECT,
+    scaffold: { cpuShare: 0.05 },
+    reserveUsd: 10,
+    noEvolution: true,
+    social: false,
+  },
+  "dry-explore10": {
+    description: "dry run of explore-1: the same 10 teams with the stub claude, one 3-minute game",
+    config: EXPLORE_CONFIG,
+    minutesByGame: [3],
+    lineup: EXPLORE_LINEUP,
+    session: { warmupSeconds: 3, gapSeconds: 2, idleBackoff: false, maxIdleGapSeconds: 2, endMarginSeconds: 3, maxMinutes: 2, lobbyMinutes: 1, effort: "high", nice: 15 },
+    prompts: { brevity: false, simpleCode: false },
+    honest: HI_CONTRACT,
+    concurrency: 16,
+    expectConfig: EXPLORE_EXPECT,
+    scaffold: { cpuShare: 0.05 },
+    reserveUsd: 0,
+    noEvolution: true,
+    social: false,
+  },
   "dry-coop10": {
     description: "dry run of coop-eq: the same 10 teams with the stub claude, one 3-minute game",
     config: COOP_CONFIG,
@@ -354,6 +408,21 @@ export const EXPERIMENTS = {
     gameUsd: 300, // the game starts only if this much fits under the cap (10 opus teams: lobby up to $6, play up to $3 a session)
     capUsd: 600,
     cohorts: [{ id: "mesa-c", arm: "coop-eq", label: "coop-eq" }],
+  },
+  "explore-1": {
+    description: "explore-1: 5 pinned cooperators, 3 pinned defectors and 2 veterans, the metagame carried on from mesa-c, in one 60-minute game of metagame v3",
+    preset: "explore10",
+    games: 1,
+    gameUsd: 300, // the game starts only if this much fits under the cap (10 opus teams: lobby up to $6, play up to $3 a session)
+    capUsd: 600,
+    cohorts: [{ id: "mesa-d", arm: "explore-1", label: "explore-1" }],
+  },
+  "explore-1-dry": {
+    description: "dry run of explore-1 with the stub claude: 10 teams, one 3-minute game (its seeds need mesa-c and mesa-a in the database)",
+    preset: "dry-explore10",
+    games: 1,
+    gameUsd: 0,
+    cohorts: [{ id: "dry-e", arm: "explore-1", label: "explore-1" }],
   },
   "coop-eq-dry": {
     description: "dry run of coop-eq with the stub claude: 10 teams, one 3-minute game",

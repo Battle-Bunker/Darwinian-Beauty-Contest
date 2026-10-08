@@ -15,20 +15,29 @@
 // GET .../scores as prevalence.sample, beside the settings and the resolved feedPrice; GET .../prevalence as samples),
 // and the `prevalence` query entity, one row per team and sample ({ round, atMs, team (index), flowerSuccess, beeSuccess,
 // flowerP, beeP, fitness, c, slots }). GAME has feed_price (resolved; 0 when off) and flower_window_ms.
+// Metagame v3 (prevalence.pools, the engine's default since 35b3b5d): B_b is instead N × the bee's share of the bees'
+// nectar balances (each floored at 0, capped): a single linear balance that starts at the endowment (prevalence.endowment,
+// null = 10 × the feed price), gains each feed's net nectar and relaxes toward the endowment with the half-life; a bee
+// whose balance is below the price can't feed (its feed is settled as a leave, beeError "too poor to feed"). F is as in
+// v2. Samples' species entries, feed actions and turns (and the query entities) carry `balance`. A stored v2 config (with
+// `slots`, no `pools`) keeps the v2 bee formula.
 import { emaxOf, energyUnit } from "./energy.js";
 
-/** The engine's defaults: the feed price and every ledger cell's prior, as shares of Emax. */
+/** The engine's defaults: the feed price and every ledger cell's prior, as shares of Emax; a bee's endowment, in prices. */
 export const FEED_PRICE_SHARE = 0.05;
 export const PRIOR_SHARE = 0.12;
+export const ENDOWMENT_FEEDS = 10;
 
-/** The game's prevalence settings ({ halfLifeS, cStart, cEnd, cap, slots, prior }, the prior resolved; halfLifeS and cap
- * may be null: cumulative, uncapped), or null when it plays the old way (no prevalence, on false, or no `slots`). */
+/** The game's prevalence settings ({ halfLifeS, cStart, cEnd, cap, slots, prior, pools, endowment }, the prior and the
+ * endowment resolved; halfLifeS and cap may be null: cumulative, uncapped), or null when it plays the old way (no
+ * prevalence, on false, or no `slots`). pools (v3: the bee's single nectar balance) only when the config says so: a
+ * stored v2 config has no `pools` key. */
 export function prevalenceOf(config) {
   const p = config?.prevalence;
   if (!p || typeof p !== "object" || !("slots" in p) || p.on !== true) return null;
-  const or = (v, d) => (v === undefined ? d : v);
+  const or = (v, d) => (v === undefined ? d : v), pools = p.pools === true;
   return { halfLifeS: or(p.halfLifeS, 90), cStart: p.cStart ?? 1, cEnd: p.cEnd ?? 0.1, cap: or(p.cap, 4), slots: p.slots ?? 0.25,
-    prior: p.prior ?? PRIOR_SHARE * emaxOf(config) };
+    prior: p.prior ?? PRIOR_SHARE * emaxOf(config), pools, endowment: pools ? p.endowment ?? ENDOWMENT_FEEDS * feedPriceOf(config) : null };
 }
 
 /** c at game time t (ms) of a game lasting durationMs: linear from cStart to cEnd. */
@@ -70,15 +79,15 @@ export function windowOf(config) {
  * timeAverage (the score is the time-average of F × B) }. */
 export function coopRules(config, n = null) {
   const p = prevalenceOf(config), emax = emaxOf(config), price = feedPriceOf(config), windowMs = windowOf(config);
-  return { on: !!p, slots: p?.slots ?? null, perRound: n ? slotsOf(config, n) : null, price, priceShare: emax > 0 ? price / emax : null, emax,
+  return { on: !!p, pools: !!p?.pools, endowment: p?.endowment ?? null, slots: p?.slots ?? null, perRound: n ? slotsOf(config, n) : null, price, priceShare: emax > 0 ? price / emax : null, emax,
     unit: energyUnit(config), windowMs, roundMs: windowMs + (config?.budgets?.bee?.ms ?? 50), timeAverage: !!p };
 }
 
 const num = (v) => { const x = Number(v); return v != null && v !== "" && Number.isFinite(x) ? x : null; };
 
 /** One team at one sample, from a sample's species entry or a query row: { atMs, round, team (id or index), index, F
- * (flower success), B (bee success), pF (its species' draw chance), pB (its bee's), fitness, c }. Also reads the
- * superseded one-sided shape (p, P / success) as the flower side. */
+ * (flower success), B (bee success), pF (its species' draw chance), pB (its bee's), fitness, c, balance (its bee's nectar
+ * balance, v3) }. Also reads the superseded one-sided shape (p, P / success) as the flower side. */
 export function sampleOf(row) {
   if (!row || typeof row !== "object") return null;
   const atMs = num(row.atMs ?? row.at_ms ?? row.clockMs);
@@ -86,7 +95,8 @@ export function sampleOf(row) {
   const F = num(row.flowerSuccess ?? row.flower_success ?? row.P ?? row.success), B = num(row.beeSuccess ?? row.bee_success);
   const pF = num(row.flowerP ?? row.flower_p ?? row.p), pB = num(row.beeP ?? row.bee_p);
   if (atMs == null || team == null || (pF == null && F == null)) return null;
-  return { atMs, round: num(row.round), team, index: num(row.index), F, B, pF, pB, fitness: num(row.fitness), c: num(row.c) };
+  return { atMs, round: num(row.round), team, index: num(row.index), F, B, pF, pB, fitness: num(row.fitness), c: num(row.c),
+    balance: num(row.balance ?? row.bee_balance) };
 }
 
 /** Samples from published rows: query rows (one per team), or whole samples ({ round, atMs, c, slots, species: [...] }). */
@@ -129,12 +139,16 @@ export function prevalenceText(config, n = null) {
   with weight c + B_b; a bee not drawn doesn't visit that round. Each drawn bee visits a flower of a species drawn with
   weight c + F_s, with replacement, its own species included.
   F_s, a species' flower success: N × its share of Σ over bee teams of (the pollen it gave that team's bee lately)^${beta}.
-  B_b, a bee's success: N × its share of max(0, Σ over species of sign(D) |D|^${alpha}), D the net nectar it got at that
+${p.pools ? `  B_b, a bee's success: N × its share of the bees' nectar balances (each counted as at least 0). A bee's nectar is one
+  running balance: it starts at ${n0(p.endowment)}, each feed adds its net nectar (its nectar minus the feed price, which
+  can be negative), and it relaxes toward ${n0(p.endowment)} as game time passes, the gap above or below it halving every
+  ${p.halfLifeS == null ? "(never: it doesn't relax)" : `${p.halfLifeS} s`}. A bee whose balance is below the feed price can't feed: its "feed" counts as a leave.
+  "Lately" for F: every pollen cell (one per species and bee team) starts at ${n0(p.prior)} and ${fade}.` : `  B_b, a bee's success: N × its share of max(0, Σ over species of sign(D) |D|^${alpha}), D the net nectar it got at that
   species lately; a feed's net nectar is its nectar minus the feed price, so D can be negative. "Lately": every ledger
-  cell (one per species and bee team) starts at ${n0(p.prior)} and ${fade}.
+  cell (one per species and bee team) starts at ${n0(p.prior)} and ${fade}.`}
   F and B have par 1${p.cap == null ? " (uncapped)" : ` and are capped at ${p.cap}`}; c runs from ${p.cStart} to ${p.cEnd} over the game.
 - Your score, your fitness, is the time-average over the rounds played of F × B: your species' flower success times your
-  bee's success (par 1). Every F, B, draw chance and fitness is public, about once a second: tools/status.py,
+  bee's success (par 1). Every F, B, draw chance${p.pools ? ", nectar balance" : ""} and fitness is public, about once a second: tools/status.py,
   garden.status(), garden.prevalence(), the scoreboard and the history queries (garden.game.prevalence). Programs never
   see them.`;
 }

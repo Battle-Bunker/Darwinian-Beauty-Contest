@@ -255,7 +255,7 @@ def follow_live(after=None):
 def scores():
     """The live scoreboard from the public API: status, clockMs, endMs, round, scores, ledgers, and in a game with
     prevalence its settings, feed price and latest sample (prevalence: {..., "feedPrice", "sample": {"round", "atMs", "c",
-    "slots", "species": [{"team", "index", "flowerSuccess", "beeSuccess", "flowerP", "beeP", "fitness"}]}})."""
+    "slots", "species": [{"team", "index", "flowerSuccess", "beeSuccess", "flowerP", "beeP", "fitness", "balance"}]}})."""
     with urllib.request.urlopen(API + "/scores", timeout=10) as resp:
         return json.loads(resp.read())
 
@@ -263,9 +263,10 @@ def scores():
 def prevalence(after=0):
     """Prevalence (games that have it), from the public API: {"prevalence": its settings (None: the old way, uniform draws),
     "samples": [{"round", "atMs", "c", "slots", "species": [{"team", "index", "flowerSuccess", "beeSuccess", "flowerP",
-    "beeP", "fitness"}]}]}, the samples after round `after`, about one a second of game time. flowerSuccess (F) and
-    beeSuccess (B) are a team's species' and bee's recent success (par 1), flowerP the chance a visit is to its species,
-    beeP its bee's share of the bee weights, fitness the time-average of F × B so far."""
+    "beeP", "fitness", "balance"}]}]}, the samples after round `after`, about one a second of game time. flowerSuccess (F)
+    and beeSuccess (B) are a team's species' and bee's recent success (par 1), flowerP the chance a visit is to its
+    species, beeP its bee's share of the bee weights, fitness the time-average of F × B so far, balance its bee's nectar
+    balance (in games that keep one; else None)."""
     with urllib.request.urlopen("%s/prevalence?after=%d" % (API, after), timeout=10) as resp:
         return json.loads(resp.read())
 
@@ -283,9 +284,9 @@ def game_over():
 def status(afford=None):
     """{"status", "clockMs", "endMs", "leftMs", "round", "budgets": {kind: {"available", "exact", "perMinute", "cap", ...}},
     "scores" (the live scoreboard), "versions": {kind: {"version", "size", "atMs", ...}}, "memory", "text", and in a game
-    with prevalence "prevalence": [{"species", "teamId", "F", "B", "pF", "pB", "fitness"}] (F, B: the species' flower
-    success and the bee's success, par 1; pF: the chance a visit is to the species; pB: the bee's share of the bee
-    weights; fitness: the time-average of F × B so far)}"""
+    with prevalence "prevalence": [{"species", "teamId", "F", "B", "pF", "pB", "fitness", "balance"}] (F, B: the species'
+    flower success and the bee's success, par 1; pF: the chance a visit is to the species; pB: the bee's share of the bee
+    weights; fitness: the time-average of F × B so far; balance: the bee's nectar balance, in games that keep one)}"""
     return call("status", afford=afford)
 
 
