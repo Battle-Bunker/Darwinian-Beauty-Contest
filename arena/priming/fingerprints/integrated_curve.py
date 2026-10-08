@@ -14,8 +14,8 @@
    accuracy and the read-back of R at each burn.
 5. Selective feeding: R uniform on 3..150; the bee feeds only when U reaches a threshold; nectar per feed and per
    round for an honest flower of --size nodes at 50%, against blind feeding at a 40-node veteran at 15% or 25%.
-   Energy has the response-bytes factor (1024 - bytes) / 1024: the flower's real bytes, and 50 or 170 bytes for
-   the veteran.
+   Energy is (1100 - size) x (R - CPU ms) x (1024 - bytes), in node·ms·bytes: the flower's real bytes, and 50 or
+   170 bytes for the veteran.
 The game's per-call clock is imitated. Run it on an idle machine.
 """
 import sys
@@ -121,8 +121,8 @@ turns = []
 for j in range(CALLS * 10):
     R = rnd.uniform(3, 150)
     z, _, cpu = call(5000011 * j + 3, R, Ws[0])
-    turns.append((sum(z), R, 0.5 * (1100 - SIZE) * max(0.0, R - cpu) * (1024 - BYTES[-1]) / 1024))
-vet = lambda pct, b: statistics.mean(pct * 1060 * max(0.0, R - 0.6) * (1024 - b) / 1024 for _, R, _ in turns)
+    turns.append((sum(z), R, 0.5 * (1100 - SIZE) * max(0.0, R - cpu) * (1024 - BYTES[-1])))
+vet = lambda pct, b: statistics.mean(pct * 1060 * max(0.0, R - 0.6) * (1024 - b) for _, R, _ in turns)
 print(json.dumps({"flower_bytes": max(BYTES), **{f"veteran_{int(p * 100)}%_{b}B_per_feed": round(vet(p, b)) for p in (0.15, 0.25) for b in (50, 170)},
                   **{f"veteran_{int(p * 100)}%_{b}B_per_round": round(vet(p, b) / 21) for p in (0.15, 0.25) for b in (50, 170)}}))
 for th in sorted({round(curve[i][1], 1) for i in range(len(curve))} | {0.0}):
@@ -135,8 +135,8 @@ for th in sorted({round(curve[i][1], 1) for i in range(len(curve))} | {0.0}):
                       "honest_per_feed": round(per), "honest_per_round": round(q * per / (1 + 20 * q))}))
 
 print("## 6. Sensitivity: burn and nectar share")
-BF = (1024 - 85) / 1024
-VET = {(p, b): statistics.mean(p * 1060 * max(0.0, R - 0.6) * (1024 - b) / 1024 for R in [3 + 147 * (j + 0.5) / 400 for j in range(400)])
+BF = 1024 - 85
+VET = {(p, b): statistics.mean(p * 1060 * max(0.0, R - 0.6) * (1024 - b) for R in [3 + 147 * (j + 0.5) / 400 for j in range(400)])
        for p in (0.15, 0.25) for b in (50, 170)}
 print(json.dumps({f"veteran_{int(p * 100)}%_{b}B_per_feed": round(v) for (p, b), v in VET.items()}))
 DIRS = [Ws[0], Ws[1], Ws[2], Ws[5], Ws[8]]          # uniform, two single-heavy, two pair-heavy

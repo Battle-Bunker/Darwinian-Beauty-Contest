@@ -14,7 +14,7 @@ KEYS = "abcd"             # MEMORY: the learned adjustment per property, in tent
 WEIGHT = (1,) * K         # the fingerprint weights
 TAU = 12                  # feed when the weighted score reaches this (a feed costs 20 rounds)
 CURVE = ((0, 0.0), (2, 4.0), (12, 9.0), (45, 13.0), (90, 15.0))   # (CPU ms, U) for W = (1, 1, 1, 1): calibrate
-PER_MS = 160              # nectar an honest 50% flower gives per ms of R (from calibration; see signals.md)
+PER_MS = 129600           # nectar (node·ms·bytes) an honest 50% flower gives per ms of R: 0.5 × 690 × 0.4 × 939
 NT, KT = 40, 6            # the hybrid's tally (hybrid.py): cliques of KT nodes in graphs of NT nodes
 UNIT_MS = 1.0             # CPU per tally clique (from calibration)
 

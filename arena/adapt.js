@@ -27,7 +27,7 @@ import { all, one, pool } from "./lib/db.js";
 import { callModel } from "./lib/llm.js";
 import { classifyPrograms, levelOf } from "./lib/mechanisms.js";
 import { queryAll } from "./lib/metrics.js";
-import { bytesFactor, bytesInEnergy } from "./lib/energy.js";
+import { bytesInEnergy, bytesShare } from "./lib/energy.js";
 import { honestyOf } from "./lib/wealth.js";
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((acc, a, i, arr) => {
@@ -193,8 +193,8 @@ async function analyse(id) {
     S.feeds = byRole;
     p("All bees by role (feed rate at flowers of each role, rival flowers only):");
     table(["bees of", ...groups.map((r) => `at ${r} flowers`)], groups.map((b) => [b, ...groups.map((f) => pct(byRole[b][f]))]));
-    // Responses by role: their size, and (in a game whose energy has the byte factor) the share of the energy left after
-    // compute that the bytes took, Σ e0 × bytes / cap ÷ Σ e0 with e0 = (cap − size) × max(0, R − CPU ms), over answered calls.
+    // Responses by role: their size, and (in a game whose energy has the byte factor) the share of the energy their bytes
+    // took: Σ e0 × bytes ÷ Σ e0 × cap, with e0 = (cap − size) × max(0, R − CPU ms), over answered calls.
     const config = g.config || {}, sizeCap = config.budgets?.flower?.size ?? 1100;
     const sizeOf = new Map(versions.filter((v) => v.kind === "flower").map((v) => [`${byIndex[v.team]}:${v.version}`, Number(v.size) || 0]));
     const bytesRow = (r) => {
@@ -202,12 +202,12 @@ async function analyse(id) {
       let e0 = 0, lost = 0;
       for (const x of ts) {
         const e = Math.max(0, sizeCap - (sizeOf.get(`${x.flower}:${x.version}`) ?? 0)) * Math.max(0, (x.R ?? config.budgets?.flower?.ms ?? 150) - (x.ms ?? 0));
-        e0 += e; lost += e * (1 - bytesFactor(config, x.bytes));
+        e0 += e; lost += e * bytesShare(config, x.bytes);
       }
       return { median: quantile(ts.map((x) => x.bytes), 0.5), p90: quantile(ts.map((x) => x.bytes), 0.9), lost: bytesInEnergy(config) && e0 ? lost / e0 : null };
     };
     S.bytes = Object.fromEntries(groups.map((r) => [r, bytesRow(r)]));
-    p(`Responses by role (bytes of JSON${bytesInEnergy(config) ? `; energy lost to bytes: the share of what compute left that the byte factor took, cap ${n0(config.maxResponseBytes)}` : "; this game's energy has no byte factor"}):`);
+    p(`Responses by role (bytes of JSON${bytesInEnergy(config) ? `; energy lost to bytes: the share of E at an empty response that the bytes took, Σ e0 × bytes ÷ Σ e0 × ${n0(config.maxResponseBytes)}` : "; this game's energy has no byte factor"}):`);
     table(["flowers of", "median bytes (p90)", "energy lost to bytes"], groups.map((r) => [r, `${n0(S.bytes[r].median)} (${n0(S.bytes[r].p90)})`, pct(S.bytes[r].lost)]));
     summary.push(S);
   }

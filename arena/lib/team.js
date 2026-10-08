@@ -13,7 +13,7 @@ import { gameBrief, interviewPrompt, interviewSystem, lobbyBrief, mmss, rFloor, 
 import { Broker } from "./broker.js";
 import { Scaffold } from "./scaffold.js";
 import { definesFed } from "./mechanisms.js";
-import { bytesFactor, bytesInEnergy, bytesTerm } from "./energy.js";
+import { byteCap, bytesFactor, bytesInEnergy, bytesTerm, energyUnit } from "./energy.js";
 import { SPIN_WARNING, TRANSCRIPTS, audit, collect, commonFiles, extOf, killLeftovers, prepareWorkspace, recordViolations, spillDir, writeMinified } from "./workspace.js";
 
 const KINDS = ["flower", "bee"];
@@ -29,6 +29,17 @@ export function refusalHint(errors) {
   return "The game's Python refuses introspection: dunder attributes (such as x.__class__, f.__globals__, .__dict__; defining dunder " +
     "methods on your own classes is fine), frame and generator internals, eval/exec/compile/globals/locals/vars/open, modules' private " +
     "names (random._os) and modules outside the allowed list (RULES.md, \"What programs can use\"). Use plain public names instead.";
+}
+
+/** What a flower of `size` nodes can make per turn, from the game's energy formula (lib/energy.js): the formula, its most
+ * (at the largest R, no compute and, with the byte factor, an empty response) and what each ms (and byte) costs. */
+export function energyLimits(config, size) {
+  const cap = config.budgets?.flower?.size ?? 1100, fms = config.budgets?.flower?.ms ?? 150, k = Math.max(0, cap - size), unit = energyUnit(config);
+  const head = `(${n0(cap)} − ${n0(size)}) × (R − CPU ms)${bytesTerm(config)}, R the call's hidden budget (${rFloor(config)} to ${fms} ms)`;
+  if (!bytesInEnergy(config)) return `${head}: at most ${n0(k * fms)} ${unit}, less ${n0(k)} for every ms of compute or of R below ${fms}.`;
+  const B = byteCap(config);
+  return `${head}: at most ${n0(k * fms * B)} ${unit} (R ${fms} ms, no compute, an empty response); each ms of compute or of R below ${fms} ` +
+    `costs ${n0(k)} × (${n0(B)} − response bytes), and each response byte ${n0(k)} × (R − CPU ms).`;
 }
 
 /** A response as a short text: a big one (over 4 KB, r null with rBytes and rHash) as its size, hash and first characters. */
@@ -149,9 +160,7 @@ export function statusOf(view, teamId, { afford = null, code = false, memory = f
     }
     lines.push(`Your programs ${g.status === "lobby" ? "submitted" : "playing"}: ${parts.join(", ")}.`);
     const fl = out.versions.flower, cap = config.budgets?.flower?.size, fms = config.budgets?.flower?.ms;
-    if (fl && cap && fms) lines.push(`Your flower's size ${n0(fl.size)} of ${n0(cap)}: its excess energy per turn is (${n0(cap)} − ${n0(fl.size)}) × (R − CPU ms)${bytesTerm(config)}, R the call's hidden budget ` +
-      `(${rFloor(config)} to ${fms} ms): at most ${n0((cap - fl.size) * fms)} node·ms, less ${n0(cap - fl.size)} for every ms of compute or of R below ${fms}` +
-      `${bytesInEnergy(config) ? ", and less in proportion to the response's size" : ""}.`);
+    if (fl && cap && fms) lines.push(`Your flower's size ${n0(fl.size)} of ${n0(cap)}: its excess energy per turn is ${energyLimits(config, fl.size)}`);
   }
   // The bee's MEMORY: read only (only the deployed bee writes it; it starts as {} with every new bee version).
   const mem = mine?.memory;
@@ -233,9 +242,7 @@ function handlerOf(ctx) {
         const out = { ok: !errors.length, kind, size: c.size, budget: c.budget?.size, distance: c.distance, cost: c.cost, available: c.available, minified: c.minified, errors };
         const cap = config.budgets?.flower?.size, fms = config.budgets?.flower?.ms;
         out.text = [`${kind}: ${n0(c.size)} of ${n0(c.budget?.size ?? 0)} nodes.` + (c.available != null ? ` Submitting now would cost ${n0(c.cost)} of the ${n0(c.available)} you have.` : " (lobby: submitting is free)") +
-          (kind === "flower" && cap && fms && c.size != null ? ` Excess energy per turn (${n0(cap)} − ${n0(c.size)}) × (R − CPU ms)${bytesTerm(config)}, R the call's hidden budget (${rFloor(config)} to ${fms} ms): ` +
-            `at most ${n0(Math.max(0, cap - c.size) * fms)} node·ms, less ${n0(Math.max(0, cap - c.size))} per ms of compute or of R below ${fms}` +
-            `${bytesInEnergy(config) ? ", and less in proportion to the response's size" : ""}.` : ""),
+          (kind === "flower" && cap && fms && c.size != null ? ` Excess energy per turn ${energyLimits(config, c.size)}` : ""),
           errors.length ? `Problems:\n- ${errors.join("\n- ")}` : "No problems found.", refusalHint(errors)].filter(Boolean).join("\n");
         if (refusalHint(errors)) out.refused = true;
         await record({ op, kind, code: req.code, ok: out.ok, result: { size: c.size, cost: c.cost, available: c.available, errors } });

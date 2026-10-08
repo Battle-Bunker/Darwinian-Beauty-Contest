@@ -17,7 +17,7 @@ K = len(T)
 KEYS = "abcd"             # MEMORY: the learned adjustment per dimension, in tenths (-9..9)
 WEIGHT = (1,) * K         # the fingerprint weights: what this bee values in each dimension
 TAU = 30                  # feed when the weighted score reaches this (a feed costs 20 rounds)
-PER_UNIT = 2400           # nectar an honest 50% flower gives per unit (from calibration; see signals.md)
+PER_UNIT = 200000         # nectar (node·ms·bytes) an honest 50% flower gives per unit (calibrate)
 LMAX = 400                # more labels than any flower can make: implausible
 CHECK_MS = 35             # stop checking here; only checked certificates count
 

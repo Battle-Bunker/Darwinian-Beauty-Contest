@@ -10,7 +10,8 @@
 2. Selective feeding: R drawn uniformly from 3..150 as in a game; the bee reads U and feeds only when U is at
    least a threshold. For each threshold: the share of turns fed, the mean R of fed turns, nectar per feed and
    per round (a feed costs 20 rounds, a leave 1) for an honest flower of --size nodes at 50%, against feeding
-   blindly at a 40-node veteran giving 15% or 25%.
+   blindly at a 40-node veteran giving 15% or 25% in 50 bytes. Energy is (1100 - size) x (R - CPU ms) x
+   (1024 - response bytes), in node·ms·bytes.
 The game's per-call clock is imitated (process_time and perf_counter start at 0 every call). Run it on an
 idle machine.
 """
@@ -85,9 +86,9 @@ rnd = random.Random(5)
 turns = []
 for j in range(CALLS * 10):
     R = rnd.uniform(3, 150)
-    L, _, _, _, cpu = call(5000011 * j + 3, R, splits[0])
-    turns.append((sum(L), R, 0.5 * (1100 - SIZE) * max(0.0, R - cpu)))
-vet = lambda pct: statistics.mean(pct * 1060 * max(0.0, R - 0.6) for _, R, _ in turns)
+    L, _, b, _, cpu = call(5000011 * j + 3, R, splits[0])
+    turns.append((sum(L), R, 0.5 * (1100 - SIZE) * max(0.0, R - cpu) * max(0, 1024 - b)))
+vet = lambda pct: statistics.mean(pct * 1060 * max(0.0, R - 0.6) * (1024 - 50) for _, R, _ in turns)
 print(json.dumps({"veteran_15_per_feed": round(vet(0.15)), "veteran_25_per_feed": round(vet(0.25)),
                   "veteran_15_per_round": round(vet(0.15) / 21), "veteran_25_per_round": round(vet(0.25) / 21)}))
 for th in (0, 10, 20, 30, 40, 50, 60, 70, 80):
