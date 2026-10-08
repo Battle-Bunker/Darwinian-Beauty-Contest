@@ -202,7 +202,7 @@ changed from `adapt`:
 | honest flowers | some costly signalling at their discretion, percent 50; common/ honest-signals/ | pinned cooperators, not competing to win, exploring the spend and generosity that make honest, generous costly signalling attractive to bees and robust to imitators, above floors set in one place (the preset's `honest: { burnMin: 0.2, nectarMin: 20, startBurn: 0.6, startNectar: 50 }`, used by the brief, the conformance metrics, the role-drift log, the stub and adapt.js): CPU at b × R with b ≥ 0.2 of their choosing (one fixed b per version, never fixed ms), percent ≥ 20; they may change b, the percent and their fingerprint profile (their way to escape imitators). They start from the reference flower `arena/priming/fingerprints/integrated.py` (b 0.6, percent 50), and their common/ is that folder (the repertoire, the reference programs, measured numbers in strategy.md) |
 | honest bees | theirs to design | played to win, starting as the starter bee `arena/priming/fingerprints/integrated_bee.py` (`settings.starts`) |
 | game rules | R from 50 to 150 ms, a feed costs 10 rounds, √ scores, E = (1,100 − size) × (R − CPU ms) with responses up to 64 KiB | the engine's new defaults, not overridden and checked on the first game (`expectConfig`): R from 3 to 150 ms, a feed costs 20 rounds, scores with exponents 0.85 (`config.scoring`), E = (1,100 − size) × (R − CPU ms) × (1,024 − response bytes), in node·ms·bytes, with responses up to 1,024 bytes (`config.energy.bytes`, `maxResponseBytes`; arena code computes E with `lib/energy.js`) |
-| species draw | uniform | by prevalence (`config.prevalence`, the engine's defaults, checked on the first game): p_s = (c + P_s) / (N(c + 1)), P_s the species' recent pollination success (half-life 60 s), c from 1 to 0.1 over the game; every species' p_s and P_s public about once a second (the brief's rule line, `tools/status.py`, `garden.status()`, the stream and the queries; `lib/prevalence.js` reads the engine's samples in one place) |
+| species draw | uniform | by prevalence (`config.prevalence`, the engine's defaults when adapt-hi was built, checked on the first game): the one-sided form, p_s = (c + P_s) / (N(c + 1)), P_s the species' recent pollination success, c from 1 to 0.1 over the game. On a metagame v2 engine its defaults are v2's (two-sided prevalence, a feed price, no rounds out) and adapt-hi's check fails (the feed cost is now 0): adapt-hi as it was needs its rules set in `HI_CONFIG` first |
 
 Veterans start exactly as in `adapt`: carried over from fen and kiln, not from `mesa-a`. The fair-play audit no longer
 stops a session for a path into the arena's folder that names nothing there (Mallory lost a session in `mesa-a` for
@@ -239,14 +239,19 @@ work paid from the change budget's trickle.
 | veterans | 2 | Priya (without her coding limits) and Mallory, the best mean ranks over mesa-a, carried over from their source arenas as in adapt-hi |
 
 Everyone is on opus at high effort with adapt-hi's caps, prompts, constant gaps, 16 sessions at once, containment, the
-busy-wait warning and no cryptography priming. The rules (the engine's; `COOP_EXPECT` checks them on the game): the flower
-window 50 ms (R from 1 to 50), change budgets of 1 node a second for flowers (banking 300) and 10 for bees (3,000),
-prevalence on both sides (flower success F from recent pollen, bee success B from recent net nectar, par 1, a 90 s
-half-life; each round ⌈N/4⌉ bees drawn ∝ c + B, each visiting a flower drawn ∝ c + F; c from 1 to 0.1), a feed price in
-nectar of about 5% of the most E and no rounds out, and the time-average of F × B as the score. The keys of the new rules
-are provisional until the engine reports them (`lib/prevalence.js` coopRules, `COOP_EXPECT`). `adapt.js --arena mesa-c`
-adds, minute by minute, the cooperators' combined share of flower and bee prevalence, F and B per role (and per team by
-five-minute bins), the defector's F and B, each bee's dud feeds (nectar below the price) and their cost, and the verdict:
+busy-wait warning and no cryptography priming. The rules are the engine's metagame v2, every key set in `COOP_CONFIG` and
+checked on the game by `COOP_EXPECT` (an engine without v2 fails the check before any session runs): prevalence on both
+sides (`prevalence: { on: true, halfLifeS: 90, cStart: 1, cEnd: 0.1, cap: 4, slots: 0.25, prior: null }`: each round
+⌈0.25 × N⌉ bees, 3 of the 10, drawn without replacement ∝ c + B, each visiting a species drawn ∝ c + F; F from recent
+pollen^0.85, B from recent net nectar^0.85, par 1, capped at 4, every ledger cell starting at 0.12 × Emax = 6,758,400 and
+halving every 90 s; c from 1 to 0.1), fitness the time-average of F × B; a feed price of 0.05 × Emax = 2,816,000
+node·ms·bytes out of the bee's nectar (`feedPrice: null`) and no rounds out (`feedCost: 0`); responses delivered at
+150 ms (`flowerWindowMs`; rounds stay 200 ms) while R runs from 1 to 50 ms; change budgets of 1 node a second for
+flowers (banking 300) and 10 for bees (3,000). The briefs state the price and the window from the config
+(`lib/prevalence.js`), and the runner stops if they differ from the game's own (`game.feedPrice`, `game.windowMs`).
+`adapt.js --arena mesa-c` adds, minute by minute, the cooperators' combined share of flower and bee prevalence (Σ pF,
+Σ pB), F and B per role (and per team by five-minute bins, with each team's final fitness), the defector's draw chances
+and F and B, each bee's visits, dud feeds (net nectar below 0) and their cost, and the verdict:
 did the cooperators' shares hold or grow in the last ten minutes, against minutes 10–30? Spend: a team's lobby is at most
 $6 and each in-game session at most $3 and 10 minutes, so a team costs about $15–30 for the game and the arena $150–300.
 

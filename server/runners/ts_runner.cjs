@@ -139,7 +139,7 @@ const schedstat = () => { try { const [c, w] = fs.readFileSync(SCHEDSTAT, "latin
 const wallMs = () => Number(process.hrtime.bigint()) / 1e6;
 const IDLE = 0, RUNNING = 1, BUSY = 2;
 const CTL = new SharedArrayBuffer(96);
-const I = new Int32Array(CTL, 0, 4);   // [state, SIGINTs sent, (unused), call number]
+const I = new Int32Array(CTL, 0, 4);   // [state, SIGINTs sent, watchdog up (1), call number]
 // [stop at CPU ms, notice at CPU ms (0: none), start wall ms, judge at wall ms (0: none), wait ms at start, fault share, stop at wall ms]
 const F = new Float64Array(CTL, 16, 8);
 const WATCHDOG = `
@@ -156,6 +156,7 @@ const release = () => { Atomics.store(I, 0, 1); Atomics.notify(I, 0); };
 const interrupt = () => { if (hold()) { try { process.kill(process.pid, "SIGINT"); Atomics.add(I, 1, 1); } finally { release(); } } };
 const notice = (kind) => { if (hold()) { try { fs.writeSync(1, '{"notice":"' + kind + '"}\\n'); } finally { release(); } } };
 let noticed = -1, stopped = -1, walled = -1;
+Atomics.store(I, 2, 1); // up: the runner says it is ready only now, so no call runs unwatched
 for (;;) {
   if (Atomics.load(I, 0) === 0) { Atomics.wait(I, 0, 0, 1000); continue; }
   const call = Atomics.load(I, 3);
@@ -174,10 +175,17 @@ for (;;) {
   if (noticed !== call && F[3]) next = Math.min(next, F[3] - wall);
   Atomics.wait(I, 0, 1, Math.max(0.25, Math.min(next, 50)));
 }`;
+let watchdogFailed = false;
 function startWatchdog() {
   const w = new Worker(WATCHDOG, { eval: true, workerData: { ctl: CTL, path: SCHEDSTAT, clock: NATIVE.file, id: MAIN_CLOCK } });
   w.unref();
-  w.on("error", (e) => process.stderr.write(`watchdog: ${short(e)}\n`));
+  w.on("error", (e) => { watchdogFailed = true; process.stderr.write(`watchdog: ${short(e)}\n`); });
+}
+startWatchdog(); // at once: it boots while the runner reads its setup
+/** Until the watchdog is up (or has failed, or 10 s have passed): the first call must not run unwatched. */
+async function watchdogUp() {
+  const t0 = Date.now();
+  while (Atomics.load(I, 2) !== 1 && !watchdogFailed && Date.now() - t0 < 10000) await new Promise((r) => setTimeout(r, 1));
 }
 process.on("SIGINT", () => {}); // a stray SIGINT that lands between scripts is harmless
 
@@ -453,7 +461,7 @@ async function handle(line) {
   }
   let req;
   try { req = JSON.parse(line); } catch { return out({ e: "unreadable request", out: "" }); }
-  if (!setup) { startWatchdog(); return load(req); }
+  if (!setup) { await watchdogUp(); return load(req); }
   if (role === "flower") return callFlower(req);
   if (req.op === "fed") return callFed(req);
   kept = null;

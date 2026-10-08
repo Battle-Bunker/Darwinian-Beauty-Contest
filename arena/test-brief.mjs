@@ -143,22 +143,22 @@ const v2 = { ...config, minutes: 40, feedCost: 0, flowerWindowMs: 150, feedPrice
 const ct = timingText(v2, 10);
 check("v2 timing: 200 ms rounds; 3 of the 10 bees drawn by bee success; R from 1 to 50 ms; responses at 150 ms (GAME flower_window_ms); no rounds out",
   /Rounds of 200 ms of game time: a 40 minutes game is about 12000 rounds/.test(ct) && /Each round 3 of the 10 bees\s+are drawn by bee success \(below\), and each takes one turn/.test(ct)
-  && /drawn by prevalence \(below\)/.test(ct) && /drawn uniformly from\s+1 to 50 ms/.test(ct) && /GAME\["flower_ms"\] is 50/.test(ct)
-  && /reaches the bee at 150 ms \(GAME\["flower_window_ms"\]\) whatever R/.test(ct) && /A feed doesn't take the bee out of play/.test(ct)
+  && /drawn by prevalence \(below\)/.test(ct) && /drawn uniformly from\s+1 to 50 ms/.test(ct) && /GAME\["flower_ms"\] is 50, GAME\["flower_window_ms"\] 150\)/.test(ct)
+  && /reaches the bee at 150 ms whatever R/.test(ct) && !/flower_window_ms/.test(tt) && /A feed doesn't take the bee out of play/.test(ct)
   && !/out for 0 rounds/.test(ct) && !/Every bee that isn't feeding/.test(ct), ct);
 check("v2 timing: the feed price as an absolute number from the config (null: 5% of the most a flower can make), out of the bee's nectar; a set price; free",
-  /A feed costs the bee a price of 2,816,000 node·ms·bytes \(5% of the most a flower can make in a turn\) \(GAME\["feed_price"\]\), out of its nectar: its net nectar\s+is nectar − price, which can be negative/.test(ct)
-  && /a price of 1,000,000 node·ms·bytes \(1\.8% of the most/.test(timingText({ ...v2, feedPrice: 1000000 }, 10))
+  /A feed costs the bee a price of 2,816,000 node·ms·bytes, 5% of the most a flower can make in a turn\s+\(GAME\["feed_price"\]\), out of its nectar: its net nectar is nectar − price, which can be negative/.test(ct)
+  && /a price of 1,000,000 node·ms·bytes, 1\.8% of the most/.test(timingText({ ...v2, feedPrice: 1000000 }, 10))
   && !/feed costs|feed_price/.test(timingText({ ...v2, feedPrice: 0 }, 10)) && !/feed costs|feed_price/.test(tt), ct);
 check("v2 timing: prevalence on both sides: the draws, F from recent pollen^β, B from recent net nectar^α, the prior, the half-life, the cap, c; public, never to programs; no strategy",
-  /Prevalence, on both sides/.test(ct) && /3 of the 10 bees \(⌈0\.25 × N⌉\) take a turn, drawn one after another without replacement/.test(ct)
-  && /bee b with weight c \+ B_b; a bee not drawn doesn't visit that round/.test(ct) && /with weight c \+ F_s, with replacement, its own species included/.test(ct)
-  && /\(the pollen it gave that team's bee lately\)\^0\.85/.test(ct) && /net nectar it got there lately\|\^0\.85/.test(ct) && /nectar minus the feed price, so it can be negative/.test(ct)
-  && /starts at 6,758,400 and halves every 90 s of game time/.test(ct) && /par 1 and are capped at 4/.test(ct) && /c runs from 1 to 0\.1 over the game/.test(ct)
+  /Prevalence, on both sides/.test(ct) && /A round's\s+3 bees \(⌈0\.25 × N⌉ of the 10\) are drawn one after another, without replacement, among the bees with a challenge queued/.test(ct)
+  && /bee b\s+with weight c \+ B_b; a bee not drawn doesn't visit that round/.test(ct) && /weight c \+ F_s, with replacement, its own species included/.test(ct)
+  && /\(the pollen it gave that team's bee lately\)\^0\.85/.test(ct) && /Σ over species of sign\(D\) \|D\|\^0\.85\), D the net nectar it got at that\s+species lately/.test(ct) && /nectar minus the feed price, so D can be negative/.test(ct)
+  && /starts at 6,758,400 and halves every 90 s of game time/.test(ct) && /par\s+1 and are capped at 4/.test(ct) && /c runs from 1 to 0\.1 over the game/.test(ct)
   && /tools\/status\.py/.test(ct) && /garden\.prevalence\(\)/.test(ct) && /Programs never\s+see them/.test(ct), ct);
 check("v2 timing: the score is F × B's time-average (keyed to prevalence.on); cumulative and uncapped settings; the round count without N",
   /Your score, your fitness, is the time-average over the rounds played of F × B/.test(ct)
-  && /never fades \(cumulative\)/.test(timingText({ ...v2, prevalence: { ...v2.prevalence, halfLifeS: null, cap: null } }, 10)) && /par 1 \(uncapped\)/.test(timingText({ ...v2, prevalence: { ...v2.prevalence, cap: null } }, 10))
+  && /never fades \(cumulative\)/.test(timingText({ ...v2, prevalence: { ...v2.prevalence, halfLifeS: null, cap: null } }, 10)) && /par\s+1 \(uncapped\)/.test(timingText({ ...v2, prevalence: { ...v2.prevalence, cap: null } }, 10))
   && /Each round ⌈0\.25 × N⌉ of the N bees/.test(timingText(v2)) && !/F × B/.test(timingText({ ...v2, prevalence: { ...v2.prevalence, on: false } }, 10)), ct);
 check("v2 settings: Scores names F × B as the score (pollination and forage only shown); other games keep their exponents line",
   /Scores: your fitness is the time-average of F × B \(above\)/.test(settingsText(v2, 10)) && /they aren't the score/.test(settingsText(v2, 10)) && /R: 1 to 50/.test(settingsText(v2, 10))

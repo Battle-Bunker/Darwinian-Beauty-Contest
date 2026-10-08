@@ -36,12 +36,14 @@ console.log("room", room.url);
 const game = await api(owner, "POST", `/rooms/${room.shortId}/games`);
 console.log("game", game.url);
 const g = `/rooms/${room.shortId}/games/${game.shortId}`;
-// A new game's defaults: feed cost 20, R from 3 to 150 ms (2% of the window), scores Σ x^0.85, and a 1,024-byte
-// response cap whose bytes cost energy.
+// A new game's defaults: no sit-out but a feed price, R from 1 to 50 ms in a 150 ms window, slow change budgets,
+// prevalence on both sides, and a 1,024-byte response cap whose bytes cost energy.
 const fresh = (await api(owner, "GET", g)).game.config;
-assert.deepEqual([fresh.feedCost, fresh.budgets.flower.minMs, fresh.budgets.flower.ms, fresh.maxResponseBytes], [20, 3, 150, 1024]);
+assert.deepEqual([fresh.feedCost, fresh.budgets.flower.minMs, fresh.budgets.flower.ms, fresh.flowerWindowMs, fresh.maxResponseBytes], [0, 1, 50, 150, 1024]);
+assert.deepEqual([fresh.budgets.flower.perMinute, fresh.budgets.flower.cap, fresh.budgets.bee.perMinute, fresh.budgets.bee.cap], [60, 300, 600, 3000]);
+assert.deepEqual([fresh.feedPrice, (await api(owner, "GET", g)).game.feedPrice], [null, 2816000], "the feed price: 0.05 × Emax");
 assert.deepEqual([fresh.scoring, fresh.energy], [{ alpha: 0.85, beta: 0.85 }, { bytes: true }]);
-assert.deepEqual(fresh.prevalence, { on: true, basis: "pollination", halfLifeS: 90, cStart: 1, cEnd: 0.1, prior: null, cap: 4 }, "species prevalence, on by default");
+assert.deepEqual(fresh.prevalence, { on: true, halfLifeS: 90, cStart: 1, cEnd: 0.1, cap: 4, slots: 0.25, prior: null }, "prevalence, on by default");
 // Half a minute of game time. Flowers earn change budget fast so the test needn't wait; feeding costs 2
 // rounds rather than 20, so bees take turns often. Responses can be any JSON, and big (a 64 KiB cap).
 await api(owner, "PATCH", `${g}/config`, { config: { minutes: 0.5, feedCost: 2, responseType: "any", maxResponseBytes: 65536, budgets: { flower: { perMinute: 600, cap: 100 } } } });
@@ -66,7 +68,7 @@ assert.equal(view0.game.config.budgets.bee.memory, 50);
 assert.equal(view0.game.config.maxResponseBytes, 65536);
 assert.match(view0.interface.flower, /max_response_bytes"\] - the response's bytes of JSON/, "E's byte factor");
 assert.match(view0.interface.bee, /a challenge it returns replaces the one decide queued/);
-assert.deepEqual(["flower", "bee"].map((k) => view0.game.config.budgets[k].ms), [150, 50], "every time limit is public");
+assert.deepEqual(["flower", "bee"].map((k) => view0.game.config.budgets[k].ms), [50, 50], "every time limit is public");
 assert.deepEqual(view0.teams.map((t) => t.ready), view0.teams.map(() => ({ flower: false, bee: false })));
 
 const flower = (a, b, pct) => `def flower(challenge):\n    return (challenge * ${a} + ${b}) % 1000, ${pct}\n`;
@@ -107,16 +109,16 @@ for (const [kind, code, err] of [["flower", "x = 1\n", /must define flower/], ["
 const big = await api(players[0].token, "POST", `${g}/check`, { kind: "flower", code: "def flower(c):\n" + "    c = c + 1\n".repeat(400) + "    return c, 1\n" });
 assert.equal(big.ok, false);
 assert.match(big.errors[0], /Too big: \d+ nodes > budget 1100/);
-const tf = await api(players[0].token, "POST", `${g}/try`, { kind: "flower", code: variants[0].flower, challenges: [1, 2, 500], budgetMs: 150 });
+const tf = await api(players[0].token, "POST", `${g}/try`, { kind: "flower", code: variants[0].flower, challenges: [1, 2, 500], budgetMs: 50 });
 assert.deepEqual(tf.results.map((x) => [x.r, x.percent]), [[4, 30], [7, 30], [501, 30]]);
 assert.ok(tf.results.every((x) => x.energy > 0 && typeof x.ms === "number"));
-// Each flower call has a hidden time budget R (3–150 ms), told to it as GAME["ms"]; try can set it.
+// Each flower call has a hidden time budget R (1–50 ms), told to it as GAME["ms"]; try can set it.
 const drawn = await api(players[0].token, "POST", `${g}/try`, { kind: "flower", code: variants[0].flower, challenges: [...Array(12).keys()] });
-assert.ok(drawn.results.every((x) => x.budgetMs >= 3 && x.budgetMs <= 150), "try draws R per challenge by default");
+assert.ok(drawn.results.every((x) => x.budgetMs >= 1 && x.budgetMs <= 50), "try draws R per challenge by default");
 assert.ok(new Set(drawn.results.map((x) => x.budgetMs)).size > 6);
-const tr = await api(players[0].token, "POST", `${g}/try`, { kind: "flower", challenges: [1, 2, 3], budgetMs: [60, 90, 140],
+const tr = await api(players[0].token, "POST", `${g}/try`, { kind: "flower", challenges: [1, 2, 3], budgetMs: [10, 30, 45],
   code: `def flower(c):\n    return int(GAME["ms"]), 50\n` });
-assert.deepEqual(tr.results.map((x) => [x.budgetMs, x.r]), [[60, 60], [90, 90], [140, 140]], "R per challenge, as GAME['ms']");
+assert.deepEqual(tr.results.map((x) => [x.budgetMs, x.r]), [[10, 10], [30, 30], [45, 45]], "R per challenge, as GAME['ms']");
 assert.equal((await api(players[0].token, "POST", `${g}/try`, { kind: "flower", code: variants[0].flower, budgetMs: "lots" }, { allow: [400] })).status, 400);
 // Every call's clock starts at 0 (as if at the Unix epoch): a program can time itself, not the world.
 const clock = await api(players[0].token, "POST", `${g}/try`, { kind: "flower", challenges: [1, 2],
@@ -148,6 +150,8 @@ const seen = await until("turns", async () => {
     && ends.some((x) => x.flower === bo) && ends.some((x) => x.flower !== bo && x.action === "leave") && a;
 });
 const ends = seen.actions.filter(isEnd);
+const seenPrice = (await api(null, "GET", g)).game.feedPrice; // 0.05 × Emax at this game's 64 KiB byte cap
+assert.equal(seenPrice, 0.05 * 1100 * 50 * 65536);
 const adaTurn = ends.find((a) => a.bee === ada);
 assert.equal(adaTurn.c, 42, "Bo sees Ada's bee's challenge");
 assert.equal(typeof adaTurn.r, "number");
@@ -166,12 +170,14 @@ for (const a of ends) {
   }
   assert.equal("ms" in a, a.flower === bo, "the flower's CPU time: its own team only");
   assert.equal("budgetMs" in a, a.flower === bo, "the flower's hidden time budget R: its own team only");
-  if (a.flower === bo) assert.ok(a.budgetMs >= 3 && a.budgetMs <= 150, `R ${a.budgetMs}`);
+  if (a.flower === bo) assert.ok(a.budgetMs >= 1 && a.budgetMs <= 50, `R ${a.budgetMs}`);
+  if (a.action === "feed") assert.ok(a.price === seenPrice && Math.abs(a.net - (a.nectar - a.price)) < 1e-6, "a feed shows its price and net");
   assert.equal("beeMs" in a, a.bee === bo, "the bee's decision time: its own team only");
   assert.ok(a.bee === bo || !("log" in a), "what a bee prints stays with its team");
 }
 assert.ok(ends.some((a) => a.flower === bo && typeof a.ms === "number" && typeof a.percent === "number"));
-// Lockstep rounds: one turn per bee per round; arrivals at the round's start, the end at 150 ms.
+// Lockstep rounds: at most one turn per bee per round (ceil(0.25 × 3) = 1 bee a round here); arrivals at the
+// round's start, the end at 150 ms.
 const turns = new Map();
 for (const a of seen.actions) {
   if (a.action === "arrive") assert.equal(a.atMs, (a.round - 1) * 200);
@@ -309,17 +315,20 @@ assert.ok(board.scores.reduce((x, s) => x + s.pollen, 0) > 0);
 assert.ok(board.ledgers.nectar.flat().every((x) => typeof x === "number") && board.ledgers.pollen.flat().every((x) => typeof x === "number"));
 const sum = (m) => m.flat().reduce((x, y) => x + y, 0);
 assert.ok(sum(board.ledgers.feeds) > 0 && sum(board.ledgers.nectar) > 0);
-// Species prevalence is public: its latest sample on the scoreboard and the view, every sample at /prevalence.
-assert.equal(board.prevalence.basis, "pollination");
-assert.equal(board.prevalence.prior, 20000000);
-assert.ok(board.prevalence.round >= 1 && board.prevalence.species.length === 3, JSON.stringify(board.prevalence));
-assert.deepEqual(board.prevalence.species.map((x) => [x.team, x.index]), board.participants.map((id, i) => [id, i]));
-assert.ok(Math.abs(board.prevalence.species.reduce((x, s) => x + s.p, 0) - 1) < 1e-4, "p sums to 1");
+// Prevalence is public: its latest sample on the scoreboard and the view, every sample at /prevalence; the
+// scoreboard's fitness is the time-average of F × B, with each team's latest F, B and draw chances.
+assert.deepEqual([board.prevalence.slots, board.prevalence.prior, board.prevalence.feedPrice], [0.25, 0.12 * 1100 * 50 * 65536, seenPrice]);
+const smp = board.prevalence.sample;
+assert.ok(smp.round >= 1 && smp.slots === 1 && smp.species.length === 3, JSON.stringify(smp));
+assert.deepEqual(smp.species.map((x) => [x.team, x.index]), board.participants.map((id, i) => [id, i]));
+for (const k of ["flowerP", "beeP"]) assert.ok(Math.abs(smp.species.reduce((x, s) => x + s[k], 0) - 1) < 1e-4, `${k} sums to 1`);
+assert.ok(board.scores.every((s) => ["flowerSuccess", "beeSuccess", "flowerP", "beeP"].every((k) => typeof s[k] === "number")));
 const prevAll = await api(null, "GET", `${g}/prevalence`);
 assert.ok(prevAll.samples.length >= 2 && prevAll.samples.every((x, i) => i === 0 || x.round > prevAll.samples[i - 1].round));
 assert.deepEqual(prevAll.samples.slice(0, 2).map((x) => [x.round, x.atMs]), [[1, 0], [6, 1000]], "about once a second of game time");
 const prevRows = (await q(null, { from: "prevalence", where: [{ field: "round", op: "eq", value: 6 }] })).rows;
-assert.deepEqual(prevRows.map((r) => [r.team, r.p, r.success]), prevAll.samples[1].species.map((x) => [x.index, x.p, x.P]), "the query entity: the same samples");
+assert.deepEqual(prevRows.map((r) => [r.team, r.flowerSuccess, r.beeSuccess, r.flowerP, r.beeP, r.fitness]),
+  prevAll.samples[1].species.map((x) => [x.index, x.flowerSuccess, x.beeSuccess, x.flowerP, x.beeP, x.fitness]), "the query entity: the same samples");
 
 // Changes cost change budget, which accrues with game time; a change goes live at once. During play a team
 // sees only its own versions and budgets.
@@ -360,7 +369,7 @@ while (!/"action":"(feed|leave)"/.test(text)) text += new TextDecoder().decode((
 reader.cancel();
 assert.match(text, /"action":"arrive"/, "arrivals come over the stream");
 assert.doesNotMatch(text, /"beeMs"|"ms":/, "a spectator's stream has no timings");
-assert.match(text, /"prevalence":\{"round":\d+,"atMs":\d+,"c":[\d.]+,"species":\[\{"team":"/, "the stream carries species prevalence samples");
+assert.match(text, /"prevalence":\{"round":\d+,"atMs":\d+,"c":[\d.]+,"slots":1,"species":\[\{"team":"[^"]+","index":0,"flowerSuccess":/, "the stream carries prevalence samples");
 
 // The same feed over a WebSocket: the same messages, filtered for the viewer (a Bearer token here).
 const socketFeed = (query, token, enough) => new Promise((resolve, reject) => {
@@ -422,7 +431,7 @@ assert.equal(await lastSeq(), settled, "nothing happens after the end");
 const after = (await api(null, "GET", `${g}/actions?limit=5000`)).actions;
 assert.ok(after.every((a) => "beeVersion" in a && "flowerVersion" in a), "a spectator sees every version");
 assert.ok(after.filter(isEnd).every((a) => "ms" in a && "beeMs" in a && "percent" in a && "energy" in a), "and every timing, percent and energy");
-assert.ok(after.filter(isEnd).every((a) => a.budgetMs >= 3 && a.budgetMs <= 150), "and every flower call's R");
+assert.ok(after.filter(isEnd).every((a) => a.budgetMs >= 1 && a.budgetMs <= 50), "and every flower call's R");
 assert.ok(after.some((a) => a.bee === ada && /fed \d+/.test(a.log || "")), "prints are revealed");
 assert.ok(done.teams.filter((t) => t.participant).every((t) => t.memory && typeof t.memory.value === "object"), "every bee's MEMORY is revealed");
 const allGrains = after.filter((a) => a.action === "feed" && a.pollen >= 1);

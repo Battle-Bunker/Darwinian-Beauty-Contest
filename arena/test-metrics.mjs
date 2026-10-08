@@ -226,21 +226,41 @@ check("handshakes: two teams favouring each other both ways are mutual", h.hands
     && Math.abs(eB.size + eB.compute + eB.short + eB.bytes + eB.nectar + eB.pollen + eB.lost - 1) < 0.01, eB);
 }
 
-// lib/prevalence.js: the game's settings, c and the floor over the game, and the published samples in any of the shapes
-// the engine may give them.
+// lib/prevalence.js (metagame v2): the game's settings, c and the floor, the bees a round, the feed price and the flower
+// window as the engine resolves them, and the published samples in the engine's shapes.
 {
-  const { prevalenceOf, cAt, floorAt, samplesOf, currentOf } = await import("./lib/prevalence.js");
-  const cfg = { prevalence: { on: true, basis: "pollination", halfLifeS: 90, cStart: 1, cEnd: 0.1, prior: null, cap: 4 } };
-  check("prevalence: off without the key; c falls linearly from 1 to 0.1; the floor is c / (N (c + 1))",
-    prevalenceOf({}) === null && prevalenceOf({ prevalence: { on: false } }) === null && cAt(cfg, 0, 600000) === 1 && Math.abs(cAt(cfg, 600000, 600000) - 0.1) < 1e-12
-    && Math.abs(cAt(cfg, 300000, 600000) - 0.55) < 1e-12 && Math.abs(floorAt(cfg, 0, 600000, 14) - 1 / 28) < 1e-12);
-  // The engine's shapes: query rows { round, atMs, team (index), p, success, c }; samples { round, atMs, c, species: [{ team
-  // (id), index, p, P }] } (and, provisionally, coop-eq's bee side as `bees`).
-  const s = samplesOf([{ round: 5, atMs: 800, team: 2, p: 0.1, success: 1.2, c: 0.98 }, { round: 10, atMs: 1800, c: 0.97, species: [{ team: "A", index: 0, p: 0.2, P: 2 }], bees: [{ team: "A", index: 0, p: 0.3, P: 1.5 }] }]);
-  check("prevalence: samples from query rows and from whole samples (both sides)", s.length === 3 && s[0].team === 2 && s[0].P === 1.2 && s[0].side === "flower"
-    && s[1].team === "A" && s[1].P === 2 && s[1].atMs === 1800 && s[2].side === "bee" && s[2].p === 0.3, s);
-  check("prevalence: the view's latest sample", currentOf({ prevalence: { on: true, round: 3, atMs: 400, c: 0.99, species: [{ team: "A", index: 0, p: 0.4, P: 2 }] } })[0].p === 0.4
-    && currentOf({ prevalence: null }) === null);
+  const { prevalenceOf, cAt, floorAt, slotsOf, feedPriceOf, windowOf, coopRules, samplesOf, currentOf } = await import("./lib/prevalence.js");
+  const budgets = { flower: { size: 1100, ms: 50 }, bee: { ms: 50 } };
+  const cfg = { maxResponseBytes: 1024, energy: { bytes: true }, budgets, flowerWindowMs: 150, feedPrice: null,
+    prevalence: { on: true, halfLifeS: 90, cStart: 1, cEnd: 0.1, cap: 4, slots: 0.25, prior: null } };
+  check("prevalence: off without the key, with on false or in the one-sided form (no slots); c falls linearly from 1 to 0.1; the floor is c / (N (c + 1))",
+    prevalenceOf({}) === null && prevalenceOf({ prevalence: { on: false, slots: 0.25 } }) === null && prevalenceOf({ prevalence: { on: true, halfLifeS: 90 } }) === null
+    && cAt(cfg, 0, 600000) === 1 && Math.abs(cAt(cfg, 600000, 600000) - 0.1) < 1e-12 && Math.abs(cAt(cfg, 300000, 600000) - 0.55) < 1e-12
+    && Math.abs(floorAt(cfg, 0, 600000, 14) - 1 / 28) < 1e-12);
+  const pv = prevalenceOf(cfg), open = prevalenceOf({ ...cfg, prevalence: { ...cfg.prevalence, halfLifeS: null, cap: null, prior: 5 } });
+  check("prevalence: the prior null is 0.12 × Emax (6,758,400); halfLifeS and cap null stay null (cumulative, uncapped)", pv.prior === 6758400 && pv.halfLifeS === 90 && pv.cap === 4
+    && open.halfLifeS === null && open.cap === null && open.prior === 5, { pv, open });
+  check("prevalence: ⌈0.25 × N⌉ bees a round (3 of 10, 4 of 14, 1 of 2; none without prevalence)", slotsOf(cfg, 10) === 3 && slotsOf(cfg, 14) === 4 && slotsOf(cfg, 2) === 1 && slotsOf(cfg, 4) === 1
+    && slotsOf({}, 10) === null);
+  check("feed price: null is 0.05 × Emax (2,816,000 node·ms·bytes), a number itself, a config from before it 0; the window: flowerWindowMs, else flower.ms",
+    feedPriceOf(cfg) === 2816000 && feedPriceOf({ ...cfg, feedPrice: 1000 }) === 1000 && feedPriceOf({ ...cfg, feedPrice: 0 }) === 0 && feedPriceOf({ budgets }) === 0
+    && windowOf(cfg) === 150 && windowOf({ budgets: { flower: { ms: 150 } } }) === 150 && windowOf({ budgets }) === 50);
+  const co = coopRules(cfg, 10);
+  check("coopRules: on, 3 bees a round, the price and its share of Emax, the window, 200 ms rounds, the F × B score", co.on && co.perRound === 3 && co.price === 2816000
+    && Math.abs(co.priceShare - 0.05) < 1e-12 && co.windowMs === 150 && co.roundMs === 200 && co.timeAverage && co.unit === "node·ms·bytes"
+    && !coopRules({ budgets }).on && coopRules({ budgets }).price === 0, co);
+  // The engine's shapes: query rows { round, atMs, team (index), flowerSuccess, beeSuccess, flowerP, beeP, fitness, c, slots };
+  // samples { round, atMs, c, slots, species: [{ team (id), index, flowerSuccess, beeSuccess, flowerP, beeP, fitness }] }.
+  const row = { game: "g", round: 5, atMs: 800, team: 2, flowerSuccess: 1.2, beeSuccess: 0.7, flowerP: 0.1, beeP: 0.08, fitness: 0.95, c: 0.98, slots: 3 };
+  const sample = { round: 10, atMs: 1800, c: 0.97, slots: 3, species: [{ team: "A", index: 0, flowerSuccess: 2, beeSuccess: 1.5, flowerP: 0.2, beeP: 0.3, fitness: 1.1 },
+    { team: "B", index: 1, flowerSuccess: null, beeSuccess: null, flowerP: null, beeP: null, fitness: null }] };
+  const s = samplesOf([row, sample]);
+  check("prevalence: samples from query rows and from whole samples (F, B, pF, pB, fitness; an empty entry skipped)", s.length === 2 && s[0].team === 2 && s[0].F === 1.2 && s[0].B === 0.7
+    && s[0].pF === 0.1 && s[0].pB === 0.08 && s[0].fitness === 0.95 && s[0].c === 0.98 && s[1].team === "A" && s[1].index === 0 && s[1].F === 2 && s[1].B === 1.5 && s[1].pB === 0.3
+    && s[1].atMs === 1800 && s[1].round === 10, s);
+  check("prevalence: the view's or the scores' latest sample (prevalence.sample), a stream page's (the sample itself), none",
+    currentOf({ prevalence: { on: true, slots: 0.25, feedPrice: 2816000, sample } })[0].pF === 0.2 && currentOf({ prevalence: sample })[0].fitness === 1.1
+    && currentOf({ prevalence: { on: true, sample: null } }) === null && currentOf({ prevalence: null }) === null);
 }
 
 // lib/energy.js: E from the game's own config (old games without the byte factor keep their formula).

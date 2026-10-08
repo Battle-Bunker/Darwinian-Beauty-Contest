@@ -352,7 +352,6 @@ async function prevalenceReport({ g, gp, teams, ents, role, T, S }) {
 async function coopReport({ g, gp, teams, ents, role, T, S }) {
   const config = g.config || {}, co = coopRules(config, ents.length);
   const samples = await prevalenceSamples(gp, teams);
-  const name = Object.fromEntries(ents.map((e) => [e.team_id, e.team_name]));
   const duration = Math.max((config.minutes ?? 0) * 60000, ...samples.map((x) => x.atMs), 1), nMin = Math.ceil(duration / 60000);
   const at = (team, w, f) => mean(samples.filter((x) => x.team === team && Math.floor(x.atMs / 60000) === w).map(f).filter((v) => v != null));
   const teamsOf = (r) => ents.filter((e) => role(e.team_id) === r).map((e) => e.team_id);

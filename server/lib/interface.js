@@ -1,7 +1,7 @@
 // What every team knows before writing a line: the function names, their arguments, and the game's
 // types. Deliberately no behaviour: no starter code, so there's no shared starting point to converge on.
 import { parseType } from "./types.js";
-import { RESPONSE_DEPTH, energyBytes, limitsOf, prevalenceOf, roundMs, wallLimits } from "./gameConfig.js";
+import { RESPONSE_DEPTH, energyBytes, feedPriceOf, limitsOf, prevalenceOf, roundMs, wallLimits, windowMsOf } from "./gameConfig.js";
 import { scoringOf } from "./scoring.js";
 
 function describe(t) {
@@ -74,28 +74,35 @@ function flowerNotes(ts, config) {
     (energyBytes(config)
       ? `\n${c}     * (${G("max_response_bytes")} - the response's bytes of JSON), in node·ms·bytes: a response at the cap leaves E = 0.\n`
       : `, in node·ms.\n`) +
-    `${c} The bee is never told R: the response reaches it at ${G("flower_ms")} ms whatever R was.\n` +
-    `${c} Programs see only their arguments and GAME: no history.\n` +
-    `${c} Your team scores pollination = Σ over bee teams of (the pollen your species gave that team's bee)^${scoringOf(config).beta};\n` +
-    `${c} fitness = N² × pollination share × forage share.` + prevalenceNote(c, config);
+    `${c} The bee is never told R: the response reaches it at ${G("flower_window_ms")} = ${windowMsOf(config)} ms whatever R was.\n` +
+    `${c} Programs see only their arguments and GAME: no history.\n` + scoreNote(c, config, "flower");
 }
 
-// Species prevalence, when the game has it (a line for both programs).
-function prevalenceNote(c, config) {
-  const p = prevalenceOf(config);
-  if (!p) return "";
-  const basis = p.basis === "feeds" ? "feeds it got" : p.basis === "fitness" ? "fitness" : "pollination";
-  return `\n${c} Species prevalence: a turn draws species s with probability (c + P_s) / Σ_k (c + P_k), P_s = N × s's share of recent\n` +
-    `${c} ${basis} (${p.halfLifeS ? `half-life ${p.halfLifeS} s of game time` : "the whole game"}${p.cap != null ? `, capped at ${p.cap}` : ""}), c from ${p.cStart} to ${p.cEnd} over the game. Public, but not in GAME.`;
+// How the game scores a team, and (with prevalence) how its success makes it common: a few lines for each program.
+function scoreNote(c, config, kind) {
+  const p = prevalenceOf(config), { alpha, beta } = scoringOf(config);
+  if (!p) {
+    return kind === "flower"
+      ? `${c} Your team scores pollination = Σ over bee teams of (the pollen your species gave that team's bee)^${beta};\n${c} fitness = N² × pollination share × forage share.`
+      : `${c} Your team scores forage = Σ over flower teams of (the nectar your bee got there)^${alpha};\n${c} fitness = N² × pollination share × forage share.`;
+  }
+  const half = p.halfLifeS ? `halving every ${p.halfLifeS} s of game time` : "over the whole game";
+  return `${c} Prevalence: each round ceil(${p.slots} × N) bees visit, drawn without replacement with weights c + B_b, and each visits\n` +
+    `${c} a species drawn with weights c + F_s (c from ${p.cStart} to ${p.cEnd} over the game). F_s = N × your species' share of Σ over bee\n` +
+    `${c} teams of (recent pollen it gave them)^${beta}; B_b = N × your bee's share of max(0, Σ over species of signed (recent net nectar,\n` +
+    `${c} nectar − feed price, it got there)^${alpha}); recent: ${half}${p.cap != null ? `; each capped at ${p.cap}` : ""}. Par 1.\n` +
+    `${c} Your team's fitness = the time-average over the game of F × B (your species' times your bee's). Public, but not in GAME.`;
 }
 
 // How a bee runs.
 function beeNotes(ts, config) {
   const c = ts ? "//" : "#", G = (k) => (ts ? `GAME.${k}` : `GAME["${k}"]`), nul = ts ? "null" : "None";
-  return `${c} Rounds of ${G("round_ms")} = ${roundMs(config)} ms. As each round starts, a bee with a challenge queued (and not feeding)\n` +
-    `${c} takes its turn: a flower of a species drawn at random among all ${G("teams")} (your own included${prevalenceOf(config) ? ", by prevalence" : ""}) answers within\n` +
-    `${c} ${config.budgets.flower.ms} ms; then decide has ${G("ms")} = ${config.budgets.bee.ms} ms of CPU time (budget with ${ts ? "performance.cpuTime()" : "time.process_time()"}; ${ts ? "Atomics.wait" : "time.sleep"}\n` +
-    `${c} returns at once). You are never told whose flower it is, nor its percent.\n` +
+  const price = feedPriceOf(config), p = prevalenceOf(config);
+  return `${c} Rounds of ${G("round_ms")} = ${roundMs(config)} ms. As each round starts, ${p ? "each bee drawn to visit (see Prevalence)" : "a bee"} with a challenge\n` +
+    `${c} queued (and not feeding${p ? "; the others' challenges wait" : ""}) takes its turn: a flower of a species drawn among all ${G("teams")} (your own\n` +
+    `${c} included) answers by ${G("flower_window_ms")} = ${windowMsOf(config)} ms; then decide has ${G("ms")} = ${config.budgets.bee.ms} ms of CPU time (budget with\n` +
+    `${c} ${ts ? "performance.cpuTime()" : "time.process_time()"}; ${ts ? "Atomics.wait" : "time.sleep"} returns at once). You are never told whose flower it is, nor its percent.\n` +
+    (price > 0 ? `${c} Every feed costs your bee ${G("feed_price")} = ${price} of its nectar: net = nectar − ${G("feed_price")} (fed() still gets the nectar).\n` : "") +
     `${c} A feed sits your bee out ${G("feed_cost")} = ${config.feedCost} rounds. A late reply (over ${G("ms")} of CPU, or no reply after ${wallLimits(config).bee} ms of wall time)\n` +
     `${c} never feeds; only a late ["leave", c] queues c. After any other late reply, or a reply with no usable next challenge,\n` +
     `${c} first() is called at once. A call is stopped after ${wallLimits(config).beeCpu / 1000} s of CPU (or ${wallLimits(config).beeHard / 1000} s of wall time). A call that spent most of its wall\n` +
@@ -106,8 +113,7 @@ function beeNotes(ts, config) {
     `${c} first; string keys; string, number, ${ts ? "boolean or null" : "bool or None"} values) you change in place or reassign. It is saved after\n` +
     `${c} each first, decide or fed that returns, if Σ (key bytes + value JSON bytes) ≤ ${G("memory")} = ${config.budgets.bee.memory}.\n` +
     `${c} response is ${nul} if the flower failed. Programs get no history; each call's clock reads 0 as it starts.\n` +
-    `${c} Your team scores forage = Σ over flower teams of (the nectar your bee got there)^${scoringOf(config).alpha};\n` +
-    `${c} fitness = N² × pollination share × forage share.` + prevalenceNote(c, config);
+    scoreNote(c, config, "bee");
 }
 
 export function programInterface(config) {

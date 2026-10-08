@@ -317,7 +317,9 @@ export function computeMetrics({ game, teams: teamRows, turns: turnRows, version
     changes, final, memory, ecology, grains, wealth,
     config: { minutes: config.minutes, feedCost: config.feedCost, challengeType: config.challengeType, responseType: config.responseType, budgets: config.budgets,
       grains: config.grains ?? null, pollenGrain: config.pollenGrain ?? null, maxResponseBytes: config.maxResponseBytes ?? null, scoring: config.scoring ?? null,
-      energy: config.energy ?? null },
+      energy: config.energy ?? null, prevalence: config.prevalence ?? null, feedPrice: config.feedPrice ?? null, flowerWindowMs: config.flowerWindowMs ?? null,
+      // (resolved, from the view: what the game played with)
+      ...(game.feedPrice != null ? { feedPriceResolved: game.feedPrice } : {}), ...(game.windowMs != null ? { windowMs: game.windowMs } : {}) },
     clockMs: Number(game.clockMs) || 0, round: Number(game.round) || 0,
   };
 }

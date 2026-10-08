@@ -35,16 +35,15 @@ export const changeText = () => `A change costs the node edits that turn the ver
 export function timingText(config, n = null) {
   const b = config.budgets, fl = b.flower, bee = b.bee, minR = rFloor(config), co = coopRules(config, n);
   const feedText = config.feedCost > 0 ? `A feed takes the bee\n  out for ${config.feedCost} rounds.` : `A feed doesn't take the bee out of play.`;
-  const price = co.price > 0 ? `\n  A feed costs the bee a price of ${priceText(config)} (GAME["feed_price"]), out of its nectar: its net nectar
-  is nectar − price, which can be negative.` : "";
-  const windowKey = config.flowerWindowMs != null ? ` (GAME["flower_window_ms"])` : "";
+  const price = co.price > 0 ? `\n  A feed costs the bee a price of ${priceText(config)}\n  (GAME["feed_price"]), out of its nectar: its net nectar is nectar − price, which can be negative.` : "";
+  const windowKey = config.flowerWindowMs != null ? `, GAME["flower_window_ms"] ${co.windowMs}` : "";
   return `- Rounds of ${co.roundMs} ms of game time: a ${durationText(config.minutes)} game is about ${Math.round((config.minutes * 60000) / co.roundMs)} rounds. ${co.on
     ? `Each round ${co.perRound ? `${co.perRound} of the ${n} bees` : `⌈${co.slots} × N⌉ of the N bees`}\n  are drawn by bee success (below), and each takes one turn.` : "Every bee that isn't feeding gets\n  one turn per round, all bees in lockstep."}
 - Each team's flower program is its flower species. A turn: the bee's queued challenge goes to one flower of a species
   drawn ${co.on ? "by prevalence (below)" : "at random"} from all species (yours included); that flower call gets a hidden time budget R, drawn uniformly from
   ${minR} to ${fl.ms} ms afresh for every call: its hard limit to return [response, percent], in CPU time from the start of
-  the call (the flower is told its R as GAME["ms"]; GAME["flower_ms"] is ${fl.ms}).
-  The response reaches the bee at ${co.windowMs} ms${windowKey} whatever R and the flower's speed, and the bee is never told R; the bee has
+  the call (the flower is told its R as GAME["ms"]; GAME["flower_ms"] is ${fl.ms}${windowKey}).
+  The response reaches the bee at ${co.windowMs} ms whatever R and the flower's speed, and the bee is never told R; the bee has
   ${bee.ms} ms of CPU time to return ["feed" or "leave", next challenge]. Neither is told whose the other is. ${feedText}${price}
 - Time limits are CPU time: a program measures its own with time.process_time(). A wall-clock backstop also stops a call
   that runs far longer in real time (RULES.md has its thresholds), and a call the server itself starved of CPU is voided
@@ -254,7 +253,7 @@ ${personaAndSituation(persona, fixed, { simpleCode })}
   builder, kept up to date), \`game\` and \`room\` (the same query builder, run by the game), \`follow()\` (each new turn as it
   arrives), \`response(seq)\` (a whole response over 4 KB), \`grains()\` and \`assemble(flower)\` (your pollen grains),
   \`follow_live()\` (public actions as they happen), \`status()\` (clock, round, live scores, your exact budgets and their
-  refill rate, your versions, and every species' prevalence in a game that has it), \`memory()\` (your bee's MEMORY, read only), \`live(kind)\` (your code playing now),
+  refill rate, your versions, and every team's F, B, draw chances and fitness in a game with prevalence), \`memory()\` (your bee's MEMORY, read only), \`live(kind)\` (your code playing now),
   \`measure(kind, code)\` (size and cost, free), \`check(kind, code)\`, \`try_flower(code, challenges)\`, \`try_bee(code)\`,
   \`submit(kind, code)\` (refused with \`wait_s\` if you can't afford it yet), \`wait_for_budget(kind, cost)\`. Its code is
   audited before every start and restart with the fair-play rules below; it also may not start other processes, use

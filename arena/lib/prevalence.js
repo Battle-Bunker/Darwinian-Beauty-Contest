@@ -111,10 +111,10 @@ export function currentOf(view) {
 const n0 = (x) => Math.round(x).toLocaleString("en-US");
 const pc = (x) => `${+(x * 100).toFixed(1)}%`;
 
-/** The feed price in words: "2,816,000 node·ms·bytes (5% of the most a flower can make in a turn)"; "" when feeds are free. */
+/** The feed price in words: "2,816,000 node·ms·bytes, 5% of the most a flower can make in a turn"; "" when feeds are free. */
 export function priceText(config) {
   const co = coopRules(config);
-  return co.price > 0 ? `${n0(co.price)} ${co.unit}${co.priceShare != null ? ` (${pc(co.priceShare)} of the most a flower can make in a turn)` : ""}` : "";
+  return co.price > 0 ? `${n0(co.price)} ${co.unit}${co.priceShare != null ? `, ${pc(co.priceShare)} of the most a flower can make in a turn` : ""}` : "";
 }
 
 /** The rule in a paragraph, for the timing brief (empty for a game that plays the old way). n: the number of teams. */
@@ -122,17 +122,17 @@ export function prevalenceText(config, n = null) {
   const p = prevalenceOf(config);
   if (!p) return "";
   const co = coopRules(config, n), alpha = config?.scoring?.alpha ?? 0.5, beta = config?.scoring?.beta ?? 0.5;
-  const K = co.perRound ? `${co.perRound} of the ${n} bees (⌈${p.slots} × N⌉)` : `⌈${p.slots} × N⌉ bees of the N`;
+  const K = co.perRound ? `${co.perRound} bees (⌈${p.slots} × N⌉ of the ${n})` : `⌈${p.slots} × N⌉ bees`;
   const fade = p.halfLifeS == null ? "never fades (cumulative)" : `halves every ${p.halfLifeS} s of game time`;
-  return `- Prevalence, on both sides: species and bees that have done well lately are drawn more often. Each round
-  ${K} take a turn, drawn one after another without replacement from the bees ready to (a challenge queued),
-  bee b with weight c + B_b; a bee not drawn doesn't visit that round. Each drawn bee visits a flower of a species drawn
-  with weight c + F_s, with replacement, its own species included.
+  return `- Prevalence, on both sides: species and bees that have done well lately are drawn more often. A round's
+  ${K} are drawn one after another, without replacement, among the bees with a challenge queued, bee b
+  with weight c + B_b; a bee not drawn doesn't visit that round. Each drawn bee visits a flower of a species drawn with
+  weight c + F_s, with replacement, its own species included.
   F_s, a species' flower success: N × its share of Σ over bee teams of (the pollen it gave that team's bee lately)^${beta}.
-  B_b, a bee's success: N × its share of max(0, Σ over species of ±|the net nectar it got there lately|^${alpha}); a feed's
-  net nectar is its nectar minus the feed price, so it can be negative. "Lately": every ledger cell (one per species and
-  bee team) starts at ${n0(p.prior)} and ${fade}. F and B have par 1${p.cap == null ? " (uncapped)" : ` and are capped at ${p.cap}`};
-  c runs from ${p.cStart} to ${p.cEnd} over the game.
+  B_b, a bee's success: N × its share of max(0, Σ over species of sign(D) |D|^${alpha}), D the net nectar it got at that
+  species lately; a feed's net nectar is its nectar minus the feed price, so D can be negative. "Lately": every ledger
+  cell (one per species and bee team) starts at ${n0(p.prior)} and ${fade}.
+  F and B have par 1${p.cap == null ? " (uncapped)" : ` and are capped at ${p.cap}`}; c runs from ${p.cStart} to ${p.cEnd} over the game.
 - Your score, your fitness, is the time-average over the rounds played of F × B: your species' flower success times your
   bee's success (par 1). Every F, B, draw chance and fitness is public, about once a second: tools/status.py,
   garden.status(), garden.prevalence(), the scoreboard and the history queries (garden.game.prevalence). Programs never
