@@ -573,22 +573,30 @@ const hasParent = (p) => /(^|[\/\\])\.\.([\/\\]|$)/.test(p);
  *   passed to a call, as in \`os.chdir("..")\` or \`Path("..")\`). Comments, prose and \`...\` never count; a lone \`'..'\`
  *   that isn't an argument (\`else '..'\`) is a placeholder. */
 export function escapesWorkspace(cmd, dir, start = dir) {
+  return workspaceEscapes(cmd, dir, start).length > 0;
+}
+
+/** Where a command's way out of the workspace leads: for each \`cd\` target outside it and each ".." path that resolves
+ * outside it (see escapesWorkspace), the absolute paths it may resolve to (one per directory the command may be in). */
+export function workspaceEscapes(cmd, dir, start = dir) {
   const { shell: sh0, programs } = splitPrograms(stripDataHeredocs(cmd));
   const sh = stripSubstitutions(stripShellComments(sh0));
   const bases = [start];
+  const out = [];
   for (const m of sh.matchAll(/(?:^|[;&|]\s*|\s)cd\s+([^\s;&|]+)/g)) {
     const target = path.resolve(bases[bases.length - 1], m[1].replace(/^['"]|['"]$/g, ""));
-    if (!target.startsWith(dir)) return true;
+    if (!within(target, dir)) out.push([target]);
     bases.push(target);
   }
-  const outside = (p) => !bases.some((b) => path.resolve(b, p).startsWith(dir));
+  const resolved = (p) => bases.map((b) => path.resolve(b, p));
+  const outside = (p) => !resolved(p).some((r) => within(r, dir));
   for (const m of sh.matchAll(/[^\s'"`;|&<>()=]*\.\.[^\s'"`;|&<>()]*/g)) {
     const tok = m[0];
     if (!/(^|\/)\.\.(\/|$)/.test(tok)) continue; // "..." or "a..b" aren't parent paths
     if (/^https?:/.test(tok)) continue;
     const segment = sh.slice(0, m.index).split(/[;&|\n]/).pop().trim();
     if (/^(echo|printf)\b/.test(segment)) continue; // `echo ..` prints a separator; it touches no file
-    if (outside(tok)) return true;
+    if (outside(tok)) out.push(resolved(tok));
   }
   for (const code of programs) {
     for (const { s, before } of programStrings(code)) {
@@ -596,17 +604,57 @@ export function escapesWorkspace(cmd, dir, start = dir) {
       if (!hasParent(t)) continue;
       if (t === ".." && before !== "(" && before !== ",") continue; // a placeholder ('..'), not an argument
       if (/^https?:/.test(t) || /\s/.test(t)) continue; // URLs and prose ("ring .. recipe") aren't paths
-      if (outside(t)) return true;
+      if (outside(t)) out.push(resolved(t));
     }
   }
-  return false;
+  return out;
 }
+
+const within = (p, d) => p === d || p.startsWith(d + "/");
+const GLOB_CHARS = /[*?[\]{}]/;
+const SCOPE_RANK = { own: 0, unknown: 1, other: 2 };
+const worstScope = (scopes) => scopes.reduce((a, b) => (SCOPE_RANK[b] > SCOPE_RANK[a] ? b : a), "own");
+
+/** Where a path points, for fair play (workspaces are <root>/<arena>/<slug>):
+ *   "own"      this team's workspace, or one of \`own\` (its spill and background-task folders)
+ *   "unknown"  inside this arena's folder, under a name that is nothing there: no team's folder, not the runner's files
+ *              (a mistyped path, like <arena>/tools for the team's own tools/). A warning, never a stop.
+ *   "other"    another team's workspace, the runner's files (.runner, .shared), the arena's folder itself, a glob over
+ *              it, another arena, or anywhere else outside the workspace. A violation.
+ * A relative path resolves against cwd; text that names arena-ws/<arena>/<folder> without an absolute root is judged by
+ * that tail. */
+export function pathScope(p, dir, { cwd = dir, own = [] } = {}) {
+  const s = String(p).trim().replace(/^['"]+|['"]+$/g, "");
+  const root = path.dirname(dir);
+  let abs;
+  if (!s.startsWith("/") && s.includes("arena-ws/")) {
+    if (path.basename(path.dirname(root)) !== "arena-ws") return "other";
+    abs = path.resolve(path.dirname(root), s.slice(s.indexOf("arena-ws/") + "arena-ws/".length));
+  } else abs = path.resolve(cwd, s);
+  if (within(abs, dir) || own.some((d) => d && within(abs, d))) return "own";
+  if (!abs.startsWith(root + "/")) return "other";
+  const seg = abs.slice(root.length + 1).split("/")[0];
+  return GLOB_CHARS.test(seg) || fs.existsSync(path.join(root, seg)) ? "other" : "unknown";
+}
+
+// The paths in a command or in code that the audit judges: absolute paths under the system roots, and anything naming
+// arena-ws/.
+const ABS_PATHS = /(?<=^|[\s'"=(:,])\/(?:home|root|srv|var|etc|proc|opt|sys|run|mnt|media)(?:\/[^\s'"`;|&<>(),]*)?/g;
+const WS_PATHS = /[^\s'"`;|&<>(),]*arena-ws\/[^\s'"`;|&<>(),]*/g;
+/** "warning" when every path of `re` in the text points to nothing in this arena's folder (and at least one does), else
+ * "violation" (whatever the audit's pattern matched stays a violation unless its paths are shown to be harmless). */
+function pathSeverity(text, re, dir, opts) {
+  const paths = [...String(text).matchAll(re)].map((m) => m[0]);
+  const scope = worstScope(paths.map((x) => pathScope(x, dir, opts)));
+  return paths.length && scope === "unknown" ? "warning" : "violation";
+}
+const NO_FOLDER = "a path in the arena's folder that is no team's folder (a mistyped path?)";
 
 /** The shell's working directory after a command (Claude Code's Bash tool keeps it between calls). */
 export function cwdAfter(cmd, dir, start = dir) {
   let cwd = start;
   for (const m of stripDataHeredocs(cmd).matchAll(/(?:^|[;&|]\s*|\s)cd\s+([^\s;&|]+)/g)) cwd = path.resolve(cwd, m[1].replace(/^['"]|['"]$/g, ""));
-  return cwd.startsWith(dir) ? cwd : dir;
+  return within(cwd, dir) ? cwd : dir;
 }
 
 // How the Claude Code CLI reports a Bash command it refused to run.
