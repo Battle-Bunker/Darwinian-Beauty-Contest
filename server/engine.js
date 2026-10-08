@@ -8,9 +8,9 @@
 //   0 ms   Each bee with a challenge QUEUED (and no call in flight) takes its turn; one with nothing
 //          queued loses it. The engine draws a flower uniformly at random among all N species, the bee's
 //          own included (a public `arrive`, flushed at once), pins both versions, and calls
-//          flower(challenge), which has flower.ms to return [response, percent]. The runner reports the
-//          CPU time of the call; excess energy E = (flower size cap − the flower's size) × max(0,
-//          flower.ms − CPU ms). A late answer, an error, a malformed return or a response over
+//          flower(challenge), which has its hidden budget R (drawn from [flower.minMs, flower.ms]) to
+//          return [response, percent]. The runner reports the CPU time of the call; excess energy E =
+//          (flower size cap − the flower's size) × max(0, R − CPU ms). A late answer, an error, a malformed return or a response over
 //          maxResponseBytes: response null, E = 0. The response goes to the bee's process at once.
 //   150 ms Every response is delivered at once, however fast its flower was. Each bee that took a turn
 //          is called: decide(challenge, response), with bee.ms to return ["feed" | "leave", next].
@@ -323,6 +323,7 @@ export class Garden {
       memory: memories?.[ti]?.memory ?? EMPTY_MEMORY, memoryVersion: memories?.[ti]?.version ?? null,
       memoryError: memories?.[ti]?.error ?? null, memoryChanged: false,
       fedDone: null,     // a fed() call in flight: the bee's next request waits for it (and its MEMORY)
+      fedNote: null,     // what went wrong in the last fed(), for the bee's next turn's beeError
     }));
     this.feeds = ledgers?.feeds ?? zeroLedger(teams);
     this.nectar = ledgers?.nectar ?? zeroLedger(teams);
@@ -543,6 +544,7 @@ export class Garden {
     b.proc?.kill(); // its call in flight, if any, ends at once (and frees its core); the reply is ignored
     b.gen++;
     b.fedDone = null;
+    b.fedNote = null;
     b.code = code;
     b.version = version;
     b.broken = false;
@@ -773,6 +775,8 @@ export class Garden {
       const g = grainOf(t.flowerCode, grainLength(this.config, t.pollen));
       if (g.grain !== null) grain = { grain: g.grain, grainVersion: t.flowerVersion, grainCodeLength: g.grainCodeLength };
     }
+    // What went wrong in the bee's last fed() shows with this turn, as what it printed does.
+    if (b.fedNote && t.gen === b.gen) { t.beeError = [b.fedNote, t.beeError].filter(Boolean).join("; ").slice(0, 600); b.fedNote = null; }
     const large = t.rFull !== undefined ? { rFull: t.rFull, rHash: t.rHash, rPreview: t.rPreview } : {};
     this.#record(t, t.fed ? "feed" : "leave", {
       c: t.c, r: t.rFull !== undefined ? null : t.r, rBytes: t.rBytes ?? null, ...large,
@@ -815,22 +819,21 @@ export class Garden {
       if (gen !== b.gen || this.closed) return;
       this.#keepLog(b, res.out);
       if (res.skipped) return;
+      // Anything wrong is the team's problem, and shows with the bee's next turn (as its beeError).
+      const note = (error) => { b.fedNote = error; this.#problem(b.ti, "bee", b.version, error); };
       if (res.e) { // decide's challenge stays, and so does the MEMORY saved after decide
-        const error = `fed() failed (${String(res.e).slice(0, 200)}): MEMORY is as saved after decide`;
+        const error = `fed() failed (${String(res.e).slice(0, 200)}): MEMORY is as saved after decide, and decide's challenge stays queued`;
         this.#setMemory(b, b.memory, b.memoryVersion, error);
-        this.#problem(b.ti, "bee", b.version, error);
+        note(error);
         return;
       }
       this.#saveMemory(b, res);
-      if (res.aError) { // not plain data, or far too large: MEMORY is saved, decide's challenge stays
-        this.#problem(b.ti, "bee", b.version, `${String(res.aError).slice(0, 200)}: decide's challenge stays queued`);
-        return;
-      }
+      if (res.aError) return note(`${String(res.aError).slice(0, 200)}: decide's challenge stays queued`); // MEMORY is saved
       if (res.a === undefined || res.a === null) return; // nothing returned: decide's challenge stays
       const bad = checkValue(this.cType, res.a, this.limits, "next challenge");
-      if (bad) this.#problem(b.ti, "bee", b.version, `fed() returned a bad next challenge (${String(bad).slice(0, 200)}): decide's stays queued`);
+      if (bad) note(`fed() returned a bad next challenge (${String(bad).slice(0, 200)}): decide's challenge stays queued`);
       // (With feedCost 0, a slow fed() can end after the bee's next turn began with decide's challenge.)
-      else if (b.queued !== queued || b.turn) this.#problem(b.ti, "bee", b.version, "fed() returned its challenge after the bee's next turn had begun: it was dropped");
+      else if (b.queued !== queued || b.turn) note("fed() returned its challenge after the bee's next turn had begun: it was dropped");
       else b.queued = { c: res.a };
     });
     const done = logged(run).finally(() => {

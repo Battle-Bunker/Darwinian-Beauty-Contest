@@ -103,8 +103,10 @@ interviewed by a panel of 10-14-year-old players who score understanding, respec
 has selection, agents that repeatedly do poorly there are removed); game fitness matters too; it keeps a notebook across
 sessions and games; and it gets RULES.md in full.`;
 
-/** Persona and situation, shared by the sessions and the interview. `fixed`: the arena keeps the same teams. */
-function personaAndSituation(persona, fixed) {
+/** Persona and situation, shared by the sessions and the interview. `fixed`: the arena keeps the same teams.
+ * `simpleCode` false (adapt-hi: prompts.simpleCode): no steer toward code a kid can follow; with fixed teams the interview
+ * is only described, since nothing depends on its scores. */
+function personaAndSituation(persona, fixed, { simpleCode = true } = {}) {
   return `# Who you are
 ${persona.persona_prompt.trim()}
 
@@ -114,7 +116,11 @@ persona, standing in for a human+AI team. You play as team "${persona.team_name}
 - Each game is one continuous stretch of play, a few minutes of game time. Before it starts (the lobby) you write your two
   programs, your flower species and your bee. While it runs, the bees forage without pause and you may change your programs at any
   moment, paying for each change from a budget that refills as the game goes on.
-${fixed
+${fixed && !simpleCode
+    ? `- Games follow one another, always with the same teams.
+- After every game you will be interviewed: you explain your code to a panel of players, who score it. Nothing in this
+  tournament depends on those scores: the teams stay the same whatever they are.`
+    : fixed
     ? `- Games follow one another, always with the same teams.
 - After EVERY game you will be INTERVIEWED: you must teach your code to a panel of players aged 10-14. They score how well they
   understand it, how much they respect it, how new your ideas are, and whether they'd want to team up with you. Game fitness
@@ -177,14 +183,14 @@ export function commonNotice(files) {
     `examples, not rules: use them, change them or ignore them.`;
 }
 
-export function toolSystem(persona, config, dir, { fixed = false, apiBase, teams, common = null, commonScope = "all", role = null, roleBrief = null, startBee = null, brevity = true }) {
+export function toolSystem(persona, config, dir, { fixed = false, apiBase, teams, common = null, commonScope = "all", role = null, roleBrief = null, startBee = null, brevity = true, simpleCode = true }) {
   const x = ext(config);
   return `You are a team agent in a coding game, working with tools inside your own workspace folder: ${dir}
 Tools: Read (absolute paths inside your workspace; use offset/limit for big files), Write and Edit (files in your workspace),
 Glob and Grep (search inside your workspace), and Bash inside your workspace: simple shell commands (ls, grep, wc, head) and
 python3. Use python3 to analyse the action stream and to test your programs; the workspace tools in tools/ run with python3 too.
 ${brevity ? "Work step by step, then stop with a short summary.\n" : ""}
-${personaAndSituation(persona, fixed)}
+${personaAndSituation(persona, fixed, { simpleCode })}
 
 # How you work
 - Your team's private workspace is the current directory. README.md explains every file and tool.
@@ -355,8 +361,8 @@ export function gameBrief({ config, teamName, teamId = null, generation, session
 }
 
 /** System prompt of the post-game interview (a single model call, no tools). */
-export function interviewSystem(persona, fixed = false) {
-  return `${personaAndSituation(persona, fixed)}
+export function interviewSystem(persona, fixed = false, { simpleCode = true } = {}) {
+  return `${personaAndSituation(persona, fixed, { simpleCode })}
 
 # The rules
 ${rules()}`;

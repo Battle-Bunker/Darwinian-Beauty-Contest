@@ -276,13 +276,17 @@ for (const language of ["python", "typescript"]) {
     const cs = ends(out.actions).map((a) => a.c);
     assert.deepEqual(cs, [1, 2, 3, 4, 5, 6, 7], "decide's challenge every time");
     assert.equal(JSON.parse(out.memories.at(-1).memory).f, "14567", "MEMORY saved after every fed but the crashed and the stopped one");
-    const errors = out.problems.map((x) => x.error);
-    const has = (re, what) => assert.ok(errors.some((e) => re.test(e)), `${what}: ${JSON.stringify(errors)}`);
-    has(/fed\(\) returned a bad next challenge .*decide's stays queued/, "a string for an int");
-    has(/fed\(\) failed \((ZeroDivisionError|.*boom)/, "a crash");
-    has(/fed\(\) failed \(Timeout/, "stopped at 50 ms");
-    assert.equal(errors.filter((e) => /fed\(\) returned a bad next challenge/.test(e)).length, 2, "the string and the int beyond the limits");
-    has(/fed returned something that is not plain data.*decide's challenge stays queued/, "not plain data");
+    // Each fed's error shows with the bee's next turn (its beeError), as its prints do; the first is also
+    // the bee version's problem.
+    const errs = ends(out.actions).map((a) => a.beeError ?? "");
+    assert.equal(errs[0], "");
+    assert.match(errs[1], /^fed\(\) returned a bad next challenge .*: decide's challenge stays queued$/, "a string for an int");
+    assert.match(errs[2], /^fed\(\) failed \((ZeroDivisionError|.*boom).*: MEMORY is as saved after decide, and decide's challenge stays queued$/, "a crash");
+    assert.match(errs[3], /^fed\(\) failed \(Timeout/, "stopped at 50 ms");
+    assert.match(errs[4], /^fed\(\) returned a bad next challenge /, "an int beyond the limits");
+    assert.match(errs[5], /^fed returned something that is not plain data.*: decide's challenge stays queued$/, "not plain data");
+    assert.equal(errs[6], "");
+    assert.match(out.problems[0].error, /^fed\(\) returned a bad next challenge/);
     assert.ok(out.problems.every((x) => x.kind === "bee"));
   });
 }

@@ -16,7 +16,9 @@
 //                  session (the game ending stops it anyway); lobbyMinutes: wall-clock cap of a lobby session (told to the
 //                  team); effort: the CLI's --effort for every team session; nice: the sessions' CPU priority (default 5);
 //                  penaltyMinutes: how long a team waits after a session with a fair-play violation (default maxMinutes)
-//   prompts        { brevity: false }: no "be quick", "at most N tool calls" or "short summary" lines in the briefs
+//   prompts        { brevity: false }: no "be quick", "at most N tool calls" or "short summary" lines in the briefs;
+//                  { simpleCode: false }: no steer toward code a kid can follow (with fixed teams the interview is only
+//                  described: nothing depends on its scores)
 //   concurrency    model sessions and calls at once (ARENA_CONCURRENCY overrides it; default 8)
 //   expectConfig   { "dotted.key": value } the server's config must have (checked when a game is created)
 //   limits         per-model session limits (turns, usd), optionally per phase: { lobby: {...}, game: {...} }
@@ -151,7 +153,7 @@ export const PRESETS = {
     lineup: ADAPT_HI_LINEUP,
     session: { warmupSeconds: 10, gapSeconds: 5, idleBackoff: false, maxIdleGapSeconds: 5, endMarginSeconds: 20, maxMinutes: 10, penaltyMinutes: 6, lobbyMinutes: 10, effort: "high", nice: 15 },
     limits: { lobby: { opus: { turns: 100, usd: 6 } }, game: { opus: { turns: 60, usd: 3 } } },
-    prompts: { brevity: false },
+    prompts: { brevity: false, simpleCode: false },
     concurrency: 16,
     // The engine's new defaults, which this preset leaves to the server: checked on the first game before any session.
     expectConfig: { "budgets.flower.minMs": 3, feedCost: 20, "scoring.alpha": 0.85, "scoring.beta": 0.85 },
@@ -167,7 +169,7 @@ export const PRESETS = {
     minutesByGame: [1],
     lineup: ADAPT_HI_LINEUP,
     session: { warmupSeconds: 3, gapSeconds: 2, idleBackoff: false, maxIdleGapSeconds: 2, endMarginSeconds: 3, maxMinutes: 2, lobbyMinutes: 1, effort: "high", nice: 15 },
-    prompts: { brevity: false },
+    prompts: { brevity: false, simpleCode: false },
     concurrency: 16,
     scaffold: { cpuShare: 0.05 },
     reserveUsd: 0,

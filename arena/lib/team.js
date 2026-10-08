@@ -410,7 +410,8 @@ export async function runTeamSession({ desk, arena, gameRow, persona, entry, gPa
   const cf = commonFiles(arena, persona);
   const system = toolSystem(persona, config, dir, { fixed: !!arena.settings.noEvolution, apiBase, teams, common: cf?.files, commonScope: cf?.scope,
     role: arena.settings.roles?.[persona.slug]?.role ?? null, roleBrief: arena.settings.roles?.[persona.slug]?.brief ?? null,
-    startBee: startBeeName(arena.settings.starts?.[persona.slug]?.bee, cf?.files), brevity: arena.settings.prompts?.brevity !== false });
+    startBee: startBeeName(arena.settings.starts?.[persona.slug]?.bee, cf?.files), brevity: arena.settings.prompts?.brevity !== false,
+    simpleCode: arena.settings.prompts?.simpleCode !== false });
   const scripts = fs.readdirSync(dir).filter((f) => f.endsWith(".py") && !KINDS.includes(f.replace(/\.py$/, "")));
   const prompt = buildPrompt({ view, drafts, status, maxTurns, scripts, dir, brevity: arena.settings.prompts?.brevity !== false });
   const tag = `${arena.id}:${persona.slug}:g${gameRow.generation}:s${sessionNo}${attempt ? `a${attempt}` : ""}:${crypto.randomBytes(3).toString("hex")}`;
@@ -551,7 +552,7 @@ export async function interview({ arena, gameRow, persona, entry, entries, final
   const notebook = (await one("SELECT notebook FROM arena.personas WHERE id = $1", [persona.id]))?.notebook || "";
   const standings = entries.filter((e) => e.fitness != null).sort((a, b) => b.fitness - a.fitness).map((e) => ({ name: e.team_name, fitness: e.fitness, me: e.persona_id === persona.id }));
   const mine = finals[entry.team_id] || { code: {}, changes: 0 };
-  const r = await callModel({ model: capModel(persona.model, arena.settings.maxModel), system: interviewSystem(persona, !!arena.settings.noEvolution),
+  const r = await callModel({ model: capModel(persona.model, arena.settings.maxModel), system: interviewSystem(persona, !!arena.settings.noEvolution, { simpleCode: arena.settings.prompts?.simpleCode !== false }),
     prompt: interviewPrompt({ standings, programs: mine.code, changes: mine.changes, config: gameRow.config, notebook }),
     effort: "low", ctx: { purpose: "interview", arenaId: arena.id, gameId: gameRow.id, personaId: persona.id } });
   return (extractTag(r.text, "explanation") || r.text).trim().slice(0, 4000);
