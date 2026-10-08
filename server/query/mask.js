@@ -38,3 +38,23 @@ export function mask(entityName, r, viewer, opts = {}) {
   }
   return out;
 }
+
+// Private play (config.visibility "private", until the game is over): a team sees only its own programs' side
+// of a turn, never the other side's team. Its flower's side: what the flower was asked and answered, R, its CPU
+// time and errors, not which bee came nor whether it fed. Its bee's side: what the bee asked, the response, its
+// decision and what the feed brought (nectar, price, net, balance, the grain bare), not which species answered.
+// A turn of its bee at its own flower gives both sides, as two records.
+export const FLOWER_SIDE = new Set(["game", "seq", "round", "atMs", "flower", "challenge", "response", "responseBytes", "responseHash",
+  "percent", "ms", "budgetMs", "flowerVersion", "flowerError"]);
+export const BEE_SIDE = new Set(["game", "seq", "round", "atMs", "turn", "bee", "challenge", "response", "responseBytes", "responseHash",
+  "fed", "nectar", "price", "net", "balance", "beeMs", "beeVersion", "beeError", "grain"]);
+
+/** A `turns` record as team `viewer` sees it in private play: its flower's side and/or its bee's side (none for anyone else). */
+export function privateTurns(r, viewer) {
+  if (viewer === null || viewer === undefined) return [];
+  const side = (keep) => Object.fromEntries(SCHEMA.entities.turns.fields.map((f) => [f.name, keep.has(f.name) && r[f.name] !== undefined ? r[f.name] : null]));
+  const out = [];
+  if (r.flower === viewer) out.push(side(FLOWER_SIDE));
+  if (r.bee === viewer) out.push(side(BEE_SIDE));
+  return out;
+}

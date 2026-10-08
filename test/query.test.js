@@ -48,7 +48,8 @@ before(async () => {
   await migrate();
   // Team 2's big responses fit. Prevalence and a feed price, as a new game has, but every ready bee visits each
   // round (slots 1), and a feed sits the bee out 2 rounds, so there are turns enough to query.
-  const config = normalizeConfig({ feedCost: 2, responseType: "any", maxResponseBytes: 65536, prevalence: { slots: 1 } });
+  // A public game (private play has its own test, below).
+  const config = normalizeConfig({ feedCost: 2, responseType: "any", maxResponseBytes: 65536, prevalence: { slots: 1 }, visibility: "public" });
   const out = await play(config, Array.from({ length: N }, (_, ti) => ({ flower: flowerCode(ti), bee: beeCode(ti) })), 80);
   const uid = () => crypto.randomUUID();
   db.users = Array.from({ length: N + 1 }, uid); // one per team, and a spectator

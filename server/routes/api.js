@@ -47,12 +47,14 @@ export function apiRouter() {
   r.get("/query/schema", (_req, res) => res.json(G.querySchema()));
   r.get(`${base}/ledger`, wrap(async (req, res) => res.json(await G.viewLedger(req.game, req.user, { after: req.query.after, limit: req.query.limit }))));
   r.get(`${base}/responses/:seq`, wrap(async (req, res) => {
-    const body = await G.viewResponse(req.game, req.params.seq);
+    const body = await G.viewResponse(req.game, req.params.seq, req.user);
     if (body === null) return res.status(404).json({ error: "That turn has no response" });
-    res.type("application/json").set("Cache-Control", "public, max-age=31536000, immutable").send(body);
+    // A private game's responses are each team's own until it's over: never in a shared cache.
+    const priv = req.game.config?.visibility === "private" && req.game.status !== "finished";
+    res.type("application/json").set("Cache-Control", priv ? "private, no-store" : "public, max-age=31536000, immutable").send(body);
   }));
-  r.get(`${base}/scores`, wrap(async (req, res) => res.json(await G.viewScores(req.game))));
-  r.get(`${base}/prevalence`, wrap(async (req, res) => res.json(await G.viewPrevalence(req.game, { after: req.query.after, limit: req.query.limit }))));
+  r.get(`${base}/scores`, wrap(async (req, res) => res.json(await G.viewScores(req.game, req.user))));
+  r.get(`${base}/prevalence`, wrap(async (req, res) => res.json(await G.viewPrevalence(req.game, { after: req.query.after, limit: req.query.limit }, req.user))));
   r.get(`${base}/events`, wrap(async (req, res) => gameStream(req, res, {
     gameId: req.game.id, teamId: await G.myTeamId(req.game, req.user), version: req.game.version,
     after: Number(req.query.after ?? req.game.last_seq) || 0,

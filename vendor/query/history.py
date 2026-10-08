@@ -10,26 +10,26 @@ Json = Any  # any JSON value: a challenge, a response, a bee's memory
 
 
 class Turn(NamedTuple):
-    """One finished turn: a bee's challenge, a flower's response and the bee's decision. (entity "turns")"""
+    """One finished turn: a bee's challenge, a flower's response and the bee's decision. In private play (a private game, until it's over) a team has only its own turns, one row per side it played: its flower's (bee, turn, fed and the bee's fields null) and its bee's (flower, percent, energy and the flower's fields null); a spectator none. (entity "turns")"""
     game: str  # the game's short id
     seq: int  # the number of the turn's feed or leave action (GET .../responses/:seq has its whole response)
     round: int  # the round the turn was taken in (1, 2, ...)
     at_ms: int  # game time the round began: (round - 1) × round_ms
-    turn: int  # the bee's turn number (1, 2, ...)
-    bee: int  # the bee's team index
-    flower: int  # the flower's team index
+    turn: Optional[int]  # the bee's turn number (1, 2, ...); null on a flower's side in private play
+    bee: Optional[int]  # the bee's team index; null on a flower's side in private play
+    flower: Optional[int]  # the flower's team index; null on a bee's side in private play
     challenge: Json  # the bee's challenge
     response: Json  # the flower's response (null if it failed, or if its JSON is over 4 KB: see responseBytes)
     response_bytes: Optional[int]  # the response's size: UTF-8 bytes of its JSON text (null if it failed)
     response_hash: Optional[str]  # an identifier of the full response; null unless the response is over 4 KB
-    fed: bool  # whether the bee fed
+    fed: Optional[bool]  # whether the bee fed; null on a flower's side in private play
     percent: Optional[float]  # the share of E the flower offered, 0-100 (null if it failed)
     energy: Optional[float]  # E, the flower's excess energy (node·ms·bytes with the game's byte factor, else node·ms; 0 if it failed)
     nectar: Optional[float]  # the nectar the flower gave the bee: percent/100 × E on a feed, else null
     price: Optional[float]  # on a feed, the feed price the bee paid out of its nectar (0 in games without one), else null
     net: Optional[float]  # on a feed, the bee's net nectar: nectar - price (it can be negative), else null
     balance: Optional[float]  # on a feed in a pools game, the bee's nectar balance after it; else null
-    pollen: float  # the pollen the flower gave the bee: (1 − percent/100) × E on a feed, else 0
+    pollen: Optional[float]  # the pollen the flower gave the bee: (1 − percent/100) × E on a feed, else 0; null in private play
     ms: Optional[float]  # the flower's CPU time for the call (ms)
     budget_ms: Optional[float]  # R: the call's hidden time budget (ms of CPU time, uniform in minMs..ms): its hard limit, and E's ceiling
     flower_version: Optional[int]  # the flower version that answered
@@ -134,7 +134,7 @@ PairField = Literal["game", "bee", "flower", "feeds", "nectar", "pollen"]
 
 
 class Prevalence(NamedTuple):
-    """Prevalence on both sides (games that have it): every team's flower and bee success and draw chances, and its fitness so far, sampled about once a second of game time. (entity "prevalence")"""
+    """Prevalence on both sides (games that have it): every team's flower and bee success and draw chances, and its fitness, sampled about once a second of game time. In private play only the snapshots (a sample every prevalenceEveryS seconds of game time), rounded to 2 decimals, without balances. (entity "prevalence")"""
     game: str  # the game's short id
     round: int  # the round whose draws it gave (sampled as the round began)
     at_ms: int  # game time that round began: (round - 1) × round_ms
@@ -163,25 +163,25 @@ PrevalenceField = Literal["game", "round", "at_ms", "team", "flower_success", "b
 
 
 class Score(NamedTuple):
-    """The scoreboard: each team's fitness (the game's rule), pollination, forage and shares over the whole game, and its latest prevalence. (entity "scores")"""
+    """The scoreboard: each team's fitness (the game's rule), pollination, forage and shares over the whole game, and its latest prevalence. In private play the latest snapshot's fitness, F, B and draw chances only (the rest null). (entity "scores")"""
     game: str  # the game's short id
     team: int  # the team's index
-    pollination: float  # Σ over bee teams of (pollen this species gave their bee)^beta (the game's scoring.beta; √ in games without one)
-    forage: float  # Σ over flower teams of (nectar this bee got there)^alpha (the game's scoring.alpha; √ in games without one)
-    pollination_share: float  # pollination ÷ everyone's (1/N if that is 0)
-    forage_share: float  # forage ÷ everyone's (1/N if that is 0)
-    fitness: float  # with prevalence, by the game's scoring.mode: "final", N² × p^F_s × p^B_s at the latest round played (the final round once the game is over); "timeAverage" (v2, v3), the time-average of F × B over the rounds played. Else N² × pollination share × forage share. Par 1
+    pollination: Optional[float]  # Σ over bee teams of (pollen this species gave their bee)^beta (the game's scoring.beta; √ in games without one)
+    forage: Optional[float]  # Σ over flower teams of (nectar this bee got there)^alpha (the game's scoring.alpha; √ in games without one)
+    pollination_share: Optional[float]  # pollination ÷ everyone's (1/N if that is 0)
+    forage_share: Optional[float]  # forage ÷ everyone's (1/N if that is 0)
+    fitness: Optional[float]  # with prevalence, by the game's scoring.mode: "final", N² × p^F_s × p^B_s at the latest round played (the final round once the game is over); "timeAverage" (v2, v3), the time-average of F × B over the rounds played. Else N² × pollination share × forage share. Par 1. In private play the latest snapshot's (null before the first)
     flower_success: Optional[float]  # with prevalence, F_s at the latest sample, else null
     bee_success: Optional[float]  # with prevalence, B_b at the latest sample, else null
     flower_p: Optional[float]  # with prevalence, p^F_s at the latest sample, else null
     bee_p: Optional[float]  # with prevalence, p^B_b at the latest sample, else null
-    pollen: float  # all the pollen this species gave
-    feeds_received: int  # feeds at this flower
-    feeds_given: int  # feeds by this bee
-    pollinators: int  # bee teams that fed at this flower
-    nectar_collected: float  # nectar this bee got
-    nectar_given: float  # nectar this flower paid
-    nectar_sources: int  # flower teams that paid this bee
+    pollen: Optional[float]  # all the pollen this species gave
+    feeds_received: Optional[int]  # feeds at this flower
+    feeds_given: Optional[int]  # feeds by this bee
+    pollinators: Optional[int]  # bee teams that fed at this flower
+    nectar_collected: Optional[float]  # nectar this bee got
+    nectar_given: Optional[float]  # nectar this flower paid
+    nectar_sources: Optional[int]  # flower teams that paid this bee
 
     @classmethod
     def from_json(cls, d: dict) -> "Score":
@@ -322,21 +322,21 @@ SCHEMA = {
                 {"name": "seq", "type": "int", "nullable": False},
                 {"name": "round", "type": "int", "nullable": False},
                 {"name": "atMs", "type": "int", "nullable": False},
-                {"name": "turn", "type": "int", "nullable": False},
-                {"name": "bee", "type": "int", "nullable": False},
-                {"name": "flower", "type": "int", "nullable": False},
+                {"name": "turn", "type": "int", "nullable": True},
+                {"name": "bee", "type": "int", "nullable": True},
+                {"name": "flower", "type": "int", "nullable": True},
                 {"name": "challenge", "type": "json", "nullable": False},
                 {"name": "response", "type": "json", "nullable": True},
                 {"name": "responseBytes", "type": "int", "nullable": True},
                 {"name": "responseHash", "type": "str", "nullable": True},
-                {"name": "fed", "type": "bool", "nullable": False},
+                {"name": "fed", "type": "bool", "nullable": True},
                 {"name": "percent", "type": "float", "nullable": True},
                 {"name": "energy", "type": "float", "nullable": True},
                 {"name": "nectar", "type": "float", "nullable": True},
                 {"name": "price", "type": "float", "nullable": True},
                 {"name": "net", "type": "float", "nullable": True},
                 {"name": "balance", "type": "float", "nullable": True},
-                {"name": "pollen", "type": "float", "nullable": False},
+                {"name": "pollen", "type": "float", "nullable": True},
                 {"name": "ms", "type": "float", "nullable": True},
                 {"name": "budgetMs", "type": "float", "nullable": True},
                 {"name": "flowerVersion", "type": "int", "nullable": True},
@@ -456,22 +456,22 @@ SCHEMA = {
             "fields": [
                 {"name": "game", "type": "str", "nullable": False},
                 {"name": "team", "type": "int", "nullable": False},
-                {"name": "pollination", "type": "float", "nullable": False},
-                {"name": "forage", "type": "float", "nullable": False},
-                {"name": "pollinationShare", "type": "float", "nullable": False},
-                {"name": "forageShare", "type": "float", "nullable": False},
-                {"name": "fitness", "type": "float", "nullable": False},
+                {"name": "pollination", "type": "float", "nullable": True},
+                {"name": "forage", "type": "float", "nullable": True},
+                {"name": "pollinationShare", "type": "float", "nullable": True},
+                {"name": "forageShare", "type": "float", "nullable": True},
+                {"name": "fitness", "type": "float", "nullable": True},
                 {"name": "flowerSuccess", "type": "float", "nullable": True},
                 {"name": "beeSuccess", "type": "float", "nullable": True},
                 {"name": "flowerP", "type": "float", "nullable": True},
                 {"name": "beeP", "type": "float", "nullable": True},
-                {"name": "pollen", "type": "float", "nullable": False},
-                {"name": "feedsReceived", "type": "int", "nullable": False},
-                {"name": "feedsGiven", "type": "int", "nullable": False},
-                {"name": "pollinators", "type": "int", "nullable": False},
-                {"name": "nectarCollected", "type": "float", "nullable": False},
-                {"name": "nectarGiven", "type": "float", "nullable": False},
-                {"name": "nectarSources", "type": "int", "nullable": False},
+                {"name": "pollen", "type": "float", "nullable": True},
+                {"name": "feedsReceived", "type": "int", "nullable": True},
+                {"name": "feedsGiven", "type": "int", "nullable": True},
+                {"name": "pollinators", "type": "int", "nullable": True},
+                {"name": "nectarCollected", "type": "float", "nullable": True},
+                {"name": "nectarGiven", "type": "float", "nullable": True},
+                {"name": "nectarSources", "type": "int", "nullable": True},
             ],
         },
     },
@@ -479,7 +479,7 @@ SCHEMA = {
 
 
 class ProgramHistory:
-    """local()'s read-only root (Local.history): .turns is a query over One finished turn: a bee's challenge, a flower's response and the bee's decision."""
+    """local()'s read-only root (Local.history): .turns is a query over One finished turn: a bee's challenge, a flower's response and the bee's decision. In private play (a private game, until it's over) a team has only its own turns, one row per side it played: its flower's (bee, turn, fed and the bee's fields null) and its bee's (flower, percent, energy and the flower's fields null); a spectator none."""
     __slots__ = ("turns",)
     turns: "Query[Turn, TurnField]"
 

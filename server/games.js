@@ -3,7 +3,7 @@
 import crypto from "node:crypto";
 import { query, tx } from "./db/pool.js";
 import { allocatePrefixLen, normalizeCode, shortId, uuidToCode } from "./lib/shortid.js";
-import { DEFAULT_CONFIG, KINDS, available, drawEndMs, endFactorOf, energyBytes, feedPriceOf, lengthOf, normalizeConfig, prevalenceConfig, prevalenceOf, windowMsOf } from "./lib/gameConfig.js";
+import { DEFAULT_CONFIG, KINDS, available, drawEndMs, endFactorOf, energyBytes, feedPriceOf, lengthOf, normalizeConfig, prevalenceConfig, prevalenceOf, snapshotsOf, visibilityOf, windowMsOf } from "./lib/gameConfig.js";
 import { fitnessBasisOf, scoreboard } from "./lib/prevalence.js";
 import { changes, size } from "./lib/measure.js";
 import { scoringOf, zeroLedger } from "./lib/scoring.js";
@@ -11,7 +11,7 @@ import { programInterface } from "./lib/interface.js";
 import { ruleBreaches } from "./lib/pyRules.js";
 import { canonicalJson, memoryShapeError, memorySize, tryBee, tryFlower } from "./engine.js";
 import { exampleValue, parseType } from "./lib/types.js";
-import { mask } from "./query/mask.js";
+import { mask, privateTurns } from "./query/mask.js";
 import { runQuery } from "./query/sql.js";
 import { SCHEMA } from "./query/schema.js";
 
@@ -362,6 +362,91 @@ export async function tryProgram(game, user, { kind, code, challenges, budgetMs,
   return { ...result, actions: result.actions.map((a) => ({ ...a, bee: team.id, flower: team.id })) };
 }
 
+// ---------- private play: what a viewer sees of a private game until it is over ----------
+//
+// A game whose config.visibility is "private" shows each team, while it runs or is paused, only its own programs'
+// side of their turns (privateActionViews; mask.js privateTurns), its own versions, budgets and MEMORY, and
+// everyone's prevalence in snapshots: a sample every prevalenceEveryS seconds of game time (gameConfig.js
+// isSnapshot), its F, B, p^F, p^B, fitness and c rounded to 2 decimals, its balances left out. Spectators see the
+// snapshots only. The scoreboard is the latest snapshot's; there are no ledgers, arrivals, other teams' turns or
+// samples in between. The room's owner, with no team in the game, sees it as a public game. Once it is over,
+// everything is revealed as in any game.
+
+/** Whether this viewer sees game row `g` privately (the room's owner `ownerId`; the viewer `userId`, on team `mine` or none). */
+export const restrictedFor = (g, ownerId, userId, mine) =>
+  visibilityOf(g.config) === "private" && g.status !== "finished" && !(!!userId && userId === ownerId && !mine);
+
+const r2 = (x) => (typeof x === "number" && Number.isFinite(x) ? Math.round(x * 100) / 100 : x ?? null);
+
+/** SQL: whether the prevalence sample at `col` (game ms) is one of the snapshots of a game with this config. */
+export function snapshotSql(col, config) {
+  const { everyMs, sampleMs } = snapshotsOf(config);
+  const P = Math.max(1, Math.round(everyMs)), S = Math.max(1, Math.round(sampleMs)); // integers, written inline
+  return `(${col} = 0 OR floor(${col}::float8 / ${P}) > floor((${col} - ${S})::float8 / ${P}))`;
+}
+
+/** A private game's latest prevalence snapshot (a stored sample row), or null before the first. */
+export async function latestSnapshot(g, client = { query }) {
+  const { rows } = await client.query(`SELECT round, at_ms, c, slots, flower_success, bee_success, flower_p, bee_p, fitness FROM prevalence
+    WHERE game_id = $1 AND ${snapshotSql("at_ms", g.config)} ORDER BY round DESC LIMIT 1`, [g.id]);
+  return rows[0] ?? null;
+}
+
+/** A snapshot as published: a sample (sampleView) with F, B, p^F, p^B, fitness and c rounded to 2 decimals and no balances. */
+export const snapshotView = (x, participants) => {
+  const v = sampleView(x, participants);
+  return {
+    ...v, c: r2(v.c), snapshot: true,
+    species: v.species.map((sp) => ({ ...sp, flowerSuccess: r2(sp.flowerSuccess), beeSuccess: r2(sp.beeSuccess), flowerP: r2(sp.flowerP), beeP: r2(sp.beeP), fitness: r2(sp.fitness), balance: null })),
+  };
+};
+
+/** The scoreboard of a private game during play: each team's latest snapshot values; everything else null. */
+export function snapshotScores(participants, snap) {
+  const v = snap ? snapshotView(snap, participants) : null;
+  return participants.map((teamId, i) => {
+    const sp = v?.species[i];
+    return {
+      teamId, fitness: sp?.fitness ?? null, flowerSuccess: sp?.flowerSuccess ?? null, beeSuccess: sp?.beeSuccess ?? null, flowerP: sp?.flowerP ?? null, beeP: sp?.beeP ?? null,
+      pollination: null, forage: null, pollinationShare: null, forageShare: null, pollen: null, feedsReceived: null, feedsGiven: null,
+      pollinators: null, nectarCollected: null, nectarGiven: null, nectarSources: null,
+    };
+  });
+}
+
+/**
+ * A turn's end action as team `me` sees it in private play: its flower's side and/or its bee's side (a turn of
+ * its own bee at its own flower gives both, flower first, with the same seq). Arrivals give nothing.
+ *   flower side: { seq, atMs, round, side: "flower", flower: me, action: "answer", c, r, rBytes, rHash?, rPreview?,
+ *                  percent, ms, budgetMs, flowerError, flowerVersion }: not the bee, not whether it fed
+ *   bee side:    { seq, atMs, round, side: "bee", bee: me, turn, action: "feed" | "leave", c, r, rBytes, rHash?,
+ *                  rPreview?, beeMs, beeError, beeVersion, log?, and on a feed nectar, price, net, balance, grain? }:
+ *                  not the flower, its version, percent or energy
+ */
+export function privateActionViews(a, me) {
+  if (!me || a.action === "arrive") return [];
+  const base = { seq: a.seq, atMs: a.at_ms, round: a.round };
+  const resp = { c: a.c, r: a.r, rBytes: a.r_bytes ?? null, ...(a.r_hash ? { rHash: a.r_hash, rPreview: a.r_preview } : {}) };
+  const out = [];
+  if (a.flower_team === me) {
+    out.push({ ...base, side: "flower", flower: me, action: "answer", ...resp, percent: a.percent, ms: a.cpu_ms, budgetMs: a.budget_ms ?? null,
+      flowerError: a.flower_error, flowerVersion: a.flower_version });
+  }
+  if (a.bee_team === me) {
+    const v = { ...base, side: "bee", bee: me, turn: a.turn, action: a.action, ...resp, beeMs: a.bee_ms, beeError: a.bee_error, beeVersion: a.bee_version };
+    if (a.log) v.log = a.log;
+    if (a.action === "feed") {
+      Object.assign(v, { nectar: a.nectar, price: a.price ?? 0, net: a.nectar - (a.price ?? 0), balance: a.balance ?? null });
+      if (a.grain !== null && a.grain !== undefined) v.grain = a.grain; // bare: no version, no code length
+    }
+    out.push(v);
+  }
+  return out;
+}
+
+/** The room's owner of game row `g` (for restrictedFor). */
+const ownerOf = async (g) => (await query("SELECT owner_id FROM rooms WHERE id = $1", [g.room_id])).rows[0]?.owner_id ?? null;
+
 // ---------- the views: everything a given viewer may see, live or later ----------
 //
 // During play, everyone (spectators included) sees every turn's arrival, challenge, response and whether
@@ -399,9 +484,10 @@ export const sampleView = (x, participants) => {
  * A game's prevalence (public): its settings and latest sample, { on, halfLifeS, cDecay, cStart, cHalfS (sech) or cEnd (linear), cap,
  * slots, prior, pools, endowment, feedPrice, sample } (sample null before the first); null when the game has none.
  */
-function prevalenceView(g) {
+function prevalenceView(g, snap = undefined) {
   const settings = prevalenceOf(g.config);
   if (!settings) return null;
+  if (snap !== undefined) return { ...settings, feedPrice: feedPriceOf(g.config), sample: snap && g.participants ? snapshotView(snap, g.participants) : null };
   return { ...settings, feedPrice: feedPriceOf(g.config), sample: g.prevalence && g.participants ? sampleView(g.prevalence, g.participants) : null };
 }
 
@@ -430,6 +516,9 @@ export async function viewGame(room, game, user) {
   const banks = (await query("SELECT * FROM banks WHERE game_id = $1", [g.id])).rows;
   const memories = (await query("SELECT * FROM bee_memories WHERE game_id = $1", [g.id])).rows;
   const participants = g.participants || null;
+  // Private play: this viewer's numbers are the latest snapshot's; no ledgers.
+  const restricted = restrictedFor(g, room.owner_id, user?.id, mine);
+  const snap = restricted && participants && prevalenceOf(cfg) ? await latestSnapshot(g) : null;
   const indexOf = (teamId) => (participants ? participants.indexOf(teamId) : -1);
   const canSeeCode = (teamId) => revealed || mine?.id === teamId;
   const canSeeChanges = (teamId) => over || mine?.id === teamId;
@@ -453,6 +542,7 @@ export async function viewGame(room, game, user) {
       // if it has none), its end factor (1 if it has none) and its energy formula (no byte factor if it has none).
       id: g.id, shortId: shortId(g), url: `/room/${shortId(room)}/game/${shortId(g)}`, status: g.status,
       config: { ...cfg, endFactor: endFactorOf(cfg), scoring: scoringOf(cfg), energy: { bytes: energyBytes(cfg) }, prevalence: prevalenceConfig(cfg),
+        visibility: visibilityOf(cfg), prevalenceEveryS: snapshotsOf(cfg).everyMs / 1000,
         flowerWindowMs: cfg.flowerWindowMs ?? null, feedPrice: cfg.feedPrice === undefined ? 0 : cfg.feedPrice },
       // what they come to: the flower window (ms) and the feed price (E's unit) the game plays with
       windowMs: windowMsOf(cfg), feedPrice: feedPriceOf(cfg),
@@ -461,6 +551,8 @@ export async function viewGame(room, game, user) {
       // minMs, maxMs, endMs (null while hidden) and, for the owner with no team here, drawnEndMs
       clockMs: g.clock_ms, ...timingOf(g, isOwner && !mine), round: g.round, lastSeq: g.last_seq, version: g.version, lastError: g.last_error,
       createdAt: g.created_at, startedAt: g.started_at, finishedAt: g.finished_at, revealed, isOwner,
+      // this viewer sees the game privately (a private game, until it's over; not its owner with no team in it)
+      restricted,
     },
     me: user ? { id: user.id, name: user.name, teamId: mine?.id ?? null } : null,
     participants,
@@ -480,39 +572,47 @@ export async function viewGame(room, game, user) {
     })),
     myTeam: mine ? { id: mine.id, name: mine.name, joinCode: mine.join_code, index: indexOf(mine.id) >= 0 ? indexOf(mine.id) : null } : null,
     interface: programInterface(cfg),
-    scores: scoresOf(g),
-    // feeds[bee team][flower team], nectar[..][..] and pollen[..][..] over the whole game, in participants order
-    ledgers: ledgersView(g),
-    // species prevalence: its settings and latest sample (null: species are drawn uniformly)
-    prevalence: prevalenceView(g),
+    // private play: the latest snapshot's numbers only
+    scores: restricted ? (participants ? snapshotScores(participants, snap) : null) : scoresOf(g),
+    // feeds[bee team][flower team], nectar[..][..] and pollen[..][..] over the whole game, in participants order (not in private play)
+    ledgers: restricted ? null : ledgersView(g),
+    // species prevalence: its settings and latest sample, or in private play its latest snapshot (null: species are drawn uniformly)
+    prevalence: restricted ? prevalenceView(g, snap) : prevalenceView(g),
   };
 }
 
 /**
  * Just the live numbers (cheap enough to poll every second): clock, the length range (and the end, once it may
- * be seen: timingOf), round, the scoreboard and the ledgers. Public: nobody gets the hidden end here.
+ * be seen: timingOf), round, the scoreboard and the ledgers (in private play, for anyone but the room's owner
+ * with no team in it: the latest snapshot's numbers, no ledgers). Nobody gets the hidden end here.
  */
-export async function viewScores(game) {
+export async function viewScores(game, user = null) {
   const g = (await query("SELECT * FROM games WHERE id = $1", [game.id])).rows[0];
+  const restricted = restrictedFor(g, await ownerOf(g), user?.id, await myTeam(g.id, user?.id));
+  const snap = restricted && g.participants && prevalenceOf(g.config) ? await latestSnapshot(g) : null;
   return {
-    status: g.status, clockMs: g.clock_ms, ...timingOf(g), round: g.round, lastSeq: g.last_seq, fitnessBasis: fitnessBasisOf(g.config),
-    participants: g.participants || null, scores: scoresOf(g), ledgers: ledgersView(g), prevalence: prevalenceView(g),
+    status: g.status, clockMs: g.clock_ms, ...timingOf(g), round: g.round, lastSeq: g.last_seq, fitnessBasis: fitnessBasisOf(g.config), restricted,
+    participants: g.participants || null,
+    scores: restricted ? (g.participants ? snapshotScores(g.participants, snap) : null) : scoresOf(g),
+    ledgers: restricted ? null : ledgersView(g), prevalence: restricted ? prevalenceView(g, snap) : prevalenceView(g),
   };
 }
 
 /**
  * A game's prevalence samples (public), oldest first: those of rounds after `after`, at most `limit` (default
- * and most 5000). { prevalence (its settings, null for a game without), samples: [sample] }.
+ * and most 5000). { prevalence (its settings, null for a game without), samples: [sample] }. In private play
+ * (restrictedFor), its snapshots only (snapshotView).
  */
-export async function viewPrevalence(game, { after = 0, limit = 5000 } = {}) {
-  const g = (await query("SELECT config, participants FROM games WHERE id = $1", [game.id])).rows[0];
+export async function viewPrevalence(game, { after = 0, limit = 5000 } = {}, user = null) {
+  const g = (await query("SELECT id, room_id, status, config, participants FROM games WHERE id = $1", [game.id])).rows[0];
   const settings = prevalenceOf(g.config);
   if (!settings || !g.participants) return { prevalence: settings, samples: [] };
+  const restricted = restrictedFor(g, await ownerOf(g), user?.id, await myTeam(g.id, user?.id));
   const n = Math.max(1, Math.min(5000, Number(limit) || 5000));
   const { rows } = await query(`SELECT round, at_ms, c, slots, flower_success, bee_success, flower_p, bee_p, fitness, bee_balance FROM prevalence
-    WHERE game_id = $1 AND round > $2 ORDER BY round LIMIT $3`,
+    WHERE game_id = $1 AND round > $2${restricted ? ` AND ${snapshotSql("at_ms", g.config)}` : ""} ORDER BY round LIMIT $3`,
     [game.id, Math.max(0, Number(after) || 0), n]);
-  return { prevalence: settings, samples: rows.map((r) => sampleView(r, g.participants)) };
+  return { prevalence: settings, samples: rows.map((r) => (restricted ? snapshotView(r, g.participants) : sampleView(r, g.participants))) };
 }
 
 /**
@@ -522,12 +622,13 @@ export async function viewPrevalence(game, { after = 0, limit = 5000 } = {}) {
  * WebSocket streams) goes through actionView.
  */
 export async function viewActions(game, user, { after = 0, before = null, limit = 1000, mine: onlyMine = false } = {}) {
-  const g = (await query("SELECT status, config, last_seq, clock_ms, round, participants, prevalence FROM games WHERE id = $1", [game.id])).rows[0];
+  const g = (await query("SELECT g.id, g.room_id, g.status, g.config, g.last_seq, g.clock_ms, g.round, g.participants, g.prevalence, r.owner_id FROM games g JOIN rooms r ON r.id = g.room_id WHERE g.id = $1", [game.id])).rows[0];
   const mine = await myTeam(game.id, user?.id);
   const over = g.status === "finished", revealed = over && g.config.revealOnFinish;
   const n = Math.max(1, Math.min(5000, Number(limit) || 1000));
   const only = onlyMine && onlyMine !== "0" && onlyMine !== "false" ? (mine?.id ?? null) : undefined;
   if (only === null) fail(403, "Join a team first");
+  if (restrictedFor(g, g.owner_id, user?.id, mine)) return privateActions(g, mine, { after, before, n });
   const where = only ? "game_id = $1 AND (bee_team = $4 OR flower_team = $4)" : "game_id = $1";
   const params = (x) => (only ? [game.id, x, n, only] : [game.id, x, n]);
   const { rows } = before !== null && before !== undefined && before !== ""
@@ -539,6 +640,22 @@ export async function viewActions(game, user, { after = 0, before = null, limit 
     // the latest species prevalence sample (games with prevalence, once sampled)
     ...(g.prevalence && g.participants && prevalenceOf(g.config) ? { prevalence: sampleView(g.prevalence, g.participants) } : {}),
   };
+}
+
+/**
+ * viewActions in private play: only the team's own programs' sides of its turns (privateActionViews; a spectator
+ * none), paged by the actions' seq like any page, and the latest prevalence snapshot.
+ */
+async function privateActions(g, mine, { after, before, n }) {
+  const snap = g.participants && prevalenceOf(g.config) ? await latestSnapshot(g) : null;
+  const out = { actions: [], lastSeq: g.last_seq, clockMs: g.clock_ms, round: g.round, status: g.status, ...(snap ? { prevalence: snapshotView(snap, g.participants) } : {}) };
+  if (!mine) return out;
+  const where = "game_id = $1 AND action IN ('feed', 'leave') AND (bee_team = $4 OR flower_team = $4)";
+  const { rows } = before !== null && before !== undefined && before !== ""
+    ? await query(`SELECT * FROM (SELECT * FROM actions WHERE ${where} AND seq < $2 ORDER BY seq DESC LIMIT $3) t ORDER BY seq`, [g.id, Number(before) || 0, n, mine.id])
+    : await query(`SELECT * FROM actions WHERE ${where} AND seq > $2 ORDER BY seq LIMIT $3`, [g.id, Math.max(0, Number(after) || 0), n, mine.id]);
+  out.actions = rows.flatMap((a) => privateActionViews(a, mine.id));
+  return out;
 }
 
 /**
@@ -573,7 +690,8 @@ export function actionView(a, me, over, revealed, grainsPublic = false) {
 /**
  * The team ledger: one entry per finished turn (its feed or leave), oldest first, as the viewer's team may
  * see it (team indices into participants; `seq` for paging). A spectator gets the public fields; once the
- * game is over, everyone gets every field.
+ * game is over, everyone gets every field. In private play (restrictedFor) only the team's own turns, as its
+ * programs' sides (mask.js privateTurns: two entries, same seq, for its bee at its own flower); a spectator none.
  */
 export async function viewLedger(game, user, { after = 0, limit = 1000 } = {}) {
   const g = (await query("SELECT * FROM games WHERE id = $1", [game.id])).rows[0];
@@ -581,16 +699,23 @@ export async function viewLedger(game, user, { after = 0, limit = 1000 } = {}) {
   const mine = await myTeam(game.id, user?.id);
   const team = mine && participants && participants.includes(mine.id) ? participants.indexOf(mine.id) : null;
   if (!participants) return { participants, team, entries: [], lastSeq: g.last_seq, round: g.round, status: g.status };
+  const restricted = restrictedFor(g, await ownerOf(g), user?.id, mine);
   const n = Math.max(1, Math.min(5000, Number(limit) || 1000));
-  const { rows } = await query(
-    "SELECT * FROM actions WHERE game_id = $1 AND seq > $2 AND action IN ('feed', 'leave') ORDER BY seq LIMIT $3",
-    [game.id, Math.max(0, Number(after) || 0), n]);
+  // Private play: the team's own turns only (a spectator none), each as its own programs' sides (mask.js privateTurns).
+  if (restricted && team === null) return { participants, team, restricted, lastSeq: g.last_seq, round: g.round, status: g.status, entries: [] };
+  const { rows } = restricted
+    ? await query("SELECT * FROM actions WHERE game_id = $1 AND seq > $2 AND action IN ('feed', 'leave') AND (bee_team = $4 OR flower_team = $4) ORDER BY seq LIMIT $3",
+      [game.id, Math.max(0, Number(after) || 0), n, mine.id])
+    : await query("SELECT * FROM actions WHERE game_id = $1 AND seq > $2 AND action IN ('feed', 'leave') ORDER BY seq LIMIT $3",
+      [game.id, Math.max(0, Number(after) || 0), n]);
   const idx = new Map(participants.map((id, i) => [id, i]));
   const over = g.status === "finished";
   const opts = { game: shortId(g), flowerMs: windowMsOf(g.config) };
   return {
-    participants, team, lastSeq: g.last_seq, round: g.round, status: g.status,
-    entries: rows.map((a) => mask("turns", turnOf(a, idx, opts), team, { over, grainsPublic: g.config.grains === "public" })),
+    participants, team, restricted, lastSeq: g.last_seq, round: g.round, status: g.status,
+    entries: restricted
+      ? rows.flatMap((a) => privateTurns(turnOf(a, idx, opts), team))
+      : rows.map((a) => mask("turns", turnOf(a, idx, opts), team, { over, grainsPublic: g.config.grains === "public" })),
   };
 }
 
@@ -609,9 +734,16 @@ export const turnOf = (a, idx, { game, flowerMs }) => ({
  * The whole response of the turn whose end is action `seq`, as its JSON text (responses are public). A big
  * one comes from `responses`; a small one from the action itself. Null if that turn has no response.
  */
-export async function viewResponse(game, seq) {
+export async function viewResponse(game, seq, user = null) {
   const n = Number(seq);
   if (!Number.isInteger(n) || n < 1) fail(400, "seq must be a positive integer");
+  // Private play: only a turn of the viewer's own bee or at its own flower.
+  const g = (await query("SELECT id, room_id, status, config FROM games WHERE id = $1", [game.id])).rows[0];
+  const mine = await myTeam(game.id, user?.id);
+  if (restrictedFor(g, await ownerOf(g), user?.id, mine)) {
+    const own = mine && (await query("SELECT 1 FROM actions WHERE game_id = $1 AND seq = $2 AND (bee_team = $3 OR flower_team = $3) AND action IN ('feed', 'leave')", [game.id, n, mine.id])).rowCount;
+    if (!own) return null;
+  }
   const big = (await query("SELECT body FROM responses WHERE game_id = $1 AND seq = $2", [game.id, n])).rows[0];
   if (big) return big.body;
   const a = (await query("SELECT r, action FROM actions WHERE game_id = $1 AND seq = $2", [game.id, n])).rows[0];
@@ -632,9 +764,11 @@ async function asViewer(ast, where) {
   }
 }
 
-/** A query over one game, as the viewer may see it. */
+/** A query over one game, as the viewer may see it (in private play: restrictedFor, sql.js). */
 export async function queryGame(game, user, ast) {
-  return asViewer(ast, { gameId: game.id, userId: user?.id ?? null });
+  const g = (await query("SELECT id, room_id, status, config FROM games WHERE id = $1", [game.id])).rows[0];
+  const restricted = restrictedFor(g, await ownerOf(g), user?.id, await myTeam(game.id, user?.id));
+  return asViewer(ast, { gameId: game.id, userId: user?.id ?? null, restricted, config: g.config });
 }
 
 /** A query across a room's finished games (fully revealed; scopes mean the viewer's team in each). */

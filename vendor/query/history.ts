@@ -4,7 +4,7 @@
 /** Any JSON value: a challenge, a response, a bee's memory. */
 export type Json = null | boolean | number | string | readonly Json[] | { readonly [key: string]: Json };
 
-/** One finished turn: a bee's challenge, a flower's response and the bee's decision. (entity "turns") */
+/** One finished turn: a bee's challenge, a flower's response and the bee's decision. In private play (a private game, until it's over) a team has only its own turns, one row per side it played: its flower's (bee, turn, fed and the bee's fields null) and its bee's (flower, percent, energy and the flower's fields null); a spectator none. (entity "turns") */
 export interface Turn {
   /** the game's short id */
   readonly game: string;
@@ -14,12 +14,12 @@ export interface Turn {
   readonly round: number;
   /** game time the round began: (round - 1) × round_ms */
   readonly atMs: number;
-  /** the bee's turn number (1, 2, ...) */
-  readonly turn: number;
-  /** the bee's team index */
-  readonly bee: number;
-  /** the flower's team index */
-  readonly flower: number;
+  /** the bee's turn number (1, 2, ...); null on a flower's side in private play */
+  readonly turn: number | null;
+  /** the bee's team index; null on a flower's side in private play */
+  readonly bee: number | null;
+  /** the flower's team index; null on a bee's side in private play */
+  readonly flower: number | null;
   /** the bee's challenge */
   readonly challenge: Json;
   /** the flower's response (null if it failed, or if its JSON is over 4 KB: see responseBytes) */
@@ -28,8 +28,8 @@ export interface Turn {
   readonly responseBytes: number | null;
   /** an identifier of the full response; null unless the response is over 4 KB */
   readonly responseHash: string | null;
-  /** whether the bee fed */
-  readonly fed: boolean;
+  /** whether the bee fed; null on a flower's side in private play */
+  readonly fed: boolean | null;
   /** the share of E the flower offered, 0-100 (null if it failed) */
   readonly percent: number | null;
   /** E, the flower's excess energy (node·ms·bytes with the game's byte factor, else node·ms; 0 if it failed) */
@@ -42,8 +42,8 @@ export interface Turn {
   readonly net: number | null;
   /** on a feed in a pools game, the bee's nectar balance after it; else null */
   readonly balance: number | null;
-  /** the pollen the flower gave the bee: (1 − percent/100) × E on a feed, else 0 */
-  readonly pollen: number;
+  /** the pollen the flower gave the bee: (1 − percent/100) × E on a feed, else 0; null in private play */
+  readonly pollen: number | null;
   /** the flower's CPU time for the call (ms) */
   readonly ms: number | null;
   /** R: the call's hidden time budget (ms of CPU time, uniform in minMs..ms): its hard limit, and E's ceiling */
@@ -132,7 +132,7 @@ export interface Pair {
   readonly pollen: number;
 }
 
-/** Prevalence on both sides (games that have it): every team's flower and bee success and draw chances, and its fitness so far, sampled about once a second of game time. (entity "prevalence") */
+/** Prevalence on both sides (games that have it): every team's flower and bee success and draw chances, and its fitness, sampled about once a second of game time. In private play only the snapshots (a sample every prevalenceEveryS seconds of game time), rounded to 2 decimals, without balances. (entity "prevalence") */
 export interface Prevalence {
   /** the game's short id */
   readonly game: string;
@@ -160,22 +160,22 @@ export interface Prevalence {
   readonly slots: number | null;
 }
 
-/** The scoreboard: each team's fitness (the game's rule), pollination, forage and shares over the whole game, and its latest prevalence. (entity "scores") */
+/** The scoreboard: each team's fitness (the game's rule), pollination, forage and shares over the whole game, and its latest prevalence. In private play the latest snapshot's fitness, F, B and draw chances only (the rest null). (entity "scores") */
 export interface Score {
   /** the game's short id */
   readonly game: string;
   /** the team's index */
   readonly team: number;
   /** Σ over bee teams of (pollen this species gave their bee)^beta (the game's scoring.beta; √ in games without one) */
-  readonly pollination: number;
+  readonly pollination: number | null;
   /** Σ over flower teams of (nectar this bee got there)^alpha (the game's scoring.alpha; √ in games without one) */
-  readonly forage: number;
+  readonly forage: number | null;
   /** pollination ÷ everyone's (1/N if that is 0) */
-  readonly pollinationShare: number;
+  readonly pollinationShare: number | null;
   /** forage ÷ everyone's (1/N if that is 0) */
-  readonly forageShare: number;
-  /** with prevalence, by the game's scoring.mode: "final", N² × p^F_s × p^B_s at the latest round played (the final round once the game is over); "timeAverage" (v2, v3), the time-average of F × B over the rounds played. Else N² × pollination share × forage share. Par 1 */
-  readonly fitness: number;
+  readonly forageShare: number | null;
+  /** with prevalence, by the game's scoring.mode: "final", N² × p^F_s × p^B_s at the latest round played (the final round once the game is over); "timeAverage" (v2, v3), the time-average of F × B over the rounds played. Else N² × pollination share × forage share. Par 1. In private play the latest snapshot's (null before the first) */
+  readonly fitness: number | null;
   /** with prevalence, F_s at the latest sample, else null */
   readonly flowerSuccess: number | null;
   /** with prevalence, B_b at the latest sample, else null */
@@ -185,19 +185,19 @@ export interface Score {
   /** with prevalence, p^B_b at the latest sample, else null */
   readonly beeP: number | null;
   /** all the pollen this species gave */
-  readonly pollen: number;
+  readonly pollen: number | null;
   /** feeds at this flower */
-  readonly feedsReceived: number;
+  readonly feedsReceived: number | null;
   /** feeds by this bee */
-  readonly feedsGiven: number;
+  readonly feedsGiven: number | null;
   /** bee teams that fed at this flower */
-  readonly pollinators: number;
+  readonly pollinators: number | null;
   /** nectar this bee got */
-  readonly nectarCollected: number;
+  readonly nectarCollected: number | null;
   /** nectar this flower paid */
-  readonly nectarGiven: number;
+  readonly nectarGiven: number | null;
   /** flower teams that paid this bee */
-  readonly nectarSources: number;
+  readonly nectarSources: number | null;
 }
 
 /** Each entity's record type. */
@@ -368,17 +368,17 @@ export const SCHEMA: Schema = {
         {
           "name": "turn",
           "type": "int",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "bee",
           "type": "int",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "flower",
           "type": "int",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "challenge",
@@ -403,7 +403,7 @@ export const SCHEMA: Schema = {
         {
           "name": "fed",
           "type": "bool",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "percent",
@@ -438,7 +438,7 @@ export const SCHEMA: Schema = {
         {
           "name": "pollen",
           "type": "float",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "ms",
@@ -822,27 +822,27 @@ export const SCHEMA: Schema = {
         {
           "name": "pollination",
           "type": "float",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "forage",
           "type": "float",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "pollinationShare",
           "type": "float",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "forageShare",
           "type": "float",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "fitness",
           "type": "float",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "flowerSuccess",
@@ -867,37 +867,37 @@ export const SCHEMA: Schema = {
         {
           "name": "pollen",
           "type": "float",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "feedsReceived",
           "type": "int",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "feedsGiven",
           "type": "int",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "pollinators",
           "type": "int",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "nectarCollected",
           "type": "float",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "nectarGiven",
           "type": "float",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "nectarSources",
           "type": "int",
-          "nullable": false
+          "nullable": true
         }
       ]
     }

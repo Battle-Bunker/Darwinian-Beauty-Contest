@@ -152,17 +152,17 @@
         {
           "name": "turn",
           "type": "int",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "bee",
           "type": "int",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "flower",
           "type": "int",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "challenge",
@@ -187,7 +187,7 @@
         {
           "name": "fed",
           "type": "bool",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "percent",
@@ -222,7 +222,7 @@
         {
           "name": "pollen",
           "type": "float",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "ms",
@@ -606,27 +606,27 @@
         {
           "name": "pollination",
           "type": "float",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "forage",
           "type": "float",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "pollinationShare",
           "type": "float",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "forageShare",
           "type": "float",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "fitness",
           "type": "float",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "flowerSuccess",
@@ -651,37 +651,37 @@
         {
           "name": "pollen",
           "type": "float",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "feedsReceived",
           "type": "int",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "feedsGiven",
           "type": "int",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "pollinators",
           "type": "int",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "nectarCollected",
           "type": "float",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "nectarGiven",
           "type": "float",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "nectarSources",
           "type": "int",
-          "nullable": false
+          "nullable": true
         }
       ]
     }
@@ -689,7 +689,7 @@
   "program": "turns",
   "docs": {
     "turns": {
-      "doc": "One finished turn: a bee's challenge, a flower's response and the bee's decision.",
+      "doc": "One finished turn: a bee's challenge, a flower's response and the bee's decision. In private play (a private game, until it's over) a team has only its own turns, one row per side it played: its flower's (bee, turn, fed and the bee's fields null) and its bee's (flower, percent, energy and the flower's fields null); a spectator none.",
       "rows": null,
       "fields": {
         "game": {
@@ -709,15 +709,15 @@
           "visibility": "public"
         },
         "turn": {
-          "doc": "the bee's turn number (1, 2, ...)",
+          "doc": "the bee's turn number (1, 2, ...); null on a flower's side in private play",
           "visibility": "public"
         },
         "bee": {
-          "doc": "the bee's team index",
+          "doc": "the bee's team index; null on a flower's side in private play",
           "visibility": "public"
         },
         "flower": {
-          "doc": "the flower's team index",
+          "doc": "the flower's team index; null on a bee's side in private play",
           "visibility": "public"
         },
         "challenge": {
@@ -737,7 +737,7 @@
           "visibility": "public"
         },
         "fed": {
-          "doc": "whether the bee fed",
+          "doc": "whether the bee fed; null on a flower's side in private play",
           "visibility": "public"
         },
         "percent": {
@@ -765,7 +765,7 @@
           "visibility": "public"
         },
         "pollen": {
-          "doc": "the pollen the flower gave the bee: (1 − percent/100) × E on a feed, else 0",
+          "doc": "the pollen the flower gave the bee: (1 − percent/100) × E on a feed, else 0; null in private play",
           "visibility": "public"
         },
         "ms": {
@@ -937,7 +937,7 @@
       }
     },
     "prevalence": {
-      "doc": "Prevalence on both sides (games that have it): every team's flower and bee success and draw chances, and its fitness so far, sampled about once a second of game time.",
+      "doc": "Prevalence on both sides (games that have it): every team's flower and bee success and draw chances, and its fitness, sampled about once a second of game time. In private play only the snapshots (a sample every prevalenceEveryS seconds of game time), rounded to 2 decimals, without balances.",
       "rows": null,
       "fields": {
         "game": {
@@ -991,7 +991,7 @@
       }
     },
     "scores": {
-      "doc": "The scoreboard: each team's fitness (the game's rule), pollination, forage and shares over the whole game, and its latest prevalence.",
+      "doc": "The scoreboard: each team's fitness (the game's rule), pollination, forage and shares over the whole game, and its latest prevalence. In private play the latest snapshot's fitness, F, B and draw chances only (the rest null).",
       "rows": null,
       "fields": {
         "game": {
@@ -1019,7 +1019,7 @@
           "visibility": "public"
         },
         "fitness": {
-          "doc": "with prevalence, by the game's scoring.mode: \"final\", N² × p^F_s × p^B_s at the latest round played (the final round once the game is over); \"timeAverage\" (v2, v3), the time-average of F × B over the rounds played. Else N² × pollination share × forage share. Par 1",
+          "doc": "with prevalence, by the game's scoring.mode: \"final\", N² × p^F_s × p^B_s at the latest round played (the final round once the game is over); \"timeAverage\" (v2, v3), the time-average of F × B over the rounds played. Else N² × pollination share × forage share. Par 1. In private play the latest snapshot's (null before the first)",
           "visibility": "public"
         },
         "flowerSuccess": {

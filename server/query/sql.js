@@ -7,6 +7,8 @@ import { createRequire } from "node:module";
 import { tx } from "../db/pool.js";
 import { SCHEMA } from "./schema.js";
 import { scoreboard } from "../lib/prevalence.js";
+import { snapshotsOf } from "../lib/gameConfig.js";
+import { BEE_SIDE, FLOWER_SIDE } from "./mask.js";
 
 const require = createRequire(import.meta.url);
 const History = require("../../vendor/query/history.js");
@@ -101,11 +103,24 @@ function visibleSql(vis, roles) {
   }
 }
 
+/** SQL: whether a prevalence sample at `col` (game ms) is a snapshot of a game with `config` (games.js snapshotSql). */
+function snapshotCond(col, config) {
+  const { everyMs, sampleMs } = snapshotsOf(config);
+  const P = Math.max(1, Math.round(everyMs)), S = Math.max(1, Math.round(sampleMs));
+  return `(${col} = 0 OR floor(${col}::float8 / ${P}) > floor((${col} - ${S})::float8 / ${P}))`;
+}
+
+// Private play (`restricted`: one game, games.js restrictedFor): turns are the viewer's team's own programs' sides
+// (one row per side: its flower's, its bee's; a spectator none, mask.js FLOWER_SIDE / BEE_SIDE), pairs are empty,
+// prevalence is its snapshots rounded to 2 decimals without balances, and scores the latest snapshot's (scoreRows).
+const SNAPSHOT_ROUNDED = new Set(["flowerSuccess", "beeSuccess", "flowerP", "beeP", "fitness", "c"]);
+
 /**
  * Compile a validated AST. `where` picks the games: { gameId } (one game, as it stands) or { roomId } (its
- * finished games). `userId` is the viewer (null: a spectator). Returns { text, params, limit }.
+ * finished games). `userId` is the viewer (null: a spectator); `restricted`: the viewer sees that one game
+ * privately (its `config` gives the snapshots). Returns { text, params, limit }.
  */
-export function compile(ast, { gameId = null, roomId = null, userId = null, scores = null }) {
+export function compile(ast, { gameId = null, roomId = null, userId = null, scores = null, restricted = false, config = null }) {
   const params = [];
   const p = (v) => { params.push(v); return `$${params.length}`; };
   const e = SCHEMA.entities[ast.from];
@@ -125,12 +140,28 @@ export function compile(ast, { gameId = null, roomId = null, userId = null, scor
   ), pt AS (
     SELECT gs.id AS game_id, t.id AS team_id, (t.ord - 1)::int AS idx FROM gs, unnest(gs.participants) WITH ORDINALITY AS t(id, ord)
   )`;
+  const priv = restricted && !!gameId;
   const cols = e.fields.map((f) => {
     const expr = source.cols[f.name];
+    if (priv && ast.from === "turns") {
+      // One row per side the viewer's team played: only that side's fields.
+      const side = (set) => (set.has(f.name) ? expr : `NULL${CAST[f.type]}`);
+      return `CASE WHEN sd.side = 'flower' THEN ${side(FLOWER_SIDE)} ELSE ${side(BEE_SIDE)} END AS ${q(f.name)}`;
+    }
+    if (priv && ast.from === "prevalence") {
+      if (f.name === "balance") return `NULL::float8 AS ${q(f.name)}`;
+      if (SNAPSHOT_ROUNDED.has(f.name)) return `round((${expr})::numeric, 2)::float8 AS ${q(f.name)}`;
+    }
     const cond = visibleSql(f.visibility, source.roles);
     return `${cond ? `CASE WHEN ${cond} THEN ${expr} END` : expr} AS ${q(f.name)}`;
   });
   let from = typeof source.from === "function" ? source.from(p(JSON.stringify(scores ?? []))) : source.from;
+  if (priv && ast.from === "turns") {
+    from = from.replace(/\bWHERE\b/, `CROSS JOIN (VALUES ('flower'), ('bee')) AS sd(side) WHERE`) +
+      ` AND ((sd.side = 'flower' AND pf.idx = gs.viewer) OR (sd.side = 'bee' AND pb.idx = gs.viewer))`;
+  }
+  if (priv && ast.from === "pairs") from += " WHERE false";
+  if (priv && ast.from === "prevalence") from += ` AND ${snapshotCond("x.at_ms", config)}`;
   if (e.rows === "team") from += `${/\bWHERE\b/.test(from) ? " AND" : " WHERE"} (gs.over OR ${source.roles.owner} = gs.viewer)`;
   const src = `src AS (SELECT ${cols.join(", ")}, gs.viewer AS "_viewer" FROM ${from})`;
 
@@ -192,6 +223,7 @@ export async function runQuery(input, where) {
     await c.query(`SET LOCAL statement_timeout = ${TIMEOUT_MS}`);
     let scores = null;
     if (ast.from === "scores") scores = await scoreRows(c, where);
+    if (where.restricted && !where.config) throw new Error("a restricted query needs the game's config");
     const { text, params, limit } = compile(ast, { ...where, scores });
     const { rows } = await c.query(text, params);
     const truncated = rows.length > limit;
@@ -199,12 +231,22 @@ export async function runQuery(input, where) {
   });
 }
 
-/** Every team's score in the games queried (public), as rows of the scores entity. */
-async function scoreRows(c, { gameId = null, roomId = null }) {
+/** Every team's score in the games queried (public), as rows of the scores entity (in private play: the latest snapshot's). */
+async function scoreRows(c, { gameId = null, roomId = null, restricted = false }) {
   const { rows } = await c.query(
-    `SELECT substr(code, 1, prefix_len) AS short, config, participants, feeds, nectar, pollen, fitness, prevalence FROM games
+    `SELECT id, substr(code, 1, prefix_len) AS short, config, participants, feeds, nectar, pollen, fitness, prevalence FROM games
       WHERE ${gameId ? "id = $1" : "room_id = $1 AND status = 'finished'"} AND participants IS NOT NULL`, [gameId ?? roomId]);
   const out = [];
+  if (restricted && gameId) {
+    const { latestSnapshot, snapshotScores } = await import("../games.js");
+    for (const g of rows) {
+      snapshotScores(g.participants, await latestSnapshot(g, c)).forEach((s, team) => {
+        const { teamId, ...rest } = s;
+        out.push({ game: g.short, team, ...rest });
+      });
+    }
+    return out;
+  }
   for (const g of rows) {
     const n = g.participants.length;
     const zero = () => Array.from({ length: n }, () => new Array(n).fill(0));

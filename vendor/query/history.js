@@ -7,7 +7,7 @@ var DbcHistory = (function () {
 /** Any JSON value: a challenge, a response, a bee's memory. */
                                                                                                          
 
-/** One finished turn: a bee's challenge, a flower's response and the bee's decision. (entity "turns") */
+/** One finished turn: a bee's challenge, a flower's response and the bee's decision. In private play (a private game, until it's over) a team has only its own turns, one row per side it played: its flower's (bee, turn, fed and the bee's fields null) and its bee's (flower, percent, energy and the flower's fields null); a spectator none. (entity "turns") */
                        
                             
                         
@@ -17,12 +17,12 @@ var DbcHistory = (function () {
                          
                                                           
                         
-                                          
-                        
-                             
-                       
-                                
-                          
+                                                                                   
+                               
+                                                                      
+                              
+                                                                      
+                                 
                             
                            
                                                                                                   
@@ -31,8 +31,8 @@ var DbcHistory = (function () {
                                         
                                                                                   
                                        
-                            
-                        
+                                                                     
+                               
                                                                      
                                   
                                                                                                                 
@@ -45,8 +45,8 @@ var DbcHistory = (function () {
                               
                                                                                 
                                   
-                                                                                    
-                          
+                                                                                                          
+                                 
                                                 
                              
                                                                                                                  
@@ -135,7 +135,7 @@ var DbcHistory = (function () {
                           
  
 
-/** Prevalence on both sides (games that have it): every team's flower and bee success and draw chances, and its fitness so far, sampled about once a second of game time. (entity "prevalence") */
+/** Prevalence on both sides (games that have it): every team's flower and bee success and draw chances, and its fitness, sampled about once a second of game time. In private play only the snapshots (a sample every prevalenceEveryS seconds of game time), rounded to 2 decimals, without balances. (entity "prevalence") */
                              
                             
                         
@@ -163,22 +163,22 @@ var DbcHistory = (function () {
                                 
  
 
-/** The scoreboard: each team's fitness (the game's rule), pollination, forage and shares over the whole game, and its latest prevalence. (entity "scores") */
+/** The scoreboard: each team's fitness (the game's rule), pollination, forage and shares over the whole game, and its latest prevalence. In private play the latest snapshot's fitness, F, B and draw chances only (the rest null). (entity "scores") */
                         
                             
                         
                          
                         
                                                                                                                         
-                               
+                                      
                                                                                                                     
-                          
+                                 
                                                     
-                                    
+                                           
                                                
-                               
-                                                                                                                                                                                                                                                                                 
-                           
+                                      
+                                                                                                                                                                                                                                                                                                                                                
+                                  
                                                              
                                         
                                                              
@@ -188,19 +188,19 @@ var DbcHistory = (function () {
                                                                
                                
                                          
-                          
+                                 
                              
-                                 
-                          
-                              
-                                          
-                               
-                            
-                                   
-                                
-                               
                                         
-                                 
+                          
+                                     
+                                          
+                                      
+                            
+                                          
+                                
+                                      
+                                        
+                                        
  
 
 /** Each entity's record type. */
@@ -371,17 +371,17 @@ const SCHEMA         = {
         {
           "name": "turn",
           "type": "int",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "bee",
           "type": "int",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "flower",
           "type": "int",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "challenge",
@@ -406,7 +406,7 @@ const SCHEMA         = {
         {
           "name": "fed",
           "type": "bool",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "percent",
@@ -441,7 +441,7 @@ const SCHEMA         = {
         {
           "name": "pollen",
           "type": "float",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "ms",
@@ -825,27 +825,27 @@ const SCHEMA         = {
         {
           "name": "pollination",
           "type": "float",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "forage",
           "type": "float",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "pollinationShare",
           "type": "float",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "forageShare",
           "type": "float",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "fitness",
           "type": "float",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "flowerSuccess",
@@ -870,37 +870,37 @@ const SCHEMA         = {
         {
           "name": "pollen",
           "type": "float",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "feedsReceived",
           "type": "int",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "feedsGiven",
           "type": "int",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "pollinators",
           "type": "int",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "nectarCollected",
           "type": "float",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "nectarGiven",
           "type": "float",
-          "nullable": false
+          "nullable": true
         },
         {
           "name": "nectarSources",
           "type": "int",
-          "nullable": false
+          "nullable": true
         }
       ]
     }
