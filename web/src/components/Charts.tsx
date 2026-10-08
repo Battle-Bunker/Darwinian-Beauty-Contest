@@ -4,7 +4,7 @@
 import { useMemo, useRef, useState } from "react";
 import type { Team } from "../types";
 import { useElementWidth } from "../hooks";
-import { fmtClock, fmtE, fmtEExact, fmtMs } from "../lib/format";
+import { fmtClock, fmtE, fmtEExact, fmtMs, getEnergyUnit } from "../lib/format";
 import { METRICS, seriesOf, type Binned, type EnergyTotals, type Metric, type MetricKey } from "../lib/stats";
 
 const H = 230;
@@ -106,7 +106,7 @@ export function TeamSeriesChart({ teams, rows, data, metric, focus, onFocus, cur
 
   return (
     <div className="chart" ref={boxRef}>
-      <div className="chart-head small muted">{m.label}: {m.unit}{clipped && <span className="chart-note"> · the first few seconds, with few feeds, run off the top</span>}</div>
+      <div className="chart-head small muted">{m.label}: {m.unit.replace("node·ms", getEnergyUnit())}{clipped && <span className="chart-note"> · the first few seconds, with few feeds, run off the top</span>}</div>
       <div className="chart-plot">
         <svg ref={svgRef} width={W} height={H} viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`${m.label} over the game, one line per team`}
           onPointerMove={(e) => setHover(binAt(e))} onPointerLeave={() => setHover(null)}

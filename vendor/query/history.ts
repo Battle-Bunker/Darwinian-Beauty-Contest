@@ -32,7 +32,7 @@ export interface Turn {
   readonly fed: boolean;
   /** the share of E the flower offered, 0-100 (null if it failed) */
   readonly percent: number | null;
-  /** E, the flower's excess energy (node·ms; 0 if it failed) */
+  /** E, the flower's excess energy (node·ms·bytes with the game's byte factor, else node·ms; 0 if it failed) */
   readonly energy: number | null;
   /** the nectar the flower gave the bee: percent/100 × E on a feed, else null */
   readonly nectar: number | null;

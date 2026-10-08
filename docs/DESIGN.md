@@ -12,7 +12,7 @@ A flower now *chooses* how much to pay, out of energy it can only have by being 
 | a team's asking program | **bee** | |
 | one bee's challenge, one flower's response, one decision | **turn** | at most one per bee per round |
 | each flower call's time budget, uniform in 3–150 ms | **R** | hidden from the bee: this flower instance's reserve this turn |
-| (flower size cap − size) × max(0, R − CPU ms) × (byte cap − response bytes) / byte cap | **excess energy** E (node·ms) | what a flower saved this turn by being small, quick and brief |
+| (flower size cap − size) × max(0, R − CPU ms) × (byte cap − response bytes) | **excess energy** E (node·ms·bytes) | what a flower saved this turn by being small, quick and brief |
 | the share of E a flower offers | **percent** | 0–100, clamped |
 | percent/100 × E, to the bee if it feeds | **nectar** | |
 | (1 − percent/100) × E, kept by the flower if the bee feeds | **pollen** | a turn without a feed pays nobody. A flower allocates its energy between compute, nectar and pollen |
@@ -20,7 +20,7 @@ A flower now *chooses* how much to pay, out of energy it can only have by being 
 | every finished turn, as one team may see it | **history** | for teams and agents, over HTTP and the generated query clients; programs get none |
 | a bee's only state from one turn to the next | **MEMORY** | a key-value store the engine keeps, 50 bytes by default |
 | a bee's call after an in-time feed, in the instance that decided | **fed(nectar)** | the bee keeps what it worked out that turn long enough to store some of it, and can choose its next challenge knowing the nectar |
-| ⌊pollen^(1/3)⌋ characters of the answering flower's minified code, to the feeding bee's team | **pollen grain** | pollen carries genes |
+| ⌊0.1 × pollen^(1/3)⌋ characters of the answering flower's minified code, to the feeding bee's team | **pollen grain** | pollen carries genes |
 | each call's clock, reading 0 as the call's time starts | **the game's clock** | programs can time themselves, not the world |
 | Σ xᵢ^p, 0 < p ≤ 1 | **power sum** | the diversity-weighted size of an earnings vector (p = 0.5: Σ√xᵢ, the old **rootsum**) |
 | power sum of a flower's pollen column, p = β | **pollination** | how widely, and how profitably, the flower is pollinated |
@@ -47,7 +47,7 @@ Every flower call gets its own time budget **R**, drawn uniformly from `budgets.
 is kept), so R ranges 50-fold rather than 3-fold as with the earlier floor of 50 ms: a poor instance has almost
 nothing to give. R is the call's hard limit (the runner stops the flower at
 R, as it stopped it at 150 before) and the ceiling its energy counts down from: E = (cap − size) × max(0, R −
-CPU ms) × (B − bytes) / B (B the byte cap; see "Bytes cost too"). The flower is told R as `GAME.ms`; the bee never is, and the response still reaches it at the fixed
+CPU ms) × (B − bytes) (B the byte cap; see "Bytes cost too"). The flower is told R as `GAME.ms`; the bee never is, and the response still reaches it at the fixed
 150 ms, so timing tells it nothing about R.
 
 So compute costs the same energy whatever R is, but a flower can only show t ms of checkable work (and
@@ -76,12 +76,14 @@ another's slot. CPU time charges for work done. The time *limit* is still wall-c
 runner); since the engine runs at most one program per core, the two stay close.
 
 **Bytes cost too.** With `energy.bytes` (the default), E has a third factor: E = (cap − size) × max(0, R −
-CPU ms) × (B − bytes) / B, where B is `maxResponseBytes` (1,024 by default) and bytes the response's JSON
-size as the cap counts it. So code nodes, compute milliseconds and output bytes are each free only when
-unused: a flower can show work in CPU time or in what it writes, and either costs it. Dividing by B keeps E
-in node·ms and its magnitudes as before (a short answer loses almost nothing: 3 bytes of 1,024 is 0.3%); a
-response of exactly B bytes is still an answer, with E = 0. A game stored without `energy` keeps the
-two-factor formula (and its stored cap, 65,536 for the games before it).
+CPU ms) × (B − bytes), in node·ms·bytes, where B is `maxResponseBytes` (1,024 by default) and bytes the
+response's JSON size as the cap counts it. So code nodes, compute milliseconds and output bytes are each free
+only when unused: a flower can show work in CPU time or in what it writes, and either costs it. E is not
+divided by B, so a game with bigger limits makes bigger numbers, which gives players a feel for the scale of
+compute (scores use shares, so they don't care). A response of exactly B bytes is still an answer, with E = 0.
+Grains are ⌊0.1 × pollen^(1/3)⌋ characters by default (0.1 ≈ 1,024^(−1/3)), so they stay about as long as
+they were in node·ms. A game stored without `energy` keeps the two-factor formula in node·ms, its stored cap
+(65,536 for the games before it) and its grain scale (1); old and new energies aren't comparable.
 
 ## Lockstep rounds: why timing is equalised
 

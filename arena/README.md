@@ -208,7 +208,10 @@ stops a session for a path into the arena's folder that names nothing there (Mal
 `cd <arena>/tools`): that is a warning; another team's folder, the runner's files, a glob over the arena, the arena's
 folder itself and anything outside the arena stay violations. A busy-wait or a deliberate CPU burn outside a team's own
 programs (Tobi spun 150 s as a sleep in `mesa-a` game 4; Ada 40 s in `kiln-a`) is a fair-play warning: the session is
-told with its next tool's output, the runner logs it, and every session's system prompt says to wait with `time.sleep()`. `adapt.js --arena mesa-b` adds the honest flowers' CPU
+told with its next tool's output, the runner logs it, and every session's system prompt says to wait with `time.sleep()`.
+Nothing the arena writes for a team primes cryptography (hashes, signatures, nonces, HMACs): in a game whose responses fit
+in 1 KB the docs leave out the hash of big responses, `tools/stream.py` no longer hashes, and the honest brief speaks of
+fingerprints (`test-brief.mjs` checks it). RULES.md (the engine's) still lists `hashlib` among the allowed imports. `adapt.js --arena mesa-b` adds the honest flowers' CPU
 conformance (CPU ms ÷ R, the share within 55–65%), each change of an honest flower timed against the defectors'
 imitations before it, and a side-by-side with `mesa-a` (the agents' sessions, turns, output tokens and spend per game,
 and each role's headline measures), and each role's response bytes and the share of energy they cost. `adapt-hi-dry` is its capacity check (stub honest flowers at 0.6 × R, R from 3 ms).

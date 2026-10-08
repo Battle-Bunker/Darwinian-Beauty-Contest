@@ -213,7 +213,7 @@ const run = (argv) => new Promise((ok) => { const c = spawnA("python3", argv, { 
   c.stdout.on("data", (d) => (stdout += d)); c.stderr.on("data", (d) => (stderr += d)); c.on("close", (status) => ok({ status, stdout, stderr })); });
 const pyA = (tool, ...a) => run([`tools/${tool}.py`, ...a]), pycA = (code) => run(["-c", code]);
 r = await pyA("stream", "response", String(bigT.seq));
-check("stream.py response: a whole response, its size, hash and shape", r.status === 0 && r.stdout.includes(`${bigT.bytes} bytes, sha256 ${bigT.hash}; graph: 400 nodes, 399 edges, 400 labels`) && r.stdout.includes("--out FILE"), r.stdout + r.stderr);
+check("stream.py response: a whole response, its size and shape", r.status === 0 && r.stdout.includes(`${bigT.bytes} bytes; graph: 400 nodes, 399 edges, 400 labels`) && r.stdout.includes("--out FILE"), r.stdout + r.stderr);
 r = await pyA("stream", "response", String(bigT.seq), "--out", "big.json");
 check("stream.py response --out: saved in the workspace", r.status === 0 && fs.readFileSync(path.join(dir, "big.json"), "utf8") === bigT.text, r.stdout + r.stderr);
 r = await pyA("stream", "response", String(bigT.seq), "--out", "../escape.json");

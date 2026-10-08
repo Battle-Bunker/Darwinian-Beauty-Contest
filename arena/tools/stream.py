@@ -8,8 +8,8 @@
 The runner appends to them about once a second while the game runs. Read them, never write to them.
 To ask questions of the history, use tools/query.py (or garden.local in a script): typed history queries.
 
-A response over 4 KB is in the files and queries only as its size, its SHA-256 and its first characters (rBytes, rHash,
-rPreview in actions; responseBytes and responseHash in history records); fetch the whole of it when you need it.
+A response over 4 KB (in a game whose cap allows one) is in the files and queries only as its size and its first
+characters (rBytes and rPreview in actions; responseBytes in history records); fetch the whole of it when you need it.
 
 As a library (from a script in your workspace):
     import sys; sys.path.insert(0, "tools")
@@ -25,10 +25,9 @@ As a library (from a script in your workspace):
 From the shell:
     python3 tools/stream.py tail [-n 20]     the latest public actions, one line each
     python3 tools/stream.py response SEQ [--out FILE]
-                                             a whole response: its size, hash, shape and first characters (--out
+                                             a whole response: its size, shape and first characters (--out
                                              saves all of it to FILE in your workspace)
 """
-import hashlib
 import json
 import os
 import re
@@ -267,8 +266,7 @@ if __name__ == "__main__":
         text = response_text(args[1])
         if text is None:
             sys.exit("turn #%s has no response (the flower failed), or there is no such turn" % args[1])
-        print("turn #%s: %d bytes, sha256 %s; %s" % (args[1], len(text.encode("utf-8")), hashlib.sha256(text.encode("utf-8")).hexdigest(),
-                                                   describe(json.loads(text))))
+        print("turn #%s: %d bytes; %s" % (args[1], len(text.encode("utf-8")), describe(json.loads(text))))
         if "--out" in args:
             out = args[args.index("--out") + 1]
             full = os.path.abspath(out)

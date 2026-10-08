@@ -14,9 +14,14 @@ import { mask } from "../server/query/mask.js";
 const ends = (actions) => actions.filter((a) => a.action === "feed" || a.action === "leave");
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-test("a grain's length: ⌊scale × pollen^exponent⌋ characters (27,000 pollen: 30); none without pollen, or when grains are off", () => {
-  const c = normalizeConfig({});
-  assert.deepEqual([c.grains, c.pollenGrain], ["feeder", { exponent: 1 / 3, scale: 1 }]);
+test("a grain's length: ⌊scale × pollen^exponent⌋ characters (scale 0.1 by default: 27,000,000 pollen gives 30); none without pollen, or when grains are off", () => {
+  const d = normalizeConfig({});
+  assert.deepEqual([d.grains, d.pollenGrain], ["feeder", { exponent: 1 / 3, scale: 0.1 }], "0.1 ≈ 1024^(−1/3): E is in node·ms·bytes");
+  assert.deepEqual([27e6, 27e6 - 1e4, 1e6, 8000, 1000, 0].map((p) => grainLength(d, p)), [30, 29, 10, 2, 1, 0]);
+  // A config from before the byte factor keeps scale 1 (and E in node·ms).
+  const { energy: _, pollenGrain: __, ...old } = d;
+  assert.equal(normalizeConfig({}, old).pollenGrain.scale, 1);
+  const c = normalizeConfig({ pollenGrain: { scale: 1 } });
   assert.deepEqual([27000, 26999, 1000, 8, 1, 0.5, 0, -5].map((p) => grainLength(c, p)), [30, 29, 10, 2, 1, 0, 0, 0]);
   assert.equal(grainLength(c, 150000), 53);
   assert.equal(grainLength(normalizeConfig({ pollenGrain: { scale: 2 } }), 27000), 60);
@@ -50,7 +55,7 @@ test("every feed carries a grain of the answering version's minified code; leave
   const flower = `def flower(c):\n${body}\n    return x29 % 1000, 30\n`;
   const { minified } = await size("python", flower);
   const bee = `def first():\n    return 1\ndef decide(c, r):\n    return ("feed" if c % 2 else "leave"), c + 1\n`;
-  const out = await play(normalizeConfig({ feedCost: 0 }), [{ flower, bee }], 12);
+  const out = await play(normalizeConfig({ feedCost: 0, budgets: { flower: { minMs: 150 } } }), [{ flower, bee }], 12); // R held at 150: every feed has pollen
   const turns = ends(out.actions);
   const feeds = turns.filter((a) => a.action === "feed");
   assert.ok(feeds.length >= 5);
@@ -111,7 +116,7 @@ test("who sees a grain: the feeding bee's team during play (everyone if grains a
 
 test("programs never get grains: fed() gets the nectar only", async () => {
   const bee = `def first():\n    return 1\ndef decide(c, r):\n    return "feed", 1\ndef fed(*args):\n    MEMORY["args"] = len(args)\n    MEMORY["n"] = type(args[0]).__name__\n`;
-  const out = await play(normalizeConfig({ feedCost: 0 }), [{ flower: `def flower(c):\n    return c, 10\n`, bee }], 3);
+  const out = await play(normalizeConfig({ feedCost: 0, budgets: { flower: { minMs: 150 } } }), [{ flower: `def flower(c):\n    return c, 10\n`, bee }], 3);
   assert.deepEqual(JSON.parse(out.memories.at(-1).memory), { args: 1, n: "float" });
   assert.ok(out.actions.some((a) => a.grain));
 });

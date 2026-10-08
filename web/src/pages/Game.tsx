@@ -8,7 +8,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errorText, gameBase } from "../api";
 import { Link } from "../router";
 import { useDocumentTitle } from "../hooks";
-import type { GameView, Kind, ScoresView } from "../types";
+import { energyUnitOf, type GameView, type Kind, type ScoresView } from "../types";
+import { setEnergyUnit } from "../lib/format";
 import { LiveStore, useGameStream, useLiveTick } from "../lib/live";
 import { useHistory, useLedger, type HistoryStore, type LedgerStore } from "../lib/history";
 import { Alert, CopyButton, Section, StatusBadge } from "../components/ui";
@@ -39,6 +40,7 @@ export function GamePage({ room, game }: { room: string; game: string }) {
 
   const accept = useCallback((v: GameView) => {
     store.syncClock(v.game.clockMs, v.game.status, v.game.endMs, v.game.round);
+    setEnergyUnit(energyUnitOf(v.game.config)); // before anything of this game is shown
     setView(v);
   }, [store]);
 

@@ -69,8 +69,8 @@ function flowerNotes(ts, config) {
     `${c} If the bee feeds, it gets nectar = percent/100 × E and pollen = the rest; no feed, nothing is given.\n` +
     `${c} E = (${G("flower_size_cap")} - ${G("size")}) * max(0, ${G("ms")} - CPU ms of this call, writing the response as JSON included)` +
     (energyBytes(config)
-      ? `\n${c}     * (${G("max_response_bytes")} - the response's bytes of JSON) / ${G("max_response_bytes")}: a response at the cap leaves E = 0.\n`
-      : `.\n`) +
+      ? `\n${c}     * (${G("max_response_bytes")} - the response's bytes of JSON), in node·ms·bytes: a response at the cap leaves E = 0.\n`
+      : `, in node·ms.\n`) +
     `${c} The bee is never told R: the response reaches it at ${G("flower_ms")} ms whatever R was.\n` +
     `${c} Programs see only their arguments and GAME: no history.\n` +
     `${c} Your team scores pollination = Σ over bee teams of (the pollen your species gave that team's bee)^${scoringOf(config).beta};\n` +

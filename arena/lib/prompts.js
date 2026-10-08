@@ -170,7 +170,7 @@ to win.
   percent 50 on every answer.
 - Its signalling strategy is yours to choose: which costly signals it computes, and its position in the shared
   fingerprint space, that is how it splits its work across the dimensions of the shared repertoire of costly
-  signals${docs}. Multi-dimensional signatures can be mixed with raw costly signalling.
+  signals${docs}. Multi-dimensional fingerprints can be mixed with raw costly signalling.
 - Once your flower is in place, the only change you make to it is to its signalling strategy, and only to escape
   defecting imitators. The 60% and the 50% never change. Fixing a bug that breaks this contract is allowed.
 - You can watch for imitation in the public responses and the feed record (stream/actions.jsonl, tools/query.py).
@@ -208,8 +208,8 @@ ${personaAndSituation(persona, fixed, { simpleCode })}
   tools/history.py and README.md): \`python3 tools/query.py 'turns.my_bee().eq("fed", True).group_by("flower").sum("nectar")'\`.
   It runs on the game as your team may see it; \`--local\` runs on stream/history.jsonl, your team's history file;
   \`--room\` runs across this arena's finished games, fully revealed. The entities are turns, versions, teams (with your
-  bee's MEMORY), pairs and scores. A response over 4 KB shows as its size and hash (response_bytes, response_hash); the
-  whole of it: \`python3 tools/stream.py response <seq>\` or garden.response(seq).
+  bee's MEMORY), pairs and scores.${(config.maxResponseBytes ?? 65536) > 4096 ? ` A response over 4 KB shows as its size and hash (response_bytes,
+  response_hash); the whole of it: \`python3 tools/stream.py response <seq>\` or garden.response(seq).` : ""}
 - Your pollen grains (a piece of the code of every flower your bee feeds at) are on your bee's feeds in
   stream/history.jsonl and stream/mine.jsonl; \`python3 tools/grains.py\` lists them per species and version and pieces
   them together where they overlap (garden.grains(), garden.assemble(flower)).

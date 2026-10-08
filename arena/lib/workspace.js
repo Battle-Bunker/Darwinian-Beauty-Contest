@@ -41,13 +41,25 @@ export function commonFiles(arena, persona = null) {
   return { dir, dirs: [dir], files: fs.readdirSync(dir).filter((f) => !f.startsWith(".") && fs.statSync(path.join(dir, f)).isFile()).sort(), scope: "all" };
 }
 
+/** The workspace docs for a game whose response cap is at most 4 KB: nothing about responses over 4 KB (stored as their
+ * size, hash and first characters), which it can't have. */
+const BIG_RESPONSE_TEXT = [
+  [/ \(over 4 KB, its size, hash and first bytes\)/g, ""],
+  [/ \(a response over 4 KB is only its size, hash and first bytes in the files and queries\)/g, ""],
+  [/ A response over\n4 KB reads as None, with its size in `response_bytes` and the SHA-256 of its JSON text in `response_hash` \(equal\nresponses, equal hashes\); `garden\.response\(t\.seq\)` fetches the whole of it\./g, ""],
+  [/ \(null if the flower failed, or if it is over 4 KB\)/g, " (null if the flower failed)"],
+  [/; for a response over 4 KB, the SHA-256 of its JSON text \(`python3 tools\/stream\.py response <seq>` has the whole of it\)/g, "; responseHash stays null in this game"],
+  [/; for one over 4 KB, its SHA-256 and its first \d+ characters \(the whole of it: `python3 tools\/stream\.py response <seq>`\)/g, "; rHash and rPreview stay null in this game"],
+];
+export const forCap = (text, config) => ((config?.maxResponseBytes ?? 65536) > 4096 ? text : BIG_RESPONSE_TEXT.reduce((t, [re, to]) => t.replace(re, to), text));
+
 export function readme({ ext, apiBase, examples, common = null, commonScope = "all" }) {
   return `# Your workspace
 
 | path | what |
 |---|---|
 | RULES.md | the game's rules (exactly what every player sees) |
-| interface.txt | the function signatures and this game's types |
+| interface.txt | the functions each program defines and this game's types |
 | config.json | this game's settings: types, minutes, budgets, feed cost, the teams in index order, the public API address |
 | flower.${ext}, bee.${ext} | YOUR PROGRAMS: your flower species and your bee. While the game runs they hold the versions that were playing when this session started. Editing a file changes nothing in the game: only \`tools/submit.py\` does |
 | drafts/ | edits from an earlier session that were never submitted |
@@ -151,7 +163,7 @@ your team may not see is null; the server decides (RULES.md, "What everyone can 
 | percent, energy | the share offered as nectar and the turn's excess energy E: on every feed, and on every turn at your own species (else null) |
 | ms, budgetMs, flowerVersion, flowerError | your own flower's compute time, the call's hidden time budget R, version and error (null elsewhere) |
 | beeMs, beeVersion, beeError | your own bee's decision time, version and error, e.g. a MEMORY over its cap or of the wrong shape (null elsewhere) |
-| grain, grainVersion, grainCodeLength | on your own bee's feeds: the pollen grain (floor(pollen^(1/3)) characters of the answering flower version's minified code, from a random start, wrapping), that version, and its code's length in characters (null elsewhere, and when the pollen was 0) |
+| grain, grainVersion, grainCodeLength | on your own bee's feeds: the pollen grain (floor(scale × pollen^exponent) characters, config.json's pollenGrain, of the answering flower version's minified code, from a random start, wrapping), that version, and its code's length in characters (null elsewhere, and when the pollen was 0) |
 
 ## stream/actions.jsonl: the public stream
 
@@ -233,7 +245,7 @@ export async function prepareWorkspace({ arena, gameRow, persona, view, stream, 
   write(path.join(dir, "RULES.md"), rules());
   const examples = arena.settings.examples ? fs.readdirSync(path.resolve(ARENA_DIR, "..", arena.settings.examples)) : null;
   const common = commonFiles(arena, persona);
-  write(path.join(dir, "README.md"), readme({ ext, apiBase, examples, common: common?.files, commonScope: common?.scope }));
+  write(path.join(dir, "README.md"), forCap(readme({ ext, apiBase, examples, common: common?.files, commonScope: common?.scope }), view.game.config));
   // Common knowledge (a primed cohort): restored at every game, so every team, new ones included, has the same copy.
   fs.rmSync(path.join(dir, "common"), { recursive: true, force: true });
   // (several folders merge in order; Python's caches and dot files stay behind)
@@ -282,7 +294,7 @@ export async function prepareWorkspace({ arena, gameRow, persona, view, stream, 
   write(path.join(sdir, "teams.json"), json({ teams: name, me, participants,
     names: participants ? participants.map((id) => name[id]) : null, myIndex: participants ? participants.indexOf(me) : null }));
   if (stream?.tracked?.get(me)) stream.tracked.get(me).indexed = participants || null;
-  write(path.join(sdir, "SCHEMA.md"), SCHEMA);
+  write(path.join(sdir, "SCHEMA.md"), forCap(SCHEMA, view.game.config));
 
   await writePreviousGames(arena, dir, gameRow.generation, persona.id);
   return { dir, ext, drafts };

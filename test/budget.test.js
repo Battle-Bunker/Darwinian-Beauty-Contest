@@ -27,9 +27,9 @@ test("R is drawn uniformly from [minMs, ms] (3 to 150 by default), independently
   const narrow = normalizeConfig({ budgets: { flower: { ms: 120, minMs: 100 } } });
   assert.ok(Array.from({ length: 1000 }, () => drawBudget(narrow)).every((r) => r >= 100 && r <= 120));
   assert.equal(normalizeConfig({ budgets: { flower: { ms: 80, minMs: 200 } } }).budgets.flower.minMs, 80);
-  // E counts down from R: the same CPU costs the same energy whatever R is.
-  assert.equal(excessEnergy(c, 100, 30, 90), 1000 * 60);
-  assert.equal(excessEnergy(c, 100, 30, 140) - excessEnergy(c, 100, 0, 140), -1000 * 30);
+  // E counts down from R: the same CPU costs the same energy whatever R is (here with no response bytes).
+  assert.equal(excessEnergy(c, 100, 30, 90), 1000 * 60 * 1024);
+  assert.equal(excessEnergy(c, 100, 30, 140) - excessEnergy(c, 100, 0, 140), -1000 * 30 * 1024);
   assert.equal(excessEnergy(c, 100, 95, 90), 0, "work past R: nothing");
 });
 

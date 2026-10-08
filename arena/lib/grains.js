@@ -1,5 +1,6 @@
 // Pollen grains in a finished game (RULES.md "Pollen carries genes"): on every feed, the feeding bee's team got a run
-// of floor(pollen^(1/3)) characters of the answering flower version's minified code, from a random start, wrapping. Pure
+// of floor(scale × pollen^exponent) characters (the game's pollenGrain: 1 × pollen^(1/3) before the byte factor, 0.1 ×
+// with it) of the answering flower version's minified code, from a random start, wrapping. Grains are read as they came. Pure
 // computation over the game's turns (with their grains, all revealed once the game is over) and the programs' minified
 // code (lib/metrics.js computes it with the game's own minifier):
 //   perSpecies  per flower species: grains given, characters, characters per minute to other teams' bees (the leak

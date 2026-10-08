@@ -78,11 +78,12 @@ const ADAPT_HI_LINEUP = [
   ["rex", "opus", { role: "defector" }], ["vik", "opus", { role: "defector" }],
 ];
 // adapt-hi's game config: the engine's defaults for what changed (the R floor, 2% of 150 ms; a feed costs 20 rounds; the
-// score exponents; energy with the byte factor and a 1,024-byte response cap), so none of them is set here.
-const HI_CONFIG = { language: "python", challengeType: "int", responseType: "graph[any]", grains: GRAINS, pollenGrain: POLLEN_GRAIN,
-  budgets: { flower: { ms: FLOWER_MAX_MS } } };
+// score exponents; energy with the byte factor and a 1,024-byte response cap; pollen grains of ⌊0.1 × pollen^(1/3)⌋
+// characters, about their old length now that E is in node·ms·bytes), so none of them is set here.
+const HI_CONFIG = { language: "python", challengeType: "int", responseType: "graph[any]", grains: GRAINS, budgets: { flower: { ms: FLOWER_MAX_MS } } };
 // ...and checked on the first game, before any session (an old server would play the old rules).
-const HI_EXPECT = { "budgets.flower.minMs": 3, feedCost: 20, "scoring.alpha": 0.85, "scoring.beta": 0.85, maxResponseBytes: 1024, "energy.bytes": true };
+const HI_EXPECT = { "budgets.flower.minMs": 3, feedCost: 20, "scoring.alpha": 0.85, "scoring.beta": 0.85, maxResponseBytes: 1024, "energy.bytes": true,
+  "pollenGrain.scale": 0.1 };
 
 export const DEFAULT_SESSION = { warmupSeconds: 8, gapSeconds: 5, maxIdleGapSeconds: 20, endMarginSeconds: 10, maxMinutes: 6 };
 

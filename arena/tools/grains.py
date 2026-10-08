@@ -1,7 +1,7 @@
 """Your pollen grains: on every feed of your bee, your team gets a grain of the flower that answered, a run of
-floor(pollen ** (1/3)) characters of that flower version's minified code (the text the game runs), from a random start,
-wrapping from the end back to the start, with the version and the code's length (not where the grain starts). During
-play only your team sees your grains; programs never get them. This tool lists them per species and version and pieces
+floor(scale * pollen ** exponent) characters (config.json: pollenGrain) of that flower version's minified code (the
+text the game runs), from a random start, wrapping from the end back to the start, with the version and the code's
+length (not where the grain starts). During play only your team sees your grains; programs never get them. This tool lists them per species and version and pieces
 them together where they overlap (best effort: short or repetitive pieces can be placed wrongly).
 
     python3 tools/grains.py                       # per species and version: grains, characters, code length, how much

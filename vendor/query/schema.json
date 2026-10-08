@@ -626,7 +626,7 @@
           "visibility": "publicOnFeed"
         },
         "energy": {
-          "doc": "E, the flower's excess energy (node·ms; 0 if it failed)",
+          "doc": "E, the flower's excess energy (node·ms·bytes with the game's byte factor, else node·ms; 0 if it failed)",
           "visibility": "publicOnFeed"
         },
         "nectar": {

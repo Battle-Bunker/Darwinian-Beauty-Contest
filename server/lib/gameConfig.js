@@ -5,7 +5,7 @@ import { scoringOf } from "./scoring.js";
 // Budgets per program kind, in weighted syntax-tree nodes of the minified program (vendor/measure.js).
 //   flower: small (1,100 nodes) and slow to change (220 a minute), with the whole 150 ms flower window.
 //           Its size cap is also the "size cap" of the energy formula: E = (cap − size) × max(0, R − CPU ms)
-//           × (maxResponseBytes − response bytes) / maxResponseBytes (the last factor when energy.bytes).
+//           × (maxResponseBytes − response bytes), in node·ms·bytes (the last factor when energy.bytes).
 //   bee:    room for detector repertoires (11,000 nodes, 2,200 a minute), 50 ms to decide, and a MEMORY of
 //           at most `memory` bytes (a key-value store: Σ key bytes + value JSON bytes): the only thing
 //           that carries over from one of its turns to the next.
@@ -39,12 +39,14 @@ export const DEFAULT_CONFIG = Object.freeze({
                                // with energy.bytes, also the byte cap of the energy formula
   revealOnFinish: true,        // when the game ends, everyone can see all code and every bee's print output
   grains: "feeder",            // who sees a feed's pollen grain during play: "feeder" (the bee's team) | "public" | "off"
-  pollenGrain: Object.freeze({ exponent: 1 / 3, scale: 1 }), // a grain is ⌊scale × pollen^exponent⌋ characters of code
+  // A grain is ⌊scale × pollen^exponent⌋ characters of code. Scale 0.1 ≈ 1024^(−1/3): with E in node·ms·bytes,
+  // grains keep about the length they had when E was in node·ms (and scale 1).
+  pollenGrain: Object.freeze({ exponent: 1 / 3, scale: 0.1 }),
   // forage = Σ nectar^alpha (over flower teams), pollination = Σ pollen^beta (over bee teams); each in (0, 1].
   // A config stored without `scoring` is from before it existed: those games were scored with √ (scoring.js).
   scoring: Object.freeze({ alpha: 0.85, beta: 0.85 }),
-  // bytes: E has a third factor, (maxResponseBytes − response bytes) / maxResponseBytes. A config stored
-  // without `energy` (or with bytes false) has the two-factor formula: E = (cap − size) × max(0, R − CPU ms).
+  // bytes: E has a third factor, (maxResponseBytes − response bytes), and is in node·ms·bytes. A config stored
+  // without `energy` (or with bytes false) has the two-factor formula, in node·ms: E = (cap − size) × max(0, R − CPU ms).
   energy: Object.freeze({ bytes: true }),
   budgets: BUDGETS,
 });
@@ -82,7 +84,7 @@ export function normalizeConfig(input = {}, base = DEFAULT_CONFIG) {
     grains: GRAINS.includes(c.grains) ? c.grains : GRAINS.includes(base.grains) ? base.grains : DEFAULT_CONFIG.grains,
     pollenGrain: {
       exponent: num(c.pollenGrain?.exponent, 0.01, 1, base.pollenGrain?.exponent ?? DEFAULT_CONFIG.pollenGrain.exponent),
-      scale: num(c.pollenGrain?.scale, 0, 1000, base.pollenGrain?.scale ?? DEFAULT_CONFIG.pollenGrain.scale),
+      scale: num(c.pollenGrain?.scale, 0, 1000, base.pollenGrain?.scale ?? (energyBytes(base) ? DEFAULT_CONFIG.pollenGrain.scale : 1)),
     },
     // Left out, the base's (a base stored without them is a √ game: it stays one unless they are set).
     scoring: { alpha: exponent(c.scoring?.alpha, "alpha", scoringOf(base).alpha), beta: exponent(c.scoring?.beta, "beta", scoringOf(base).beta) },
@@ -129,18 +131,19 @@ export function available(budget, bank, clockMs) {
 export const energyBytes = (config) => config?.energy?.bytes === true;
 
 /**
- * Excess energy of a turn, in node·ms: (flower size cap − the flower's size) × max(0, R − CPU ms), where R
- * is this call's time budget (default: the flower window, for callers without a per-call R); with
- * energy.bytes, times (maxResponseBytes − bytes) / maxResponseBytes, `bytes` being the response's (UTF-8
- * bytes of its JSON text, as the cap counts them): 1 for no bytes, 0 at the cap.
+ * Excess energy of a turn: (flower size cap − the flower's size) × max(0, R − CPU ms), in node·ms, where R is
+ * this call's time budget (default: the flower window, for callers without a per-call R); with energy.bytes,
+ * times (maxResponseBytes − bytes), in node·ms·bytes, `bytes` being the response's (UTF-8 bytes of its JSON
+ * text, as the cap counts them): the whole cap for no bytes, 0 at the cap.
  */
 export function excessEnergy(config, size, cpuMs, r = config.budgets.flower.ms, bytes = 0) {
   const { size: cap } = config.budgets.flower;
   const e = Math.max(0, cap - size) * Math.max(0, r - cpuMs);
-  if (!energyBytes(config)) return e;
-  const B = config.maxResponseBytes;
-  return (e * Math.max(0, B - bytes)) / B;
+  return energyBytes(config) ? e * Math.max(0, config.maxResponseBytes - bytes) : e;
 }
+
+/** The unit of a config's E: node·ms·bytes with the byte factor, node·ms without. */
+export const energyUnit = (config) => (energyBytes(config) ? "node·ms·bytes" : "node·ms");
 
 /** Draw a flower call's time budget R: uniform in [minMs, ms] ms. */
 export function drawBudget(config, rand = Math.random) {

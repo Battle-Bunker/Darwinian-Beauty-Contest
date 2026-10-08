@@ -169,9 +169,9 @@ A flower allocates its energy between three things:
 
 The bee wants nectar. The flower wants to give as much pollen as it can: pollen is what it scores on.
 
-Each turn, the energy left after compute is the flower's **excess energy**, in node·ms:
+Each turn, the energy left after compute is the flower's **excess energy**, in node·ms·bytes:
 
-> **E = (flower size cap − your flower's size) × max(0, R − compute ms) × (byte cap − response bytes) / byte cap**
+> **E = (flower size cap − your flower's size) × max(0, R − compute ms) × (byte cap − response bytes)**
 
 - **size** is the size in nodes of the flower version that answered (see "What counts toward size"); the
   cap is 1,100. A smaller flower has more to give.
@@ -189,12 +189,13 @@ Each turn, the energy left after compute is the flower's **excess energy**, in n
   stopped, having used less than R of CPU time.
 - **response bytes** is the size of the response: the UTF-8 bytes of its JSON as the game writes it (see
   "What the challenge and response look like"). The **byte cap** is the most a response may be: 1,024
-  bytes. An answer of 24 bytes keeps 1,000/1,024 of the energy; one of exactly 1,024 bytes is still an
-  answer, and a bee can feed on it, but E = 0.
+  bytes. An answer of 24 bytes multiplies by 1,000; one of exactly 1,024 bytes is still an answer, and a
+  bee can feed on it, but E = 0. A 550-node flower with 50 ms of compute and a 24-byte answer, at R = 150,
+  has E = 550 × 100 × 1,000 = 55,000,000.
 - A late answer (stopped at R of wall time), an error, a malformed return or a response over the cap: E = 0.
 
 Code nodes, compute milliseconds and response bytes are each free only when you don't use them. (Games
-played before the byte factor had E without it, and a 64 KiB cap.)
+played before the byte factor had E without it, in node·ms, and a 64 KiB cap.)
 
 So a given stretch of real work costs the same energy whatever R is, but you can only *do* t ms of
 checkable work, and still have energy left, when R happens to be more than t this turn and the call ends
@@ -212,8 +213,9 @@ So a flower gives away pollen only when bees feed at it.
 ### Pollen carries genes
 
 On every feed, after the turn is settled, the bee's team gets a **pollen grain**: a piece of the flower's
-code. It is a run of **L = ⌊pollen^(1/3)⌋** characters (pollen in node·ms: 27,000 pollen gives 30
-characters; no pollen, no grain) taken from the **minified code of the flower version that answered**,
+code. It is a run of **L = ⌊0.1 × pollen^(1/3)⌋** characters (pollen in node·ms·bytes: 27,000,000 pollen
+gives 30 characters; no pollen, no grain; the 0.1 keeps grains about as long as before E was counted in
+bytes too) taken from the **minified code of the flower version that answered**,
 starting at a position drawn uniformly at random, and wrapping from the end back to the start, so every
 character is equally likely to leak. If L is at least the code's length, the grain is the whole code.
 
@@ -288,9 +290,9 @@ Every program can read a `GAME` dictionary/object: `team` (your team's index), `
 wall time: a bee's is always 50; a flower's is this call's hidden budget R, 3–150), `flower_ms` (150, the
 most a flower's R can be) and `flower_size_cap` (1,100). A bee also gets `memory`, its `MEMORY` cap in bytes.
 A flower also gets `size`, its own size, so E = (`flower_size_cap` − `size`) × max(0, `ms` − compute ms) ×
-(`max_response_bytes` − response bytes) / `max_response_bytes`, with `ms` this call's R. In Python,
-`time.process_time()` measures the CPU time the energy counts, and `time.perf_counter()` the wall time the
-limit counts, both from 0 at the start of the call (see "The clock").
+(`max_response_bytes` − response bytes), with `ms` this call's R. In Python, `time.process_time()` measures
+the CPU time the energy counts, and `time.perf_counter()` the wall time the limit counts, both from 0 at the
+start of the call (see "The clock").
 
 ## What programs can use
 

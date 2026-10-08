@@ -24,13 +24,15 @@ export interface GameConfig {
   pollenGrain?: { exponent: number; scale: number }; // a grain is ⌊scale × pollen^exponent⌋ characters
   /** forage = Σ nectar^alpha, pollination = Σ pollen^beta, each in (0, 1] (0.85 by default; a game without them: √). */
   scoring?: Scoring;
-  /** bytes: E = (cap − size) × max(0, R − CPU ms) × (maxResponseBytes − response bytes) / maxResponseBytes. Without it, no byte factor. */
+  /** bytes: E = (cap − size) × max(0, R − CPU ms) × (maxResponseBytes − response bytes), in node·ms·bytes. Without it, no byte factor (node·ms). */
   energy?: { bytes: boolean };
   budgets: Record<Kind, Budget>;
 }
 
 /** Whether a game's E has the byte factor (a config without `energy`: no, as games before it). */
 export const energyBytes = (cfg: { energy?: { bytes: boolean } } | null | undefined) => cfg?.energy?.bytes === true;
+/** E's unit: node·ms·bytes with the byte factor, node·ms without. */
+export const energyUnitOf = (cfg: { energy?: { bytes: boolean } } | null | undefined) => (energyBytes(cfg) ? "node·ms·bytes" : "node·ms");
 /** The response byte cap (64 KiB for a config without one). */
 export const byteCapOf = (cfg: { maxResponseBytes?: number } | null | undefined) => cfg?.maxResponseBytes ?? 65536;
 
@@ -129,7 +131,7 @@ export interface Action {
   nectar?: number | null;   // feed only: percent/100 × E
   // public on a feed; on a leave the flower's team only (everyone after finish):
   percent?: number | null;
-  energy?: number | null;   // E, node·ms
+  energy?: number | null;   // E, node·ms·bytes (node·ms in games without the byte factor)
   // the flower's team (everyone after finish):
   ms?: number | null;       // the flower's CPU time
   budgetMs?: number | null; // the call's hidden time budget R (its hard limit; E counts from it)

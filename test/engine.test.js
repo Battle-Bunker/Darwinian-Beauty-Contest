@@ -54,16 +54,16 @@ test("defaults: a 1,100-node flower with R from 3 to 150 ms, an 11,000-node bee 
   assert.ok(!("cosmos" in c.budgets) && !("orchid" in c.budgets) && !("memory" in c.budgets.flower));
 });
 
-test("excess energy with the byte factor: × (byte cap − response bytes) / byte cap; a config stored without it keeps the old formula", () => {
+test("excess energy with the byte factor: × (byte cap − response bytes), in node·ms·bytes; a config stored without it keeps the old formula", () => {
   const c = normalizeConfig({});
-  assert.equal(excessEnergy(c, 100, 30, 90, 0), 1000 * 60, "a zero-byte response: the full factor of 1");
-  assert.equal(excessEnergy(c, 100, 30, 90), 1000 * 60, "(bytes left out: none)");
-  assert.equal(excessEnergy(c, 100, 30, 90, 256), (1000 * 60 * 768) / 1024);
-  assert.equal(excessEnergy(c, 100, 30, 90, 1), (1000 * 60 * 1023) / 1024);
+  assert.equal(excessEnergy(c, 100, 30, 90, 0), 1000 * 60 * 1024, "a zero-byte response: the whole cap");
+  assert.equal(excessEnergy(c, 100, 30, 90), 1000 * 60 * 1024, "(bytes left out: none)");
+  assert.equal(excessEnergy(c, 100, 30, 90, 256), 1000 * 60 * 768);
+  assert.equal(excessEnergy(c, 100, 30, 90, 1), 1000 * 60 * 1023);
   assert.equal(excessEnergy(c, 100, 30, 90, 1024), 0, "a response of exactly the cap: factor 0");
   assert.equal(excessEnergy(c, 100, 30, 90, 5000), 0, "never negative");
   assert.equal(excessEnergy(c, 1100, 30, 90, 0), 0);
-  assert.equal(excessEnergy(normalizeConfig({ maxResponseBytes: 2048 }), 100, 30, 90, 1024), 30000, "the byte cap is maxResponseBytes");
+  assert.equal(excessEnergy(normalizeConfig({ maxResponseBytes: 2048 }), 100, 30, 90, 1024), 1000 * 60 * 1024, "the byte cap is maxResponseBytes");
   // Old games: stored without `energy` (and with their 64 KiB cap), or with it off.
   const { energy: _, ...old } = { ...c, maxResponseBytes: 65536 };
   assert.equal(excessEnergy(old, 100, 30, 90, 30000), 1000 * 60, "no byte factor");
@@ -75,13 +75,14 @@ test("excess energy with the byte factor: × (byte cap − response bytes) / byt
   assert.deepEqual(normalizeConfig({ minutes: 3 }, c).energy, { bytes: true });
 });
 
-test("excess energy: E = (size cap − size) × max(0, 150 − CPU ms)", () => {
-  const config = normalizeConfig({});
+test("excess energy: E = (size cap − size) × max(0, 150 − CPU ms) (× the byte cap, with no bytes)", () => {
+  const config = normalizeConfig({ energy: { bytes: false } });
   assert.equal(excessEnergy(config, 300, 20), 800 * 130);
   assert.equal(excessEnergy(config, 1100, 1), 0, "a flower at the size cap has nothing to give");
   assert.equal(excessEnergy(config, 100, 150), 0);
   assert.equal(excessEnergy(config, 100, 400), 0, "never negative");
-  assert.equal(excessEnergy(normalizeConfig({ budgets: { flower: { size: 2000, ms: 100 } } }), 500, 40), 1500 * 60);
+  assert.equal(excessEnergy(normalizeConfig({ energy: { bytes: false }, budgets: { flower: { size: 2000, ms: 100 } } }), 500, 40), 1500 * 60);
+  assert.equal(excessEnergy(normalizeConfig({ budgets: { flower: { size: 2000, ms: 100 } } }), 500, 40), 1500 * 60 * 1024);
 });
 
 for (const language of ["python", "typescript"]) {
@@ -749,7 +750,7 @@ test("try a flower: responses (big ones as a preview), percent, energy and CPU t
 });
 
 test("try a bee: unpaced, in a garden of its own flower, with a simulated MEMORY", async () => {
-  const config = normalizeConfig({});
+  const config = normalizeConfig({ feedCost: 10 }); // (feeds sit 10 rounds out, so 100 rounds have enough turns)
   const t0 = performance.now();
   const r = await tryBee({ config, programs: starters(config), rounds: 100, memory: { turns: 41 } });
   assert.equal(r.rounds, 100);

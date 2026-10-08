@@ -20,9 +20,14 @@ export function fmtE(x: number | null | undefined): string {
   return s + (a / 1e9).toFixed(2) + "G";
 }
 
-/** An exact energy figure for titles: 123,486.5 node·ms. */
+// The unit of E in the game on screen: node·ms·bytes with the byte factor, else node·ms (the game page sets it).
+let energyUnit = "node·ms";
+export const setEnergyUnit = (unit: string) => { energyUnit = unit; };
+export const getEnergyUnit = () => energyUnit;
+
+/** An exact energy figure for titles: 123,486.5 node·ms (or node·ms·bytes). */
 export const fmtEExact = (x: number | null | undefined) =>
-  x === null || x === undefined || !Number.isFinite(x) ? "–" : `${(Math.round(x * 10) / 10).toLocaleString()} node·ms`;
+  x === null || x === undefined || !Number.isFinite(x) ? "–" : `${(Math.round(x * 10) / 10).toLocaleString()} ${energyUnit}`;
 
 /** A flower's CPU time: one decimal under 10 ms. */
 export const fmtMs = (x: number | null | undefined) =>

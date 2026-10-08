@@ -24,7 +24,7 @@ class Turn(NamedTuple):
     response_hash: Optional[str]  # for a response over 4 KB: the SHA-256 (hex) of its JSON text, else null
     fed: bool  # whether the bee fed
     percent: Optional[float]  # the share of E the flower offered, 0-100 (null if it failed)
-    energy: Optional[float]  # E, the flower's excess energy (node·ms; 0 if it failed)
+    energy: Optional[float]  # E, the flower's excess energy (node·ms·bytes with the game's byte factor, else node·ms; 0 if it failed)
     nectar: Optional[float]  # the nectar the flower gave the bee: percent/100 × E on a feed, else null
     pollen: float  # the pollen the flower gave the bee: (1 − percent/100) × E on a feed, else 0
     ms: Optional[float]  # the flower's CPU time for the call (ms)

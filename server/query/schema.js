@@ -71,7 +71,7 @@ export const SCHEMA = {
         f("responseHash", "str", "public", "for a response over 4 KB: the SHA-256 (hex) of its JSON text, else null", true),
         f("fed", "bool", "public", "whether the bee fed"),
         f("percent", "float", "publicOnFeed", "the share of E the flower offered, 0-100 (null if it failed)", true),
-        f("energy", "float", "publicOnFeed", "E, the flower's excess energy (node·ms; 0 if it failed)", true),
+        f("energy", "float", "publicOnFeed", "E, the flower's excess energy (node·ms·bytes with the game's byte factor, else node·ms; 0 if it failed)", true),
         f("nectar", "float", "public", "the nectar the flower gave the bee: percent/100 × E on a feed, else null", true),
         f("pollen", "float", "public", "the pollen the flower gave the bee: (1 − percent/100) × E on a feed, else 0"),
         f("ms", "float", "flower", "the flower's CPU time for the call (ms)", true),

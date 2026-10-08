@@ -14,8 +14,8 @@ the `claude/one-flower` branch):
 A game is one continuous garden of 200 ms rounds. Every round, each bee that isn't feeding takes a turn at a
 flower drawn at random (its own included): the flower has a hidden time budget R, drawn from 3–150 ms
 every call, the bee 50 ms. A flower allocates its energy between **compute**, **nectar** and **pollen**: its
-**excess energy** is (size cap − its size) × (R − the CPU time it used) × (byte cap − its response's bytes) /
-byte cap, so code nodes, compute milliseconds and output bytes are each free only when unused. A feed splits
+**excess energy** is (size cap − its size) × (R − the CPU time it used) × (byte cap − its response's bytes),
+in node·ms·bytes, so code nodes, compute milliseconds and output bytes are each free only when unused. A feed splits
 it into nectar for the bee and pollen the flower keeps, and sits the bee out 20 rounds; a turn without a
 feed pays nobody. Every turn is public as it
 happens (who visited whom, the challenge, the response, whether the bee fed, and a feed's percent, energy,
@@ -23,7 +23,7 @@ nectar and pollen), and so is the scoreboard; code, timings and the details of u
 their teams until the end. Programs see no history; teams, operators and agents query every finished turn
 over HTTP with typed clients (docs/QUERY.md). A response can be up to 1,024 bytes of JSON (configurable): the byte cap. Every call's clock
 starts at 0, so programs can time their own work but not tell what time or round it is. Pollen carries
-genes: each feed gives the bee's team a grain of the flower's minified code, ⌊pollen^(1/3)⌋ characters
+genes: each feed gives the bee's team a grain of the flower's minified code, ⌊0.1 × pollen^(1/3)⌋ characters
 long. Each program earns a change budget as the game goes on, and a team can spend it at any
 moment on a new version. Fitness rewards *diverse* success: energy your flower kept from many teams' bees
 (**pollination**, Σ pollen^0.85 over bee teams) and nectar your bee got from many teams' flowers (**forage**,

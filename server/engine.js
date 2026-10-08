@@ -11,7 +11,7 @@
 //          flower(challenge), which has its hidden budget R (drawn from [flower.minMs, flower.ms]) to
 //          return [response, percent]. The runner reports the CPU time of the call; excess energy E =
 //          (flower size cap − the flower's size) × max(0, R − CPU ms), and with energy.bytes × (maxResponseBytes
-//          − response bytes) / maxResponseBytes. A late answer, an error, a malformed return or a response over
+//          − response bytes) (node·ms·bytes). A late answer, an error, a malformed return or a response over
 //          maxResponseBytes: response null, E = 0. The response goes to the bee's process at once.
 //   150 ms Every response is delivered at once, however fast its flower was. Each bee that took a turn
 //          is called: decide(challenge, response), with bee.ms to return ["feed" | "leave", next].
@@ -231,7 +231,7 @@ function rawResponse(res) {
  * grains are off).
  */
 export function grainLength(config, pollen) {
-  const { exponent, scale } = config.pollenGrain ?? { exponent: 1 / 3, scale: 1 };
+  const { exponent, scale } = config.pollenGrain ?? { exponent: 1 / 3, scale: 1 }; // (configs from before pollenGrain: scale 1)
   if (config.grains === "off" || !(pollen > 0) || !(scale > 0)) return 0;
   const root = exponent === 1 / 3 ? Math.cbrt(pollen) : pollen ** exponent;
   return Math.max(0, Math.floor(scale * root + 1e-9));

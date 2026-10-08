@@ -40,9 +40,10 @@ export function recFromEntry(e: LedgerEntry, roundMs: number): TurnRec {
 }
 
 /**
- * The energy model's constants: E = (cap − size) × max(0, R − CPU ms) [× (byteCap − bytes) / byteCap], where R
- * is the call's hidden time budget (at most `window`, the flower window; without R, the window itself), and
- * the byte factor is there when the game has it (config.energy.bytes).
+ * The energy model's constants: E = (cap − size) × max(0, R − CPU ms) [× (byteCap − bytes)], where R is the
+ * call's hidden time budget (at most `window`, the flower window; without R, the window itself), and the byte
+ * factor is there when the game has it (config.energy.bytes): then every figure is in node·ms·bytes, the
+ * budget of a visit being cap × window × byteCap.
  */
 export interface EnergyModel {
   cap: number;          // the flower size budget, also the energy cap
@@ -85,7 +86,8 @@ export function binTurns(recs: Iterable<TurnRec>, n: number, endMs: number, binM
     pollination: mk(), forage: mk(), pollinationShare: mk(), forageShare: mk(), fitness: mk(),
   }));
   const { cap, window: W } = model;
-  const B = cap * W;
+  const U = model.byteCap ?? 1; // the byte factor's most: the whole cap (1 without it)
+  const B = cap * W * U;
   const lastSize: (number | undefined)[] = new Array(n);
   // Pollen and nectar per (bee, flower) pair, per bin: the score components follow from their running totals.
   const pairPollen: Float64Array[] = [], pairNectar: Float64Array[] = [];
@@ -105,14 +107,15 @@ export function binTurns(recs: Iterable<TurnRec>, n: number, endMs: number, binM
         // The call's budget: R where known (the rest of the window, up to the most it could have been, is the
         // reserve it was never given), else the whole window.
         const R = Math.min(W, r.budgetMs ?? W);
-        // The byte factor: what the response's bytes left of (cap − size) × (R − CPU ms).
-        const bf = model.byteCap && !r.failed && r.rBytes !== null ? Math.max(0, model.byteCap - r.rBytes) / model.byteCap : 1;
+        // The byte factor: what the response's bytes left of the cap (U without it).
+        const used = model.byteCap && !r.failed && r.rBytes !== null ? Math.min(model.byteCap, r.rBytes) : 0;
+        const bf = U - used;
         if (size === undefined && !r.failed && r.ms !== null && r.ms < R && r.energy > 0 && bf > 0) size = Math.round(cap - r.energy / ((R - r.ms) * bf));
         if (size === undefined) size = lastSize[r.flower];
         if (size !== undefined) lastSize[r.flower] = size;
-        const BR = cap * R;
-        const sizeCost = Math.min(BR, (size ?? 0) * R);
-        const bytesCost = bf < 1 && r.ms !== null ? Math.min(BR - sizeCost, Math.max(0, cap - (size ?? 0)) * Math.max(0, R - r.ms) * (1 - bf)) : 0;
+        const BR = cap * R * U;
+        const sizeCost = Math.min(BR, (size ?? 0) * R * U);
+        const bytesCost = used > 0 && r.ms !== null ? Math.min(BR - sizeCost, Math.max(0, cap - (size ?? 0)) * Math.max(0, R - r.ms) * used) : 0;
         f.budget[k] += B;
         f.reserve[k] += B - BR;
         f.size[k] += sizeCost;

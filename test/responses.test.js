@@ -79,7 +79,7 @@ for (const language of ["python", "typescript"]) {
   });
 
   test(`${language}: a 1 MB response reaches the bee before its 50 ms start: reading it in costs the bee nothing`, async () => {
-    const config = normalizeConfig({ language, responseType: "list[int]", maxResponseBytes: 1 << 20, feedCost: 0 });
+    const config = normalizeConfig({ language, responseType: "list[int]", maxResponseBytes: 1 << 20, feedCost: 0, budgets: { flower: { minMs: 150 } } }); // R held at 150
     const n = 150000; // about 0.94 MB of JSON (so a 1 MB cap, not the 64 KiB default)
     const list = language === "python" ? `list(range(${n}))` : `Array.from({ length: ${n} }, (_, i) => i)`;
     const out = await play(config, [{ flower: P.flower(list), bee: P.bee }], 4, null, { paced: true });
@@ -115,7 +115,7 @@ for (const language of ["python", "typescript"]) {
     ? `def first():\n    return 1\ndef decide(c, r):\n    print(-1 if r is None else len(r))\n    return "feed", 1\n`
     : `function first() { return 1; }\nfunction decide(c: number, r: any): ["feed", number] { console.log(r === null ? -1 : r.length); return ["feed", 1]; }`;
 
-  test(`${language}: the byte factor: E = (cap − size) × (R − CPU ms) × (1024 − bytes) / 1024; at the cap an answer with E = 0 a bee can feed on; one byte over, refused`, async () => {
+  test(`${language}: the byte factor: E = (cap − size) × (R − CPU ms) × (1024 − bytes); at the cap an answer with E = 0 a bee can feed on; one byte over, refused`, async () => {
     const config = normalizeConfig({ language, responseType: "str", feedCost: 0, budgets: { flower: { minMs: 150 } } }); // R held at 150
     assert.deepEqual([config.maxResponseBytes, config.energy], [1024, { bytes: true }], "the defaults");
     const run = async (n) => {
@@ -129,7 +129,7 @@ for (const language of ["python", "typescript"]) {
       for (const t of turns) {
         assert.deepEqual([t.flowerError, t.rBytes, t.action], [null, n + 2, "feed"]);
         assert.equal(t.energy, excessEnergy(config, s, t.ms, 150, n + 2));
-        assert.ok(Math.abs(t.energy - (1100 - s) * (150 - t.ms) * (1022 - n) / 1024) < 1e-6, `${n}: ${t.energy}`);
+        assert.ok(Math.abs(t.energy - (1100 - s) * (150 - t.ms) * (1022 - n)) < 1e-6, `${n}: ${t.energy}`);
         assert.ok(t.energy > 0);
       }
     }

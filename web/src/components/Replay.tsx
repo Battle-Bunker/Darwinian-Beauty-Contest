@@ -8,7 +8,7 @@ import type { HistoryStore } from "../lib/history";
 import { useLiveTick, type Ticking } from "../lib/live";
 import { fed, type Turn, type TurnIndex } from "../lib/turns";
 import { binTurns, binWidth, recFromTurn, sizeLookup, totalsOf, type MetricKey, type TurnRec } from "../lib/stats";
-import { fmtClock, fmtE, fmtEExact, fmtMs, plural } from "../lib/format";
+import { fmtClock, fmtE, fmtEExact, fmtMs, getEnergyUnit, plural } from "../lib/format";
 import { GardenControls, GardenLegend, GardenStage, type BubbleMode, type GardenDriver } from "./Garden";
 import { EnergySplit, MetricPicker, TeamSeriesChart } from "./Charts";
 import { PauseIcon, PlayIcon, ReplayIcon } from "./Icons";
@@ -202,7 +202,7 @@ function RoundInspector({ index, round, roundMs, teams, mine, focus, rev, base }
             <thead>
               <tr>
                 <th className="left">Bee → flower</th><th className="left">Challenge → response</th><th className="left">Decision</th>
-                <th title="Share of E offered">%</th><th title="Excess energy, node·ms">E</th><th>Nectar</th><th>Pollen</th><th title="Energy lost: the bee didn't feed">Lost</th>
+                <th title="Share of E offered">%</th><th title={`Excess energy, ${getEnergyUnit()}`}>E</th><th>Nectar</th><th>Pollen</th><th title="Energy lost: the bee didn't feed">Lost</th>
                 {hasR && <th title="The flower call's hidden time budget R">R</th>}<th title="The flower's CPU time">Flower ms</th><th title="How long the bee took to decide">Bee ms</th><th className="left">Versions</th>
               </tr>
             </thead>
@@ -284,7 +284,7 @@ function ReplayCharts({ view, history, teams, mine, focus, setFocus, cursor, onS
       )}
       <section>
         <h3>Where each flower's energy went</h3>
-        <p className="small muted">A flower allocates every visit's energy budget ({cfg.budgets.flower.size.toLocaleString()} × R node·ms, R the call's hidden time budget, at most {cfg.budgets.flower.ms} ms) between compute, nectar and pollen. Each bar counts every visit at the most, {cfg.budgets.flower.ms} ms: what R fell short of that is "not given". Its size shrinks the budget and its CPU time uses part of it{energyBytes(cfg) ? <>, and so do its response's bytes (each of the {byteCapOf(cfg).toLocaleString()} it may write takes 1/{byteCapOf(cfg).toLocaleString()} of what's left)</> : null}; what's left, E, goes to a bee that feeds, as nectar (the percent offered) and pollen (the rest), or is lost when the bee doesn't feed.</p>
+        <p className="small muted">A flower allocates every visit's energy budget ({cfg.budgets.flower.size.toLocaleString()} × R{energyBytes(cfg) ? ` × ${byteCapOf(cfg).toLocaleString()} node·ms·bytes` : " node·ms"}, R the call's hidden time budget, at most {cfg.budgets.flower.ms} ms) between compute, nectar and pollen. Each bar counts every visit at the most, {cfg.budgets.flower.ms} ms: what R fell short of that is "not given". Its size shrinks the budget and its CPU time uses part of it{energyBytes(cfg) ? <>, and so do its response's bytes (E is multiplied by the {byteCapOf(cfg).toLocaleString()}-byte cap less the response's bytes, so every figure here is in node·ms·bytes)</> : null}; what's left, E, goes to a bee that feeds, as nectar (the percent offered) and pollen (the rest), or is lost when the bee doesn't feed.</p>
         <EnergySplit rows={rows.map((i) => ({ team: teams[i], t: totalsOf(data.teams[i]), you: i === mine }))} />
       </section>
     </div>
