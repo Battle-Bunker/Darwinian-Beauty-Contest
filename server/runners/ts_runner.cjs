@@ -11,22 +11,25 @@
 // clock: every call's clock reads 0 as its time starts (PRELUDE).
 //
 // Protocol: JSON lines on stdin/stdout, one reply per request, in order. The first line is the setup
-// {code, ms, limitMs, game, maxChars, maxResponseBytes}. Requests (as in py_runner.py):
-//   flower: {op: "call", c, ms: R}        -> {v: [response, percent], bytes, cpu} | {e, cpu}
-//           R is the call's hidden time budget: its hard limit, and GAME.ms for the call
-//   bee:    {op: "first", memory}         -> {a, out, memory} | {e, out}
+// {code, ms, limitMs, wallMs, hardWallMs, faultShare, game, maxChars, maxResponseBytes}. Requests (as in py_runner.py):
+//   flower: {op: "call", c, ms: R}        -> {v: [response, percent], bytes, cpu} | {e, cpu, backstop?, fault?}
+//           R is the call's hidden time budget: its CPU limit, and GAME.ms for the call
+//   bee:    {op: "first", memory}         -> {a, cpu, out, memory} | {e, cpu, out, backstop?, fault?}
 //           {op: "stage", c, r}           -> {ok}: the next decide's fresh context, its arguments read in
-//           {op: "decide", staged: true, memory} (or with c and r) -> {a, out, memory} | {e, out}
-//           {op: "fed", nectar}           -> {ok, a?, aError?, out, memory} | {e, out} | {skipped}
+//           {op: "decide", staged: true, memory} (or with c and r) -> as first
+//           {op: "fed", nectar}           -> {ok, a?, aError?, cpu, out, memory} | {e, out} | {skipped}
 //           (a: what fed returned unless null or undefined, the next challenge for the engine to check;
 //           aError instead when that isn't plain data or is too large: MEMORY is still saved)
+//   Before its reply, a bee's first or decide may send one notice line: {notice: "late"} (it has used its ms of
+//   CPU) or {notice: "fault"} (at wallMs it had spent most of its time waiting for a CPU).
 // Any request other than fed drops a kept context. The reply (and a bee's MEMORY) is encoded to JSON text
 // inside the context, on the clock and under the time limit, so hooks (toJSON, getters, proxies) are the
-// program's own compute; only a string leaves the context. A flower's `cpu` is this process's CPU time for
-// running the program, calling flower() and encoding its reply (not for creating the context); its
-// response's UTF-8 size (`bytes`) must be at most maxResponseBytes. Time limits are wall-clock: a flower
-// is stopped at `ms`, and so is fed(); a bee's `ms` for first and decide is a deadline the engine keeps, so
-// the runner only stops those at `limitMs`.
+// program's own compute; only a string leaves the context. `cpu` is the main thread's CPU time for running
+// the program, calling it and encoding its reply (not for creating the context; not V8's other threads); a
+// flower's response's UTF-8 size (`bytes`) must be at most maxResponseBytes. Limits are CPU time: a flower is
+// stopped at R, fed at ms, a bee's first and decide at limitMs (it is late past ms). wallMs (hardWallMs for
+// first and decide) is a wall-clock backstop: a call still going then is stopped, and is the server's fault
+// if it spent at least faultShare of that time waiting for a CPU.
 // Values cross context boundaries only as JSON strings, so no host objects leak in.
 // NOT a security sandbox: fresh contexts + timeouts + heap cap only.
 "use strict";
