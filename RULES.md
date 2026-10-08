@@ -27,7 +27,8 @@ A game is one continuous stretch of play, 2 minutes of game time by default (the
 
 The game runs in **rounds** of **200 ms** of game time: a **150 ms flower window**, then a **50 ms
 decision window**. A 2-minute game is 600 rounds. Rounds are played in real time; if the server is
-short of CPU cores a round takes longer on the wall clock, which changes nothing in the game.
+short of CPU cores a round takes longer on the wall clock. The round's pacing changes nothing in the game,
+but a flower's time limit R is wall-clock time (see "Energy"), so a busy server can make a flower late.
 
 ## A turn
 
@@ -41,8 +42,9 @@ Every bee that isn't busy feeding gets **one turn per round**: one challenge, on
 3. The flower is called: `flower(challenge)`. It has its **hidden time budget R** for this call (50 to 150
    ms, drawn at random every call; see "Energy") and returns
    `[response, percent]`: its answer, and the share (0–100, clamped) of this turn's **excess energy** it
-   gives the bee if the bee feeds. A late answer (slower than R), an error, or a malformed return (not a
-   pair, a response of the wrong type, a percent that isn't a number) gives a `null` response and no energy.
+   gives the bee if the bee feeds. A late answer (stopped at R of wall time), an error, or a malformed
+   return (not a pair, a response of the wrong type, a percent that isn't a number) gives a `null` response
+   and no energy.
 4. **150 ms.** The response is delivered to the bee, always at 150 ms however fast the flower was, so
    timing tells the bee nothing. The bee has **50 ms**: `decide(challenge, response)` returns
    `["feed", next_challenge]` or `["leave", next_challenge]`. The next challenge is queued for its next
@@ -165,20 +167,24 @@ Each turn, the energy left after compute is the flower's **excess energy**, in n
 - **size** is the size in nodes of the flower version that answered (see "What counts toward size"); the
   cap is 1,100. A smaller flower has more to give.
 - **R** is **this call's hidden time budget**: a number of milliseconds drawn fresh and uniformly at random
-  from 50 to 150 for every flower call, independently. It is this call's time limit (the flower is stopped
-  at R, as it was at 150 before), and it is the ceiling the energy counts down from. **Your flower is told
-  its R as `GAME["ms"]`** for that call (`GAME["flower_ms"]` stays 150, the most R can be). The bee is never
-  told R, and the response still reaches it at the fixed 150 ms, so timing hides R.
+  from 50 to 150 for every flower call, independently. It is this call's time limit, measured on the wall
+  clock from the start of the call (when the call's clock reads 0; see "The clock"): when the call's wall
+  time reaches R, the flower is stopped. It is also the ceiling the energy counts down from. **Your flower
+  is told its R as `GAME["ms"]`** for that call (`GAME["flower_ms"]` stays 150, the most R can be). The bee
+  is never told R, and the response still reaches it at the fixed 150 ms, so timing hides R.
 - **compute ms** is the **CPU time** your flower's process used for this call: running the program,
-  calling `flower`, and writing its response as JSON. It is CPU time, not wall time: a busy server doesn't
-  cost you, and time your flower spends not computing isn't counted.
-- A late answer (slower than R), an error, a malformed return or a response over the cap (see "What the
-  challenge and response look like"): E = 0.
+  calling `flower`, and writing its response as JSON. It is CPU time, not wall time: the energy doesn't
+  count time your flower spends not computing (waiting, sleeping, or held up while the server runs other
+  programs). The time limit R counts all of it, since it is wall time: other programs on the server can
+  make a call take longer on the wall clock than its CPU time, so a call can reach R of wall time, and be
+  stopped, having used less than R of CPU time.
+- A late answer (stopped at R of wall time), an error, a malformed return or a response over the cap (see
+  "What the challenge and response look like"): E = 0.
 
 So a given stretch of real work costs the same energy whatever R is, but you can only *do* t ms of
-checkable work, and still have energy left, when R happens to be at least t this turn. Each flower instance
-has its own hidden reserve for the turn — its R — and the bee has to judge from the answer alone whether
-this one is rich and generous.
+checkable work, and still have energy left, when R happens to be more than t this turn and the call ends
+within R of wall time. Each flower instance has its own hidden reserve for the turn — its R — and the bee
+has to judge from the answer alone whether this one is rich and generous.
 
 Then:
 - **If the bee feeds:** the flower gives the bee **nectar = percent/100 × E** and **pollen =
@@ -263,11 +269,12 @@ In TypeScript, `tree[T]` is `{ value: T; children: Tree<T>[] }` and a graph is
 
 Every program can read a `GAME` dictionary/object: `team` (your team's index), `teams` (N), `feed_cost`,
 `challenge_type`, `response_type`, `max_len`, `max_nodes` (limits on challenges), `max_response_bytes`
-(the response size cap), `round_ms` (200), `ms` (your program's own time limit for **this call**: a bee's is
-always 50; a flower's is this call's hidden budget R, 50–150), `flower_ms` (150, the most a flower's R can
-be) and `flower_size_cap` (1,100). A bee also gets `memory`, its `MEMORY` cap in bytes. A flower also gets
-`size`, its own size, so E = (`flower_size_cap` − `size`) × max(0, `ms` − compute ms) with `ms` this call's
-R. In Python, `time.process_time()` measures the CPU time the engine counts (see "The clock").
+(the response size cap), `round_ms` (200), `ms` (your program's own time limit for **this call**, in ms of
+wall time: a bee's is always 50; a flower's is this call's hidden budget R, 50–150), `flower_ms` (150, the
+most a flower's R can be) and `flower_size_cap` (1,100). A bee also gets `memory`, its `MEMORY` cap in bytes.
+A flower also gets `size`, its own size, so E = (`flower_size_cap` − `size`) × max(0, `ms` − compute ms) with
+`ms` this call's R. In Python, `time.process_time()` measures the CPU time the energy counts, and
+`time.perf_counter()` the wall time the limit counts, both from 0 at the start of the call (see "The clock").
 
 ## What programs can use
 

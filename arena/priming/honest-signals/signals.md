@@ -15,9 +15,10 @@ on this machine, outside the engine; yours will differ.
   t ms of work keeps E = (1100 − size) × (R − t), and a bee that feeds gets nectar = 0.5 × E.
   - The response always arrives at 150 ms.
   - `time.process_time()` counts the CPU time the engine charges, from 0 at the start of the call.
-- **A level is a lower bound.** Work worth t ms is possible only if R ≥ t. How closely a level tracks R
-  depends on how a flower chooses t against R. That choice is open, and a bee can learn it per family from
-  what feeds pay.
+- **A level is a lower bound.** The call is stopped when its wall time reaches R, and that wall time
+  includes any time the machine spends on other programs, so work worth t ms of CPU is done only on a call
+  whose R exceeds t plus that time. How closely a level tracks R depends on how a flower chooses t against
+  R. That choice is open, and a bee can learn it per family from what feeds pay.
 - **Every signal must be bound to the challenge.** It has to be seeded by the bee's fresh challenge c, so
   nothing can be precomputed or reused.
 - **Recognisable by family.** Put the family and its parameters in a label: `labels[0] = {"fam": "tally",

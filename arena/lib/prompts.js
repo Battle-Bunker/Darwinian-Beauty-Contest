@@ -27,13 +27,15 @@ export function timingText(config) {
   ${Math.round((config.minutes * 60000) / 200)} rounds. Every bee that isn't feeding gets one turn per round.
 - Each team's flower program is its flower species. A turn: the bee's queued challenge goes to one flower of a species
   drawn at random from all species (yours included); that flower call gets a hidden time budget R, drawn uniformly from
-  ${minR} to ${fl.ms} ms afresh for every call: its hard limit to return [response, percent] (the flower is told its R as
-  GAME["ms"]; GAME["flower_ms"] is ${fl.ms}). The response reaches the bee at ${fl.ms} ms whatever R and the flower's speed,
-  and the bee is never told R; the bee has ${bee.ms} ms to return ["feed" or "leave", next challenge]. Neither is told
-  whose the other is. A feed takes the bee out for ${config.feedCost} rounds.
+  ${minR} to ${fl.ms} ms afresh for every call: its hard limit to return [response, percent], on the wall clock from the
+  start of the call (the flower is told its R as GAME["ms"]; GAME["flower_ms"] is ${fl.ms}).
+  The response reaches the bee at ${fl.ms} ms whatever R and the flower's speed, and the bee is never told R; the bee has
+  ${bee.ms} ms to return ["feed" or "leave", next challenge]. Neither is told whose the other is. A feed takes the bee
+  out for ${config.feedCost} rounds.
 - A flower's energy goes to compute, nectar and pollen. Its excess energy for a turn is
-  E = (${n0(fl.size)} − flower size) × max(0, R − the flower's CPU ms). If the bee feeds, the flower gives it
-  percent/100 × E as nectar and the rest as pollen. If it doesn't feed, that energy is lost.
+  E = (${n0(fl.size)} − flower size) × max(0, R − the flower's CPU ms). The CPU ms are CPU time; the limit R is wall
+  time, which also counts any time the machine spends on other programs during the call. If the bee feeds,
+  the flower gives it percent/100 × E as nectar and the rest as pollen. If it doesn't feed, that energy is lost.
 - Programs run fresh for every call: flower(challenge), first(), decide(challenge, response), and the bee's optional
   fed(nectar), which runs after a feed decided in time, in the same instance as that decide. Programs see only their
   arguments and GAME (the settings and their team's index): no history, no round or game time. A program's clock reads 0
