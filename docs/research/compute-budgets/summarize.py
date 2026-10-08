@@ -97,11 +97,11 @@ def enforcement(fname, title):
                 by_r = {rr: stats([r["over"] for r in v if r["r"] == rr])["p50"] for rr in sorted({r["r"] for r in v})}
                 wall = stats([r["wall"] / r["r"] for r in v])
                 hows = collections.Counter(r["how"] for r in v)
-                late = sum(1 for r in v if r["over"] > 0.5 * r["r"] and r["over"] > 2)
+                late = sum(1 for r in v if r["over"] > max(5, 0.8 * r["r"]))  # a stop a whole period late
                 body.append([tag, m, f(s["p50"], 3), f(s["p95"], 3), f(s["min"], 3), f(s["max"], 3), str(late),
                              " ".join(f"{k:g}:{f(x, 2)}" for k, x in by_r.items()), f(wall["p50"]), ",".join(f"{k}:{n}" for k, n in hows.items())])
         print(f"### workload: {work}\n")
-        table(["condition", "mechanism", "over p50", "over p95", "min", "max", "> R/2 late", "p50 by R", "wall÷R p50", "stopped by"], body)
+        table(["condition", "mechanism", "over p50", "over p95", "min", "max", "a period late", "p50 by R", "wall÷R p50", "stopped by"], body)
     arm = collections.defaultdict(list)
     for r in enf:
         if r.get("arm_us") is not None and r["tag"] == "idle":
