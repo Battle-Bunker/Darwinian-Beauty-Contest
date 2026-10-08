@@ -31,7 +31,7 @@ def table(head, body):
     print()
 
 
-COND_ORDER = ["idle1slot", "idle", "autogroup", "agnice", "cpuidle", "cpuset", "fifo"]
+COND_ORDER = ["idle1slot", "idle", "autogroup", "agnice", "cpuidle", "cpuset", "fifo", "contained"]
 order = lambda t: COND_ORDER.index(t) if t in COND_ORDER else 99
 
 # --- noise and misses ----------------------------------------------------------------------------------------

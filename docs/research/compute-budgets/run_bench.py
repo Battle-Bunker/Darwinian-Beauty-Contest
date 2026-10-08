@@ -14,6 +14,7 @@ Conditions (the load is load.py's: spin:3, mem:1, bursty:4, i.e. 8 processes wan
   cpuidle       the same hogs in a cpu cgroup with cpu.idle=1 (SCHED_IDLE weight for the whole group)
   cpuset        the same hogs confined to cpus 0-1; the runners to cpus 2-3
   fifo          the autogroup load; the runners at SCHED_FIFO 10
+  contained     the recommendation: hogs in a cpu.idle cgroup and confined to cpus 0-1; runners on cpus 2-3
 Steps: noise (noise_py.py), enforce (enforce_py.py), node (node_cpu.cjs), det (determinism_py.py),
 fuel (fuel/fuel_bench.py), micro (micro.py, idle only).
 Everything it starts is killed by PID at the end of each condition; its cgroups (cb-*) are removed.
@@ -34,6 +35,7 @@ CONDITIONS = {
     "cpuidle": {"load": {"setsid": True, "nice": "15", "cpu_cgroup": "cb-idle"}},
     "cpuset": {"load": {"setsid": True, "nice": "15", "cpuset": "cb-rest"}, "runner_cpuset": "cb-runner"},
     "fifo": {"load": {"setsid": True, "nice": "15"}, "fifo": True},
+    "contained": {"load": {"setsid": True, "nice": "15", "cpu_cgroup": "cb-idle", "cpuset": "cb-rest"}, "runner_cpuset": "cb-runner"},
 }
 STEPS_BY_COND = {
     "idle": ["micro", "noise", "enforce", "node", "det", "fuel"],
@@ -43,6 +45,7 @@ STEPS_BY_COND = {
     "cpuidle": ["noise", "enforce"],
     "cpuset": ["noise", "enforce"],
     "fifo": ["noise"],
+    "contained": ["noise", "enforce"],
 }
 
 
