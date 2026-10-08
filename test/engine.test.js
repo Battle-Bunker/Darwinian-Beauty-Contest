@@ -143,7 +143,7 @@ test("energy is counted in CPU time: a busy flower spends it, a sleeping one doe
       assert.equal(t.flowerError, null, `${name}: ${t.flowerError}`);
       assert.equal(typeof t.ms, "number");
       assert.equal(t.budgetMs, 150);
-      assert.equal(t.energy, excessEnergy(config, s, t.ms, t.budgetMs), `${name}: E = (1100 − ${s}) × (150 − ${t.ms})`);
+      assert.equal(t.energy, excessEnergy(config, s, t.ms, t.budgetMs, t.rBytes), `${name}: E = (1100 − ${s}) × (150 − ${t.ms}) × (1024 − ${t.rBytes}) / 1024`);
       assert.ok(t.energy > 0);
     }
   }
@@ -183,7 +183,7 @@ test("typescript: energy from CPU time, and a late flower gives none", async () 
   const [fast, late] = runs;
   for (const t of fast.turns) {
     assert.ok(t.ms > 25 && t.ms < 90, `${t.ms}`);
-    assert.equal(t.energy, excessEnergy(config, fast.size, t.ms, t.budgetMs));
+    assert.equal(t.energy, excessEnergy(config, fast.size, t.ms, t.budgetMs, t.rBytes));
     assert.equal(t.r, 3);
   }
   for (const t of late.turns) {
@@ -720,7 +720,7 @@ test("try a flower: responses (big ones as a preview), percent, energy and CPU t
   assert.ok(!("rFull" in r.results[3]));
   assert.deepEqual(r.results.map((x) => x.percent), [40, 40, null, 40]);
   assert.ok(r.results[0].energy > 0 && typeof r.results[0].ms === "number");
-  assert.equal(r.results[0].energy, excessEnergy(config, r.size, r.results[0].ms, r.results[0].budgetMs));
+  assert.equal(r.results[0].energy, excessEnergy(config, r.size, r.results[0].ms, r.results[0].budgetMs, r.results[0].rBytes));
   assert.ok(r.results.every((x) => x.budgetMs >= 50 && x.budgetMs <= 150), "R drawn per challenge, as in a game");
   assert.ok(r.results[2].error);
 });

@@ -84,7 +84,7 @@ for (const language of ["python", "typescript"]) {
       assert.equal(t.r, t.budgetMs, "the flower was told its R as GAME.ms");
       // (CPU time starts a moment before the limit's clock, so it can pass R by a hair; E is then 0.)
       assert.ok(t.ms < t.budgetMs + 5, `answered within R: ${t.ms} vs ${t.budgetMs}`);
-      assert.equal(t.energy, excessEnergy(config, s, t.ms, t.budgetMs), "E counts down from R");
+      assert.equal(t.energy, excessEnergy(config, s, t.ms, t.budgetMs, t.rBytes), "E counts down from R");
     }
     for (const t of late) {
       assert.match(t.flowerError, /Timeout/);
@@ -115,7 +115,7 @@ test("try a flower with budgetMs: a number, \"random\" (the default), or one per
   assert.deepEqual(fixed.results.map((x) => [x.budgetMs, x.r]), [[80, 80], [80, 80], [80, 80]]);
   const each = await tryFlower({ config, code, challenges: [1, 2, 3], budgetMs: [60, 120, 999] });
   assert.deepEqual(each.results.map((x) => x.budgetMs), [60, 120, 150], "clamped to [minMs, ms]");
-  for (const x of each.results) assert.equal(x.energy, excessEnergy(config, each.size, x.ms, x.budgetMs));
+  for (const x of each.results) assert.equal(x.energy, excessEnergy(config, each.size, x.ms, x.budgetMs, x.rBytes));
   const random = await tryFlower({ config, code, challenges: Array.from({ length: 12 }, (_, i) => i) });
   // (At an R of a few ms even this flower can be late: then no answer.)
   assert.ok(random.results.every((x) => x.budgetMs >= 3 && x.budgetMs <= 150 && (x.r === x.budgetMs || /Timeout/.test(x.error))));

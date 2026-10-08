@@ -26,7 +26,7 @@ test("typescript: work done in a reply's toJSON is on the flower's clock", async
   for (const t of charged.turns) {
     assert.deepEqual(t.r, { nodes: 1 });
     assert.ok(t.ms >= 70, `100 ms in toJSON is charged: ${t.ms} ms (floor loose for a busy machine)`);
-    assert.equal(t.energy, excessEnergy(charged.config, charged.size, t.ms));
+    assert.equal(t.energy, excessEnergy(charged.config, charged.size, t.ms, t.budgetMs, t.rBytes));
   }
   const stopped = await turnsOf("typescript", flower(400));
   for (const t of stopped.turns) {
