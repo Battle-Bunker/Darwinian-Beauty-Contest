@@ -38,8 +38,9 @@ Everything goes through the game runner (tools/_runner.py): no password or token
 Turns are the records of stream/history.jsonl (Python field names: seq, round, at_ms, bee, flower, challenge, response,
 response_bytes, response_hash, fed, percent, energy, nectar, pollen, ms, flower_version, ...); a field your team may not
 see is None, and so is a response over 4 KB (response_bytes and response_hash say what it is; garden.response(t) fetches it). garden.MY_INDEX is your
-index, garden.N the number of teams, garden.name(i) a team's name. follow_live() yields the public actions (arrive, feed,
-leave; teams as ids, garden.ME is yours) straight from the game's public API.
+index, garden.N the number of teams, garden.name(i) a team's name. follow_live() yields the new records of
+stream/actions.jsonl as they arrive (a public game: arrive, feed, leave, teams as ids, garden.ME is yours; a private game:
+your own programs' sides of your own turns).
 """
 import json
 import os
@@ -216,7 +217,8 @@ def assemble(flower, version=None):
 
 
 def actions(after=0, since_ms=None):
-    """The public stream so far (stream/actions.jsonl) with seq > after, or from game time since_ms on."""
+    """stream/actions.jsonl so far (the public stream; in a private game your own sides of your turns) with seq > after,
+    or from game time since_ms on."""
     return _s.actions(since_ms=since_ms, since_seq=after or None)
 
 
@@ -225,31 +227,17 @@ def mine():
     return _s.mine()
 
 
-def _sse_messages(after):
-    with urllib.request.urlopen("%s/events?after=%d" % (API, after), timeout=30) as resp:
-        for raw in resp:
-            if raw.startswith(b"data: "):
-                yield json.loads(raw[6:])
-
-
-def follow_live(after=None):
-    """The public actions (arrive, feed, leave) straight from the game's public API (Server-Sent Events), as they happen.
-    Reconnects if the connection drops. (The API also has a WebSocket, API + "/ws?after=<seq>", with the same messages;
-    Python's standard library has no client for it, and raw sockets aren't allowed here.)"""
+def follow_live(after=None, poll=0.25):
+    """The new records of stream/actions.jsonl as the runner appends them (about once a second): in a public game every
+    arrival and turn end as anyone sees them; in a private game your own programs' sides of your own turns (records with
+    "side": "flower" or "bee"). Starts after what's there now, or after seq `after`. Never returns: break out of it."""
     if after is None:
-        a = None
-        for a in _s.actions():
-            pass
-        after = a["seq"] if a else 0
-    while True:
-        try:
-            for msg in _sse_messages(after):
-                for a in msg.get("actions") or []:
-                    if a["seq"] > after:
-                        after = a["seq"]
-                        yield a
-        except Exception:
-            time.sleep(1)
+        for a in _s.follow_actions(poll=poll):
+            yield a
+    else:
+        for a in _s.follow_actions(poll=poll, from_start=True):
+            if a.get("seq", 0) > after:
+                yield a
 
 
 def scores():

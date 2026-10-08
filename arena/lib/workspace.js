@@ -53,7 +53,7 @@ const BIG_RESPONSE_TEXT = [
 ];
 export const forCap = (text, config) => ((config?.maxResponseBytes ?? 65536) > 4096 ? text : BIG_RESPONSE_TEXT.reduce((t, [re, to]) => t.replace(re, to), text));
 
-export function readme({ ext, apiBase, examples, common = null, commonScope = "all" }) {
+export function readme({ ext, apiBase, examples, common = null, commonScope = "all", privatePlay = false, prevalenceEveryS = 30 }) {
   return `# Your workspace
 
 | path | what |
@@ -67,7 +67,8 @@ export function readme({ ext, apiBase, examples, common = null, commonScope = "a
 | status.txt | what \`tools/status.py\` said when this session started |
 | notebook.md | your private notes: they carry over to your next sessions and games |
 | stream/history.jsonl | YOUR TEAM'S HISTORY: one turn record per finished turn, oldest first, as your team may see it (your programs see no history: this is for you and your scripts). The runner appends new turns about once a second while the game runs. Query it (tools/query.py --local, garden.local); never write to it |
-| stream/actions.jsonl | the public action stream: every arrival and every turn's end as anyone sees it |
+${privatePlay ? "| stream/actions.jsonl | YOUR OWN action stream (a private game): your own programs' sides of your own turns, nothing of other teams' (see \"What you see during play\" below) |"
+    : "| stream/actions.jsonl | the public action stream: every arrival and every turn's end as anyone sees it |"}
 | stream/mine.jsonl | your own bee's and flower's actions as your team sees them, with your bee's printouts (\`log\`), decision times and errors |
 | stream/teams.json, stream/SCHEMA.md | team ids, names and indices; what each file holds |
 | tools/ | the tools below, and history.py: the typed history query builder, as a Python module |
@@ -123,7 +124,21 @@ team may not see reads as None, in filters and aggregates too. Fields: \`python3
 4 KB reads as None, with its size in \`response_bytes\` and the SHA-256 of its JSON text in \`response_hash\` (equal
 responses, equal hashes); \`garden.response(t.seq)\` fetches the whole of it.
 
-## The game's public API
+${privatePlay ? `## What you see during play (a private game)
+
+During play your team sees only its own programs' sides of its own turns:
+- your flower's turns: the challenge it got, its response, its percent, its CPU time and the call's R; not whose bee
+  visited, and not whether that bee fed (records with \`side: "flower"\`);
+- your bee's turns: the challenge it asked, the response it got, its decision, and on a feed its nectar, the feed price,
+  the net and its balance; not which species answered (records with \`side: "bee"\`);
+- on your bee's feeds, the pollen grains as bare fragments of code (no species, version or code length);
+- every team's prevalence (F, B, draw chances, fitness) every ${prevalenceEveryS} s of game time, rounded to 2 decimals; the
+  scoreboard is the latest of these.
+Everything else (every turn with both teams named, every sample, every team's code) is revealed once the game is over.
+Your files and tools (status.py, query.py, garden) read the game as your team. Read without a login, the API below shows
+the clock, the settings, the prevalence snapshots and the scoreboard during play, and no turns.
+
+` : ""}## The game's public API
 
 The public API needs no login, and you may read it (GET) at ${apiBase}, and post history queries to its query endpoint.
 It shows public fields only (your private ones are in stream/history.jsonl and stream/mine.jsonl, and in garden.game):
@@ -141,6 +156,19 @@ It shows public fields only (your private ones are in stream/history.jsonl and s
 Read at most a few times a second.
 `;
 }
+
+/** On top of SCHEMA.md in a private game: what the files hold during play. */
+export const PRIVATE_SCHEMA_NOTE = `# During play in this private game
+
+The files below hold only your own team's records until the game is over. stream/actions.jsonl has your own programs'
+sides of your own turns: \`side: "flower"\` records ({seq, atMs, round, side, flower (your id), action: "answer", c, r,
+rBytes, percent, ms, budgetMs, flowerError, flowerVersion}: no bee, no outcome) and \`side: "bee"\` records ({seq,
+atMs, round, side, bee (your id), turn, action: "feed" or "leave", c, r, rBytes, beeMs, beeError, beeVersion, log, and on
+a feed nectar, price, net, balance and a bare grain}: no flower). Your bee at your own flower gives both, with the same
+seq. stream/history.jsonl has the same as turn records (the other side's fields null), and stream/mine.jsonl your own
+actions. The descriptions below are of a whole game, as everything is once it is over.
+
+`;
 
 export const SCHEMA = `# The streams
 
@@ -245,7 +273,9 @@ export async function prepareWorkspace({ arena, gameRow, persona, view, stream, 
   write(path.join(dir, "RULES.md"), rules());
   const examples = arena.settings.examples ? fs.readdirSync(path.resolve(ARENA_DIR, "..", arena.settings.examples)) : null;
   const common = commonFiles(arena, persona);
-  write(path.join(dir, "README.md"), forCap(readme({ ext, apiBase, examples, common: common?.files, commonScope: common?.scope }), view.game.config));
+  const privatePlay = view.game.config?.visibility === "private";
+  write(path.join(dir, "README.md"), forCap(readme({ ext, apiBase, examples, common: common?.files, commonScope: common?.scope, privatePlay,
+    prevalenceEveryS: view.game.config?.prevalenceEveryS ?? 30 }), view.game.config));
   // Common knowledge (a primed cohort): restored at every game, so every team, new ones included, has the same copy.
   fs.rmSync(path.join(dir, "common"), { recursive: true, force: true });
   // (several folders merge in order; Python's caches and dot files stay behind)
@@ -294,7 +324,7 @@ export async function prepareWorkspace({ arena, gameRow, persona, view, stream, 
   write(path.join(sdir, "teams.json"), json({ teams: name, me, participants,
     names: participants ? participants.map((id) => name[id]) : null, myIndex: participants ? participants.indexOf(me) : null }));
   if (stream?.tracked?.get(me)) stream.tracked.get(me).indexed = participants || null;
-  write(path.join(sdir, "SCHEMA.md"), forCap(SCHEMA, view.game.config));
+  write(path.join(sdir, "SCHEMA.md"), forCap(privatePlay ? PRIVATE_SCHEMA_NOTE + SCHEMA : SCHEMA, view.game.config));
 
   await writePreviousGames(arena, dir, gameRow.generation, persona.id);
   return { dir, ext, drafts };

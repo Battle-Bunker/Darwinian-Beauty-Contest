@@ -38,7 +38,7 @@ check("system: the game is short", /30 seconds/.test(sys));
 check("system: fair play allows reading the public API and its history queries, nothing else", /except to read \(GET\) the game's public API/.test(sys) && /post history queries to its query endpoints/.test(sys)
   && /Do not write to stream\//.test(sys) && /not even \/tmp/.test(sys) && /raw\s+sockets/.test(sys));
 check("system: RULES.md in full (species, pollen, MEMORY, fed, no history for programs)", /## A turn/.test(sys) && /## Energy: compute, nectar and pollen/.test(sys) && /### Bee memory/.test(sys)
-  && /### After a feed: `fed\(nectar\)`/.test(sys) && /## History is for teams, not programs/.test(sys) && /## What everyone can see/.test(sys));
+  && /### After a feed: `fed\(nectar\)`/.test(sys) && /## History is for teams, not programs/.test(sys) && /## What (everyone|you) can see/.test(sys));
 const tt = timingText(config);
 check("timing: 200 ms rounds, the flower's hidden budget R (50 to 150 ms) and the bee's 50 ms, a feed costs 10 rounds", /Rounds of 200 ms/.test(tt) && /about\s+150 rounds/.test(tt)
   && /hidden time budget R, drawn uniformly from\s+50 to 150 ms afresh for every call: its hard limit to return \[response, percent\]/.test(tt) && /told its R as\s+GAME\["ms"\]/.test(tt)
@@ -211,6 +211,25 @@ check("v2 settings: Scores names F × B as the score (pollination and forage onl
     && /half that at 6 minutes of game time/.test(t4) && /Scores: your fitness is N² × pF × pB at the game's last round/.test(s4)
     && /the score is that at the game's last round/.test(run4) && !/time-average/.test(t4), t4);
 
+}
+// Private play (explore-1: visibility "private"): the system prompt, the rules summary and the briefs say what a team
+// sees during play, plainly; nothing describes a public stream or a public scoreboard during play.
+{
+  const { PRESETS } = await import("./lib/presets.js");
+  const pv = { ...PRESETS.explore10.config, minutes: 30 };
+  const full = toolSystem(persona, pv, "/w", { apiBase, teams: 10, fixed: true, brevity: false, simpleCode: false, role: "honest", roleBrief: "contract", common: ["integrated.py"], commonScope: "role" });
+  const head = full.slice(0, full.indexOf("# The rules (also in RULES.md)")), tp = timingText(pv, 10);
+  check("private play: the system prompt says what the team sees during play (its own sides, no identities, bare grains, 30 s snapshots, the rest at the end)",
+    /What your team sees during play \(a private game\): only its own programs' sides of its own turns/.test(head) && /Not whose bee\s+visited, and not whether that bee fed/.test(head)
+    && /Not which species answered/.test(head) && /bare fragments of code \(no species, version or code length\)/.test(head) && /every 30 s of game time, rounded to 2 decimals/.test(head)
+    && /once the game is over/.test(head) && !/What everyone sees, the moment it happens/.test(head) && !/stream\/actions\.jsonl is the public stream/.test(head)
+    && /your own actions as they happen/.test(head) && /You can watch|you see only your own turns during play/.test(head) && !/watch for imitation in the public responses/.test(head), head.slice(-2500));
+  check("private play: the rules summary says the game is private; grains come bare", /This is a private game: during play a team sees only its own programs' sides/.test(tp)
+    && /it comes bare during play: no species, version or code length/.test(tp) && !/Arrivals, challenges, responses and feeds are public/.test(tp), tp);
+  const ph = gameBrief({ config: pv, teamName: "M", teamId: "me", generation: 1, sessionNo: 2, status: "running", clockMs: 120000, budgets: null, maxTurns: 60, brevity: false,
+    head: { private: true, turns: 30, bee: { turns: 12, feeds: 5, nectar: 9e6, net: 2e6, poor: 1, balance: 3e7 }, flower: { answers: 18, noResponse: 2, meanPercent: 31 } } });
+  check("private play: the game brief's headline is the team's own turns only", /So far, your own turns: your bee 12 turns, 5 feeds, 9,000,000 nectar \(net 2,000,000; balance after the last feed 30,000,000\), 1 feeds refused as too poor\. Your flower 18 answers \(mean percent 31\), 2 without a response/.test(ph)
+    && !/teams' species|teams' bees|pollen given/.test(ph), ph);
 }
 const v2Scores = [{ teamId: "me", fitness: 1.08, pollinationShare: 0.3, forageShare: 0.2, flowerSuccess: 1.2, beeSuccess: 0.9 }, { teamId: "b", fitness: 0.92 }];
 const v2Brief = gameBrief({ config: v2, teamName: "M", teamId: "me", generation: 1, sessionNo: 3, status: "running", clockMs: 60000, budgets: null, scores: v2Scores, maxTurns: 60, brevity: false });

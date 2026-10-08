@@ -81,7 +81,8 @@ def assemble(pieces, length, language="python"):
     "covered": characters covered (at most length), "share", "complete", "code" (the whole code when complete, rotated
     to where it most likely starts), "compiles"}."""
     if not length:
-        return {"pieces": [], "covered": 0, "share": None, "complete": False, "code": None, "compiles": False}
+        # (bare grains, as in a private game during play: no code length, so no assembly; the pieces as they are)
+        return {"pieces": sorted(set(p for p in pieces if p), key=len, reverse=True), "covered": None, "share": None, "complete": False, "code": None, "compiles": False}
     # A grain as long as the code is the whole code (from a random start).
     uniq = sorted(set(p for p in pieces if p), key=len, reverse=True)
     for p in uniq:
@@ -175,13 +176,15 @@ if __name__ == "__main__":
         sys.exit(0)
     print("species of            version  grains  characters  code length  pieced together")
     for r in rows:
-        state = "complete" if r["complete"] else "%d%% in %d piece%s" % (round(100 * (r["share"] or 0)), len(r["pieces"]), "" if len(r["pieces"]) == 1 else "s")
-        print("%s %-20s %7s %7d %11d %12s  %s" % ("*" if r["flower"] == s.my_index else " ", s.name(r["flower"])[:20], "v%s" % r["version"], r["grains"],
+        state = "complete" if r["complete"] else ("%d piece%s (no code length to piece them by)" % (len(r["pieces"]), "" if len(r["pieces"]) == 1 else "s") if r["share"] is None
+                                                  else "%d%% in %d piece%s" % (round(100 * (r["share"] or 0)), len(r["pieces"]), "" if len(r["pieces"]) == 1 else "s"))
+        nm = s.name(r["flower"]) if r["flower"] is not None else "(unknown: bare grains)"
+        print("%s %-20s %7s %7d %11d %12s  %s" % ("*" if r["flower"] is not None and r["flower"] == s.my_index else " ", nm[:20], "v%s" % r["version"] if r["version"] is not None else "-", r["grains"],
                                                r["characters"], r["code_length"] or 0, state))
     print("(* = your own species; the pieces are best effort: short or repeated text can join wrongly)")
     if "--show" in args:
         for r in rows:
-            print("\n=== %s v%s (%s)" % (s.name(r["flower"]), r["version"], "complete" if r["complete"] else "%d piece(s)" % len(r["pieces"])))
+            print("\n=== %s v%s (%s)" % (s.name(r["flower"]) if r["flower"] is not None else "bare grains", r["version"], "complete" if r["complete"] else "%d piece(s)" % len(r["pieces"])))
             if r["complete"]:
                 print(r["code"])
             else:

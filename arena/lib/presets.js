@@ -54,7 +54,7 @@ const expectOf = (rules) => Object.fromEntries(leaves(rules));
 // responses, √ scores (exponents 0.5: exactly the legacy √), grains of ⌊pollen^(1/3)⌋ characters, and no prevalence
 // (every bee each round, species drawn uniformly). OLD_EXPECT checks them all on each new game (a metagame v2 engine
 // stores feedPrice and flowerWindowMs; one from before it fails the check on those two).
-const OLD_RULES = { endFactor: 1, feedCost: 10, feedPrice: 0, flowerWindowMs: FLOWER_MAX_MS, maxResponseBytes: MAX_RESPONSE_BYTES, maxLen: 64, maxNodes: 512,
+const OLD_RULES = { visibility: "public", endFactor: 1, feedCost: 10, feedPrice: 0, flowerWindowMs: FLOWER_MAX_MS, maxResponseBytes: MAX_RESPONSE_BYTES, maxLen: 64, maxNodes: 512,
   revealOnFinish: true, grains: GRAINS, pollenGrain: POLLEN_GRAIN, energy: { bytes: false }, scoring: { alpha: 0.5, beta: 0.5 }, prevalence: { on: false },
   budgets: { flower: { size: 1100, perMinute: 220, cap: 220, ...FLOWER_R }, bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 50, memory: 50 } } };
 const OLD_EXPECT = expectOf(OLD_RULES);
@@ -107,7 +107,7 @@ const ADAPT_HI_LINEUP = [
 // exponents 0.85, E with the byte factor and a 1,024-byte response cap, grains of ⌊0.1 × pollen^(1/3)⌋ characters. It was
 // built with the one-sided species prevalence, which a v2 engine no longer has (it reads that form as off): prevalence is
 // off. HI_EXPECT checks every key on each new game.
-const HI_RULES = { endFactor: 1, feedCost: 20, feedPrice: 0, flowerWindowMs: FLOWER_MAX_MS, maxResponseBytes: 1024, maxLen: 64, maxNodes: 512, revealOnFinish: true,
+const HI_RULES = { visibility: "public", endFactor: 1, feedCost: 20, feedPrice: 0, flowerWindowMs: FLOWER_MAX_MS, maxResponseBytes: 1024, maxLen: 64, maxNodes: 512, revealOnFinish: true,
   grains: GRAINS, pollenGrain: { exponent: 1 / 3, scale: 0.1 }, energy: { bytes: true }, scoring: { alpha: 0.85, beta: 0.85 }, prevalence: { on: false },
   budgets: { flower: { size: 1100, perMinute: 220, cap: 220, ms: FLOWER_MAX_MS, minMs: 3 }, bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 50, memory: 50 } } };
 const HI_CONFIG = { language: "python", challengeType: "int", responseType: "graph[any]", ...HI_RULES };
@@ -131,7 +131,7 @@ const COOP_LINEUP = [
 // null: 2,816,000 node·ms·bytes) out of the bee's nectar and no rounds out; responses delivered at 150 ms (rounds stay
 // 200 ms) while R runs from 1 to 50 ms; change budgets of 1 node a second for flowers (banking 300) and 10 for bees
 // (3,000); E with the byte factor, a 1,024-byte response cap, exponents 0.85, grains of ⌊0.1 × pollen^(1/3)⌋ characters.
-const COOP_RULES = { endFactor: 1, feedCost: 0, flowerWindowMs: 150, feedPrice: null, maxResponseBytes: 1024, maxLen: 64, maxNodes: 512, revealOnFinish: true,
+const COOP_RULES = { visibility: "public", endFactor: 1, feedCost: 0, flowerWindowMs: 150, feedPrice: null, maxResponseBytes: 1024, maxLen: 64, maxNodes: 512, revealOnFinish: true,
   grains: GRAINS, pollenGrain: { exponent: 1 / 3, scale: 0.1 }, energy: { bytes: true }, scoring: { alpha: 0.85, beta: 0.85, mode: "timeAverage" },
   prevalence: { on: true, halfLifeS: 90, cDecay: "linear", cStart: 1, cEnd: 0.1, cap: 4, slots: 0.25, prior: null, pools: false, endowment: null },
   budgets: { flower: { size: 1100, perMinute: 60, cap: 300, ms: 50, minMs: 1 }, bee: { size: 11000, perMinute: 600, cap: 3000, ms: 50, memory: 50 } } };
@@ -164,7 +164,9 @@ const EXPLORE_LINEUP = [
 // (scoring.mode "final"); c = sech-shaped from 1, halving at cHalfS (null: 0.2 × the minimum length = 6 minutes) toward 0
 // with no floor. Everything else as coop-eq; every key set and checked.
 const { cEnd: _linearEnd, ...EXPLORE_PREVALENCE } = COOP_RULES.prevalence;
-const EXPLORE_RULES = { ...COOP_RULES, endFactor: 2, scoring: { alpha: 0.85, beta: 0.85, mode: "final" },
+// Private play (visibility "private"): during the game a team sees only its own programs' sides of their turns, its bee's
+// bare grains and every team's prevalence every prevalenceEveryS (30) seconds, rounded; everything once it is over.
+const EXPLORE_RULES = { ...COOP_RULES, visibility: "private", prevalenceEveryS: 30, endFactor: 2, scoring: { alpha: 0.85, beta: 0.85, mode: "final" },
   prevalence: { ...EXPLORE_PREVALENCE, cDecay: "sech", cHalfS: null, pools: true, endowment: null } };
 const EXPLORE_CONFIG = { language: "python", challengeType: "int", responseType: "graph[any]", ...EXPLORE_RULES };
 const EXPLORE_EXPECT = expectOf(EXPLORE_RULES);

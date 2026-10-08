@@ -155,8 +155,16 @@ export function statusOf(view, teamId, { afford = null, code = false, memory = f
   }
   if (view.scores) {
     out.scores = view.scores.map((x) => ({ team: name[x.teamId], ...x }));
-    lines.push(`Scores (live${g.status === "finished" ? ", final" : ""}):`);
-    lines.push(scoreboard(view.scores, name, teamId));
+    if (g.restricted) {
+      // A private game during play: the scoreboard is the latest prevalence snapshot's (every other field is hidden).
+      const at = currentOf(view)?.[0]?.atMs;
+      lines.push(`Scores (the latest prevalence snapshot${at != null ? `, at ${mmss(at)} of game time` : ""}; rounded):`);
+      const rows = [...view.scores].sort((a, b) => (b.fitness ?? -1) - (a.fitness ?? -1));
+      lines.push(rows.map((x, i) => `  ${i + 1}. ${name[x.teamId] ?? x.teamId}${x.teamId === teamId ? " (you)" : ""}: fitness ${x.fitness == null ? "-" : Number(x.fitness).toFixed(2)}`).join("\n"));
+    } else {
+      lines.push(`Scores (live${g.status === "finished" ? ", final" : ""}):`);
+      lines.push(scoreboard(view.scores, name, teamId));
+    }
   }
   if (mine?.programs) {
     const parts = [];
@@ -185,7 +193,8 @@ export function statusOf(view, teamId, { afford = null, code = false, memory = f
     out.prevalence = prev.map((x) => { const t = teamOf(x.team); return { species: t.name, teamId: t.id, F: x.F, B: x.B, pF: x.pF, pB: x.pB, fitness: x.fitness, balance: x.balance }; });
     const bal = out.prevalence.some((x) => x.balance != null);
     const f = (v, d = 2) => (v == null ? "-" : Number(v).toFixed(d));
-    lines.push(`Prevalence now (F: the species' flower success, pF: the chance a visit is to it; B: the bee's success, pB: its share of the bee weights; par 1;${bal ? " the bee's nectar balance;" : ""} fitness: F × B's time-average so far):\n` +
+    const snap = g.restricted ? prev[0]?.atMs : null, mode = config.scoring?.mode === "final" ? "N² × pF × pB now" : "F × B's time-average so far";
+    lines.push(`${snap != null ? `Prevalence at ${mmss(snap)} of game time (a snapshot: every ${config.prevalenceEveryS ?? 30} s, rounded)` : "Prevalence now"} (F: the species' flower success, pF: the chance a visit is to it; B: the bee's success, pB: its share of the bee weights; par 1;${bal ? " the bee's nectar balance;" : ""} fitness: ${mode}):\n` +
       [...out.prevalence].sort((a, b) => (b.fitness ?? 0) - (a.fitness ?? 0))
         .map((x) => `  ${x.species}${x.teamId === teamId ? " (you)" : ""}: F ${f(x.F)} (pF ${f(x.pF, 3)}), B ${f(x.B)} (pB ${f(x.pB, 3)})${bal ? `, balance ${x.balance == null ? "-" : n0(x.balance)}` : ""}, fitness ${f(x.fitness)}`).join("\n"));
   }

@@ -279,6 +279,68 @@ await waiterDone;
 check("game start: the stream writes the indices into teams.json", tj().myIndex === 0 && tj().participants.join() === "T1,T2" && tj().names[1] === "Show Your Work", JSON.stringify(tj()));
 check("game start: a scaffold started in the lobby learns its index without restarting", /lobby None 0/.test(wout) && /started 0 2 Show Your Work/.test(wout), wout);
 
+// ---------------------------------------------------------------- private play
+// A private game during play: the runner's master stream comes from the owner (everything); each team's files come
+// only from its own token (its own programs' sides of its turns). No file in a team's workspace may hold another team's
+// id on a turn record, an arrival, per-round samples or owner-only fields; there is no shared public file.
+{
+  const sideOf = (a, me) => {
+    const t = a._t, out = [];
+    if (a.action === "arrive") return out;
+    if (t.flower === me) out.push({ seq: a.seq, atMs: a.atMs, round: a.round, side: "flower", flower: me, action: "answer", c: t.c, r: t.big ? null : t.r, rBytes: t.bytes,
+      percent: t.percent, ms: t.ms, budgetMs: 40, flowerError: null, flowerVersion: 1 });
+    if (t.bee === me) out.push({ seq: a.seq, atMs: a.atMs, round: a.round, side: "bee", bee: me, turn: t.k, action: a.action, c: t.c, r: t.big ? null : t.r, rBytes: t.bytes,
+      beeMs: t.beeMs, beeError: null, beeVersion: 1, ...(t.fed ? { nectar: (t.percent / 100) * t.energy, price: 10, net: (t.percent / 100) * t.energy - 10, balance: 500 + t.k, grain: t.grain } : {}) });
+    return out;
+  };
+  const turnOf = (t, me) => [
+    ...(t.flower === me ? [{ seq: t.seq, round: t.round, atMs: (t.round - 1) * 200, side: "flower", flower: 0, bee: null, turn: null, fed: null, challenge: t.c, percent: t.percent, ms: t.ms }] : []),
+    ...(t.bee === me ? [{ seq: t.seq, round: t.round, atMs: (t.round - 1) * 200, side: "bee", bee: 0, flower: null, percent: null, energy: null, pollen: null, turn: t.k, fed: t.fed, grain: t.fed ? t.grain : null, grainVersion: null, grainCodeLength: null }] : [])];
+  const pConfig = { ...config, visibility: "private", prevalenceEveryS: 30 };
+  let ownerPolls = 0;
+  const stream3 = new GameStream({ root: path.join(root, AID), gen: 3, gPath: "/z", privatePlay: true, teams: [{ id: "T1", name: "Moonpetal" }, { id: "T2", name: "Show Your Work" }],
+    // The owner (no team in the game) sees everything, both teams named on every turn.
+    fetchPage: async (after) => { ownerPolls++; return { actions: acts.filter((a) => a.seq > after).slice(0, 5000).map(publicOf), lastSeq: acts.length, clockMs: turns.length * 200, status: "running" }; },
+    fetchActions: async (tok, after) => ({ actions: acts.filter((a) => a.seq > after).flatMap((a) => sideOf(a, meOf(tok))) }),
+    fetchMine: async (tok, after) => ({ actions: acts.filter((a) => a.seq > after).flatMap((a) => sideOf(a, meOf(tok))) }),
+    fetchLedger: async (tok, after) => ({ participants: IDS, team: IDS.indexOf(meOf(tok)), restricted: true, entries: turns.filter((t) => t.seq > after).flatMap((t) => turnOf(t, meOf(tok))) }) }).load();
+  const pView = { ...viewFor("T1"), game: { ...viewFor("T1").game, config: pConfig, restricted: true } };
+  const { dir: pdir } = await prepareWorkspace({ arena, gameRow: { ...gameRow, generation: 3 }, persona: p1, view: pView, stream: stream3, apiBase, tok: "tok-T1" });
+  await stream3.poll();
+  const sdir = path.join(pdir, "stream");
+  const own = fs.readFileSync(path.join(sdir, "actions.jsonl"), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  const shared = path.join(root, AID, ".shared", "g3", "actions.jsonl");
+  const sharedSize = fs.existsSync(shared) ? fs.statSync(shared).size : 0;
+  check("private play: the runner's master stream is the owner's (both teams on every turn); no shared public file is written",
+    ownerPolls > 0 && fs.readFileSync(path.join(root, AID, ".runner", "g3", "actions.jsonl"), "utf8").includes('"T2"') && sharedSize === 0
+    && (!fs.existsSync(shared) || fs.statSync(path.join(sdir, "actions.jsonl")).ino !== fs.statSync(shared).ino), String(sharedSize));
+  check("private play: stream/actions.jsonl holds only the team's own sides (flower records with no bee, bee records with no flower)",
+    own.length > 0 && own.every((a) => (a.side === "flower" && a.flower === "T1" && !("bee" in a) && !("energy" in a) && !("pollen" in a))
+      || (a.side === "bee" && a.bee === "T1" && !("flower" in a) && !("percent" in a) && !("grainVersion" in a)))
+    && own.some((a) => a.side === "flower") && own.some((a) => a.side === "bee") && !own.some((a) => a.action === "arrive"), JSON.stringify(own[0]));
+  // No file of the team's (but the public lists of teams) names the other team on a record, carries an arrival, an
+  // owner-only field or per-round samples.
+  const leaks = [];
+  const scanWs = (d) => { for (const f of fs.readdirSync(d, { withFileTypes: true })) {
+    const p = path.join(d, f.name);
+    if (f.isDirectory()) { if (!["tools", "previous-games", "earlier-tournament", "__pycache__", ".runner"].includes(f.name)) scanWs(p); continue; }
+    if (["teams.json", "config.json"].includes(f.name)) continue; // (the teams' ids and names in index order are public)
+    const t = fs.readFileSync(p, "utf8");
+    if (/"T2"/.test(t)) leaks.push(`${f.name}: another team's id`);
+    if (/"action":"arrive"/.test(t)) leaks.push(`${f.name}: an arrival`);
+    if (/"energy":\d|"pollen":\d|"grainVersion":\d|"grainCodeLength":\d/.test(t)) leaks.push(`${f.name}: an owner-only field`);
+    if (/"species":\[|"snapshot":false/.test(t)) leaks.push(`${f.name}: per-round samples`);
+  } };
+  scanWs(pdir);
+  check("private play: no file in the team's workspace holds another team's id on a record, an arrival, an owner-only field or per-round samples", !leaks.length, leaks.join("; "));
+  const h = stream3.headline("T1");
+  check("private play: the brief's headline comes from the team's own turns only (no other teams' species or bees)", h.private && h.bee.turns > 0 && h.flower.answers > 0
+    && h.bee.feeds === own.filter((a) => a.side === "bee" && a.action === "feed").length && !("flowers" in h.bee) && !("bees" in h.flower), JSON.stringify(h));
+  const rd = fs.readFileSync(path.join(pdir, "README.md"), "utf8"), sc = fs.readFileSync(path.join(sdir, "SCHEMA.md"), "utf8");
+  check("private play: the README says what the team sees during play; the schema says what the files hold", /What you see during play \(a private game\)/.test(rd)
+    && /YOUR OWN action stream/.test(rd) && !/the public action stream: every arrival/.test(rd) && /During play in this private game/.test(sc));
+}
+
 // ---------------------------------------------------------------- the audit
 const tr = (...tools) => tools.map((t, i) => JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: `t${i}`, name: t[0], input: t[1] }] } }));
 const sev = (...tools) => { const f = audit(tr(...tools), dir, AID, "luna", { port: 4100 }); return f.some((x) => x.severity === "violation") ? "violation" : f.length ? "warning" : "ok"; };

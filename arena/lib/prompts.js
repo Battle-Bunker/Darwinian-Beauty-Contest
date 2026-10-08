@@ -29,6 +29,21 @@ export function endRangeText(config) {
  * random moment between 30 and 60 minutes of game time; nobody knows when". */
 export const lengthText = (config) => (randomEnd(config) ? `ends at a random moment ${endRangeText(config)} of game time; nobody knows when`
   : `lasts ${durationText(config.minutes)} of game time`);
+/** Private play (config.visibility "private"; a config without it is public). */
+export const privatePlayOf = (config) => config?.visibility === "private";
+/** What a team sees during a private game, in plain words (RULES.md "What you can see during play" is the official text). */
+export function privateSeeText(config) {
+  const every = config?.prevalenceEveryS ?? 30;
+  return `- What your team sees during play (a private game): only its own programs' sides of its own turns.
+  - Your flower's turns: the challenge it got, its response, its percent, its CPU time and the call's R. Not whose bee
+    visited, and not whether that bee fed.
+  - Your bee's turns: the challenge it asked, the response it got, its decision, and on a feed its nectar, the feed
+    price, the net and its balance. Not which species answered.
+  - On your bee's feeds: the pollen grains, as bare fragments of code (no species, version or code length).
+  - Every team's prevalence (F, B, its draw chances, its fitness) every ${every} s of game time, rounded to 2 decimals; the
+    scoreboard is the latest of these.
+  - Everything else (every turn with both teams named, every sample, every team's code) once the game is over.`;
+}
 
 /** The floor of a flower call's hidden budget R: the game's own (budgets.flower.minMs), else the engine's default, 2% of
  * the most R can be, at least 1 ms (1 ms of 50, 3 of 150). */
@@ -74,9 +89,10 @@ ${prevalenceText(config, n) ? `${prevalenceText(config, n)}\n` : ""}- Programs r
   also has MEMORY: a flat key-value store (string keys; string, number, true/false or null values) of at most
   ${n0(bee.memory ?? 50)} bytes (each key's bytes plus its value's JSON bytes) that it alone writes, the only thing kept
   from one turn to the next; a new bee version starts with {}.
-- Arrivals, challenges, responses and feeds are public as they happen, and so are a feed's percent, energy, nectar and
+${privatePlayOf(config) ? `- This is a private game: during play a team sees only its own programs' sides of its own turns, and every team's
+  prevalence every ${config.prevalenceEveryS ?? 30} s (below). Everything is revealed once the game is over.` : `- Arrivals, challenges, responses and feeds are public as they happen, and so are a feed's percent, energy, nectar and
   pollen. The percent and energy of turns without a feed, every compute time and every flower call's R stay with the
-  flower's team until the game ends.
+  flower's team until the game ends.`}
 ${grainText(config)}`;
 }
 
@@ -85,6 +101,10 @@ export function grainText(config) {
   const g = config.grains ?? "feeder", pg = config.pollenGrain ?? { exponent: 1 / 3, scale: 1 };
   if (g === "off") return "- Pollen grains are off in this game.";
   const e = Math.abs(pg.exponent - 1 / 3) < 1e-9 ? "^(1/3)" : `^${+Number(pg.exponent).toFixed(3)}`, sc = pg.scale === 1 || pg.scale == null ? "" : `${pg.scale} × `;
+  if (privatePlayOf(config)) return `- Pollen carries genes: on every feed, the feeding bee's team gets a pollen grain, floor(${sc}pollen${e}) characters of the
+  minified code of the flower version that answered, from a random start, wrapping from its end to its start. In this
+  private game it comes bare during play: no species, version or code length (all revealed once the game is over).
+  Only the feeding bee's team sees it. Programs never get grains.`;
   return `- Pollen carries genes: on every feed, the feeding bee's team gets a pollen grain, floor(${sc}pollen${e}) characters of the
   minified code of the flower version that answered, from a random start, wrapping from its end to its start, with that
   version and the code's length (not where the grain starts). ${g === "public" ? "In this game everyone sees every grain as\n  it happens." : "During play only the feeding bee's team sees it;\n  everyone sees every grain once the game is over."} Programs never get grains.`;
@@ -164,10 +184,10 @@ ${fixed && !simpleCode
 
 /** System prompt of a session (lobby or game): tools, persona, how the workspace works, fair play, RULES.md, settings. */
 /** A role's private brief (EXPERIMENTS.adapt): what the team specialises in. Nobody else is told it. */
-export function roleText(role, { common = null, brief = null, start = null, contract = null } = {}) {
+export function roleText(role, { common = null, brief = null, start = null, contract = null, privatePlay = false } = {}) {
   if (!role) return "";
   const docs = common?.length ? ` common/ (${common.join(", ")}) holds candidate costly signals, shared with every team that has your role and with no other team: ideas, not rules.` : "";
-  if (role === "honest" && brief === "contract") return honestContract(common, start || {}, contract);
+  if (role === "honest" && brief === "contract") return honestContract(common, start || {}, contract, privatePlay);
   if (role === "honest") {
     return `# Your role in this tournament (private: no other team is told it)
 You specialise in honesty. Your flower does some level of costly signalling, at your discretion, that reveals its true
@@ -197,7 +217,7 @@ export const HONEST_MANDATE = Object.freeze({ burnMin: 0.2, nectarMin: 20, start
  * generosity of honest costly signalling above floors (CPU at b × R with b ≥ burnMin, one fixed b per version; percent ≥
  * nectarMin), and their fingerprint profile to escape imitators; the bee played to win. `start`: the names of its start
  * programs ({ flower, bee }: common/<file>). */
-function honestContract(common, start = {}, mandate = HONEST_MANDATE) {
+function honestContract(common, start = {}, mandate = HONEST_MANDATE, privatePlay = false) {
   const { burnMin, nectarMin, startBurn, startNectar } = { ...HONEST_MANDATE, ...(mandate || {}) };
   const docs = common?.length ? ` in common/ (${common.join(", ")}; shared with every team that has your role and with no other team)` : "";
   const notes = common?.includes("strategy.md") ? "\n  common/strategy.md has measured numbers for spend and generosity: information, not instructions." : "";
@@ -215,7 +235,8 @@ it is not competing to win. Your bee plays to win.
   space, that is how it splits its work across the dimensions of the shared repertoire of costly signals${docs}.
   The profile is your way to escape defecting imitators. Multi-dimensional fingerprints can be mixed with raw costly
   signalling. Fixing a bug is allowed.
-- You can watch for imitation in the public responses and the feed record (stream/actions.jsonl, tools/query.py).
+${privatePlay ? "- In this private game you see only your own turns during play; every team's responses and the feed record are revealed\n  once it is over."
+    : "- You can watch for imitation in the public responses and the feed record (stream/actions.jsonl, tools/query.py)."}
 ${start.flower ? `- Your flower starts as a copy of the reference flower (${start.flower}), at b = ${startBurn} and percent ${startNectar}.${notes}\n` : notes ? `- ${notes.trim()}\n` : ""}- ${start.bee ? `Your bee starts as a copy of the reference bee (${start.bee}): it recognises the shared repertoire of costly
   signals as a weighted fingerprint vector. Play it to win, and change it as you like.` : "Your bee is yours to design: play it to win, and change it as you like."}`;
 }
@@ -267,7 +288,7 @@ ${personaAndSituation(persona, fixed, { simpleCode, config })}
   It runs with tools/ on its import path, so \`import garden\` works. garden.py: \`local\` (your team's history file as a query
   builder, kept up to date), \`game\` and \`room\` (the same query builder, run by the game), \`follow()\` (each new turn as it
   arrives), \`response(seq)\` (a whole response over 4 KB), \`grains()\` and \`assemble(flower)\` (your pollen grains),
-  \`follow_live()\` (public actions as they happen), \`status()\` (clock, round, live scores, your exact budgets and their
+  \`follow_live()\` (${privatePlayOf(config) ? "your own actions as they happen" : "public actions as they happen"}), \`status()\` (clock, round, live scores, your exact budgets and their
   refill rate, your versions, and every team's F, B, draw chances and fitness in a game with prevalence), \`memory()\` (your bee's MEMORY, read only), \`live(kind)\` (your code playing now),
   \`measure(kind, code)\` (size and cost, free), \`check(kind, code)\`, \`try_flower(code, challenges)\`, \`try_bee(code)\`,
   \`submit(kind, code)\` (refused with \`wait_s\` if you can't afford it yet), \`wait_for_budget(kind, cost)\`. Its code is
@@ -279,7 +300,12 @@ ${personaAndSituation(persona, fixed, { simpleCode, config })}
 - In your scripts and scaffold, to wait, sleep: \`time.sleep(s)\` (in a scaffold also \`garden.wait_for_budget(kind, cost)\`
   and \`follow()\`, which block without using the CPU). Never spin in a loop until a clock says so: this machine also runs
   the game and every other team's agent, and a busy loop takes CPU from all of them.
-- What everyone sees, the moment it happens: every arrival (whose bee at whose species), challenge, response and feed; on a
+${privatePlayOf(config) ? `${privateSeeText(config)}
+- Your files: stream/actions.jsonl holds your own programs' sides of your turns as above, stream/history.jsonl the same as
+  turn records, and stream/mine.jsonl your own actions with your bee's printouts (stream/SCHEMA.md), each growing about
+  once a second. They grow big: query them, never print them whole. garden.follow() and garden.follow_live() yield
+  your own new records as they arrive. The game's API (${apiBase}) shows you the same: the scores are the latest
+  prevalence snapshot.` : `- What everyone sees, the moment it happens: every arrival (whose bee at whose species), challenge, response and feed; on a
   feed, its percent, energy, nectar and pollen; the nectar and pollen ledgers and the live scoreboard. Private to the
   flower's team during play: the percent and energy of turns without a feed, and the flower's compute time on every turn.
   Code, versions, budgets, bee decision times, a bee's MEMORY and what it prints stay with their own team, a flower
@@ -291,13 +317,13 @@ ${personaAndSituation(persona, fixed, { simpleCode, config })}
   needs no login: ${apiBase}/events?after=<seq> (Server-Sent Events; garden.follow_live reads it),
   ${apiBase.replace(/^http/, "ws")}/ws?after=<seq> (a WebSocket with the same messages), ${apiBase}/scores, and history
   queries (POST ${apiBase}/query, public fields). Python's standard library has no WebSocket client and your own code may
-  not open raw sockets, so from Python use the Server-Sent Events.
+  not open raw sockets, so from Python use the Server-Sent Events.`}
 - ${sizeText()} So write readable code, and keep prose in comments (docstrings are strings).
 - ${changeText()} Your programs run minified, so error messages refer to the minified program (\`tools/check.py <kind> --json\`
   shows it).
 ${common && commonScope !== "role" ? `- ${commonNotice(common)}
 ` : ""}${role ? `
-${roleText(role, { common: commonScope === "role" ? common : null, brief: roleBrief, start, contract })}
+${roleText(role, { common: commonScope === "role" ? common : null, brief: roleBrief, start, contract, privatePlay: privatePlayOf(config) })}
 ` : ""}
 # Fair play (breaking these ends your session at once; anything you try to submit after that is refused)
 - Use only the files in this workspace. Do not read, list or write any other directory (not even /tmp).
@@ -384,11 +410,17 @@ export function gameBrief({ config, teamName, teamId = null, generation, session
     const ranked = [...scores].sort((a, b) => (b.fitness ?? -1) - (a.fitness ?? -1));
     const f = (v) => (v == null ? "-" : Number(v).toFixed(2));
     lines.push(`Your scores so far: fitness ${f(mine.fitness)}${mine.fitness != null ? ` (#${ranked.indexOf(mine) + 1} of ${scores.length}; par is 1.00)` : ""}; ` +
-      (prevalenceOf(config) ? `now: flower success F ${f(mine.flowerSuccess)}, bee success B ${f(mine.beeSuccess)} (${coopRules(config).final
+      (prevalenceOf(config) ? `${privatePlayOf(config) ? "at the latest snapshot" : "now"}: flower success F ${f(mine.flowerSuccess)}, bee success B ${f(mine.beeSuccess)} (${coopRules(config).final
         ? "fitness is N² × pF × pB now; the score is that at the game's last round" : "fitness is F × B's time-average"}).`
         : `shares: pollination ${f(mine.pollinationShare)}, forage ${f(mine.forageShare)}.`));
   }
-  if (head && head.turns) {
+  if (head?.private && head.turns) {
+    // Private play: only the team's own sides of its turns.
+    lines.push(`So far, your own turns: your bee ${head.bee.turns} turns, ${head.bee.feeds} feeds, ${n0(head.bee.nectar)} nectar (net ${n0(head.bee.net)}` +
+      `${head.bee.balance != null ? `; balance after the last feed ${n0(head.bee.balance)}` : ""})${head.bee.poor ? `, ${head.bee.poor} feeds refused as too poor` : ""}. ` +
+      `Your flower ${head.flower.answers} answers${head.flower.meanPercent != null ? ` (mean percent ${Math.round(head.flower.meanPercent)})` : ""}` +
+      `${head.flower.noResponse ? `, ${head.flower.noResponse} without a response` : ""}.`);
+  } else if (head && head.turns) {
     lines.push(`So far: ${n0(head.turns)} turns. Your bee: ${head.bee.turns} turns, ${head.bee.feeds} feeds at ${head.bee.flowers} team${head.bee.flowers === 1 ? "" : "s"}' species` +
       `${head.bee.ownFeeds ? ` (${head.bee.ownFeeds} at your own)` : ""}, ${n0(head.bee.nectar)} nectar. Your species: ${head.flower.turns} visits, ${head.flower.feeds} feeds by ` +
       `${head.flower.bees} team${head.flower.bees === 1 ? "'s bee" : "s' bees"}${head.flower.meanPercentFed != null ? ` (mean percent on feeds ${Math.round(head.flower.meanPercentFed)})` : ""}, ` +

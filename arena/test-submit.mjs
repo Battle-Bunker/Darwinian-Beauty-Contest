@@ -275,6 +275,19 @@ check("statusOf: budgets computed from bank + rate × time (capped); the bee's M
     /10:00 played/.test(hidden.text) && /ends at a random moment between 30:00 and 60:00 of game time; nobody knows when/.test(hidden.text)
     && !/\bleft\b|45:12|of 30:00|of 60:00|after the game ends/.test(hidden.text) && hidden.endMs === null && hidden.leftMs === null && hidden.minMs === 1800000 && hidden.maxMs === 3600000
     && !("drawnEndMs" in owner.game) && !("drawnEndMs" in owner.games[0]) && owner.game.maxMs === 3600000, hidden.text.split("\n")[0]);
+  // Private play: the scoreboard and the prevalence block are the latest 30 s snapshot, labelled with its game time.
+  const pv = await fakeApi.view("t");
+  const pcfg = { ...config, visibility: "private", prevalenceEveryS: 30, endFactor: 2, minutes: 30, scoring: { alpha: 0.85, beta: 0.85, mode: "final" },
+    prevalence: { on: true, halfLifeS: 90, cDecay: "sech", cStart: 1, cHalfS: null, cap: 4, slots: 0.25, prior: null, pools: true, endowment: null } };
+  pv.game = { ...pv.game, status: "running", clockMs: 95000, endMs: null, minMs: 1800000, maxMs: 3600000, restricted: true, config: pcfg };
+  pv.scores = [{ teamId: "T1", fitness: 1.12, flowerSuccess: 1.1, beeSuccess: 1.02, flowerP: 0.52, beeP: 0.54 }, { teamId: "T2", fitness: 0.88, flowerSuccess: 0.9, beeSuccess: 0.98, flowerP: 0.48, beeP: 0.46 }];
+  pv.prevalence = { on: true, sample: { round: 451, atMs: 90000, c: 0.25, slots: 1, snapshot: true, species: [
+    { team: "T1", index: 0, flowerSuccess: 1.1, beeSuccess: 1.02, flowerP: 0.52, beeP: 0.54, fitness: 1.12, balance: null },
+    { team: "T2", index: 1, flowerSuccess: 0.9, beeSuccess: 0.98, flowerP: 0.48, beeP: 0.46, fitness: 0.88, balance: null }] } };
+  const ps = statusOf(pv, "T1");
+  check("statusOf in private play: the scoreboard and prevalence are the latest snapshot, labelled with its game time; no balances",
+    /Scores \(the latest prevalence snapshot, at 1:30 of game time; rounded\)/.test(ps.text) && /Prevalence at 1:30 of game time \(a snapshot: every 30 s, rounded\)/.test(ps.text)
+    && /fitness: N² × pF × pB now/.test(ps.text) && !/balance/.test(ps.text) && !/pollination|forage/.test(ps.text), ps.text);
   const fixed = statusOf(await fakeApi.view("t"), "T1");
   check("statusOf with a fixed end: the end and the time left, as before", /0:30 of 2:00 played \(1:30 left\)/.test(fixed.text) && fixed.leftMs === 90000, fixed.text.split("\n")[0]);
 }

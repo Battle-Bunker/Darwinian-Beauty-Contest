@@ -288,7 +288,12 @@ async function playGame(arena, ctx, log) {
   const gen = gameRow.generation;
   let view = await Api.view(ownerTok, gPath);
   const teams = view.teams.map((t) => ({ id: t.id, name: t.name }));
-  const stream = new GameStream({ root: path.join(WS_ROOT, arena.id), gen, gPath, gameUuid: gameRow.game_uuid, teams, grainsPublic: view.game.config?.grains === "public", log }).load();
+  // The master stream and every analysis read the game as the room's owner, who has no team in it (in private play the
+  // only viewer who sees it whole); each team's own files are fetched with its own token (lib/stream.js).
+  const privatePlay = view.game.config?.visibility === "private";
+  if (view.game.restricted) throw new Error(`game ${gen}: the runner's owner view is restricted (does the owner have a team in it?): the master stream would miss turns`);
+  const stream = new GameStream({ root: path.join(WS_ROOT, arena.id), gen, gPath, gameUuid: gameRow.game_uuid, teams, ownerTok, privatePlay,
+    grainsPublic: view.game.config?.grains === "public", log }).load();
   // Every team's desk (its tools' requests, its scaffold) lives from the lobby to the end of the game.
   const allEntries = await all("SELECT * FROM arena.entries WHERE game_id = $1", [gameRow.id]);
   const allPersonas = await all("SELECT * FROM arena.personas WHERE id = ANY($1)", [allEntries.map((e) => e.persona_id)]);
@@ -393,6 +398,11 @@ async function playGame(arena, ctx, log) {
     const sat = entries.filter((e) => !st.participants.includes(e.team_id));
     for (const e of sat) await q("UPDATE arena.entries SET sat_out = true WHERE game_id = $1 AND persona_id = $2", [gameRow.id, e.persona_id]);
     stream.status = "running";
+    // (Once it runs, a private game shows the owner everything only if the owner has no team in it: check it.)
+    if (privatePlay) {
+      const ov = await Api.view(ownerTok, gPath);
+      log(ov.game.restricted ? `*** game ${gen}: the owner's view is restricted: the runner's stream misses other teams' turns` : `game ${gen}: private play; the runner's owner view is unrestricted`);
+    }
     log(`game ${gen} STARTED (${endMs != null ? `${view.game.config.minutes} min` : `ends at a hidden moment in ${rangeText}`}) with ${st.participants.length} teams${sat.length ? `; sitting out: ${sat.map((e) => e.team_name).join(", ")}` : ""}`);
   } else {
     if (view.game.status !== "finished") loops = players.map((e) => sessionsOf(e));

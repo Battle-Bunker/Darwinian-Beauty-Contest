@@ -3,6 +3,7 @@
     stream/history.jsonl   YOUR TEAM'S HISTORY: one turn record per finished turn, oldest first, as your team may see
                            it (with "seq"). Teams are indices 0..N-1. Your programs see no history: this is for you.
     stream/actions.jsonl   the public stream: every arrival and every turn's end as anyone sees it. Teams are ids.
+                           (In a private game, during play: only your own programs' sides of your own turns.)
     stream/mine.jsonl      your own bee's and flower's actions with your private fields and your bee's printouts.
     stream/teams.json      ids -> names, "names" in index order, "me" (your id) and "myIndex".
 The runner appends to them about once a second while the game runs. Read them, never write to them.
@@ -23,7 +24,8 @@ As a library (from a script in your workspace):
     response(seq)                            # the whole response of the turn whose end is action seq (parsed JSON)
 
 From the shell:
-    python3 tools/stream.py tail [-n 20]     the latest public actions, one line each
+    python3 tools/stream.py tail [-n 20]     the latest actions of stream/actions.jsonl, one line each (a private
+                                             game: your own sides of your own turns)
     python3 tools/stream.py response SEQ [--out FILE]
                                              a whole response: its size, shape and first characters (--out
                                              saves all of it to FILE in your workspace)
@@ -247,6 +249,15 @@ def tail(s, n):
                 except ValueError:
                     pass
     for a in rows[-n:]:
+        if a.get("side") == "flower":  # a private game: your flower's side of a turn (no bee, no outcome)
+            print("#%d %s round %s  your flower answered c=%s r=%s percent=%s ms=%s R=%s%s" % (a["seq"], _mmss(a.get("atMs", 0)), a.get("round"), _short(a.get("c")),
+                  _short(a.get("r")), a.get("percent"), a.get("ms"), a.get("budgetMs"), " error=%s" % a["flowerError"] if a.get("flowerError") else ""))
+            continue
+        if a.get("side") == "bee":  # a private game: your bee's side of a turn (no flower)
+            fed = " nectar=%s price=%s net=%s balance=%s" % (a.get("nectar"), a.get("price"), a.get("net"), a.get("balance")) if a.get("action") == "feed" else ""
+            print("#%d %s round %s  your bee (turn %s) %s c=%s r=%s%s%s" % (a["seq"], _mmss(a.get("atMs", 0)), a.get("round"), a.get("turn"), a.get("action"),
+                  _short(a.get("c")), _short(a.get("r")), fed, " error=%s" % a["beeError"] if a.get("beeError") else ""))
+            continue
         what = a["action"]
         if what != "arrive":
             r = _short(a.get("r")) if a.get("rHash") is None else "<%s bytes: tools/stream.py response %d>" % (a.get("rBytes"), a["seq"])
