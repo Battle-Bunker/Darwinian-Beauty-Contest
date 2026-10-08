@@ -565,9 +565,11 @@ export class Garden {
     m.tally(this.weights.F, this.weights.B);
     if ((r - 1) % this.sampleEvery === 0) {
       const r6 = (x) => Math.round(x * 1e6) / 1e6, w = this.weights;
+      const balances = m.balances();
       this.sample = {
         round: r, atMs: Math.round(start), c: r6(w.c), slots: w.slots,
         F: w.F.map(r6), B: w.B.map(r6), pF: w.pF.map(r6), pB: w.pB.map(r6), fitness: m.fitness().map(r6),
+        balance: balances ? balances.map(r6) : null,
       };
       this.samples.push(this.sample);
     }
@@ -591,7 +593,7 @@ export class Garden {
     this.out.push({
       seq: ++this.seq, atMs: Math.round(atMs), round: t.round, turn: t.no, bee: t.b.ti, flower: t.flower, action,
       beeVersion: t.beeVersion, flowerVersion: t.flowerVersion,
-      c: null, r: null, rBytes: null, percent: null, energy: null, ms: null, budgetMs: null, pollen: null, nectar: null, price: null, net: null,
+      c: null, r: null, rBytes: null, percent: null, energy: null, ms: null, budgetMs: null, pollen: null, nectar: null, price: null, net: null, balance: null,
       flowerError: null, beeMs: null, beeError: null, log: null, grain: null, grainVersion: null, grainCodeLength: null, ...fields,
     });
   }
@@ -907,6 +909,12 @@ export class Garden {
   #settle(t) {
     const b = t.b, f = t.flower;
     let grain = {};
+    // Too poor to feed (pools): a bee whose nectar balance is below the price can't feed; its feed becomes a
+    // leave. The next challenge it queued stands (a feed queues one too); it recovers toward its endowment.
+    if (t.fed && this.prevalence && !this.prevalence.canFeed(b.ti)) {
+      t.fed = false;
+      t.beeError = [t.beeError, "too poor to feed"].filter(Boolean).join("; ");
+    }
     if (t.fed) {
       t.nectar = ((t.percent ?? 0) / 100) * t.energy;
       t.pollen = t.energy - t.nectar;
@@ -916,6 +924,7 @@ export class Garden {
       this.nectar[b.ti][f] += t.nectar;
       this.pollen[b.ti][f] += t.pollen;
       this.prevalence?.feed(b.ti, f, t.pollen, t.net);
+      t.balance = this.prevalence?.balances()?.[b.ti] ?? null; // the bee's nectar balance after this feed (pools)
       // Pollen carries genes: a grain of the code of the flower version that answered.
       const g = grainOf(t.flowerCode, grainLength(this.config, t.pollen));
       if (g.grain !== null) grain = { grain: g.grain, grainVersion: t.flowerVersion, grainCodeLength: g.grainCodeLength };
@@ -926,7 +935,7 @@ export class Garden {
     this.#record(t, t.fed ? "feed" : "leave", {
       c: t.c, r: t.rFull !== undefined ? null : t.r, rBytes: t.rBytes ?? null, ...large,
       percent: t.percent, energy: t.energy, ms: t.ms, budgetMs: t.budgetMs, pollen: t.pollen, nectar: t.fed ? t.nectar : null,
-      price: t.fed ? t.price : null, net: t.fed ? t.net : null,
+      price: t.fed ? t.price : null, net: t.fed ? t.net : null, balance: t.fed ? t.balance ?? null : null,
       flowerError: t.flowerError, beeMs: t.beeMs, beeError: t.beeError, log: t.log, ...grain,
     }, t.start + this.windowMs);
     // The turn as a `turns` record (server/query/schema.js), unmasked.
@@ -935,7 +944,7 @@ export class Garden {
         game: this.game, seq: this.seq, round: t.round, atMs: Math.round(t.start), turn: t.no, bee: b.ti, flower: f,
         challenge: t.c, response: t.rFull !== undefined ? null : t.r, responseBytes: t.rBytes ?? null, responseHash: t.rHash ?? null,
         fed: t.fed, percent: t.percent, energy: t.energy, nectar: t.fed ? t.nectar : null, price: t.fed ? t.price : null, net: t.fed ? t.net : null,
-        pollen: t.pollen, ms: t.ms, budgetMs: t.budgetMs,
+        balance: t.fed ? t.balance ?? null : null, pollen: t.pollen, ms: t.ms, budgetMs: t.budgetMs,
         flowerVersion: t.flowerVersion, flowerError: t.flowerError, beeMs: t.beeMs, beeVersion: t.beeVersion, beeError: t.beeError,
         grain: grain.grain ?? null, grainVersion: grain.grainVersion ?? null, grainCodeLength: grain.grainCodeLength ?? null,
       };

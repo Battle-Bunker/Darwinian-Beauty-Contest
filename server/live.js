@@ -136,7 +136,7 @@ async function loadPrograms(run) {
 
 const ACTION_COLUMNS = ["game_id", "seq", "at_ms", "round", "turn", "bee_team", "flower_team", "action", "c", "r", "percent", "energy",
   "cpu_ms", "pollen", "flower_error", "nectar", "bee_ms", "bee_error", "log", "bee_version", "flower_version", "r_bytes", "r_hash", "r_preview",
-  "grain", "grain_version", "grain_code_length", "budget_ms", "price"];
+  "grain", "grain_version", "grain_code_length", "budget_ms", "price", "balance"];
 const json = (v) => (v === null || v === undefined ? null : JSON.stringify(v));
 
 /**
@@ -153,7 +153,7 @@ export async function insertActions(c, gameId, actions, ids) {
       params.push(gameId, a.seq, a.atMs, a.round, a.turn, ids[a.bee], ids[a.flower], a.action, end ? json(a.c) : null, end ? json(a.r) : null,
         a.percent, a.energy, a.ms, a.pollen, a.flowerError, a.nectar, a.beeMs, a.beeError, a.log, a.beeVersion, a.flowerVersion,
         end ? a.rBytes ?? null : null, a.rHash ?? null, a.rPreview ?? null, a.grain ?? null, a.grainVersion ?? null, a.grainCodeLength ?? null, end ? a.budgetMs ?? null : null,
-        a.price ?? null);
+        a.price ?? null, a.balance ?? null);
     });
     await c.query(`INSERT INTO actions (${cols.join(",")}) VALUES ${rows.join(",")}`, params);
   }
@@ -169,13 +169,13 @@ export async function insertActions(c, gameId, actions, ids) {
   }
 }
 
-/** Write prevalence samples ({ round, atMs, c, slots, F, B, pF, pB, fitness }, arrays in participants order). */
+/** Write prevalence samples ({ round, atMs, c, slots, F, B, pF, pB, fitness, balance }, arrays in participants order). */
 export async function insertSamples(c, gameId, samples) {
-  const cols = ["game_id", "round", "at_ms", "c", "slots", "flower_success", "bee_success", "flower_p", "bee_p", "fitness"];
+  const cols = ["game_id", "round", "at_ms", "c", "slots", "flower_success", "bee_success", "flower_p", "bee_p", "fitness", "bee_balance"];
   for (let i = 0; i < samples.length; i += 200) {
     const chunk = samples.slice(i, i + 200), params = [];
     const rows = chunk.map((x, j) => {
-      params.push(gameId, x.round, x.atMs, x.c, x.slots, ...[x.F, x.B, x.pF, x.pB, x.fitness].map((v) => JSON.stringify(v)));
+      params.push(gameId, x.round, x.atMs, x.c, x.slots, ...[x.F, x.B, x.pF, x.pB, x.fitness, x.balance].map((v) => (v == null ? null : JSON.stringify(v))));
       return `(${cols.map((_, k) => `$${j * cols.length + k + 1}`).join(",")})`;
     });
     await c.query(`INSERT INTO prevalence (${cols.join(",")}) VALUES ${rows.join(",")} ON CONFLICT (game_id, round) DO NOTHING`, params);

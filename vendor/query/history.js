@@ -43,6 +43,8 @@ var DbcHistory = (function () {
                                 
                                                                                         
                               
+                                                                                
+                                  
                                                                                     
                           
                                                 
@@ -145,13 +147,15 @@ var DbcHistory = (function () {
                         
                                                                                                                    
                                  
-                                                                                                                                       
+                                                                                                                                                                             
                               
                                                                              
                            
                                                                                                                    
                         
                                                                              
+                                  
+                                                                        
                                   
                                                                                                        
                      
@@ -426,6 +430,11 @@ const SCHEMA         = {
         },
         {
           "name": "net",
+          "type": "float",
+          "nullable": true
+        },
+        {
+          "name": "balance",
           "type": "float",
           "nullable": true
         },
@@ -766,6 +775,11 @@ const SCHEMA         = {
         },
         {
           "name": "fitness",
+          "type": "float",
+          "nullable": true
+        },
+        {
+          "name": "balance",
           "type": "float",
           "nullable": true
         },

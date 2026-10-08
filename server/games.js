@@ -359,16 +359,19 @@ const ledgersView = (g) => (g.participants ? { feeds: g.feeds, nectar: g.nectar,
 
 /**
  * A prevalence sample as published (view, scores, the action stream, GET .../prevalence): { round, atMs, c, slots,
- * species: [{ team (id), index, flowerSuccess, beeSuccess, flowerP, beeP, fitness }] } in participants order.
- * Stored samples hold arrays (F, B, pF, pB, fitness on the game row; columns in the prevalence table).
+ * species: [{ team (id), index, flowerSuccess, beeSuccess, flowerP, beeP, fitness, balance }] } in participants
+ * order (balance: the bee's nectar balance with pools, else null). Stored samples hold arrays (F, B, pF, pB,
+ * fitness, balance on the game row; columns in the prevalence table).
  */
 export const sampleView = (x, participants) => {
   const col = (k, alt) => x[k] ?? x[alt] ?? [];
   const F = col("F", "flower_success"), B = col("B", "bee_success"), pF = col("pF", "flower_p"), pB = col("pB", "bee_p"), fit = col("fitness", "fitness");
+  const bal = x.balance ?? x.bee_balance ?? null;
   return {
     round: Number(x.round), atMs: Number(x.atMs ?? x.at_ms), c: x.c, slots: x.slots ?? null,
     species: participants.map((team, index) => ({
-      team, index, flowerSuccess: F[index] ?? null, beeSuccess: B[index] ?? null, flowerP: pF[index] ?? null, beeP: pB[index] ?? null, fitness: fit[index] ?? null,
+      team, index, flowerSuccess: F[index] ?? null, beeSuccess: B[index] ?? null, flowerP: pF[index] ?? null, beeP: pB[index] ?? null,
+      fitness: fit[index] ?? null, balance: bal ? bal[index] ?? null : null,
     })),
   };
 };
@@ -480,7 +483,7 @@ export async function viewPrevalence(game, { after = 0, limit = 5000 } = {}) {
   const settings = prevalenceOf(g.config);
   if (!settings || !g.participants) return { prevalence: settings, samples: [] };
   const n = Math.max(1, Math.min(5000, Number(limit) || 5000));
-  const { rows } = await query(`SELECT round, at_ms, c, slots, flower_success, bee_success, flower_p, bee_p, fitness FROM prevalence
+  const { rows } = await query(`SELECT round, at_ms, c, slots, flower_success, bee_success, flower_p, bee_p, fitness, bee_balance FROM prevalence
     WHERE game_id = $1 AND round > $2 ORDER BY round LIMIT $3`,
     [game.id, Math.max(0, Number(after) || 0), n]);
   return { prevalence: settings, samples: rows.map((r) => sampleView(r, g.participants)) };
@@ -528,7 +531,7 @@ export function actionView(a, me, over, revealed, grainsPublic = false) {
     Object.assign(out, { c: a.c, r: a.r, rBytes: a.r_bytes ?? null, pollen: a.pollen });
     // A response over INLINE_BYTES: its size, hash and first INLINE_BYTES; the whole of it from GET .../responses/:seq.
     if (a.r_hash) Object.assign(out, { rHash: a.r_hash, rPreview: a.r_preview });
-    if (fed) Object.assign(out, { nectar: a.nectar, price: a.price ?? 0, net: a.nectar - (a.price ?? 0) });
+    if (fed) Object.assign(out, { nectar: a.nectar, price: a.price ?? 0, net: a.nectar - (a.price ?? 0), balance: a.balance ?? null });
     if (fed || myFlower) Object.assign(out, { percent: a.percent, energy: a.energy });
     if (myFlower) Object.assign(out, { ms: a.cpu_ms, budgetMs: a.budget_ms ?? null, flowerError: a.flower_error });
     if (myBee) Object.assign(out, { beeMs: a.bee_ms, beeError: a.bee_error });
@@ -570,7 +573,8 @@ export const turnOf = (a, idx, { game, flowerMs }) => ({
   game, seq: Number(a.seq), round: Number(a.round), atMs: Number(a.at_ms) - flowerMs, turn: a.turn, bee: idx.get(a.bee_team), flower: idx.get(a.flower_team),
   challenge: a.c, response: a.r, responseBytes: a.r_bytes ?? null, responseHash: a.r_hash ?? null,
   fed: a.action === "feed", percent: a.percent, energy: a.energy, nectar: a.nectar,
-  price: a.action === "feed" ? a.price ?? 0 : null, net: a.action === "feed" ? a.nectar - (a.price ?? 0) : null, pollen: a.pollen ?? 0,
+  price: a.action === "feed" ? a.price ?? 0 : null, net: a.action === "feed" ? a.nectar - (a.price ?? 0) : null,
+  balance: a.action === "feed" ? a.balance ?? null : null, pollen: a.pollen ?? 0,
   ms: a.cpu_ms, budgetMs: a.budget_ms ?? null, flowerVersion: a.flower_version, flowerError: a.flower_error, beeMs: a.bee_ms, beeVersion: a.bee_version, beeError: a.bee_error,
   grain: a.grain ?? null, grainVersion: a.grain_version ?? null, grainCodeLength: a.grain_code_length ?? null,
 });

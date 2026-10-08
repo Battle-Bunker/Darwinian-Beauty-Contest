@@ -2,19 +2,24 @@
 //   - K = ceil(slots × N) bee slots are filled with K distinct bee teams, drawn without replacement with
 //     weights c(t) + B_b (among the bees ready to take a turn); a bee not drawn doesn't visit this round.
 //   - Each drawn bee visits a flower species drawn with weights c(t) + F_s, with replacement, its own included.
-// where, from ledgers every cell of which starts at `prior` and, as each round begins, is multiplied by
-// d = 2^(−round_s / halfLifeS) (halfLifeS null: d = 1, cumulative) before that round's feeds are added (rounds
-// are game time, so a paused game doesn't decay):
-//   F_s  flower success: N × Q^F_s / Σ_k Q^F_k, Q^F_s = Σ_b (D^F_{s,b})^β, D^F the pollen species s gave bee
-//        team b (β the game's scoring.beta). Generosity costs the flower: pollen is what it keeps.
-//   B_b  bee success: N × Q^B_b / Σ_k Q^B_k, Q^B_b = max(0, Σ_s sign(D) |D^B_{b,s}|^α), D^B the net nectar
-//        bee b got at species s, nectar − feedPrice per feed: it can go negative (α the game's scoring.alpha).
-// Each is 1 for every team when its Σ Q is 0, and capped at `cap`: par 1. c(t) runs linearly from cStart at the
-// start of the game to cEnd at its end. The draw probabilities published are p^F_s = (c + F_s) / Σ_k (c + F_k)
-// and p^B_b = (c + B_b) / Σ_k (c + B_k) (the chance of filling a given slot first).
+// where:
+//   F_s  flower success: N × Q^F_s / Σ_k Q^F_k, Q^F_s = Σ_b (D^F_{s,b})^β, D^F the decayed pollen species s
+//        gave bee team b (β the game's scoring.beta). Per-(species, bee) cells, so pollen spread across many
+//        bee teams counts for more and no flower–bee pair can go singleton. Each cell starts at `prior` and, as
+//        each round begins, is multiplied by d = 2^(−round_s / halfLifeS) (halfLifeS null: d = 1), then the
+//        round's pollen is added.
+//   B_b  bee success. With `pools` (v3, the default): N × balance_b / Σ_k balance_k, balances floored at 0 for
+//        the share. The bee's nectar is a single linear balance: it starts at the endowment b0, each feed adds
+//        net nectar (nectar − feedPrice), and as each round begins it relaxes toward b0 by d (balance ← b0 +
+//        (balance − b0) d: metabolism above b0, recovery below). A bee whose balance is below the price can't
+//        feed (its feed becomes a leave). Without `pools` (v2): N × Q^B_b / Σ_k Q^B_k, Q^B_b = max(0, Σ_s
+//        sign(D) |D^B_{b,s}|^α), D^B the decayed per-(bee, species) net nectar (α the game's scoring.alpha).
+// Each of F and B is 1 for every team when its total is 0, and capped at `cap`: par 1. c(t) runs linearly from
+// cStart at the start of the game to cEnd at its end. The draw probabilities published are p^F_s = (c + F_s) /
+// Σ_k (c + F_k) and p^B_b = (c + B_b) / Σ_k (c + B_k) (the chance of filling a given slot first).
 // A team's fitness is the time-average, over the rounds played, of F_s × B_s (its species' and its bee's), par 1.
-// The garden samples them about once a second of game time (public); programs never see them.
-import { prevalenceOf, roundMs } from "./gameConfig.js";
+// The garden samples them (and the bees' balances) about once a second of game time (public); programs never see them.
+import { feedPriceOf, prevalenceOf, roundMs } from "./gameConfig.js";
 import { score, scoringOf } from "./scoring.js";
 
 const matrix = (n, v) => Array.from({ length: n }, () => new Array(n).fill(v));
@@ -41,9 +46,13 @@ export class Prevalence {
     this.durationMs = config.minutes * 60000;
     this.d = s.halfLifeS ? Math.pow(2, -roundMs(config) / 1000 / s.halfLifeS) : 1;
     this.slots = Math.min(n, Math.max(1, Math.ceil(s.slots * n - 1e-9)));
-    this.pollen = matrix(n, s.prior);  // [species][bee team]: D^F, the pollen s gave b's bee
-    this.net = matrix(n, s.prior);     // [bee team][species]: D^B, the net nectar b's bee got at s
-    this.sum = new Array(n).fill(0);   // Σ over rounds of F_s × B_s
+    this.pools = s.pools;
+    this.price = feedPriceOf(config);
+    this.b0 = s.endowment;                     // a bee's nectar endowment, the balance's relaxation baseline
+    this.pollen = matrix(n, s.prior);          // [species][bee team]: D^F, the pollen s gave b's bee
+    this.balance = this.pools ? new Array(n).fill(this.b0) : null; // [bee team]: its single nectar balance (v3)
+    this.net = this.pools ? null : matrix(n, s.prior); // [bee team][species]: D^B, the net nectar b got at s (v2)
+    this.sum = new Array(n).fill(0);           // Σ over rounds of F_s × B_s
     this.rounds = 0;
   }
 
@@ -61,12 +70,15 @@ export class Prevalence {
     const m = Prevalence.of(config, n);
     if (!m) return null;
     const k = Math.pow(m.d, rounds);
-    for (const M of [m.pollen, m.net]) for (const row of M) row.fill(m.settings.prior * k);
+    for (const row of m.pollen) row.fill(m.settings.prior * k);
+    if (m.pools) m.balance.fill(m.b0);                 // b0 is the fixed point of the relaxation, so it doesn't decay
+    else for (const row of m.net) row.fill(m.settings.prior * k);
     for (const f of feeds) {
       if (!(f.bee >= 0 && f.bee < n && f.flower >= 0 && f.flower < n) || f.round > rounds) continue;
       const w = Math.pow(m.d, rounds - f.round);
       m.pollen[f.flower][f.bee] += Math.max(0, f.pollen ?? 0) * w;
-      m.net[f.bee][f.flower] += (f.net ?? 0) * w;
+      if (m.pools) m.balance[f.bee] += (f.net ?? 0) * w;
+      else m.net[f.bee][f.flower] += (f.net ?? 0) * w;
     }
     if (fitness && Array.isArray(fitness.sum) && fitness.sum.length === n) {
       m.sum = fitness.sum.map(Number);
@@ -75,16 +87,24 @@ export class Prevalence {
     return m;
   }
 
-  /** A round begins: every cell decays by d. */
+  /** A round begins: pollen decays toward 0, a bee's balance relaxes toward its endowment b0. */
   decay() {
     if (this.d === 1) return;
-    for (const M of [this.pollen, this.net]) for (const row of M) for (let i = 0; i < row.length; i++) row[i] *= this.d;
+    for (const row of this.pollen) for (let i = 0; i < row.length; i++) row[i] *= this.d;
+    if (this.pools) for (let b = 0; b < this.n; b++) this.balance[b] = this.b0 + (this.balance[b] - this.b0) * this.d;
+    else for (const row of this.net) for (let i = 0; i < row.length; i++) row[i] *= this.d;
+  }
+
+  /** Whether bee b can afford a feed this round (always, unless pools and its balance is below the price). */
+  canFeed(b) {
+    return !this.pools || this.balance[b] >= this.price;
   }
 
   /** A feed in this round: bee team b at species s, the pollen s kept and the bee's net nectar (nectar − price). */
   feed(b, s, pollen, net) {
     this.pollen[s][b] += Math.max(0, pollen || 0);
-    this.net[b][s] += net || 0;
+    if (this.pools) this.balance[b] += net || 0;
+    else this.net[b][s] += net || 0;
   }
 
   /** c at game time tMs. */
@@ -97,7 +117,9 @@ export class Prevalence {
   /** { F, B }: each team's flower and bee success, by team index. */
   success() {
     const qF = this.pollen.map((row) => row.reduce((a, x) => a + (x > 0 ? Math.pow(x, this.beta) : 0), 0));
-    const qB = this.net.map((row) => Math.max(0, row.reduce((a, x) => a + signedPow(x, this.alpha), 0)));
+    const qB = this.pools
+      ? this.balance.map((x) => Math.max(0, x))
+      : this.net.map((row) => Math.max(0, row.reduce((a, x) => a + signedPow(x, this.alpha), 0)));
     return { F: shares(qF, this.settings.cap), B: shares(qB, this.settings.cap) };
   }
 
@@ -107,6 +129,11 @@ export class Prevalence {
     const wF = F.map((x) => c + x), wB = B.map((x) => c + x);
     const norm = (w) => { const t = w.reduce((a, b) => a + b, 0); return w.map((x) => (t > 0 ? x / t : 1 / w.length)); };
     return { c, F, B, wF, wB, pF: norm(wF), pB: norm(wB), slots: this.slots };
+  }
+
+  /** Each bee's nectar balance (pools), or null (v2). */
+  balances() {
+    return this.pools ? [...this.balance] : null;
   }
 
   /** A round's F × B goes into each team's fitness. */

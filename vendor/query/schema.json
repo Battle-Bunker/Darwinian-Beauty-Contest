@@ -215,6 +215,11 @@
           "nullable": true
         },
         {
+          "name": "balance",
+          "type": "float",
+          "nullable": true
+        },
+        {
           "name": "pollen",
           "type": "float",
           "nullable": false
@@ -555,6 +560,11 @@
           "nullable": true
         },
         {
+          "name": "balance",
+          "type": "float",
+          "nullable": true
+        },
+        {
           "name": "c",
           "type": "float",
           "nullable": false
@@ -748,6 +758,10 @@
         },
         "net": {
           "doc": "on a feed, the bee's net nectar: nectar - price (it can be negative), else null",
+          "visibility": "public"
+        },
+        "balance": {
+          "doc": "on a feed in a pools game, the bee's nectar balance after it; else null",
           "visibility": "public"
         },
         "pollen": {
@@ -947,7 +961,7 @@
           "visibility": "public"
         },
         "beeSuccess": {
-          "doc": "B_b: N × its bee's share of recent net nectar (max(0, Σ over species of signed decayed (nectar - price)^alpha)), capped; par 1",
+          "doc": "B_b: N × its bee's share of recent net nectar, capped; par 1 (pools: of its nectar balance; else of max(0, Σ over species of signed decayed (nectar - price)^alpha))",
           "visibility": "public"
         },
         "flowerP": {
@@ -960,6 +974,10 @@
         },
         "fitness": {
           "doc": "its fitness so far: the time-average of F × B over the rounds played",
+          "visibility": "public"
+        },
+        "balance": {
+          "doc": "its bee's nectar balance at the sample (pools games), else null",
           "visibility": "public"
         },
         "c": {

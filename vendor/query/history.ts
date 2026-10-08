@@ -40,6 +40,8 @@ export interface Turn {
   readonly price: number | null;
   /** on a feed, the bee's net nectar: nectar - price (it can be negative), else null */
   readonly net: number | null;
+  /** on a feed in a pools game, the bee's nectar balance after it; else null */
+  readonly balance: number | null;
   /** the pollen the flower gave the bee: (1 − percent/100) × E on a feed, else 0 */
   readonly pollen: number;
   /** the flower's CPU time for the call (ms) */
@@ -142,7 +144,7 @@ export interface Prevalence {
   readonly team: number;
   /** F_s: N × its species' share of recent pollination (Σ over bee teams of decayed pollen^beta), capped; par 1 */
   readonly flowerSuccess: number;
-  /** B_b: N × its bee's share of recent net nectar (max(0, Σ over species of signed decayed (nectar - price)^alpha)), capped; par 1 */
+  /** B_b: N × its bee's share of recent net nectar, capped; par 1 (pools: of its nectar balance; else of max(0, Σ over species of signed decayed (nectar - price)^alpha)) */
   readonly beeSuccess: number;
   /** p^F_s: the chance a visit is to its species, (c + F_s) / Σ (c + F_k) */
   readonly flowerP: number;
@@ -150,6 +152,8 @@ export interface Prevalence {
   readonly beeP: number;
   /** its fitness so far: the time-average of F × B over the rounds played */
   readonly fitness: number | null;
+  /** its bee's nectar balance at the sample (pools games), else null */
+  readonly balance: number | null;
   /** c(t): the weight every species and bee has whatever its success (cStart to cEnd over the game) */
   readonly c: number;
   /** bees visiting each round: ceil(slots × N) */
@@ -423,6 +427,11 @@ export const SCHEMA: Schema = {
         },
         {
           "name": "net",
+          "type": "float",
+          "nullable": true
+        },
+        {
+          "name": "balance",
           "type": "float",
           "nullable": true
         },
@@ -763,6 +772,11 @@ export const SCHEMA: Schema = {
         },
         {
           "name": "fitness",
+          "type": "float",
+          "nullable": true
+        },
+        {
+          "name": "balance",
           "type": "float",
           "nullable": true
         },
