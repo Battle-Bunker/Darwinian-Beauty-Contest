@@ -94,6 +94,17 @@ With CPU = BURN × R, a turn pays PERCENT/100 × (1100 − size) × (1 − BURN)
 - **How the starter bee groups profiles:** two flowers whose T are at most NEAR = 4 apart, measured as a
   distance in (t1, t2), are one profile to it. To that bee they share one learned rate, honest or not.
 
+## Imitation, as arithmetic
+
+- **One solver covers every profile.** A profile is two literals, so once an imitator runs the solver, following
+  a profile move costs it the byte edit of T: 3 to 4 nodes, or 3 to 4 seconds of a flower's 1 node/s.
+- **Getting the solver in the first place** costs about 250 nodes of change: the starter's size, plus deleting
+  whatever flower code it replaces (inserts and deletes both count). A full 300-node bank covers that at once.
+  From an empty bank it takes about 4 to 5 minutes at 1 node/s.
+- **Code leaks only through pollen grains,** and only to bees that feed.
+- So a cooperator's protection is the imitator's lag in noticing a move, plus the change budget it needs to
+  acquire the solver.
+
 ## The starter flower and bee
 
 **Flower: `integrated.py`, 250 nodes, 84 bytes.**
