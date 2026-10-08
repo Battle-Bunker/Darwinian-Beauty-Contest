@@ -1,105 +1,3 @@
-{"tag":"idle","test":"noise","thread":40.314,"process":48.744,"wall":37.10873899999999}
-{"tag":"idle","test":"noise","thread":33.56099999999999,"process":40.870999999999995,"wall":33.995433000000006}
-{"tag":"idle","test":"noise","thread":32.804,"process":41.333,"wall":32.612373000000005}
-{"tag":"idle","test":"noise","thread":32.53899999999999,"process":39.51400000000001,"wall":32.871275}
-{"tag":"idle","test":"noise","thread":34.712999999999994,"process":40.791,"wall":36.00489999999999}
-{"tag":"idle","test":"noise","thread":35.480999999999995,"process":41.71599999999998,"wall":37.363407000000024}
-{"tag":"idle","test":"noise","thread":32.18100000000001,"process":39.28199999999998,"wall":32.87116599999999}
-{"tag":"idle","test":"noise","thread":31.42900000000003,"process":37.81400000000002,"wall":31.11477500000001}
-{"tag":"idle","test":"noise","thread":30.968999999999994,"process":37.07400000000001,"wall":31.240590999999995}
-{"tag":"idle","test":"noise","thread":31.864000000000033,"process":37.66199999999998,"wall":32.858344000000045}
-{"tag":"idle","test":"noise","thread":31.09899999999999,"process":37.51299999999998,"wall":32.496073000000024}
-{"tag":"idle","test":"noise","thread":31.875,"process":37.194999999999936,"wall":32.49071100000003}
-{"tag":"idle","test":"noise","thread":30.70999999999998,"process":38.047000000000025,"wall":31.575586999999985}
-{"tag":"idle","test":"noise","thread":31.36500000000001,"process":37.29900000000009,"wall":31.380128999999954}
-{"tag":"idle","test":"noise","thread":33.73199999999997,"process":40.62199999999996,"wall":34.65164200000004}
-{"tag":"idle","test":"noise","thread":31.710000000000036,"process":37.69200000000001,"wall":31.788019000000077}
-{"tag":"idle","test":"noise","thread":32.63600000000008,"process":39.424999999999955,"wall":33.00477999999998}
-{"tag":"idle","test":"noise","thread":32.98900000000003,"process":38.087999999999965,"wall":32.44320399999992}
-{"tag":"idle","test":"noise","thread":33.947,"process":39.966999999999985,"wall":36.649487999999906}
-{"tag":"idle","test":"noise","thread":31.890999999999963,"process":37.20500000000004,"wall":31.469562999999994}
-{"tag":"idle","test":"noise","thread":31.845000000000027,"process":37.500999999999976,"wall":31.55840699999999}
-{"tag":"idle","test":"noise","thread":32.44799999999998,"process":38.555999999999926,"wall":32.436148}
-{"tag":"idle","test":"noise","thread":40.19999999999993,"process":45.124000000000024,"wall":39.243472}
-{"tag":"idle","test":"noise","thread":31.581000000000017,"process":37.86500000000001,"wall":31.156842000000097}
-{"tag":"idle","test":"noise","thread":33.11400000000003,"process":40.79499999999996,"wall":33.36601799999994}
-{"tag":"idle","test":"noise","thread":33.21900000000005,"process":41.047000000000025,"wall":32.76311099999998}
-{"tag":"idle","test":"noise","thread":31.288999999999987,"process":37.942999999999984,"wall":31.693412999999964}
-{"tag":"idle","test":"noise","thread":30.4670000000001,"process":35.36299999999983,"wall":30.033841999999936}
-{"tag":"idle","test":"noise","thread":31.610000000000014,"process":36.57099999999991,"wall":31.179935999999998}
-{"tag":"idle","test":"noise","thread":32.138000000000034,"process":38.45900000000006,"wall":31.89644599999997}
-{"tag":"idle","test":"worker_cpuUsage_live","samples":[[0.2624940000000606,0],[2.9861430000000837,3.966],[5.454071000000113,7.969],[7.759246000000076,7.969],[10.00969699999996,12.659],[12.388703999999962,15.733],[14.641006000000061,15.733],[16.825949000000037,19.736],[19.02465499999994,21.716],[20.26567100000011,23.703],[22.482531999999992,23.703],[24.77096900000015,27.702],[27.060068,28.774],[29.275601999999935,31.579],[31.45003500000007,31.579],[33.65334699999994,35.575],[35.83283600000004,35.575],[38.04241500000012,39.575],[40.29465099999993,43.575],[42.46830100000011,43.575],[44.64742700000011,47.574],[46.893935000000056,47.574],[49.09757000000013,51.574],[51.28681000000006,51.574],[53.505720999999994,55.576],[55.68438900000001,55.576],[57.90888700000005,59.575],[60.129952,59.575],[62.31437800000003,63.573],[64.47403299999996,67.574],[66.66225600000007,67.574],[68.84216200000014,71.574],[71.0664690000001,71.574],[73.44857900000011,75.574],[75.67013700000007,75.574],[77.88584100000003,79.572],[80.0873180000001,79.572],[82.27533300000005,83.58],[84.44329100000004,87.576],[86.61142399999994,87.576],[88.92983700000013,91.575],[91.14254900000014,91.575],[93.33432300000004,95.574],[95.52548100000013,95.574],[97.72830700000009,99.575],[99.99702000000002,99.575],[102.20861800000011,103.575],[104.39295800000014,107.574],[106.60378700000001,107.574],[108.93281300000012,111.574],[111.13790700000004,111.574],[113.32924000000003,115.575],[115.57559100000003,115.575],[117.75534400000015,119.573],[120.02052200000003,119.573],[122.21203400000013,123.574],[124.4159790000001,127.574],[126.59160700000007,127.574],[128.76191300000005,131.574],[131.0386900000001,131.574],[133.25159400000007,135.575],[135.4507390000001,135.575],[137.66102999999998,139.575],[140.03806699999996,139.575],[142.3330820000001,143.575],[144.554527,147.574],[146.80941000000007,147.574],[149.0757920000001,151.574],[151.71939700000007,151.574],[154.02112699999998,155.576],[156.32324300000005,159.574],[158.57209699999999,159.574],[160.81467399999997,163.575],[163.03631100000007,163.575],[165.26704900000004,167.574],[167.48736099999996,167.574],[169.74969499999997,171.572],[171.98555899999997,171.572],[174.2265950000001,175.578],[176.41661399999998,179.577],[178.64906500000006,179.577],[180.9123320000001,183.58],[183.132208,183.58],[185.37897900000007,187.551],[189.17497500000013,190.268],[191.4801930000001,190.268],[193.68523000000005,193.536],[195.94559700000013,193.536],[198.2212810000001,197.539],[200.45055700000012,201.54],[202.70361900000012,201.54],[204.95834800000011,205.54],[207.14221399999997,205.54],[209.37503400000014,209.539],[211.59372800000006,209.539],[213.77445899999998,213.536],[215.97056399999997,213.536],[218.18355700000006,217.535],[220.33093400000007,221.539],[222.52581499999997,221.539],[224.7138930000001,225.539],[226.90021100000013,225.539],[229.2522550000001,229.536],[231.52156800000012,229.536],[233.71458499999994,233.559],[235.8914360000001,233.559],[238.11875600000008,237.537],[240.30753600000003,241.536],[242.55207500000006,241.536],[244.70828900000015,245.54],[246.949971,245.54],[249.09107700000004,249.535],[251.269497,249.535],[253.44711000000007,253.535],[255.647199,253.535],[257.830876,257.537],[259.97255399999995,257.537],[262.123507,261.534],[264.3122430000001,265.536],[266.514318,265.536],[268.6893480000001,269.535],[270.81931899999995,269.535],[272.96027300000014,273.536],[275.15457100000003,273.536],[276.2618830000001,277.535],[278.42132800000013,277.535],[280.5784960000001,281.536],[282.76871900000015,281.536],[284.96994100000006,285.538],[287.0991570000001,285.538],[289.3450250000001,289.538],[291.58744,289.538],[293.7830200000001,293.541],[295.94431899999995,293.541],[298.0898730000001,297.535],[300.2718070000001,301.535],[302.4673520000001,301.535],[304.703614,305.535]]}
-{"tag":"idle","test":"stop","mech":"sigint_poll","r":10,"err":"Script execution was interrupted by `SIGINT`","wall":11.164732999999842,"over":-0.9470000000001164}
-{"tag":"idle","test":"stop","mech":"sigint_perf","r":3,"arm_us":154.3,"head_ms":0.660697,"err":"Script execution was interrupted by `SIGINT`","wall":2.806491000000051,"over":-2.3393029999999726,"count_ms":3.558255}
-{"tag":"idle","test":"stop","mech":"vm_wall","r":10,"err":"Script execution timed out after 10ms","wall":10.634019999999964,"over":-2.272999999999911}
-{"tag":"idle","test":"stop","mech":"sigint_perf","r":150,"arm_us":176.7,"head_ms":0.207193,"err":"Script execution was interrupted by `SIGINT`","wall":150.60258700000009,"over":-3.12180699999999,"count_ms":150.773469}
-{"tag":"idle","test":"stop","mech":"sigint_perf","r":10,"arm_us":169.6,"head_ms":0.260118,"err":"Script execution was interrupted by `SIGINT`","wall":10.3865780000001,"over":-2.959882000000107,"count_ms":10.795854}
-{"tag":"idle","test":"stop","mech":"vm_wall","r":10,"err":"Script execution timed out after 10ms","wall":10.653171000000157,"over":-2.0319999999999254}
-{"tag":"idle","test":"stop","mech":"vm_wall","r":3,"err":"Script execution timed out after 3ms","wall":3.650772000000188,"over":-3}
-{"tag":"idle","test":"stop","mech":"sigint_perf","r":150,"arm_us":161.6,"head_ms":0.197298,"err":"Script execution was interrupted by `SIGINT`","wall":150.58108600000014,"over":-3.1157020000000557,"count_ms":150.794146}
-{"tag":"idle","test":"stop","mech":"vm_wall","r":10,"err":"Script execution timed out after 10ms","wall":9.608813000000055,"over":-2.2049999999999272}
-{"tag":"idle","test":"stop","mech":"vm_wall","r":150,"err":"Script execution timed out after 150ms","wall":150.7761599999999,"over":1.8689999999999145}
-{"tag":"idle","test":"stop","mech":"vm_wall","r":3,"err":"Script execution timed out after 3ms","wall":3.5553509999999733,"over":1.0040000000001328}
-{"tag":"idle","test":"stop","mech":"sigint_perf","r":50,"arm_us":169.2,"head_ms":0.255205,"err":"Script execution was interrupted by `SIGINT`","wall":50.47179500000016,"over":-1.1787950000000365,"count_ms":50.734412}
-{"tag":"idle","test":"stop","mech":"sigint_perf","r":150,"arm_us":152,"head_ms":0.093603,"err":"Script execution was interrupted by `SIGINT`","wall":150.7963149999996,"over":-1.47739700000011,"count_ms":150.845411}
-{"tag":"idle","test":"stop","mech":"vm_wall","r":10,"err":"Script execution timed out after 10ms","wall":10.630181999999877,"over":-0.4960000000000946}
-{"tag":"idle","test":"stop","mech":"sigint_perf","r":50,"arm_us":148.8,"head_ms":0.189475,"err":"Script execution was interrupted by `SIGINT`","wall":50.622045999999955,"over":-0.9805250000001706,"count_ms":50.785553}
-{"tag":"idle","test":"stop","mech":"vm_wall","r":50,"err":"Script execution timed out after 50ms","wall":49.63785199999984,"over":-0.21000000000003638}
-{"tag":"idle","test":"stop","mech":"sigint_perf","r":150,"arm_us":129.8,"head_ms":0.134975,"err":"Script execution was interrupted by `SIGINT`","wall":301.78116999999975,"over":147.47597500000006,"count_ms":300.758987}
-{"tag":"idle","test":"stop","mech":"vm_wall","r":50,"err":"Script execution timed out after 50ms","wall":50.69394599999987,"over":-2.0030000000001564}
-{"tag":"idle","test":"stop","mech":"vm_wall","r":3,"err":"Script execution timed out after 3ms","wall":3.618960999999672,"over":1.0199999999999818}
-{"tag":"idle","test":"stop","mech":"sigint_perf","r":3,"arm_us":171.5,"head_ms":0.146915,"err":"Script execution was interrupted by `SIGINT`","wall":3.509038000000146,"over":-2.853085000000192,"count_ms":3.817867}
-{"tag":"idle","test":"stop","mech":"vm_wall","r":50,"err":"Script execution timed out after 50ms","wall":49.65006900000026,"over":-2.2539999999999054}
-{"tag":"idle","test":"stop","mech":"vm_wall","r":10,"err":"Script execution timed out after 10ms","wall":10.643651000000318,"over":2.005999999999858}
-{"tag":"idle","test":"stop","mech":"sigint_perf","r":50,"arm_us":142.7,"head_ms":0.159431,"err":"Script execution was interrupted by `SIGINT`","wall":50.519221000000016,"over":-0.7705690000002505,"count_ms":50.668455}
-{"tag":"idle","test":"stop","mech":"sigint_perf","r":50,"arm_us":109.6,"head_ms":0.123411,"err":"Script execution was interrupted by `SIGINT`","wall":50.55371000000014,"over":-0.7485889999998108,"count_ms":50.645899}
-{"tag":"idle","test":"stop","mech":"sigint_perf","r":150,"arm_us":114.2,"head_ms":0.094962,"err":"Script execution was interrupted by `SIGINT`","wall":150.63908600000013,"over":-2.504038000000037,"count_ms":150.701903}
-{"tag":"idle","test":"stop","mech":"vm_wall","r":3,"err":"Script execution timed out after 3ms","wall":2.5725710000001527,"over":-0.987999999999829}
-{"tag":"idle","test":"stop","mech":"vm_wall","r":50,"err":"Script execution timed out after 50ms","wall":50.63268199999993,"over":0.487999999999829}
-{"tag":"idle","test":"stop","mech":"sigint_perf","r":10,"arm_us":124.3,"head_ms":0.186392,"err":"Script execution was interrupted by `SIGINT`","wall":10.438505999999961,"over":-3.6226079999996728,"count_ms":10.547975}
-{"tag":"idle","test":"stop","mech":"vm_wall","r":50,"err":"Script execution timed out after 50ms","wall":50.76422000000002,"over":-2.593999999999596}
-{"tag":"idle","test":"stop","mech":"sigint_perf","r":10,"arm_us":120.3,"head_ms":0.226805,"err":"Script execution was interrupted by `SIGINT`","wall":10.40023599999995,"over":-3.2941950000004,"count_ms":10.722234}
-{"tag":"idle","test":"stop","mech":"vm_wall","r":150,"err":"Script execution timed out after 150ms","wall":150.9261260000003,"over":-6.407000000000153}
-{"tag":"idle","test":"stop","mech":"sigint_perf","r":150,"arm_us":144.8,"head_ms":0.209904,"err":"Script execution was interrupted by `SIGINT`","wall":150.53245199999992,"over":-12.826096000000234,"count_ms":150.722083}
-{"tag":"idle","test":"stop","mech":"sigint_perf","r":3,"arm_us":121.8,"head_ms":0.143438,"err":"Script execution was interrupted by `SIGINT`","wall":3.3367000000002918,"over":-0.5035619999998744,"count_ms":3.484336}
-{"tag":"idle","test":"stop","mech":"sigint_perf","r":10,"arm_us":80.2,"head_ms":0.076874,"err":"Script execution was interrupted by `SIGINT`","wall":10.479432999999972,"over":0.0658739999998943,"count_ms":10.541609}
-{"tag":"idle","test":"stop","mech":"sigint_perf","r":150,"arm_us":90.5,"head_ms":0.083566,"err":"Script execution was interrupted by `SIGINT`","wall":300.59223699999984,"over":139.81156599999986,"count_ms":300.688603}
-{"tag":"idle","test":"stop","mech":"vm_wall","r":3,"err":"Script execution timed out after 3ms","wall":4.693443000000116,"over":-1.40099999999984}
-{"tag":"idle","test":"stop","mech":"sigint_perf","r":50,"arm_us":131,"head_ms":0.134795,"err":"Script execution was interrupted by `SIGINT`","wall":50.56433500000003,"over":-7.869204999999965,"count_ms":50.726507}
-{"tag":"idle","test":"stop","mech":"sigint_perf","r":10,"arm_us":126.9,"head_ms":0.103576,"err":"Script execution was interrupted by `SIGINT`","wall":10.549694000000272,"over":-2.813423999999941,"count_ms":10.650453}
-{"tag":"idle","test":"stop","mech":"sigint_perf","r":150,"arm_us":144.6,"head_ms":0.096617,"err":"Script execution was interrupted by `SIGINT`","wall":150.79193299999997,"over":-2.8953829999995833,"count_ms":150.828047}
-{"tag":"idle","test":"stop","mech":"sigint_perf","r":3,"arm_us":125.1,"head_ms":0.096743,"err":"Script execution was interrupted by `SIGINT`","wall":3.423761999999897,"over":-0.26925699999992503,"count_ms":3.50417}
-{"tag":"idle","test":"stop","mech":"vm_wall","r":150,"err":"Script execution timed out after 150ms","wall":150.8928420000002,"over":0.7210000000000036}
-{"tag":"idle","test":"stop","mech":"sigint_perf","r":10,"arm_us":124.8,"head_ms":0.174688,"err":"Script execution was interrupted by `SIGINT`","wall":10.61322300000029,"over":-3.5903119999998125,"count_ms":10.741863}
-{"tag":"idle","test":"stop","mech":"vm_wall","r":3,"err":"Script execution timed out after 3ms","wall":3.5371959999993123,"over":0.375}
-{"tag":"idle","test":"stop","mech":"vm_wall","r":10,"err":"Script execution timed out after 10ms","wall":10.623759000000064,"over":1.9659999999998945}
-{"tag":"idle","test":"stop","mech":"sigint_poll","r":50,"err":"Script execution was interrupted by `SIGINT`","wall":52.9501479999999,"over":1.961999999999989}
-{"tag":"idle","test":"stop","mech":"sigint_poll","r":150,"err":"Script execution was interrupted by `SIGINT`","wall":151.02095100000042,"over":0.08699999999998909}
-{"tag":"idle","test":"stop","mech":"vm_wall","r":150,"err":"Script execution timed out after 150ms","wall":150.84241399999974,"over":0.40699999999969805}
-{"tag":"idle","test":"stop","mech":"vm_wall","r":3,"err":"Script execution timed out after 3ms","wall":3.679690999999366,"over":1.0030000000001564}
-{"tag":"idle","test":"stop","mech":"vm_wall","r":3,"err":"Script execution timed out after 3ms","wall":3.5452070000001186,"over":1}
-{"tag":"idle","test":"stop","mech":"sigint_poll","r":50,"err":"Script execution was interrupted by `SIGINT`","wall":51.13515800000005,"over":-0.23499999999967258}
-{"tag":"idle","test":"stop","mech":"sigint_perf","r":50,"arm_us":122.3,"head_ms":0.13251,"err":"Script execution was interrupted by `SIGINT`","wall":100.80976100000044,"over":46.647509999999784,"count_ms":100.748239}
-{"tag":"idle","test":"stop","mech":"sigint_poll","r":3,"err":"Script execution was interrupted by `SIGINT`","wall":3.6221949999999197,"over":0.6289999999999054}
-{"tag":"idle","test":"stop","mech":"worker_kill","r":3,"terminate_ms":3.9951350000001185,"wall":10.728556999999455,"over":3.729000000000042,"polls":5,"respawn_ms":47.683939000000464}
-{"tag":"idle","test":"stop","mech":"sigint_perf","r":50,"arm_us":148.4,"head_ms":0.165836,"err":"Script execution was interrupted by `SIGINT`","wall":50.67069999999967,"over":-3.1691639999999097,"count_ms":50.694116}
-{"tag":"idle","test":"stop","mech":"sigint_poll","r":150,"err":"Script execution was interrupted by `SIGINT`","wall":153.44306099999994,"over":1.4650000000001455}
-{"tag":"idle","test":"stop","mech":"sigint_poll","r":50,"err":"Script execution was interrupted by `SIGINT`","wall":52.13438200000019,"over":-0.38699999999971624}
-{"tag":"idle","test":"stop","mech":"sigint_poll","r":150,"err":"Script execution was interrupted by `SIGINT`","wall":154.62058799999977,"over":-0.5399999999999636}
-{"tag":"idle","test":"stop","mech":"sigint_poll","r":50,"err":"Script execution was interrupted by `SIGINT`","wall":53.025777000000744,"over":-0.5849999999991269}
-{"tag":"idle","test":"stop","mech":"sigint_poll","r":50,"err":"Script execution was interrupted by `SIGINT`","wall":53.215642999999545,"over":1.6719999999995707}
-{"tag":"idle","test":"stop","mech":"worker_kill","r":150,"terminate_ms":2.1800240000002304,"wall":155.1752980000001,"over":2.1299999999999955,"polls":5,"respawn_ms":39.435363999999936}
-{"tag":"idle","test":"stop","mech":"worker_kill","r":3,"terminate_ms":1.8657090000006065,"wall":1.8979609999996683,"over":-3,"polls":1,"respawn_ms":39.932466000000204}
-{"tag":"idle","test":"stop","mech":"worker_kill","r":3,"terminate_ms":1.7597560000003796,"wall":1.8314689999997427,"over":-3,"polls":1,"respawn_ms":35.65604100000019}
-{"tag":"idle","test":"stop","mech":"worker_kill","r":10,"terminate_ms":5.534606000000167,"wall":13.777356999999938,"over":-2.012999999999998,"polls":4,"respawn_ms":39.4661100000003}
-{"tag":"idle","test":"stop","mech":"worker_kill","r":150,"terminate_ms":2.4904820000001564,"wall":149.28960200000074,"over":-2.3189999999999884,"polls":6,"respawn_ms":38.27289799999926}
-{"tag":"idle","test":"stop","mech":"sigint_poll","r":3,"err":"Script execution was interrupted by `SIGINT`","wall":3.7493210000002364,"over":-0.04500000000007276}
-{"tag":"idle","test":"stop","mech":"worker_kill","r":50,"terminate_ms":2.222182999999859,"wall":56.9363170000006,"over":3.824000000000005,"polls":5,"respawn_ms":38.02355400000033}
-{"tag":"idle","test":"stop","mech":"sigint_poll","r":50,"err":"Script execution was interrupted by `SIGINT`","wall":51.244032999999945,"over":0.7219999999997526}
-{"tag":"idle","test":"stop","mech":"worker_kill","r":50,"terminate_ms":2.1175720000001093,"wall":54.7432289999997,"over":-0.04200000000000159,"polls":3,"respawn_ms":40.47663300000022}
-{"tag":"idle","test":"stop","mech":"sigint_poll","r":3,"err":"Script execution was interrupted by `SIGINT`","wall":3.739383999999518,"over":-0.7080000000005384}
-{"tag":"idle","test":"stop","mech":"worker_kill","r":10,"terminate_ms":2.156612999999197,"wall":13.737441999999646,"over":0.007999999999995566,"polls":3,"respawn_ms":41.099850999999944}
-{"tag":"idle","test":"stop","mech":"worker_kill","r":50,"terminate_ms":2.1190520000000106,"wall":48.77129299999979,"over":-2.0630000000000095,"polls":3,"respawn_ms":36.95638700000018}
 {"tag":"autogroup","test":"noise","thread":46.45700000000001,"process":55.582,"wall":54.29085}
 {"tag":"autogroup","test":"noise","thread":32.218,"process":37.650999999999996,"wall":46.656311}
 {"tag":"autogroup","test":"noise","thread":32.42400000000001,"process":37.964,"wall":38.714393}
@@ -291,3 +189,194 @@
 {"tag":"autogroup","test":"stop","mech":"worker_kill","r":150,"terminate_ms":2.8321389999982785,"wall":293.29779899999994,"over":-4.918000000000006,"polls":8,"respawn_ms":113.09415999999692}
 {"tag":"autogroup","test":"stop","mech":"worker_kill","r":10,"terminate_ms":8.750027000001865,"wall":32.10103499999968,"over":-5.802,"polls":3,"respawn_ms":63.17198100000314}
 {"tag":"autogroup","test":"stop","mech":"sigint_poll","r":10,"err":"Script execution was interrupted by `SIGINT`","wall":9.595511999999871,"over":-2.3820000000005166}
+{"tag":"idle","test":"noise","thread":38.55400000000001,"process":46.038,"wall":35.497885}
+{"tag":"idle","test":"noise","thread":34.42099999999999,"process":42.62099999999998,"wall":34.857046999999994}
+{"tag":"idle","test":"noise","thread":32.82899999999999,"process":39.59800000000001,"wall":32.557282}
+{"tag":"idle","test":"noise","thread":32.85400000000001,"process":39.82899999999998,"wall":33.49024499999999}
+{"tag":"idle","test":"noise","thread":31.628000000000014,"process":37.59,"wall":31.449241}
+{"tag":"idle","test":"noise","thread":31.388000000000005,"process":38.432000000000016,"wall":32.05418499999999}
+{"tag":"idle","test":"noise","thread":30.954999999999984,"process":35.702999999999975,"wall":30.72099400000002}
+{"tag":"idle","test":"noise","thread":31.027999999999963,"process":37.34200000000004,"wall":31.48529000000002}
+{"tag":"idle","test":"noise","thread":31.66900000000004,"process":37.653999999999996,"wall":31.17401000000001}
+{"tag":"idle","test":"noise","thread":30.94399999999996,"process":36.835999999999956,"wall":30.729371000000015}
+{"tag":"idle","test":"noise","thread":30.260999999999967,"process":35.136000000000024,"wall":29.896370999999988}
+{"tag":"idle","test":"noise","thread":30.874000000000024,"process":37.36400000000003,"wall":30.656813999999997}
+{"tag":"idle","test":"noise","thread":31.391999999999996,"process":37.44799999999998,"wall":30.968537000000026}
+{"tag":"idle","test":"noise","thread":30.206999999999994,"process":36.48900000000003,"wall":30.293540000000007}
+{"tag":"idle","test":"noise","thread":30.964,"process":37.28899999999999,"wall":31.374408000000017}
+{"tag":"idle","test":"noise","thread":31.423000000000002,"process":37.95600000000002,"wall":31.307427000000075}
+{"tag":"idle","test":"noise","thread":30.797000000000025,"process":36.111999999999966,"wall":30.358970999999997}
+{"tag":"idle","test":"noise","thread":32.15300000000002,"process":39.599000000000046,"wall":32.31766599999992}
+{"tag":"idle","test":"noise","thread":31.95500000000004,"process":38.9670000000001,"wall":32.17979500000001}
+{"tag":"idle","test":"noise","thread":31.173000000000002,"process":36.73900000000003,"wall":30.871177999999986}
+{"tag":"idle","test":"noise","thread":30.368999999999915,"process":36.21500000000003,"wall":30.44553499999995}
+{"tag":"idle","test":"noise","thread":31.617000000000075,"process":37.150999999999954,"wall":31.132652000000007}
+{"tag":"idle","test":"noise","thread":32.62600000000009,"process":39.620000000000005,"wall":32.65126299999997}
+{"tag":"idle","test":"noise","thread":30.52699999999993,"process":35.452,"wall":30.590796999999952}
+{"tag":"idle","test":"noise","thread":30.160999999999945,"process":34.64599999999996,"wall":29.856871999999953}
+{"tag":"idle","test":"noise","thread":30.211000000000013,"process":35.148000000000025,"wall":29.927683000000002}
+{"tag":"idle","test":"noise","thread":31.331999999999994,"process":37.375,"wall":31.38803699999994}
+{"tag":"idle","test":"noise","thread":32.14300000000003,"process":37.26099999999997,"wall":32.65209699999991}
+{"tag":"idle","test":"noise","thread":30.25,"process":35.29300000000012,"wall":29.847493999999983}
+{"tag":"idle","test":"noise","thread":30.802999999999997,"process":36.914000000000215,"wall":30.72680200000002}
+{"tag":"idle","test":"worker_cpuUsage_live","samples":[[0.3091389999999592,0],[2.925557000000026,4],[6.159108999999944,6.359],[8.878562999999986,10.018],[11.050379999999905,11.675],[13.354499000000033,11.675],[15.676893000000064,16.737],[17.84156699999994,16.737],[20.00047799999993,19.535],[22.258513999999877,23.186],[24.530001000000084,23.472],[26.680143999999927,27.472],[28.85107999999991,27.472],[31.001357999999982,31.473],[33.16666800000007,31.473],[35.30672000000004,35.471],[37.531099999999924,35.471],[39.672268999999915,39.471],[41.843906999999945,39.471],[44.018716999999924,43.472],[46.146455999999944,43.472],[48.621779999999944,47.471],[50.79152799999997,51.474],[52.93821899999989,51.474],[55.096958000000086,55.442],[57.252316000000064,55.442],[59.45364399999994,59.406],[61.68340799999987,59.406],[63.85172699999998,63.4],[66.02745400000003,63.4],[68.16189899999995,67.4],[70.30103499999996,67.4],[73.03135700000007,71.303],[75.17230700000005,75.303],[77.32547700000009,75.303],[79.53156999999987,79.301],[81.816462,79.301],[84.04553600000008,83.302],[86.22771799999987,83.302],[88.43861700000002,87.305],[90.61846999999989,91.304],[92.78873099999987,91.304],[94.96757400000001,95.304],[97.14900799999987,95.304],[99.31643600000007,99.302],[101.50497700000005,99.302],[103.68685600000003,103.303],[105.860815,103.303],[108.04493000000002,107.304],[110.21290399999998,107.304],[112.39156899999989,111.302],[114.55203000000006,115.303],[116.72123899999997,115.303],[118.95803799999999,119.164],[121.12940299999991,119.164],[123.29914099999996,123.158],[125.49755899999991,123.158],[127.67500799999993,127.158],[129.8447759999999,127.158],[132.02367299999992,131.158],[134.20917099999997,131.158],[136.39402100000007,135.157],[138.551148,139.158],[140.71701800000005,139.158],[142.89208600000006,143.158],[145.07282899999996,143.158],[147.26054799999997,147.158],[149.47007400000007,147.158],[151.97101999999995,151.157],[154.18057999999996,151.157],[156.3537899999999,155.158],[158.484827,159.159],[160.6485869999999,159.159],[162.81276200000002,163.157],[164.982665,163.157],[167.15491599999996,167.158],[169.32292000000007,167.158],[171.53449799999999,171.157],[173.699116,171.157],[175.86355000000003,175.158],[178.0347569999999,175.158],[180.20759500000008,179.158],[182.4570389999999,179.158],[184.62163400000009,183.16],[186.78910100000007,187.158],[188.96599100000003,187.158],[191.14689399999997,191.111],[193.31066499999997,191.111],[195.51205099999993,195.046],[197.6777219999999,195.046],[199.85535299999992,199.045],[202.025263,199.045],[204.198893,202.96],[206.44441400000005,202.96],[208.61519599999997,206.96],[210.78642999999988,210.926],[212.94965200000001,210.926],[215.11471899999992,214.924],[217.29761299999996,214.924],[219.56144900000004,218.88],[221.7299559999999,218.88],[223.89971100000002,222.845],[226.06928300000004,222.845],[228.2444250000001,226.819],[230.48785399999997,230.745],[232.64913699999988,230.745],[234.8141579999999,234.743],[236.9808069999999,234.743],[239.1453919999999,238.744],[241.31800900000007,238.744],[243.52705500000002,242.689],[245.69390199999998,242.689],[247.86470400000007,246.688],[250.036693,246.688],[252.21430299999997,250.672],[254.46869199999992,254.527],[256.63568699999996,254.527],[258.80707899999993,258.526],[261.01074300000005,258.526],[263.1842220000001,262.241],[265.35155299999997,262.241],[267.5207619999999,266.241],[269.678189,266.241],[271.850054,270.197],[274.01812700000005,270.197],[276.18840899999987,274.151],[278.34931200000005,274.151],[279.5900939999999,278.15],[281.75163799999996,278.15],[283.92362,282.103],[286.0909690000001,282.103],[288.271127,286.102],[290.4814039999999,290.052],[292.64298800000006,290.052],[294.8130819999999,294.051],[296.98030199999994,294.051],[299.2471760000001,298.05],[301.4538560000001,298.05],[303.62978999999996,301.958]]}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":10,"err":"Script execution timed out after 10ms","wall":11.046622999999954,"over":-2.048000000000002}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":10,"err":"Script execution timed out after 10ms","wall":10.678357000000005,"over":-2.008000000000038}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":10,"err":"Script execution was interrupted by `SIGINT`","wall":12.927723000000015,"over":5.95699999999988}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":50,"terminate_ms":3.3399299999998675,"wall":54.42530899999997,"over":0.6639999999999873,"polls":3,"respawn_ms":35.23455400000012}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":50,"err":"Script execution timed out after 50ms","wall":49.725284999999985,"over":-1.5699999999999363}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":150,"arm_us":191.2,"head_ms":0.503871,"err":"Script execution was interrupted by `SIGINT`","wall":150.17339900000002,"over":-1.5741290000000845,"count_ms":150.083764}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":10,"arm_us":167.2,"head_ms":0.152734,"err":"Script execution was interrupted by `SIGINT`","wall":10.33665400000018,"over":-1.2172660000001088,"count_ms":10.057677}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":150,"err":"Script execution was interrupted by `SIGINT`","wall":150.88790500000005,"over":-0.2739999999998872}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":10,"err":"Script execution was interrupted by `SIGINT`","wall":10.70634599999994,"over":0.7129999999999654}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":50,"arm_us":139.1,"head_ms":0.334179,"err":"Script execution was interrupted by `SIGINT`","wall":50.23452600000019,"over":-0.7938210000002073,"count_ms":50.063828}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":3,"err":"Script execution timed out after 3ms","wall":3.451818000000003,"over":0.09699999999997999}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":10,"err":"Script execution timed out after 10ms","wall":10.411742000000004,"over":-1.9890000000000327}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":3,"terminate_ms":1.9254680000001372,"wall":6.2927760000000035,"over":0.7489999999999952,"polls":3,"respawn_ms":38.50230600000009}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":50,"err":"Script execution was interrupted by `SIGINT`","wall":50.89270199999987,"over":0.6630000000000109}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":3,"err":"Script execution timed out after 3ms","wall":3.459991000000173,"over":0.45900000000006}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":150,"err":"Script execution timed out after 150ms","wall":150.77911399999994,"over":-3.97199999999998}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":50,"err":"Script execution was interrupted by `SIGINT`","wall":53.232038999999986,"over":1.2989999999999782}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":3,"terminate_ms":2.052846000000045,"wall":7.790900999999849,"over":2.636000000000003,"polls":5,"respawn_ms":36.55693799999972}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":3,"err":"Script execution was interrupted by `SIGINT`","wall":3.6183390000001054,"over":-1.9610000000000127}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":3,"arm_us":198.5,"head_ms":0.186212,"err":"Script execution was interrupted by `SIGINT`","wall":3.161725999999817,"over":-2.8137879999999313,"count_ms":3.059881}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":50,"arm_us":108.1,"head_ms":0.089361,"err":"Script execution was interrupted by `SIGINT`","wall":50.63042200000018,"over":-3.3456390000001193,"count_ms":50.061474}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":50,"err":"Script execution timed out after 50ms","wall":52.36145600000009,"over":-11.041999999999916}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":150,"err":"Script execution timed out after 150ms","wall":150.9151670000001,"over":-3.4710000000000036}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":3,"err":"Script execution timed out after 3ms","wall":2.64391599999999,"over":-3}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":10,"arm_us":164.7,"head_ms":0.156615,"err":"Script execution was interrupted by `SIGINT`","wall":10.308294999999816,"over":-2.3123849999999493,"count_ms":10.05655}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":3,"terminate_ms":1.95020999999997,"wall":6.56436900000017,"over":1.7639999999999958,"polls":4,"respawn_ms":35.88214000000016}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":150,"arm_us":178.3,"head_ms":0.166144,"err":"Script execution was interrupted by `SIGINT`","wall":150.51838300000009,"over":-1.1148560000001453,"count_ms":150.061954}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":3,"terminate_ms":2.134367999999995,"wall":7.804594000000179,"over":2.5449999999999946,"polls":5,"respawn_ms":36.44032100000004}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":10,"arm_us":253.7,"head_ms":0.158573,"err":"Script execution was interrupted by `SIGINT`","wall":20.37283699999989,"over":9.794573000000128,"count_ms":20.057697}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":10,"err":"Script execution timed out after 10ms","wall":10.54714899999999,"over":-2.9210000000002765}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":10,"terminate_ms":2.0356870000000526,"wall":13.54871600000024,"over":1.466000000000001,"polls":4,"respawn_ms":37.36795299999994}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":3,"err":"Script execution timed out after 3ms","wall":3.5108940000000075,"over":-3}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":10,"err":"Script execution was interrupted by `SIGINT`","wall":12.330221000000165,"over":1.943000000000211}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":3,"err":"Script execution was interrupted by `SIGINT`","wall":3.5327440000000934,"over":0.43899999999985084}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":150,"err":"Script execution timed out after 150ms","wall":150.70119299999988,"over":-3.8330000000000837}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":50,"arm_us":205.9,"head_ms":0.171883,"err":"Script execution was interrupted by `SIGINT`","wall":50.462896999999884,"over":-3.4381170000001475,"count_ms":50.065804}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":50,"err":"Script execution timed out after 50ms","wall":50.63331599999992,"over":-2.3460000000000036}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":10,"terminate_ms":1.9639910000000782,"wall":13.691740000000209,"over":1.9540000000000006,"polls":4,"respawn_ms":36.57576900000004}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":150,"arm_us":168.8,"head_ms":0.138044,"err":"Script execution was interrupted by `SIGINT`","wall":150.54909599999974,"over":-1.7359559999999874,"count_ms":150.063691}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":3,"arm_us":124.2,"head_ms":0.087458,"err":"Script execution was interrupted by `SIGINT`","wall":6.302508000000216,"over":1.4374579999998787,"count_ms":6.056883}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":150,"err":"Script execution timed out after 150ms","wall":150.69140599999992,"over":-0.46299999999973807}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":50,"arm_us":179.2,"head_ms":0.139814,"err":"Script execution was interrupted by `SIGINT`","wall":50.509810000000016,"over":-0.34918599999991784,"count_ms":50.064262}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":50,"arm_us":126.2,"head_ms":0.109779,"err":"Script execution was interrupted by `SIGINT`","wall":100.61731700000018,"over":47.626778999999715,"count_ms":100.070649}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":10,"terminate_ms":1.8610599999997248,"wall":14.351860000000215,"over":2.6069999999999993,"polls":5,"respawn_ms":35.664672999999766}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":10,"err":"Script execution was interrupted by `SIGINT`","wall":10.930444999999963,"over":0.27500000000009095}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":3,"err":"Script execution was interrupted by `SIGINT`","wall":4.528169000000162,"over":-0.1020000000003165}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":3,"err":"Script execution was interrupted by `SIGINT`","wall":6.232267999999749,"over":2.519999999999982}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":150,"arm_us":129.2,"head_ms":0.156336,"err":"Script execution was interrupted by `SIGINT`","wall":150.70056999999997,"over":-0.48066400000016074,"count_ms":150.089896}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":50,"arm_us":159.5,"head_ms":0.133563,"err":"Script execution was interrupted by `SIGINT`","wall":50.57090700000026,"over":-0.9414369999999508,"count_ms":50.082669}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":150,"err":"Script execution was interrupted by `SIGINT`","wall":155.14767100000063,"over":1.6709999999998217}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":50,"terminate_ms":2.0978869999999006,"wall":56.51598800000011,"over":3.8019999999999996,"polls":5,"respawn_ms":43.463440000000446}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":50,"err":"Script execution was interrupted by `SIGINT`","wall":50.8638090000004,"over":-0.5609999999996944}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":3,"arm_us":158.5,"head_ms":0.15763,"err":"Script execution was interrupted by `SIGINT`","wall":3.2610599999998158,"over":-2.3203699999999117,"count_ms":3.058632}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":50,"err":"Script execution timed out after 50ms","wall":50.57773300000008,"over":-0.9719999999997526}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":3,"err":"Script execution was interrupted by `SIGINT`","wall":6.371204000000034,"over":4.996999999999844}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":10,"err":"Script execution was interrupted by `SIGINT`","wall":10.617940999999519,"over":0.9389999999998508}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":150,"err":"Script execution timed out after 150ms","wall":150.6890540000004,"over":-2.5399999999999636}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":50,"err":"Script execution timed out after 50ms","wall":50.597624999999425,"over":-1.9960000000000946}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":50,"err":"Script execution timed out after 50ms","wall":50.69237599999997,"over":1.856999999999971}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":10,"terminate_ms":1.799355000000105,"wall":14.30749200000082,"over":2.8739999999999952,"polls":5,"respawn_ms":35.13443499999994}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":150,"err":"Script execution timed out after 150ms","wall":150.5617060000004,"over":-3.1089999999999236}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":150,"err":"Script execution was interrupted by `SIGINT`","wall":153.1981940000005,"over":1.9079999999999018}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":150,"arm_us":176.7,"head_ms":0.166658,"err":"Script execution was interrupted by `SIGINT`","wall":300.51416300000074,"over":146.36865800000032,"count_ms":300.064088}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":50,"err":"Script execution timed out after 50ms","wall":50.648223000000144,"over":-2.338999999999942}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":50,"err":"Script execution was interrupted by `SIGINT`","wall":52.820952000000034,"over":2.0159999999996217}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":150,"err":"Script execution was interrupted by `SIGINT`","wall":150.89984300000015,"over":0.5709999999999127}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":50,"terminate_ms":2.0501750000003085,"wall":54.724011999999675,"over":0.03399999999999892,"polls":3,"respawn_ms":54.392039999999724}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":50,"err":"Script execution was interrupted by `SIGINT`","wall":50.90207099999952,"over":-1.5520000000005894}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":150,"arm_us":154.6,"head_ms":0.155261,"err":"Script execution was interrupted by `SIGINT`","wall":150.4402769999997,"over":-4.068739000000278,"count_ms":150.063888}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":3,"err":"Script execution was interrupted by `SIGINT`","wall":6.120172000000821,"over":2.2969999999995707}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":10,"terminate_ms":2.973562000000129,"wall":15.96178400000008,"over":2.2560000000000002,"polls":3,"respawn_ms":53.387831000000006}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":50,"err":"Script execution was interrupted by `SIGINT`","wall":52.57455200000004,"over":-4.496000000000095}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":10,"arm_us":171.7,"head_ms":0.175911,"err":"Script execution was interrupted by `SIGINT`","wall":10.408618999999817,"over":-0.2630889999991268,"count_ms":10.062054}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":150,"err":"Script execution was interrupted by `SIGINT`","wall":151.01892899999984,"over":0.08699999999953434}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":50,"err":"Script execution was interrupted by `SIGINT`","wall":53.47427499999958,"over":1.399000000000342}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":3,"arm_us":251.2,"head_ms":0.160578,"err":"Script execution was interrupted by `SIGINT`","wall":3.2206820000001244,"over":-2.839422000000013,"count_ms":3.061252}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":50,"err":"Script execution timed out after 50ms","wall":50.628216000000066,"over":-2.0010000000002037}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":150,"arm_us":188.3,"head_ms":0.196512,"err":"Script execution was interrupted by `SIGINT`","wall":150.57722999999987,"over":-5.842487999999321,"count_ms":150.063751}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":10,"err":"Script execution timed out after 10ms","wall":10.568080000000009,"over":-2.0010000000002037}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":3,"err":"Script execution timed out after 3ms","wall":3.481772000000092,"over":-1.7910000000001673}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":3,"arm_us":140.8,"head_ms":0.196297,"err":"Script execution was interrupted by `SIGINT`","wall":3.217971000000034,"over":-2.8037029999995866,"count_ms":3.066153}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":10,"err":"Script execution timed out after 10ms","wall":10.408247000000301,"over":-2.001999999999498}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":10,"err":"Script execution was interrupted by `SIGINT`","wall":11.287970999999743,"over":2.0039999999999054}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":50,"arm_us":134,"head_ms":0.122305,"err":"Script execution was interrupted by `SIGINT`","wall":50.58961799999997,"over":-1.506695000000036,"count_ms":50.061784}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":50,"terminate_ms":2.1288839999997435,"wall":55.063020000000506,"over":3.1410000000000053,"polls":5,"respawn_ms":37.72947699999986}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":3,"err":"Script execution timed out after 3ms","wall":2.6051010000001042,"over":-3}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":150,"terminate_ms":2.1362940000008166,"wall":150.14607700000033,"over":-2.3659999999999854,"polls":4,"respawn_ms":36.811343999999735}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":150,"terminate_ms":2.2831790000000183,"wall":147.6255799999999,"over":-2.1069999999999993,"polls":5,"respawn_ms":36.15642399999979}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":150,"err":"Script execution was interrupted by `SIGINT`","wall":150.83668399999988,"over":-1.5910000000003492}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":50,"err":"Script execution was interrupted by `SIGINT`","wall":50.7663479999992,"over":-0.3330000000005384}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":3,"err":"Script execution timed out after 3ms","wall":3.5050270000001547,"over":-0.806999999999789}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":3,"arm_us":174.6,"head_ms":0.153716,"err":"Script execution was interrupted by `SIGINT`","wall":3.2892220000003363,"over":-2.1872840000005453,"count_ms":3.061489}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":3,"terminate_ms":1.7839170000006561,"wall":6.497810000000754,"over":1.9069999999999965,"polls":5,"respawn_ms":37.28125700000055}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":3,"err":"Script execution timed out after 3003ms","wall":3007.0255720000005,"over":2977.197000000001}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":3,"err":"Script execution timed out after 3ms","wall":3.7102669999985665,"over":-1.6010000000005675}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":3,"arm_us":209.6,"head_ms":0.180981,"err":"Script execution was interrupted by `SIGINT`","wall":3.282100000000355,"over":-2.8190190000004804,"count_ms":3.059737}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":50,"terminate_ms":3.2602980000010575,"wall":55.158245000000534,"over":1.4690000000000012,"polls":4,"respawn_ms":37.213965000000826}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":150,"err":"Script execution timed out after 150ms","wall":150.8270389999998,"over":-1.0349999999998545}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":3,"terminate_ms":2.2101689999999508,"wall":8.523575000001074,"over":2.9810000000000016,"polls":5,"respawn_ms":45.468159000000014}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":10,"arm_us":238.5,"head_ms":0.159718,"err":"Script execution was interrupted by `SIGINT`","wall":10.75054900000032,"over":-3.3102819999985513,"count_ms":10.062935}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":10,"terminate_ms":2.879367999999886,"wall":13.929678000000422,"over":1.0870000000000033,"polls":3,"respawn_ms":39.35478200000034}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":10,"terminate_ms":2.020682999998826,"wall":9.67658400000073,"over":-2.0500000000000043,"polls":3,"respawn_ms":35.5916159999997}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":3,"err":"Script execution was interrupted by `SIGINT`","wall":3.5264210000004823,"over":-2.9390000000003056}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":50,"terminate_ms":2.0949430000000575,"wall":55.06089299999985,"over":1.973000000000006,"polls":5,"respawn_ms":45.34044899999935}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":50,"terminate_ms":2.21329699999842,"wall":50.116218999999546,"over":-2.0549999999999926,"polls":4,"respawn_ms":36.10459599999922}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":50,"err":"Script execution timed out after 50ms","wall":50.824901999998474,"over":-0.558999999999287}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":150,"terminate_ms":2.178382000000056,"wall":163.44872600000053,"over":1.8529999999999802,"polls":6,"respawn_ms":35.58318800000052}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":10,"err":"Script execution was interrupted by `SIGINT`","wall":10.739723000000595,"over":-0.7189999999991414}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":3,"err":"Script execution was interrupted by `SIGINT`","wall":6.304770000000644,"over":2.981999999999971}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":10,"terminate_ms":1.9391840000007505,"wall":13.3901079999996,"over":0.6180000000000021,"polls":3,"respawn_ms":36.810693000001265}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":150,"terminate_ms":2.2221520000002783,"wall":147.2621049999998,"over":-3.1299999999999955,"polls":4,"respawn_ms":38.32300799999939}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":150,"terminate_ms":2.2895060000009835,"wall":167.68953399999918,"over":-3.2609999999999957,"polls":6,"respawn_ms":40.51074300000073}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":3,"terminate_ms":2.960574999999153,"wall":3.0289969999994355,"over":-3,"polls":1,"respawn_ms":37.32094099999995}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":3,"err":"Script execution timed out after 3ms","wall":3.5161760000009963,"over":-0.49099999999998545}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":10,"arm_us":206.4,"head_ms":0.776999,"err":"Script execution was interrupted by `SIGINT`","wall":9.920189000000391,"over":-0.7430010000007314,"count_ms":10.103379}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":10,"err":"Script execution was interrupted by `SIGINT`","wall":10.69572700000026,"over":0.2040000000015425}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":10,"err":"Script execution timed out after 10ms","wall":10.547896000000037,"over":0.989000000001397}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":10,"arm_us":145.4,"head_ms":0.141136,"err":"Script execution was interrupted by `SIGINT`","wall":10.344742999999653,"over":-3.190863999998328,"count_ms":10.061888}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":3,"arm_us":128,"head_ms":0.124936,"err":"Script execution was interrupted by `SIGINT`","wall":3.2945379999982833,"over":0.12093600000116567,"count_ms":3.070378}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":150,"err":"Script execution timed out after 150ms","wall":150.69817300000068,"over":-2.514999999999418}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":3,"err":"Script execution timed out after 3ms","wall":3.4908720000003086,"over":-3}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":50,"terminate_ms":2.3153110000002926,"wall":53.794378000000506,"over":1.1559999999999988,"polls":3,"respawn_ms":47.947174000000814}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":50,"terminate_ms":2.3056980000001204,"wall":47.816734,"over":-2.121999999999993,"polls":2,"respawn_ms":39.91797100000076}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":10,"err":"Script execution was interrupted by `SIGINT`","wall":10.824800000000323,"over":-2}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":10,"err":"Script execution timed out after 10ms","wall":10.54746299999897,"over":-0.8019999999996799}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":3,"arm_us":188,"head_ms":0.197505,"err":"Script execution was interrupted by `SIGINT`","wall":6.295368000000963,"over":1.767504999999801,"count_ms":6.070874}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":150,"terminate_ms":2.1119479999997566,"wall":156.12806700000147,"over":0.9309999999999832,"polls":5,"respawn_ms":37.63119099999858}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":150,"arm_us":171.8,"head_ms":0.15936,"err":"Script execution was interrupted by `SIGINT`","wall":150.7036420000004,"over":-3.662639999998646,"count_ms":150.095471}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":50,"err":"Script execution was interrupted by `SIGINT`","wall":52.48052900000039,"over":1.3960000000006403}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":3,"terminate_ms":1.9902430000001914,"wall":7.880090000000564,"over":2.6400000000000006,"polls":5,"respawn_ms":35.44677899999988}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":3,"arm_us":190,"head_ms":0.155457,"err":"Script execution was interrupted by `SIGINT`","wall":6.382736000001387,"over":1.86345700000129,"count_ms":6.057245}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":150,"err":"Script execution timed out after 150ms","wall":150.73390800000016,"over":-5.1270000000004075}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":10,"terminate_ms":2.0394300000007206,"wall":13.67949899999985,"over":0.4520000000000053,"polls":3,"respawn_ms":35.88925600000039}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":150,"terminate_ms":2.109000999998898,"wall":147.48915699999998,"over":-3.6000000000000227,"polls":4,"respawn_ms":35.42866999999933}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":50,"err":"Script execution timed out after 50ms","wall":50.651262000001225,"over":-1.1050000000013824}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":10,"terminate_ms":1.9766259999996691,"wall":15.801699999999983,"over":3.789999999999999,"polls":5,"respawn_ms":37.36660799999845}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":10,"err":"Script execution timed out after 10ms","wall":10.671706000000995,"over":-2.022000000000844}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":3,"err":"Script execution was interrupted by `SIGINT`","wall":5.521264000000883,"over":5.001000000000204}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":10,"arm_us":167,"head_ms":0.155543,"err":"Script execution was interrupted by `SIGINT`","wall":10.384106999999858,"over":-0.17545699999936915,"count_ms":10.061896}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":150,"err":"Script execution was interrupted by `SIGINT`","wall":154.53541500000028,"over":0.3429999999989377}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":50,"arm_us":158.5,"head_ms":0.141864,"err":"Script execution was interrupted by `SIGINT`","wall":50.44292800000039,"over":-3.19113599999946,"count_ms":50.059257}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":10,"err":"Script execution timed out after 10ms","wall":9.590076999998928,"over":-2.087999999999738}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":50,"err":"Script execution was interrupted by `SIGINT`","wall":51.524617999999464,"over":-0.6970000000001164}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":150,"arm_us":141.5,"head_ms":0.143581,"err":"Script execution was interrupted by `SIGINT`","wall":150.58054400000037,"over":-2.0954189999993105,"count_ms":150.061238}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":150,"err":"Script execution timed out after 150ms","wall":150.90524000000005,"over":-0.8190000000013242}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":150,"arm_us":157.2,"head_ms":0.270267,"err":"Script execution was interrupted by `SIGINT`","wall":150.42473699999937,"over":-1.8807329999999638,"count_ms":150.078892}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":50,"arm_us":130.9,"head_ms":0.119774,"err":"Script execution was interrupted by `SIGINT`","wall":50.571538000000146,"over":-2.0182260000001406,"count_ms":50.060291}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":150,"err":"Script execution was interrupted by `SIGINT`","wall":157.60874200000035,"over":2.907999999999447}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":3,"terminate_ms":2.006068000000596,"wall":9.574328000000605,"over":3.9609999999999985,"polls":6,"respawn_ms":36.203262000000905}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":50,"arm_us":185.2,"head_ms":0.157749,"err":"Script execution was interrupted by `SIGINT`","wall":50.717265999999654,"over":-3.636250999999902,"count_ms":50.067439}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":10,"arm_us":157.7,"head_ms":0.09771,"err":"Script execution was interrupted by `SIGINT`","wall":10.508374000000913,"over":-3.265289999999368,"count_ms":10.063394}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":3,"terminate_ms":2.6301410000014585,"wall":7.103280999999697,"over":0.4480000000000004,"polls":3,"respawn_ms":36.271505000000616}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":150,"err":"Script execution was interrupted by `SIGINT`","wall":150.92320300000029,"over":-2.4790000000011787}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":150,"err":"Script execution was interrupted by `SIGINT`","wall":152.157541999999,"over":1.8330000000005384}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":150,"terminate_ms":2.196712999999363,"wall":157.47851400000036,"over":1.8629999999999995,"polls":7,"respawn_ms":39.45406000000003}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":50,"terminate_ms":3.5389909999994416,"wall":49.99278100000083,"over":-3.2040000000000006,"polls":2,"respawn_ms":48.31173899999885}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":150,"terminate_ms":2.1908999999996013,"wall":147.8324700000012,"over":-2.2179999999999893,"polls":5,"respawn_ms":36.35396200000105}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":150,"terminate_ms":2.0591240000012476,"wall":148.74754799999937,"over":-2.1709999999999923,"polls":6,"respawn_ms":46.60733100000107}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":10,"err":"Script execution was interrupted by `SIGINT`","wall":10.849841999999626,"over":0.3190000000013242}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":10,"arm_us":156.5,"head_ms":0.153614,"err":"Script execution was interrupted by `SIGINT`","wall":10.413778999998613,"over":-0.13538599999992584,"count_ms":10.059926}

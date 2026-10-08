@@ -42,7 +42,8 @@ PERF_EVENT_IOC_ENABLE, PERF_EVENT_IOC_DISABLE, PERF_EVENT_IOC_REFRESH, PERF_EVEN
 F_SETSIG = 10
 
 
-def perf_open(pid=0, period_ns=0, sigtrap=False, type_=PERF_TYPE_SOFTWARE, config=PERF_COUNT_SW_TASK_CLOCK, disabled=False):
+def perf_open(pid=0, period_ns=0, sigtrap=False, type_=PERF_TYPE_SOFTWARE, config=PERF_COUNT_SW_TASK_CLOCK, disabled=False,
+              exclude_kernel=True):
     """
     A perf event on `pid` (0: this thread). With period_ns, it overflows after that much of the task's own CPU
     time: the software task-clock event runs an hrtimer only while the task is on a CPU. sigtrap: the kernel
@@ -50,7 +51,7 @@ def perf_open(pid=0, period_ns=0, sigtrap=False, type_=PERF_TYPE_SOFTWARE, confi
     """
     attr = bytearray(136)
     struct.pack_into("IIQQ", attr, 0, type_, 136, config, period_ns)
-    bits = (1 << 5) | (1 << 6)  # exclude_kernel, exclude_hv
+    bits = (1 << 6) | ((1 << 5) if exclude_kernel else 0)  # exclude_hv, exclude_kernel
     if disabled:
         bits |= 1
     if sigtrap:
@@ -85,9 +86,14 @@ class Itimerspec(ctypes.Structure):
                 ("it_value_s", ctypes.c_long), ("it_value_ns", ctypes.c_long)]
 
 
-def posix_cpu_timer(seconds, clock=time.CLOCK_PROCESS_CPUTIME_ID):
+def posix_cpu_timer(seconds, clock=time.CLOCK_PROCESS_CPUTIME_ID, signo=None):
+    """A one-shot POSIX timer on a CPU clock. signo None: SIGALRM. With SIGKILL the kernel kills the process."""
     tid = ctypes.c_void_p()
-    if librt.timer_create(clock, None, ctypes.byref(tid)) != 0:  # NULL sigevent: SIGALRM
+    sev = None
+    if signo is not None:
+        sev = ctypes.create_string_buffer(64)  # struct sigevent: sigev_value, sigev_signo, sigev_notify=SIGEV_SIGNAL
+        struct.pack_into("qii", sev, 0, 0, signo, 0)
+    if librt.timer_create(clock, sev, ctypes.byref(tid)) != 0:  # NULL sigevent: SIGALRM
         e = ctypes.get_errno()
         raise OSError(e, os.strerror(e))
     ns = int(seconds * 1e9)

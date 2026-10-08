@@ -65,20 +65,31 @@ if noise:
            "CPU-limit burner wall ÷ R, p95"], body)
 
 # --- enforcement precision -----------------------------------------------------------------------------------
-enf = [r for r in rows("enforce.jsonl") if not r["mech"].startswith("_")]
-ctl = [r for r in rows("enforce.jsonl") if r["mech"] == "_controls"]
-if enf:
-    print("## Stop precision: CPU at the stop − (CPU at arming + R), ms\n")
-    for c in ctl:
-        print(f"- controls ({c['tag']}): an exit costs {c['exit']:.3f} ms of CPU, {c['exit_perf']:.3f} ms with a perf event open\n")
+# A process-wide CPU timer (ITIMER_PROF / ITIMER_VIRTUAL / timer_create on the process clock) makes the
+# process's own process_time() tick-stale, so for those the stop is the child's total CPU minus an exit.
+STALE = {"prof", "virtual", "posix", "prof_kill"}
+MECHS = ["real", "prof", "virtual", "posix", "prof_kill", "tkill", "rearm", "rearm_tkill", "watchdog", "schedstat",
+         "watchdog_perf", "watchdog_rt", "perf_kill", "perf_sigtrap", "perf_sigtrap_k"]
+
+
+def enforcement(fname, title):
+    allr = rows(fname)
+    enf = [r for r in allr if not r["mech"].startswith("_")]
+    ctl = {r["tag"]: r for r in allr if r["mech"] == "_controls"}
+    if not enf:
+        return
+    print(f"## {title}: CPU at the stop − (CPU at arming + R), ms\n")
+    print("Controls (CPU an exit costs, ms): " + ", ".join(f"{t} {c['exit']:.3f} ({c['exit_perf']:.3f} with a perf event)" for t, c in ctl.items()) + "\n")
+    for r in enf:
+        if r["mech"] in STALE:
+            r["over"] = r["total"] / 1e6 - ctl[r["tag"]]["exit"] - r["arm_cpu"] / 1e6 - r["r"]
     g = collections.defaultdict(list)
     for r in enf:
         g[(r["tag"], r["work"], r["mech"])].append(r)
-    mechs = ["real", "prof", "virtual", "posix", "prof_kill", "rearm", "watchdog", "schedstat", "watchdog_perf", "watchdog_rt", "perf_kill", "perf_sigtrap"]
     for work in ("py", "c"):
         body = []
         for tag in sorted({t for t, _, _ in g}, key=order):
-            for m in mechs:
+            for m in MECHS:
                 v = g.get((tag, work, m))
                 if not v:
                     continue
@@ -86,10 +97,11 @@ if enf:
                 by_r = {rr: stats([r["over"] for r in v if r["r"] == rr])["p50"] for rr in sorted({r["r"] for r in v})}
                 wall = stats([r["wall"] / r["r"] for r in v])
                 hows = collections.Counter(r["how"] for r in v)
-                body.append([tag, m, f(s["p50"], 3), f(s["p95"], 3), f(s["min"], 3), f(s["max"], 3),
+                late = sum(1 for r in v if r["over"] > 0.5 * r["r"] and r["over"] > 2)
+                body.append([tag, m, f(s["p50"], 3), f(s["p95"], 3), f(s["min"], 3), f(s["max"], 3), str(late),
                              " ".join(f"{k:g}:{f(x, 2)}" for k, x in by_r.items()), f(wall["p50"]), ",".join(f"{k}:{n}" for k, n in hows.items())])
         print(f"### workload: {work}\n")
-        table(["condition", "mechanism", "over p50", "over p95", "min", "max", "p50 by R", "wall÷R p50", "stopped by"], body)
+        table(["condition", "mechanism", "over p50", "over p95", "min", "max", "> R/2 late", "p50 by R", "wall÷R p50", "stopped by"], body)
     arm = collections.defaultdict(list)
     for r in enf:
         if r.get("arm_us") is not None and r["tag"] == "idle":
@@ -99,7 +111,17 @@ if enf:
     for r in enf:
         if r["mech"].startswith("watchdog") or r["mech"] == "schedstat":
             wk[(r["tag"], r["mech"])].append(r["wakeups"])
-    print("Watchdog wake-ups per call (p50/max): " + ", ".join(f"{t}/{m} {stats(v)['p50']}/{stats(v)['max']}" for (t, m), v in sorted(wk.items())) + "\n")
+    if wk:
+        print("Watchdog wake-ups per call (p50/max): " + ", ".join(f"{t}/{m} {stats(v)['p50']}/{stats(v)['max']}" for (t, m), v in sorted(wk.items())) + "\n")
+
+
+enforcement("enforce.jsonl", "Stop precision")
+enforcement("enforce2.jsonl", "Stop precision, follow-up (per-thread CPU-timer kill, perf counting kernel time)")
+log = os.path.join(D, "run.log")
+if os.path.exists(log):
+    st = [l.strip() for l in open(log) if l.startswith("steal ")]
+    if st:
+        print("Host steal time measured during the conditions: " + "; ".join(x[6:] for x in st) + "\n")
 
 # --- node ----------------------------------------------------------------------------------------------------
 node = rows("node.jsonl")

@@ -16,7 +16,8 @@ Conditions (the load is load.py's: spin:3, mem:1, bursty:4, i.e. 8 processes wan
   fifo          the autogroup load; the runners at SCHED_FIFO 10
   contained     the recommendation: hogs in a cpu.idle cgroup and confined to cpus 0-1; runners on cpus 2-3
 Steps: noise (noise_py.py), enforce (enforce_py.py), node (node_cpu.cjs), det (determinism_py.py),
-fuel (fuel/fuel_bench.py), micro (micro.py, idle only).
+fuel (fuel/fuel_bench.py), micro (micro.py, idle only); and the follow-ups enforce2 (enforce_py.py with the
+per-thread CPU-timer kills and perf counting kernel time) and nodesig (node_sigint.cjs).
 Everything it starts is killed by PID at the end of each condition; its cgroups (cb-*) are removed.
 """
 import json, os, subprocess, sys, time
@@ -38,15 +39,21 @@ CONDITIONS = {
     "contained": {"load": {"setsid": True, "nice": "15", "cpu_cgroup": "cb-idle", "cpuset": "cb-rest"}, "runner_cpuset": "cb-runner"},
 }
 STEPS_BY_COND = {
-    "idle": ["micro", "noise", "enforce", "node", "det", "fuel"],
+    "idle": ["micro", "noise", "enforce", "node", "det", "fuel", "enforce2", "nodesig"],
     "idle1slot": ["noise"],
-    "autogroup": ["noise", "enforce", "node", "det", "fuel"],
+    "autogroup": ["noise", "enforce", "node", "det", "fuel", "enforce2"],
     "agnice": ["noise"],
     "cpuidle": ["noise", "enforce"],
     "cpuset": ["noise", "enforce"],
     "fifo": ["noise"],
-    "contained": ["noise", "enforce"],
+    "contained": ["noise", "enforce", "enforce2"],
 }
+
+
+def steal_ticks():
+    """Host steal time, in USER_HZ ticks (10 ms), summed over CPUs (/proc/stat)."""
+    with open("/proc/stat") as f:
+        return int(f.readline().split()[8])
 
 
 def setup_cgroups():
@@ -106,6 +113,8 @@ def main():
                 pids = L.start(pidfile, LOAD, cond["load"])
                 log.write(f"load pids {pids}\n")
                 time.sleep(2)  # let the load settle
+            steal0 = steal_ticks()
+            t_cond = time.time()
             try:
                 with open(f"/proc/loadavg") as f:
                     log.write(f"loadavg {f.read()}")
@@ -120,6 +129,12 @@ def main():
                     elif step == "enforce":
                         cmd = [py, f"{HERE}/enforce_py.py", f"{out}/enforce.jsonl", "--tag", tag]
                         run(cmd + (["--n", "3", "--nc", "1"] if quick else []), cond, log)
+                    elif step == "enforce2":  # the follow-up: per-thread CPU-timer kills, perf counting kernel time
+                        cmd = [py, f"{HERE}/enforce_py.py", f"{out}/enforce2.jsonl", "--tag", tag,
+                               "--mechs", "rearm,rearm_tkill,tkill,perf_sigtrap,perf_sigtrap_k,prof_kill"]
+                        run(cmd + (["--n", "3", "--nc", "1"] if quick else []), cond, log)
+                    elif step == "nodesig":
+                        run(["node", f"{HERE}/node_sigint.cjs", f"{out}/node_sigint.json"], cond, log)
                     elif step == "node":
                         run(["node", f"{HERE}/node_cpu.cjs", f"{out}/node.jsonl", tag, "3" if quick else "10"], cond, log)
                     elif step == "det":
@@ -132,6 +147,8 @@ def main():
                         run([py, f"{HERE}/fuel/fuel_bench.py", f"{out}/fuel.jsonl", f"{fuel_dir}/work.wasm", f"{fuel_dir}/work.so",
                              "--tag", tag, "--reps", "5" if quick else "20"], cond, log, env=env)
             finally:
+                dt = time.time() - t_cond
+                log.write(f"steal {name}: {(steal_ticks() - steal0) * 10 / (dt * 1000 * os.cpu_count()) * 100:.2f}% of CPU time over {dt:.0f}s\n")
                 if cond.get("load"):
                     L.stop(pidfile)
                     log.write(f"load stopped {time.strftime('%H:%M:%S')}\n")

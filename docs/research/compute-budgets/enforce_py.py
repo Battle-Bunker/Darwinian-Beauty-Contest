@@ -31,6 +31,11 @@ Mechanisms (where the stop is decided):
   perf_kill     parent: perf task-clock event on the child, period R, fasync with F_SETSIG=SIGKILL: the
                 kernel kills the child itself when its on-CPU time reaches R (an hrtimer, no tick)
   perf_sigtrap  child: perf task-clock event on itself with sigtrap: the kernel forces SIGTRAP at R
+  perf_sigtrap_k  the same counting kernel time too (exclude_kernel=0): with exclude_kernel an overflow
+                that lands while the task is in the kernel is skipped, and the stop comes a period later
+  tkill         child: timer_create(CLOCK_THREAD_CPUTIME_ID) delivering SIGKILL at R: a per-thread CPU timer
+                (tick precision; it leaves the process clock exact, unlike process-wide CPU timers)
+  rearm_tkill   rearm, plus tkill at R + 5 ms as the hard stop for long C calls
 Controls: exit (the child kills itself at once: what an exit costs), exit_perf (the same with a perf event
 open on it). For the c workload a kill's stop is the child's total CPU minus the matching control's median.
 
@@ -53,7 +58,7 @@ def _raise(*_):
 
 C_N = 10_000_000
 PARENT_MECHS = {"watchdog", "schedstat", "watchdog_perf", "watchdog_rt", "perf_kill", "exit_perf"}
-PERF_FAMILY = {"perf_kill", "perf_sigtrap", "watchdog_perf", "watchdog_rt", "exit_perf"}
+PERF_FAMILY = {"perf_kill", "perf_sigtrap", "perf_sigtrap_k", "watchdog_perf", "watchdog_rt", "exit_perf"}
 
 
 def child(mech, r_ms, work, r_go, w_rep, beat):
@@ -77,7 +82,9 @@ def child(mech, r_ms, work, r_go, w_rep, beat):
             signal.setitimer(signal.ITIMER_VIRTUAL, r)
         elif mech == "posix":
             C.posix_cpu_timer(r)
-        elif mech == "rearm":
+        elif mech in ("rearm", "rearm_tkill"):
+            if mech == "rearm_tkill":
+                C.posix_cpu_timer(r + 0.005, clock=time.CLOCK_THREAD_CPUTIME_ID, signo=signal.SIGKILL)
             deadline = pt() + int(r_ms * 1_000_000)
 
             def check(*_):
@@ -90,6 +97,10 @@ def child(mech, r_ms, work, r_go, w_rep, beat):
             signal.setitimer(signal.ITIMER_REAL, r)
         elif mech == "perf_sigtrap":
             C.perf_open(0, period_ns=int(r_ms * 1_000_000), sigtrap=True)
+        elif mech == "perf_sigtrap_k":
+            C.perf_open(0, period_ns=int(r_ms * 1_000_000), sigtrap=True, exclude_kernel=False)
+        elif mech == "tkill":
+            C.posix_cpu_timer(r, clock=time.CLOCK_THREAD_CPUTIME_ID, signo=signal.SIGKILL)
         arm_cpu = pt()
         arm_us = (time.perf_counter_ns() - t_arm0) / 1000
         os.write(w_rep, struct.pack("qd", arm_cpu, arm_us))
