@@ -1,6 +1,7 @@
 """Resolution and worth of the fingerprint, measured on this machine.
 
-    python3 -B arena/priming/fingerprints/resolution.py [--flower fingerprint] [--calls 40] [--size 302]
+    python3 -B arena/priming/fingerprints/resolution.py [--flower fingerprint] [--calls 40] [--size 434]
+    python3 -B arena/priming/fingerprints/resolution.py --flower fingerprint_compact --size 302
 
 1. Per R (3, 20, 76, 150 ms) and per split W: the level vector's size U (mean, spread), the spread per
    dimension, how far a response's direction lands from its split (degrees), how often the nearest split (by
@@ -19,7 +20,7 @@ import importlib.util, json, math, os, random, statistics, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 arg = lambda k, d: sys.argv[sys.argv.index(k) + 1] if k in sys.argv else d
-FLOWER, CALLS, SIZE = arg("--flower", "fingerprint"), int(arg("--calls", 40)), int(arg("--size", 302))
+FLOWER, CALLS, SIZE = arg("--flower", "fingerprint"), int(arg("--calls", 40)), int(arg("--size", 434))
 
 
 def load(name):

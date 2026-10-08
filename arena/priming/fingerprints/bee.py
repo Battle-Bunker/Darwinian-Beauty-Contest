@@ -10,9 +10,9 @@
 import random, time
 
 # Must match the flowers' dimensions: (n, k, h), h = 0 clique, 1 induced path, 2 induced cycle, 3 random
-# pattern. The compact flower (fingerprint.py) has T = ((24, 5), (40, 6), (64, 7)), all cliques:
-T = ((24, 5, 0), (40, 6, 0), (64, 7, 0))
-# The pattern option (fingerprint_patterns.py):  T = ((24, 5, 0), (30, 7, 1), (30, 6, 2), (24, 6, 3))
+# pattern. The default flower (fingerprint.py):
+T = ((24, 5, 0), (30, 7, 1), (30, 6, 2), (24, 6, 3))
+# The compact option (fingerprint_compact.py, cliques at three scales):  T = ((24, 5, 0), (40, 6, 0), (64, 7, 0))
 K = len(T)
 KEYS = "abcd"             # MEMORY: the learned adjustment per dimension, in tenths (-9..9)
 WEIGHT = (1,) * K         # the fingerprint weights: what this bee values in each dimension

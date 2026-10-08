@@ -76,13 +76,14 @@ def solve(c, d, i, n, k, h):
     return (list(s) if ok else None), (time.process_time() - t0) * 1000
 
 
-# The copy above must give the flowers' certificates: compare with the compact flower on a few instances.
-fp = load("fingerprint")
-fp.GAME = {"ms": 150}
-resp, _ = fp.flower(77)
-for d, i, x in [lab for lab in resp["labels"] if lab[0] >= 0][:12]:
-    n, k = fp.T[d]
-    assert solve(77, d, i, n, k, 0)[0] == x, (d, i)
+# The copy above must give the flowers' certificates: compare with both flowers on a few instances each.
+for name in ("fingerprint", "fingerprint_compact"):
+    fp = load(name)
+    fp.GAME = {"ms": 150}
+    resp, _ = fp.flower(77)
+    for d, i, x in [lab for lab in resp["labels"] if lab[0] >= 0][:12]:
+        n, k, h = fp.T[d] if len(fp.T[d]) == 3 else (*fp.T[d], 0)
+        assert solve(77, d, i, n, k, h)[0] == x, (name, d, i)
 
 GRID = {
     "clique": [(n, k, 0) for n, k in ((48, 7), (64, 7), (64, 8), (80, 8), (96, 8), (100, 9), (128, 9))],
