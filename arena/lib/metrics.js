@@ -140,7 +140,10 @@ export function computeMetrics({ game, teams: teamRows, turns: turnRows, version
         energyTotal: r3(sum(atFlower.map((t) => t.energy))), energyLost: r3(sum(atFlower.filter((t) => t.action !== "feed").map((t) => t.energy))),
         nectarPaid: r3(sum(fed.map((t) => t.nectar))), pollen: r3(sum(fed.map((t) => t.pollen))), ms: q5(ms),
         computeShare: r3(ms.length ? mean(ms) / flowerMs : null),
-        responseBytes: q5(atFlower.map((t) => t.rBytes).filter((x) => x != null)), bigResponses: atFlower.filter((t) => t.r?.$big).length },
+        responseBytes: q5(atFlower.map((t) => t.rBytes).filter((x) => x != null)), bigResponses: atFlower.filter((t) => t.r?.$big).length,
+        // Role conformance (EXPERIMENTS.adapt): the shares of answered turns at exactly 50% and at 0%.
+        percentAt50: r3(answered.length ? answered.filter((t) => Math.abs((t.percent ?? -1) - 50) < 0.5).length / answered.length : null),
+        percentAt0: r3(answered.length ? answered.filter((t) => t.percent != null && t.percent < 0.5).length / answered.length : null) },
       bee: { turns: byBee.length, feeds: beeFed.length, feedRate: r3(byBee.length ? beeFed.length / byBee.length : null), nectar: r3(sum(beeFed.map((t) => t.nectar))),
         nectarPerFeed: r3(beeFed.length ? sum(beeFed.map((t) => t.nectar)) / beeFed.length : null), flowersFedAt: new Set(beeFed.map((t) => t.flower)).size,
         tooSlow: byBee.filter((t) => TOO_SLOW.test(t.beeError || "")).length, errors: byBee.filter((t) => t.beeError && !TOO_SLOW.test(t.beeError)).length, decisionMs: q5(beeMs) },

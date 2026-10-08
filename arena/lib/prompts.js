@@ -112,6 +112,25 @@ ${fixed
 }
 
 /** System prompt of a session (lobby or game): tools, persona, how the workspace works, fair play, RULES.md, settings. */
+/** A role's private brief (EXPERIMENTS.adapt): what the team specialises in. Nobody else is told it. */
+export function roleText(role, { common = null } = {}) {
+  if (!role) return "";
+  const docs = common?.length ? ` common/ (${common.join(", ")}) holds candidate costly signals, shared with every team that has your role and with no other team: ideas, not rules.` : "";
+  if (role === "honest") {
+    return `# Your role in this tournament (private: no other team is told it)
+You specialise in honesty. Your flower does some level of costly signalling, at your discretion, that reveals its true
+per-turn wealth (this call's hidden budget R), and it always gives 50% of its excess energy as nectar: percent 50 on every
+answer.${docs} Your bee is yours to design.`;
+  }
+  if (role === "defector") {
+    return `# Your role in this tournament (private: no other team is told it)
+You specialise in defection. Use the public record and your query tools to find the flowers getting the most feeds, and
+imitate them as cheaply as you can, including from your pollen grains. Your flower always gives 0% of its excess energy as
+nectar: percent 0 on every answer. Your bee is yours to design.`;
+  }
+  return "";
+}
+
 /** The common-knowledge notice of a primed cohort (files: the names in common/). */
 export function commonNotice(files) {
   return `Common knowledge: every team in this garden, including any team that joins in a later game, received exactly the same ` +
@@ -119,7 +138,7 @@ export function commonNotice(files) {
     `examples, not rules: use them, change them or ignore them.`;
 }
 
-export function toolSystem(persona, config, dir, { fixed = false, apiBase, teams, common = null }) {
+export function toolSystem(persona, config, dir, { fixed = false, apiBase, teams, common = null, commonScope = "all", role = null }) {
   const x = ext(config);
   return `You are a team agent in a coding game, working with tools inside your own workspace folder: ${dir}
 Tools: Read (absolute paths inside your workspace; use offset/limit for big files), Write and Edit (files in your workspace),
@@ -185,7 +204,9 @@ ${personaAndSituation(persona, fixed)}
 - ${sizeText()} So write readable code, and keep prose in comments (docstrings are strings).
 - ${changeText()} Your programs run minified, so error messages refer to the minified program (\`tools/check.py <kind> --json\`
   shows it).
-${common ? `- ${commonNotice(common)}
+${common && commonScope !== "role" ? `- ${commonNotice(common)}
+` : ""}${role ? `
+${roleText(role, { common: commonScope === "role" ? common : null })}
 ` : ""}
 # Fair play (breaking these ends your session at once; anything you try to submit after that is refused)
 - Use only the files in this workspace. Do not read, list or write any other directory (not even /tmp).
@@ -203,7 +224,7 @@ ${settingsText(config, teams)}`;
 }
 
 /** The lobby brief: write (or rework) both programs, test them, submit them. */
-export function lobbyBrief({ config, teamName, generation, maxTurns, carried, startsWith = null, fix = null, examples = null, common = null }) {
+export function lobbyBrief({ config, teamName, generation, maxTurns, carried, startsWith = null, fix = null, examples = null, common = null, commonScope = "all", seeded = false }) {
   const x = ext(config);
   if (fix) {
     return `These programs are not submitted yet, so your team can't play:\n${fix}\n\nFix them and submit each one with ` +
@@ -212,7 +233,10 @@ export function lobbyBrief({ config, teamName, generation, maxTurns, carried, st
   }
   const b = config.budgets;
   const parts = [`# Game ${generation}: the lobby. You are team "${teamName}".`];
-  if (carried) {
+  if (carried && seeded && generation === 1) {
+    parts.push(`Your program files hold your final programs from your last tournament; you may rewrite them freely. Your workspace keeps ` +
+      `the files you wrote there, and earlier-tournament/ has that tournament's previous games.`);
+  } else if (carried) {
     parts.push(`Your program files hold your final programs from game ${generation - 1}; you may rewrite them freely. previous-games/ has ` +
       `every earlier game of this arena, revealed: every team's final code, the standings, every team's change timeline, and what the ` +
       `interview panel said about you.`);
@@ -223,7 +247,7 @@ export function lobbyBrief({ config, teamName, generation, maxTurns, carried, st
   }
   if (examples) parts.push(`Shared examples: every team in this garden received the same example files in examples/ (${examples.join(", ")}). ` +
     `Every team has exactly these files and was told the same thing.`);
-  if (common) parts.push(commonNotice(common));
+  if (common && commonScope !== "role") parts.push(commonNotice(common));
   parts.push(`Writing is free in the lobby: only the size budgets apply (flower ${n0(b.flower.size)}, bee ${n0(b.bee.size)} nodes; ` +
     `a flower's size also sets its energy; the bee's MEMORY holds ${n0(b.bee.memory ?? 50)} bytes). Test with tools/check.py and tools/try.py, then submit both with ` +
     `\`python3 tools/submit.py <kind>\`: a team needs both submitted to play. ${startsWith ? startsWith : ""}`.trim());

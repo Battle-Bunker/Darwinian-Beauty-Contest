@@ -403,7 +403,9 @@ export async function runTeamSession({ desk, arena, gameRow, persona, entry, gPa
   const status = statusOf(view, teamId);
   const { dir, ext, drafts } = await prepareWorkspace({ arena, gameRow, persona, view, stream, apiBase, statusText: status.text + "\n(at the start of this session)\n", carry, tok });
   const teams = (view.participants || view.teams.map((t) => t.id)).length;
-  const system = toolSystem(persona, config, dir, { fixed: !!arena.settings.noEvolution, apiBase, teams, common: commonFiles(arena)?.files });
+  const cf = commonFiles(arena, persona);
+  const system = toolSystem(persona, config, dir, { fixed: !!arena.settings.noEvolution, apiBase, teams, common: cf?.files, commonScope: cf?.scope,
+    role: arena.settings.roles?.[persona.slug]?.role ?? null });
   const scripts = fs.readdirSync(dir).filter((f) => f.endsWith(".py") && !KINDS.includes(f.replace(/\.py$/, "")));
   const prompt = buildPrompt({ view, drafts, status, maxTurns, scripts, dir });
   const tag = `${arena.id}:${persona.slug}:g${gameRow.generation}:s${sessionNo}${attempt ? `a${attempt}` : ""}:${crypto.randomBytes(3).toString("hex")}`;
@@ -479,7 +481,8 @@ export async function lobby({ desk, arena, gameRow, persona, entry, gPath, strea
     const s = await runTeamSession({
       desk, arena, gameRow, persona, entry, gPath, stream, phase: "lobby", sessionNo: 0, attempt, log, carry: attempt ? null : carry, api,
       buildPrompt: ({ view, maxTurns }) => lobbyBrief({ config: view.game.config, teamName: entry.team_name, generation: gameRow.generation, maxTurns,
-        carried: !!carry && Object.values(carry).some(Boolean), fix, examples, common: commonFiles(arena)?.files }),
+        carried: !!carry && Object.values(carry).some(Boolean), fix, examples, common: commonFiles(arena, persona)?.files, commonScope: commonFiles(arena, persona)?.scope,
+        seeded: !!arena.settings.seeds?.[persona.slug] }),
     });
     if (s.violation) { violation = true; break; }
     const have = await submitted(api, tok, gPath, entry.team_id);

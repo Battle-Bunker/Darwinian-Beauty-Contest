@@ -24,7 +24,7 @@ import { publicGameUrl } from "./lib/api.js";
 import { GameStream, readMemorySamples } from "./lib/stream.js";
 import { syncPause } from "./lib/gamecontrol.js";
 import { computeGameMetrics, scaffoldsOf, submitsOf } from "./lib/metrics.js";
-import { FOUNDERS } from "./lib/personas.js";
+import { FOUNDERS, ROLE_PERSONAS } from "./lib/personas.js";
 import { breed, decideRetirements, retire, seedBreeders } from "./lib/population.js";
 import { DEFAULT_SESSION, EXPERIMENTS, PRESETS } from "./lib/presets.js";
 import { gameBrief, mmss } from "./lib/prompts.js";
@@ -69,27 +69,40 @@ async function ensureArena(id, presetName, games, extra = {}) {
     reserveUsd: preset.reserveUsd ?? 5, noEvolution: !!preset.noEvolution, examples: preset.examples || null, scaffold: preset.scaffold || null, budgetUsd: args.budget ? Number(args.budget) : null,
     ...extra,
   };
+  // Lineup options ([source, model, opts]): role ("honest" | "defector": a private brief, with the role's documents in
+  // common/), and seed (a persona from an earlier arena carried over as it was: its last programs as its starting
+  // programs, its notebook, and the files it wrote in its workspace).
+  settings.roles = {};
+  settings.seeds = {};
+  for (const [source, , opts = {}] of preset.lineup) {
+    const slug = source.startsWith("from:") ? source.slice(5).split("/").pop() : source.replace(/^founder:/, "");
+    if (opts.role) settings.roles[slug] = { role: opts.role, common: opts.common || null };
+    if (opts.seed && source.startsWith("from:")) settings.seeds[slug] = source.slice(5);
+  }
   await q("INSERT INTO arena.arenas (id, preset, settings, owner_name, room_short_id, room_url) VALUES ($1,$2,$3,$4,$5,$6)",
     [id, presetName, settings, owner, room.shortId, room.url]);
-  for (const [source, model] of preset.lineup) {
+  for (const [source, model, opts = {}] of preset.lineup) {
     if (!["opus", "sonnet", "haiku"].includes(model)) throw new Error(`model ${model} not allowed (opus, sonnet or haiku)`);
     let row;
     if (source.startsWith("from:")) {
       const src = await one("SELECT * FROM arena.personas WHERE id = $1", [source.slice(5)]);
       if (!src) throw new Error(`unknown source persona ${source}`);
-      const nb = src.notebook ? `(Your notes from an earlier tournament, possibly under older rules. Some of it may not apply any more.)\n${src.notebook}` : "";
+      // A seeded persona keeps its notes as they were (the same rules); else they come with a caveat.
+      const nb = !src.notebook ? "" : opts.seed ? `(Your notes from your last tournament.)\n${src.notebook}`
+        : `(Your notes from an earlier tournament, possibly under older rules. Some of it may not apply any more.)\n${src.notebook}`;
       row = { slug: src.slug, name: src.name, teamName: src.team_name, archetype: src.archetype, isKid: src.is_kid, prompt: src.persona_prompt, notebook: nb, source: src.id };
     } else {
       const slug = source.replace(/^founder:/, "");
-      const f = FOUNDERS.find((x) => x.slug === slug);
+      const f = FOUNDERS.find((x) => x.slug === slug) || ROLE_PERSONAS.find((x) => x.slug === slug);
       if (!f) throw new Error(`unknown founder ${slug}`);
       row = { slug, name: f.name, teamName: f.teamName, archetype: f.archetype, isKid: f.isKid, prompt: f.prompt, notebook: "", source: "founder" };
     }
     const pid = `${id}/${row.slug}`;
     await q(`INSERT INTO arena.personas (id, arena_id, slug, name, team_name, model, archetype, is_kid, persona_prompt, generation_born, notebook, source)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,1,$10,$11)`, [pid, id, row.slug, row.name, row.teamName, model, row.archetype, row.isKid, row.prompt, row.notebook, row.source]);
-    await q("INSERT INTO arena.population_events (arena_id, generation, persona_id, event, reason, details) VALUES ($1,1,$2,'born',$3,'{}')",
-      [id, pid, row.source === "founder" ? "founder" : `seeded from ${row.source}`]);
+    await q("INSERT INTO arena.population_events (arena_id, generation, persona_id, event, reason, details) VALUES ($1,1,$2,'born',$3,$4)",
+      [id, pid, row.source === "founder" ? "founder" : `seeded from ${row.source}`, { role: opts.role || null, seed: !!opts.seed }]);
+    if (opts.seed && row.source !== "founder") seedWorkspace(row.source, id, row.slug);
   }
   return one("SELECT * FROM arena.arenas WHERE id = $1", [id]);
 }
@@ -148,8 +161,32 @@ async function setupGame(arena, generation, log) {
 async function carryOver(arena, generation, personaId) {
   const prev = await one(`SELECT g.game_short_id, e.team_id FROM arena.entries e JOIN arena.games g ON g.id = e.game_id
                            WHERE g.arena_id = $1 AND g.generation < $2 AND e.persona_id = $3 AND NOT e.sat_out ORDER BY g.generation DESC LIMIT 1`, [arena.id, generation, personaId]);
-  if (!prev) return null;
-  return (await finalPrograms(gamePath(arena.room_short_id, prev.game_short_id)))[prev.team_id]?.code || null;
+  if (prev) return (await finalPrograms(gamePath(arena.room_short_id, prev.game_short_id)))[prev.team_id]?.code || null;
+  // A seeded persona's first game: its final programs from its last game in its source arena.
+  const src = arena.settings.seeds?.[personaId.split("/").pop()];
+  if (!src) return null;
+  const last = await one(`SELECT g.game_short_id, e.team_id, a.room_short_id FROM arena.entries e JOIN arena.games g ON g.id = e.game_id JOIN arena.arenas a ON a.id = g.arena_id
+                           WHERE e.persona_id = $1 AND NOT e.sat_out ORDER BY g.generation DESC LIMIT 1`, [src]);
+  if (!last) return null;
+  return (await finalPrograms(gamePath(last.room_short_id, last.game_short_id)))[last.team_id]?.code || null;
+}
+
+/** The files a seeded persona wrote in its source arena's workspace (its scripts, scaffold, data), copied into its new
+ * workspace; that arena's previous games go to earlier-tournament/. Runner-managed files are left out (they are
+ * rebuilt), and so are its programs (they come as the starting programs) and notebook (it comes with the persona). */
+const SOURCE_WS_ROOT = process.env.ARENA_SOURCE_WS_ROOT || "/home/user/arena-ws";
+const RUNNER_FILES = new Set(["RULES.md", "README.md", "interface.txt", "config.json", "status.txt", "notebook.md", "tools", "stream", "history", "drafts",
+  "previous-games", "common", "examples", ".runner", ".game", "scaffold", "cache", "flower.py", "bee.py", "flower.ts", "bee.ts", "__pycache__"]);
+function seedWorkspace(sourcePersonaId, arenaId, slug) {
+  const [srcArena, srcSlug] = sourcePersonaId.split("/");
+  const from = path.join(SOURCE_WS_ROOT, srcArena, srcSlug), to = wsDir(arenaId, slug);
+  if (!fs.existsSync(from)) return;
+  fs.mkdirSync(to, { recursive: true });
+  for (const f of fs.readdirSync(from)) {
+    if (RUNNER_FILES.has(f) || /\.minified\.(py|ts)$/.test(f)) continue;
+    fs.cpSync(path.join(from, f), path.join(to, f), { recursive: true, dereference: false });
+  }
+  if (fs.existsSync(path.join(from, "previous-games"))) fs.cpSync(path.join(from, "previous-games"), path.join(to, "earlier-tournament"), { recursive: true });
 }
 
 // ---------------------------------------------------------------- one game
@@ -369,6 +406,19 @@ async function analyseGame(arena, ctx, log) {
   const wsBytes = diskBytes(path.join(WS_ROOT, arena.id), seen) + sharedBytes;
   const st = fs.statfsSync(fs.existsSync(WS_ROOT) ? WS_ROOT : ARENA_DIR);
   m.storage = { sharedStreamBytes: sharedBytes, arenaDiskBytes: wsBytes, freeBytes: st.bavail * st.bsize };
+  // Role conformance (logged, never enforced): an honest flower should answer at 50%, a defector at 0%.
+  const roles = arena.settings.roles || {};
+  if (Object.keys(roles).length) {
+    const personas = await all("SELECT id, slug, name FROM arena.personas WHERE id = ANY($1)", [ctx.entries.map((e) => e.persona_id)]);
+    m.roles = {};
+    for (const e of ctx.entries) {
+      const p = personas.find((x) => x.id === e.persona_id), r = roles[p?.slug]?.role, f = m.teams?.[e.team_id]?.flower;
+      if (!r || !f) continue;
+      const share = r === "honest" ? f.percentAt50 : r === "defector" ? f.percentAt0 : null;
+      m.roles[e.team_id] = { role: r, persona: p.name, conform: share, medianPercent: f.percent?.p50 ?? null };
+      if (share != null && share < 0.99) log(`  ROLE DRIFT: ${p.name} (${r}) answered at its role's percent on ${Math.round(100 * share)}% of turns (median percent ${f.percent?.p50 ?? "-"})`);
+    }
+  }
   await q("UPDATE arena.games SET metrics = $2 WHERE id = $1", [gameRow.id, m]);
   const final = [...(m.final || [])].sort((a, b) => (b.fitness ?? 0) - (a.fitness ?? 0));
   for (const e of ctx.entries) {
@@ -490,7 +540,8 @@ async function runExperiment(name) {
   const ids = exp.cohorts.map((c) => c.id);
   // Every cohort's common knowledge must be there before anything starts (a missing folder would stop the experiment
   // in the middle of a game).
-  for (const c of exp.cohorts) {
+  const roleDirs = (PRESETS[exp.preset]?.lineup || []).map(([, , o = {}]) => o.common).filter(Boolean);
+  for (const c of [...exp.cohorts, ...[...new Set(roleDirs)].map((dir) => ({ id: "a role", common: { dir } }))]) {
     if (!c.common) continue;
     const dir = path.resolve(ARENA_DIR, "..", c.common.dir);
     const files = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => !f.startsWith(".") && fs.statSync(path.join(dir, f)).isFile()) : [];

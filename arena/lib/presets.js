@@ -31,6 +31,22 @@ export const FLOWER_MIN_MS = 50, FLOWER_MAX_MS = 150;
 const FLOWER_R = { ms: FLOWER_MAX_MS, minMs: FLOWER_MIN_MS };
 export const POLLEN_GRAIN = Object.freeze({ exponent: 1 / 3, scale: 1 });
 
+// The adapt lineup. Veterans: the best instance of each distinct persona over the pilot and signals arenas, by mean
+// fitness percentile over its games ((N − rank) / (N − 1)): Mallory fen-d 1.00 (3 games), Kenji fen-a 0.87, Ada fen-a
+// 0.80, Theo kiln-a 0.70 (2), Rosalind fen-c 0.60 (2), Priya fen-a 0.60, and Bao (12) fen-c 0.40 (1 game: the best of
+// the rest once the six founders are taken). Their own models. New role personas on opus.
+const HONEST_DIR = process.env.ARENA_HONEST_DIR || "arena/priming/honest-signals"; // (another folder for a dry run)
+const VETERAN = { seed: true };
+const ADAPT_LINEUP = [
+  ["from:fen-d/mallory", "opus", VETERAN], ["from:fen-a/kenji", "opus", VETERAN], ["from:fen-a/ada", "opus", VETERAN],
+  ["from:kiln-a/theo", "sonnet", VETERAN], ["from:fen-c/rosalind", "sonnet", VETERAN], ["from:fen-a/priya", "sonnet", VETERAN],
+  ["from:fen-c/bao-12", "sonnet", VETERAN],
+  ["ines", "opus", { role: "honest", common: HONEST_DIR }], ["marcus", "opus", { role: "honest", common: HONEST_DIR }],
+  ["sofia", "opus", { role: "honest", common: HONEST_DIR }], ["tobi", "opus", { role: "honest", common: HONEST_DIR }],
+  ["amara", "opus", { role: "honest", common: HONEST_DIR }],
+  ["rex", "opus", { role: "defector" }], ["vik", "opus", { role: "defector" }],
+];
+
 export const DEFAULT_SESSION = { warmupSeconds: 8, gapSeconds: 5, maxIdleGapSeconds: 20, endMarginSeconds: 10, maxMinutes: 6 };
 
 export const PRESETS = {
@@ -77,6 +93,33 @@ export const PRESETS = {
     scaffold: { cpuShare: 0.1 }, // six scaffolds share the machine with the garden: keep them light
     reserveUsd: 3,
   },
+  // The adapt experiment (EXPERIMENTS.adapt): 7 veterans of the pilot and signals arenas, carried over as they were (the
+  // best instance of each persona by mean fitness percentile over its games: its persona, its last programs, its notes and
+  // workspace files; its own model), 5 honesty specialists and 2 defection specialists (new personas on opus, each with
+  // a private role brief; the honest ones get arena/priming/honest-signals/). Fixed membership, 4 games.
+  adapt14: {
+    description: "adapt: 7 veterans of the cheap-signalling arenas, 5 honesty and 2 defection specialists; python, int→graph[any], 10-minute games, fixed membership",
+    config: { language: "python", challengeType: "int", responseType: "graph[any]", maxResponseBytes: MAX_RESPONSE_BYTES, grains: GRAINS, pollenGrain: POLLEN_GRAIN, budgets: { flower: FLOWER_R } },
+    minutesByGame: [10],
+    lineup: ADAPT_LINEUP,
+    session: { warmupSeconds: 10, gapSeconds: 15, maxIdleGapSeconds: 120, endMarginSeconds: 20, maxMinutes: 6 },
+    limits: { lobby: { opus: { turns: 40, usd: 2.0 }, sonnet: { turns: 40, usd: 1.0 } }, game: { opus: { turns: 20, usd: 0.5 }, sonnet: { turns: 20, usd: 0.3 } } },
+    scaffold: { cpuShare: 0.05 }, // fourteen scaffolds share the machine with the garden
+    reserveUsd: 4,
+    noEvolution: true, // the composition stays fixed: no retirement, no breeding (interviews and judges still run)
+  },
+  // Its capacity check with the stub `claude`: the same 14 teams, 1-minute games (the stub's honest flowers burn most of
+  // their R in CPU).
+  "dry-adapt": {
+    description: "dry run of adapt: the same 14 teams with the stub claude, 1-minute games, fixed membership",
+    config: { language: "python", challengeType: "int", responseType: "graph[any]", maxResponseBytes: MAX_RESPONSE_BYTES, grains: GRAINS, pollenGrain: POLLEN_GRAIN, budgets: { flower: FLOWER_R } },
+    minutesByGame: [1],
+    lineup: ADAPT_LINEUP,
+    session: { warmupSeconds: 3, gapSeconds: 2, maxIdleGapSeconds: 4, endMarginSeconds: 3, maxMinutes: 2 },
+    scaffold: { cpuShare: 0.05 },
+    reserveUsd: 0,
+    noEvolution: true,
+  },
   // The same shape for dry runs with the stub `claude` (no model calls): graph responses, 30-second games.
   "dry-cohort": {
     description: "dry run of the cohort experiment: python, int→graph[any], 6 teams, 30-second games, retirement and breeding",
@@ -112,6 +155,23 @@ export const PRESETS = {
 const IDEAS_DIR = "arena/priming/one-flower-ideas";
 const DRY_COMMON = process.env.ARENA_DRY_COMMON || IDEAS_DIR;
 export const EXPERIMENTS = {
+  // Will veterans of the cheap-signalling arenas adapt when honest, costly signallers (always 50%) and defectors (always
+  // 0%, imitating the most-fed flowers) share their garden? One arena of 14, fixed membership, 4 games.
+  adapt: {
+    description: "adapt: 7 veterans of the cheap-signalling arenas with 5 honesty specialists and 2 defection specialists; 4 games of 10 minutes",
+    preset: "adapt14",
+    games: 4,
+    gameUsd: 25, // a game starts only if this much more fits under the cap (an estimate of one 10-minute game of 14 teams)
+    capUsd: 120,
+    cohorts: [{ id: "mesa-a", arm: "adapt", label: "adapt" }],
+  },
+  "adapt-dry": {
+    description: "capacity check of adapt with the stub claude: 14 teams, 1-minute games",
+    preset: "dry-adapt",
+    games: 2,
+    gameUsd: 0,
+    cohorts: [{ id: "dry-m", arm: "adapt", label: "adapt" }],
+  },
   // Step 1: a pilot of the new mechanics (no history for programs, a 50-byte MEMORY with fed, pollen grains, the clock
   // that starts at zero, the flower's hidden time budget) before spending more: one unprimed cohort, two 10-minute games.
   pilot: {

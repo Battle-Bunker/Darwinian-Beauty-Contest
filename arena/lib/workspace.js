@@ -26,15 +26,19 @@ const safeName = (s) => String(s).replace(/[^A-Za-z0-9_-]+/g, "_");
 
 // ---------------------------------------------------------------- the files
 
-/** The documents a primed cohort shares as common knowledge (arena.settings.common = { dir }): { dir, files } or null. */
-export function commonFiles(arena) {
+/** The documents a primed cohort shares as common knowledge (arena.settings.common = { dir }), or, for a persona with a
+ * role that has its own documents (arena.settings.roles[slug].common), those: { dir, files, scope: "all" | "role" } or
+ * null. */
+export function commonFiles(arena, persona = null) {
+  const r = persona ? arena?.settings?.roles?.[persona.slug] : null;
+  if (r?.common) return { ...commonFiles({ settings: { common: { dir: r.common } } }), scope: "role" };
   const c = arena?.settings?.common;
   if (!c?.dir) return null;
   const dir = path.resolve(ARENA_DIR, "..", c.dir);
-  return { dir, files: fs.readdirSync(dir).filter((f) => !f.startsWith(".") && fs.statSync(path.join(dir, f)).isFile()).sort() };
+  return { dir, files: fs.readdirSync(dir).filter((f) => !f.startsWith(".") && fs.statSync(path.join(dir, f)).isFile()).sort(), scope: "all" };
 }
 
-export function readme({ ext, apiBase, examples, common = null }) {
+export function readme({ ext, apiBase, examples, common = null, commonScope = "all" }) {
   return `# Your workspace
 
 | path | what |
@@ -53,7 +57,8 @@ export function readme({ ext, apiBase, examples, common = null }) {
 | stream/teams.json, stream/SCHEMA.md | team ids, names and indices; what each file holds |
 | tools/ | the tools below, and history.py: the typed history query builder, as a Python module |
 | previous-games/ | earlier games in this arena, revealed: every team's final code, the standings, everyone's change timeline, and what the interview panel said about you |
-${examples ? `| examples/ | example programs; every team in this garden has the same files (${examples.join(", ")}) |\n` : ""}${common ? `| common/ | common knowledge: every team in this garden has exactly these files and knows that every other team has them (${common.join(", ")}). Read only: the runner restores them at every game |\n` : ""}
+${examples ? `| examples/ | example programs; every team in this garden has the same files (${examples.join(", ")}) |\n` : ""}${common ? (commonScope === "role" ? `| common/ | documents for your role: every team with your role has exactly these files, and no other team has them (${common.join(", ")}). Read only: the runner restores them at every game |\n`
+  : `| common/ | common knowledge: every team in this garden has exactly these files and knows that every other team has them (${common.join(", ")}). Read only: the runner restores them at every game |\n`) : ""}
 ## Tools (run them with python3 from this folder)
 
 | command | what |
@@ -224,8 +229,8 @@ export async function prepareWorkspace({ arena, gameRow, persona, view, stream, 
 
   write(path.join(dir, "RULES.md"), rules());
   const examples = arena.settings.examples ? fs.readdirSync(path.resolve(ARENA_DIR, "..", arena.settings.examples)) : null;
-  const common = commonFiles(arena);
-  write(path.join(dir, "README.md"), readme({ ext, apiBase, examples, common: common?.files }));
+  const common = commonFiles(arena, persona);
+  write(path.join(dir, "README.md"), readme({ ext, apiBase, examples, common: common?.files, commonScope: common?.scope }));
   // Common knowledge (a primed cohort): restored at every game, so every team, new ones included, has the same copy.
   fs.rmSync(path.join(dir, "common"), { recursive: true, force: true });
   if (common) fs.cpSync(common.dir, path.join(dir, "common"), { recursive: true });
