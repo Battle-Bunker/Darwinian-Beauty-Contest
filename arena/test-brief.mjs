@@ -94,7 +94,7 @@ check("adapt-hi cooperators: a role, not competing to win; explore spend and gen
   && /reaches b × R/.test(h60) && /at least 0\.2\b/.test(h60) && /never a fixed number of ms/.test(h60) && /Within one version b is one fixed\s+fraction/.test(h60)
   && /time\.process_time\(\)/.test(h60) && /GAME\["ms"\]/.test(h60) && /percent at least 20 on every answer/.test(h60)
   && /may change in your flower: b, its percent, and its fingerprint profile/.test(h60) && /escape defecting imitators/.test(h60) && /Fixing a bug/.test(h60)
-  && /Multi-dimensional fingerprints can be mixed with raw costly signalling/.test(h60) && /public responses and the feed record/.test(h60)
+  && /Multi-dimensional fingerprints can be mixed with raw costly\s+signalling/.test(h60) && /public responses and the feed record/.test(h60)
   && /copy of the reference flower \(common\/integrated\.py\), at b = 0\.6 and percent 50/.test(h60) && /strategy\.md has measured numbers for spend and generosity: information, not instructions/.test(h60)
   && /copy of the reference bee \(common\/integrated_bee\.py\)/.test(h60) && /Play it to win, and change it as you like/.test(h60)
   && /common\/ \(integrated\.py, integrated_bee\.py, strategy\.md/.test(h60) && !/never change|exactly \d+%/.test(h60), h60);
