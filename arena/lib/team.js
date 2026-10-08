@@ -122,13 +122,19 @@ export function scoreboard(scores, name, teamId = null) {
 }
 
 export function statusOf(view, teamId, { afford = null, code = false, memory = false } = {}) {
-  const g = view.game, config = g.config, endMs = g.endMs ?? config.minutes * 60000;
+  const g = view.game, config = g.config;
+  // The end as the server shows it to a team: endMs null while a random end is hidden (then only the public range,
+  // minMs to maxMs: never a time left); a fixed end, or a finished game's, is public.
+  const minMs = g.minMs ?? config.minutes * 60000, maxMs = g.maxMs ?? minMs;
+  const endMs = g.endMs ?? (maxMs > minMs ? null : minMs);
+  const range = `between ${mmss(minMs)} and ${mmss(maxMs)} of game time; nobody knows when`;
   const name = Object.fromEntries(view.teams.map((t) => [t.id, t.name]));
   const mine = view.teams.find((t) => t.id === teamId);
-  const out = { ok: true, status: g.status, clockMs: g.clockMs, endMs, leftMs: Math.max(0, endMs - g.clockMs), round: g.round ?? null, budgets: null, scores: null, versions: {}, memory: null };
+  const out = { ok: true, status: g.status, clockMs: g.clockMs, endMs, leftMs: endMs != null ? Math.max(0, endMs - g.clockMs) : null, minMs, maxMs, round: g.round ?? null, budgets: null, scores: null, versions: {}, memory: null };
   const lines = [];
-  if (g.status === "lobby") lines.push(`The game hasn't started (lobby). It will last ${mmss(endMs)} of game time.`);
-  else lines.push(`Game ${g.status}: ${mmss(g.clockMs)} of ${mmss(endMs)} played (${mmss(out.leftMs)} left)${g.round != null ? `, round ${g.round}` : ""}.`);
+  if (g.status === "lobby") lines.push(endMs != null ? `The game hasn't started (lobby). It will last ${mmss(endMs)} of game time.` : `The game hasn't started (lobby). It will end at a random moment ${range}.`);
+  else if (endMs != null) lines.push(`Game ${g.status}: ${mmss(g.clockMs)} of ${mmss(endMs)} played${g.status === "finished" ? "" : ` (${mmss(out.leftMs)} left)`}${g.round != null ? `, round ${g.round}` : ""}.`);
+  else lines.push(`Game ${g.status}: ${mmss(g.clockMs)} played${g.round != null ? `, round ${g.round}` : ""}. It ends at a random moment ${range}.`);
   if (mine?.banks && g.status !== "lobby") {
     out.budgets = {};
     lines.push("Your change budgets (nodes):");
@@ -141,7 +147,7 @@ export function statusOf(view, teamId, { afford = null, code = false, memory = f
       if (afford != null) {
         const ms = afford > b.cap ? null : afford <= av ? 0 : b.perMinute > 0 ? (afford - av) * 60000 / b.perMinute : null;
         x.affordInMs = ms;
-        extra = `; ${n0(afford)} nodes: ${ms === null ? `never (cap ${n0(b.cap)}: change in steps)` : ms === 0 ? "now" : `in ${mmss(ms)}${ms > out.leftMs ? " (after the game ends)" : ""}`}`;
+        extra = `; ${n0(afford)} nodes: ${ms === null ? `never (cap ${n0(b.cap)}: change in steps)` : ms === 0 ? "now" : `in ${mmss(ms)}${out.leftMs != null && ms > out.leftMs ? " (after the game ends)" : ""}`}`;
       }
       out.budgets[k] = x;
       lines.push(`  ${k.padEnd(6)} ${n0(av).padStart(6)} available, +${n0(b.perMinute)}/min, cap ${n0(b.cap)}${full ? ` (full in ${mmss(full)})` : " (full)"}${extra}`);

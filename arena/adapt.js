@@ -360,7 +360,7 @@ async function coopReport({ g, gp, teams, ents, role, T, S }) {
   const FB = (r, w) => `${f2(meanOf(r, w, (x) => x.F))} / ${f2(meanOf(r, w, (x) => x.B))}`;
   p(`## coop-eq, game ${g.generation}: prevalence on both sides`);
   p();
-  p(`Rules: ${co.perRound ?? "?"} of ${ents.length} bees visit each round; a feed price of ${n0(co.price)} ${co.unit} (${pct(co.priceShare)} of the most E); responses at ${co.windowMs} ms, R up to ${config.budgets?.flower?.ms ?? "?"} ms; fitness the time-average of F × B.`);
+  p(`Rules: ${co.perRound ?? "?"} of ${ents.length} bees visit each round; a feed price of ${n0(co.price)} ${co.unit} (${pct(co.priceShare)} of the most E); responses at ${co.windowMs} ms, R up to ${config.budgets?.flower?.ms ?? "?"} ms; fitness ${co.final ? "N² × pF × pB at the last round" : "the time-average of F × B"}.`);
   p();
   if (!samples.length) { p("(No prevalence samples: the game publishes none, or its query entity has another name.)"); p(); return; }
   const coopN = teamsOf("honest").length, N = ents.length;

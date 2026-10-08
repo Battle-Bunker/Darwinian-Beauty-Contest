@@ -253,7 +253,8 @@ def follow_live(after=None):
 
 
 def scores():
-    """The live scoreboard from the public API: status, clockMs, endMs, round, scores, ledgers, and in a game with
+    """The live scoreboard from the public API: status, clockMs, minMs, maxMs, endMs (None while a random end is hidden),
+    round, scores, ledgers, and in a game with
     prevalence its settings, feed price and latest sample (prevalence: {..., "feedPrice", "sample": {"round", "atMs", "c",
     "slots", "species": [{"team", "index", "flowerSuccess", "beeSuccess", "flowerP", "beeP", "fitness", "balance"}]}})."""
     with urllib.request.urlopen(API + "/scores", timeout=10) as resp:
@@ -282,7 +283,9 @@ def game_over():
 # ---------------------------------------------------------------- your programs
 
 def status(afford=None):
-    """{"status", "clockMs", "endMs", "leftMs", "round", "budgets": {kind: {"available", "exact", "perMinute", "cap", ...}},
+    """{"status", "clockMs", "endMs", "leftMs", "minMs", "maxMs", "round", "budgets": {kind: {"available", "exact",
+    "perMinute", "cap", ...}} (endMs and leftMs are None while a random end is hidden: minMs to maxMs is the range it
+    ends in),
     "scores" (the live scoreboard), "versions": {kind: {"version", "size", "atMs", ...}}, "memory", "text", and in a game
     with prevalence "prevalence": [{"species", "teamId", "F", "B", "pF", "pB", "fitness", "balance"}] (F, B: the species'
     flower success and the bee's success, par 1; pF: the chance a visit is to the species; pB: the bee's share of the bee

@@ -166,7 +166,7 @@ check("v2 settings: Scores names F × B as the score (pollination and forage onl
 // The presets: the old ones (up to adapt-hi) pinned to the rules they ran under, every key explicit and checked; coop-eq on v2.
 {
   const { PRESETS } = await import("./lib/presets.js");
-  const RULE_KEYS = ["feedCost", "feedPrice", "flowerWindowMs", "maxResponseBytes", "energy.bytes", "scoring.alpha", "scoring.beta", "prevalence.on", "pollenGrain.scale",
+  const RULE_KEYS = ["endFactor", "feedCost", "feedPrice", "flowerWindowMs", "maxResponseBytes", "energy.bytes", "scoring.alpha", "scoring.beta", "prevalence.on", "pollenGrain.scale",
     "budgets.flower.ms", "budgets.flower.minMs", "budgets.flower.perMinute", "budgets.flower.cap", "budgets.bee.perMinute", "budgets.bee.cap", "budgets.bee.ms", "budgets.bee.memory"];
   const at = (o, k) => k.split(".").reduce((x, y) => x?.[y], o);
   const NEW = /coop|explore/, old = Object.entries(PRESETS).filter(([k]) => !NEW.test(k)), coop = Object.entries(PRESETS).filter(([k]) => /coop/.test(k));
@@ -180,8 +180,37 @@ check("v2 settings: Scores names F × B as the score (pollination and forage onl
     && hi.energy.bytes === true && hi.scoring.alpha === 0.85 && hi.maxResponseBytes === 1024 && hi.pollenGrain.scale === 0.1 && PRESETS["dry-adapt-hi"].config === hi
     && coop.length === 2 && coop.every(([, p]) => p.config.prevalence.on === true && p.config.feedPrice === null && p.config.flowerWindowMs === 150 && p.config.budgets.flower.ms === 50
       && RULE_KEYS.every((k) => at(p.config, k) !== undefined && p.expectConfig[k] === at(p.config, k)) && p.expectConfig["prevalence.pools"] === false)
+    && coop.every(([, p]) => p.config.endFactor === 1 && p.expectConfig["scoring.mode"] === "timeAverage" && p.expectConfig["prevalence.cDecay"] === "linear" && p.expectConfig["prevalence.cEnd"] === 0.1)
+    && old.every(([, p]) => p.config.endFactor === 1)
     && explore.length === 2 && explore.every(([, p]) => p.config.prevalence.pools === true && p.config.prevalence.endowment === null && p.expectConfig["prevalence.pools"] === true
-      && p.expectConfig["prevalence.endowment"] === null && RULE_KEYS.every((k) => at(p.config, k) !== undefined && p.expectConfig[k] === at(p.config, k))), bad.join(", "));
+      && p.expectConfig["prevalence.endowment"] === null && RULE_KEYS.every((k) => at(p.config, k) !== undefined && p.expectConfig[k] === at(p.config, k))
+      && p.expectConfig.endFactor === 2 && p.expectConfig["scoring.mode"] === "final" && p.expectConfig["prevalence.cDecay"] === "sech" && p.expectConfig["prevalence.cHalfS"] === null
+      && !("cEnd" in p.config.prevalence) && !("prevalence.cEnd" in p.expectConfig))
+    && PRESETS.explore10.minutesByGame[0] === 30 && PRESETS["dry-explore10"].minutesByGame[0] === 2, bad.join(", "));
+  // v4: a hidden random end (30 to 60 minutes), the final-round score, sech c. No team-visible text names the drawn end or a
+  // time left: the briefs, the system prompt and settings state only the public range and the time played.
+  const v4 = { ...PRESETS.explore10.config, minutes: 30 }, DRAWN = 2712000; // (a drawn end of 45:12, which only the owner may see)
+  const t4 = timingText(v4, 10), s4 = settingsText(v4, 10);
+  // (the system prompt without RULES.md, the engine's: it says that nobody knows the end or the time left)
+  const sysFull4 = toolSystem(persona, v4, "/w", { apiBase, teams: 10, fixed: true, brevity: false, simpleCode: false });
+  const sys4 = sysFull4.slice(0, sysFull4.indexOf("# The rules (also in RULES.md)")) + sysFull4.slice(sysFull4.indexOf("# This game's settings"));
+  const lob4 = lobbyBrief({ config: v4, teamName: "M", generation: 1, maxTurns: 100, carried: true, brevity: false, minutes: 10 });
+  const run4 = gameBrief({ config: v4, teamName: "M", teamId: "me", generation: 1, sessionNo: 4, status: "running", clockMs: 2345600, budgets: null, maxTurns: 60, brevity: false,
+    scores: [{ teamId: "me", fitness: 1.4, flowerSuccess: 1.1, beeSuccess: 1.3 }] });
+  const pre4 = gameBrief({ config: v4, teamName: "M", generation: 1, sessionNo: 1, status: "lobby", clockMs: 0, budgets: null, maxTurns: 60, brevity: false });
+  const all4 = [t4, s4, sys4, lob4, run4, pre4];
+  check("v4: the game ends at a random moment between 30 and 60 minutes, nobody knows when; rounds per minute, not per game",
+    /The game ends at a random moment between 30 and 60 minutes of game time; nobody knows when/.test(s4) && /about 300 a minute/.test(t4)
+    && /runs without stopping until it ends at a random moment between 30 and 60 minutes/.test(lob4) && /ending at a random moment nobody knows in advance/.test(sys4)
+    && /39:06 played \(it ends at a random moment between 30 and 60 minutes/.test(run4) && /starts in a few seconds and ends at a random moment between 30 and 60 minutes; nobody knows when/.test(pre4), run4);
+  check("v4: no team-visible text names the drawn end, a time left, a fixed length or an 'of N played'",
+    all4.every((t) => !/45:12|2712000|2,712,000/.test(t) && !/\bleft\b(?! the| to| alone| out)/i.test(t.replace(/left (in|of) (your|the)/gi, "")) && !/lasts \d|of \d+:\d\d played|time left/i.test(t)),
+    all4.map((t) => (t.match(/45:12|lasts \d|of \d+:\d\d played|time left/i) || [""])[0]).join(" | "));
+  check("v4: the score is N² × pF × pB at the last round; c starts at 1 and halves at 6 minutes, toward 0 with no floor",
+    /N² × your species' draw chance pF × your bee's draw chance pB at the game's last round/.test(t4) && /c starts at 1 and falls smoothly toward 0, with no floor/.test(t4)
+    && /half that at 6 minutes of game time/.test(t4) && /Scores: your fitness is N² × pF × pB at the game's last round/.test(s4)
+    && /the score is that at the game's last round/.test(run4) && !/time-average/.test(t4), t4);
+
 }
 const v2Scores = [{ teamId: "me", fitness: 1.08, pollinationShare: 0.3, forageShare: 0.2, flowerSuccess: 1.2, beeSuccess: 0.9 }, { teamId: "b", fitness: 0.92 }];
 const v2Brief = gameBrief({ config: v2, teamName: "M", teamId: "me", generation: 1, sessionNo: 3, status: "running", clockMs: 60000, budgets: null, scores: v2Scores, maxTurns: 60, brevity: false });

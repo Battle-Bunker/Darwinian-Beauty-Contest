@@ -60,7 +60,7 @@ export function readme({ ext, apiBase, examples, common = null, commonScope = "a
 |---|---|
 | RULES.md | the game's rules (exactly what every player sees) |
 | interface.txt | the functions each program defines and this game's types |
-| config.json | this game's settings: types, minutes, budgets, feed cost, the teams in index order, the public API address |
+| config.json | this game's settings: types, minutes (the shortest the game can last) and endFactor (the longest, as a multiple: 1 is a fixed end), budgets, feed cost, the teams in index order, the public API address |
 | flower.${ext}, bee.${ext} | YOUR PROGRAMS: your flower species and your bee. While the game runs they hold the versions that were playing when this session started. Editing a file changes nothing in the game: only \`tools/submit.py\` does |
 | drafts/ | edits from an earlier session that were never submitted |
 | history/ | every version your team submitted in this game (\`<kind>/v1.${ext}\`, ...) and versions.md: when each went live, its size, its change cost |
@@ -78,7 +78,7 @@ ${examples ? `| examples/ | example programs; every team in this garden has the 
 
 | command | what |
 |---|---|
-| \`python3 tools/status.py [--afford N] [--memory]\` | the clock and time left, your change budgets right now (available, rate, cap; when you could afford N nodes), the live scores, your versions playing now, your bee's MEMORY (size; its value with --memory), and in a game with prevalence every team's F, B, draw chances and fitness so far |
+| \`python3 tools/status.py [--afford N] [--memory]\` | the game time played (and the time left when the end is public; with a random end only the range it ends in), your change budgets right now (available, rate, cap; when you could afford N nodes), the live scores, your versions playing now, your bee's MEMORY (size; its value with --memory), and in a game with prevalence every team's F, B, draw chances and fitness so far |
 | \`python3 tools/check.py <kind> [file]\` | free: size against the budget, what submitting would cost now and whether you can afford it, a quick runtime test |
 | \`python3 tools/try.py flower [file] [challenge ...] [--budget MS\\|random]\` | free: run a flower on challenges on the game's real runner, each call with a hidden budget R (one you choose, or a random one as in a game; your flower reads it as GAME["ms"]): response (over 4 KB, its size, hash and first bytes), percent, R, energy and compute time for each |
 | \`python3 tools/try.py bee [file] [--flower FILE] [--rounds N] [--memory JSON]\` | free: run a test bee for N rounds in a garden of just your own flower (FILE, else your latest submitted flower), starting with that MEMORY, with fed() called after each feed as in a game; it never touches your game bee's MEMORY |

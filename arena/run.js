@@ -153,7 +153,7 @@ async function setupGame(arena, generation, log) {
     await q("INSERT INTO arena.games (arena_id, generation, game_short_id, game_url, game_uuid, config) VALUES ($1,$2,$3,$4,$5,$6)",
       [arena.id, generation, g.shortId, g.url, view.game.id, view.game.config]);
     gameRow = await one("SELECT * FROM arena.games WHERE arena_id = $1 AND generation = $2", [arena.id, generation]);
-    log(`game ${generation}: ${view.game.config.minutes} min, ${g.url}`);
+    log(`game ${generation}: ${view.game.config.minutes}${(view.game.config.endFactor ?? 1) > 1 ? `-${view.game.config.minutes * view.game.config.endFactor}` : ""} min, ${g.url}`);
   }
   const gPath = gamePath(arena.room_short_id, gameRow.game_short_id);
   let entries = await all("SELECT * FROM arena.entries WHERE game_id = $1", [gameRow.id]);
@@ -323,7 +323,11 @@ async function playGame(arena, ctx, log) {
   }
   stream.status = view.game.status;
   stream.clockMs = view.game.clockMs;
-  const endMs = view.game.endMs;
+  // The end: a fixed one is public (endMs) and sessions stop endMarginSeconds before it; a hidden random end (endMs null)
+  // is learnt only from status "finished", like the teams learn it: sessions keep starting until then, so their stopping
+  // never signals it. (The owner's drawnEndMs never reaches here: lib/api.js drops it from every response.)
+  const endMs = view.game.endMs ?? null;
+  const rangeText = endMs != null ? mmss(endMs) : `${mmss(view.game.minMs ?? view.game.config.minutes * 60000)}-${mmss(view.game.maxMs ?? view.game.config.minutes * 60000)}`;
   const over = () => state.over || stream.status === "finished";
   let budgetStop = null;
   const autoCounts = new Map();
@@ -341,7 +345,7 @@ async function playGame(arena, ctx, log) {
     while (!over()) {
       if (isPaused() || stream.status === "paused") { await sleep(1000); continue; }
       if (Date.now() < penaltyUntil) { await sleep(1000); continue; }
-      if (stream.status === "running" && endMs - stream.clockMs < S.endMarginSeconds * 1000) break;
+      if (endMs != null && stream.status === "running" && endMs - stream.clockMs < S.endMarginSeconds * 1000) break;
       const why = await budgetOk(arena);
       if (why) { if (!budgetStop) { budgetStop = why; log(`  no more sessions: ${why}`); } break; }
       if (diskLow(log)) continue;
@@ -389,7 +393,7 @@ async function playGame(arena, ctx, log) {
     const sat = entries.filter((e) => !st.participants.includes(e.team_id));
     for (const e of sat) await q("UPDATE arena.entries SET sat_out = true WHERE game_id = $1 AND persona_id = $2", [gameRow.id, e.persona_id]);
     stream.status = "running";
-    log(`game ${gen} STARTED (${view.game.config.minutes} min) with ${st.participants.length} teams${sat.length ? `; sitting out: ${sat.map((e) => e.team_name).join(", ")}` : ""}`);
+    log(`game ${gen} STARTED (${endMs != null ? `${view.game.config.minutes} min` : `ends at a hidden moment in ${rangeText}`}) with ${st.participants.length} teams${sat.length ? `; sitting out: ${sat.map((e) => e.team_name).join(", ")}` : ""}`);
   } else {
     if (view.game.status !== "finished") loops = players.map((e) => sessionsOf(e));
     log(`game ${gen}: resuming (${view.game.status}, ${mmss(view.game.clockMs)} played)`);
@@ -405,7 +409,7 @@ async function playGame(arena, ctx, log) {
     if (Date.now() - lastLog > 30_000) {
       lastLog = Date.now();
       const s = await spend(arena.id);
-      log(`  ${mmss(stream.clockMs)} of ${mmss(endMs)}: ${stream.lastSeq} actions, ${state.controls.size} session(s) running; spend arena $${s.arena.toFixed(2)}, all $${s.global.toFixed(2)}`);
+      log(`  ${mmss(stream.clockMs)} of ${rangeText}: ${stream.lastSeq} actions, ${state.controls.size} session(s) running; spend arena $${s.arena.toFixed(2)}, all $${s.global.toFixed(2)}`);
     }
   }
   // The game is over: stop the sessions that are still running (late submissions are refused by the server anyway).

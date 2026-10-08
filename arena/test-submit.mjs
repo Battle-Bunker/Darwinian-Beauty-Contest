@@ -263,6 +263,22 @@ const st = statusOf(await fakeApi.view("t"), "T1");
 check("statusOf: budgets computed from bank + rate × time (capped); the bee's MEMORY without its value unless asked", st.budgets.flower.available === 120 && st.budgets.bee.available === 1100
   && Object.keys(st.budgets).join() === "flower,bee" && st.memory.bytes === 7 && /KeyError/.test(st.memory.error) && !("value" in st.memory) && statusOf(await fakeApi.view("t"), "T1", { memory: true }).memory.value.seen === 34);
 
+// A hidden random end: status shows the time played and the public range, never the end or a time left; the arena drops
+// the owner's drawnEndMs from every API response.
+{
+  const v = await fakeApi.view("t");
+  v.game = { ...v.game, status: "running", clockMs: 600000, endMs: null, minMs: 1800000, maxMs: 3600000, config: { ...config, endFactor: 2, minutes: 30 } };
+  const hidden = statusOf(v, "T1", { afford: 200 });
+  const { withoutDrawnEnd } = await import("./lib/api.js");
+  const owner = withoutDrawnEnd({ game: { status: "running", endMs: null, minMs: 1800000, maxMs: 3600000, drawnEndMs: 2712000 }, games: [{ id: "g", drawnEndMs: 1 }] });
+  check("statusOf with a hidden random end: the time played and the range, no end, no time left; the drawn end dropped from API responses",
+    /10:00 played/.test(hidden.text) && /ends at a random moment between 30:00 and 60:00 of game time; nobody knows when/.test(hidden.text)
+    && !/\bleft\b|45:12|of 30:00|of 60:00|after the game ends/.test(hidden.text) && hidden.endMs === null && hidden.leftMs === null && hidden.minMs === 1800000 && hidden.maxMs === 3600000
+    && !("drawnEndMs" in owner.game) && !("drawnEndMs" in owner.games[0]) && owner.game.maxMs === 3600000, hidden.text.split("\n")[0]);
+  const fixed = statusOf(await fakeApi.view("t"), "T1");
+  check("statusOf with a fixed end: the end and the time left, as before", /0:30 of 2:00 played \(1:30 left\)/.test(fixed.text) && fixed.leftMs === 90000, fixed.text.split("\n")[0]);
+}
+
 await q("DELETE FROM arena.llm_calls WHERE arena_id = 'test-submit'");
 await pool.end();
 fs.rmSync(tmp, { recursive: true, force: true });
