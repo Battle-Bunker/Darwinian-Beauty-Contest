@@ -46,7 +46,7 @@ const beeCode = (ti) => `def first():\n    return ${ti}\ndef decide(c, r):\n    
 
 before(async () => {
   await migrate();
-  const config = normalizeConfig({ feedCost: 2, responseType: "any" });
+  const config = normalizeConfig({ feedCost: 2, responseType: "any", maxResponseBytes: 65536 }); // team 2's big responses fit
   const out = await play(config, Array.from({ length: N }, (_, ti) => ({ flower: flowerCode(ti), bee: beeCode(ti) })), 80);
   const uid = () => crypto.randomUUID();
   db.users = Array.from({ length: N + 1 }, uid); // one per team, and a spectator

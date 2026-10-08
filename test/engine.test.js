@@ -31,11 +31,13 @@ const stopWhen = (done) => async (garden) => {
   await garden.stop();
 };
 
-test("defaults: a 1,100-node flower with R from 3 to 150 ms, an 11,000-node bee with 50 ms and 50 bytes of memory, 200 ms rounds, feedCost 20, 64 KiB responses", () => {
+test("defaults: a 1,100-node flower with R from 3 to 150 ms, an 11,000-node bee with 50 ms and 50 bytes of memory, 200 ms rounds, feedCost 20, 1 KiB responses whose bytes cost energy", () => {
   const { flower: f, bee } = DEFAULT_CONFIG.budgets;
   assert.deepEqual(f, { size: 1100, perMinute: 220, cap: 220, ms: 150, minMs: 3 });
   assert.deepEqual(bee, { size: 11000, perMinute: 2200, cap: 2200, ms: 50, memory: 50 });
-  assert.equal(DEFAULT_CONFIG.maxResponseBytes, 65536);
+  assert.equal(DEFAULT_CONFIG.maxResponseBytes, 1024);
+  assert.deepEqual(DEFAULT_CONFIG.energy, { bytes: true });
+  assert.deepEqual([normalizeConfig({}).maxResponseBytes, normalizeConfig({}).energy], [1024, { bytes: true }]);
   assert.equal(normalizeConfig({ maxResponseBytes: 5000 }).maxResponseBytes, 5000);
   assert.equal(normalizeConfig({ maxResponseBytes: 1e9 }).maxResponseBytes, 16777216);
   assert.equal(normalizeConfig({ budgets: { bee: { memory: 0 } } }).budgets.bee.memory, 0);
@@ -50,6 +52,27 @@ test("defaults: a 1,100-node flower with R from 3 to 150 ms, an 11,000-node bee 
   assert.equal(roundMs(c), 150);
   assert.equal(c.feedCost, 3);
   assert.ok(!("cosmos" in c.budgets) && !("orchid" in c.budgets) && !("memory" in c.budgets.flower));
+});
+
+test("excess energy with the byte factor: × (byte cap − response bytes) / byte cap; a config stored without it keeps the old formula", () => {
+  const c = normalizeConfig({});
+  assert.equal(excessEnergy(c, 100, 30, 90, 0), 1000 * 60, "a zero-byte response: the full factor of 1");
+  assert.equal(excessEnergy(c, 100, 30, 90), 1000 * 60, "(bytes left out: none)");
+  assert.equal(excessEnergy(c, 100, 30, 90, 256), (1000 * 60 * 768) / 1024);
+  assert.equal(excessEnergy(c, 100, 30, 90, 1), (1000 * 60 * 1023) / 1024);
+  assert.equal(excessEnergy(c, 100, 30, 90, 1024), 0, "a response of exactly the cap: factor 0");
+  assert.equal(excessEnergy(c, 100, 30, 90, 5000), 0, "never negative");
+  assert.equal(excessEnergy(c, 1100, 30, 90, 0), 0);
+  assert.equal(excessEnergy(normalizeConfig({ maxResponseBytes: 2048 }), 100, 30, 90, 1024), 30000, "the byte cap is maxResponseBytes");
+  // Old games: stored without `energy` (and with their 64 KiB cap), or with it off.
+  const { energy: _, ...old } = { ...c, maxResponseBytes: 65536 };
+  assert.equal(excessEnergy(old, 100, 30, 90, 30000), 1000 * 60, "no byte factor");
+  assert.equal(excessEnergy({ ...old, energy: { bytes: false } }, 100, 30, 90, 30000), 1000 * 60);
+  assert.deepEqual([normalizeConfig({ minutes: 3 }, old).energy, normalizeConfig({ minutes: 3 }, old).maxResponseBytes], [{ bytes: false }, 65536],
+    "updating a config from before keeps its formula and its cap");
+  assert.deepEqual(normalizeConfig({ energy: { bytes: true } }, old).energy, { bytes: true });
+  assert.deepEqual(normalizeConfig({ energy: { bytes: false } }).energy, { bytes: false });
+  assert.deepEqual(normalizeConfig({ minutes: 3 }, c).energy, { bytes: true });
 });
 
 test("excess energy: E = (size cap − size) × max(0, 150 − CPU ms)", () => {
@@ -711,7 +734,7 @@ test("change budgets accrue per minute of game time up to a cap", () => {
 });
 
 test("try a flower: responses (big ones as a preview), percent, energy and CPU time", async () => {
-  const config = normalizeConfig({ responseType: "any", budgets: { flower: { minMs: 50 } } }); // every call answers
+  const config = normalizeConfig({ responseType: "any", maxResponseBytes: 65536, budgets: { flower: { minMs: 50 } } }); // every call answers
   const r = await tryFlower({ config, code: `def flower(c):\n    return (c + 1 if c < 5 else "y" * 9000), 40\n`, challenges: [1, 2, "x", 9] });
   assert.deepEqual(r.results.map((x) => x.r), [2, 3, null, null]);
   assert.deepEqual(r.results.map((x) => x.rBytes), [1, 1, null, 9002]);

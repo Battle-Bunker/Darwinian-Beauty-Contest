@@ -47,6 +47,6 @@ def flower(c):
         b = part(u) + part(v)
         p[u], p[v] = p[v], p[u]
         a = part(u) + part(v)
-        if a > b and random.random() >= 2.718 ** ((b - a) / (1.001 - time.process_time() / end)):
+        if a > b and random.random() >= 2.718 ** ((b - a) / abs(1.001 - time.process_time() / end)):
             p[u], p[v] = p[v], p[u]
     return {"nodes": 1, "edges": [], "labels": ["".join(chr(35 + x) for x in p + [round(50 * time.process_time() / end)])]}, 50

@@ -45,7 +45,7 @@ n, M = fl.n, fl.M
 
 
 def reference(c, R):
-    fl.GAME, fl.time = {"ms": R}, Clock()
+    fl.GAME, fl.W, fl.time = {"ms": R}, (1 / 11, 1 / 11, 2, 1 / 9), Clock()
     resp, _ = fl.flower(c)
     return sum(bee.levels(c, resp))
 
@@ -62,7 +62,7 @@ def strong(c, cpu_ms, W=(1, 1, 1, 1)):
             if u != v:
                 inc[d][u].append((v, t))
                 inc[d][v].append((u, t))
-    w = [W[d] / fl.S[d] for d in range(4)]
+    w = [W[d] / (11, 11, 0.5, 9)[d] for d in range(4)]
     h = n / 2
     p = list(range(n))
 
