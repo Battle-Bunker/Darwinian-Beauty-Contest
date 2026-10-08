@@ -1,6 +1,6 @@
 // End-to-end check of the API (one flower per team): plays two short games over HTTP, SSE and WebSocket,
 // and verifies the rules and what each viewer can see.
-//   BASE=http://localhost:3000 node scripts/smoke.js      (the server must use a dbc_one database)
+//   BASE=http://localhost:3000 node scripts/smoke.js      (the server must use a scratch database, never dbc, dbc_live or dbc_one)
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import { WebSocket } from "ws";
@@ -36,9 +36,14 @@ console.log("room", room.url);
 const game = await api(owner, "POST", `/rooms/${room.shortId}/games`);
 console.log("game", game.url);
 const g = `/rooms/${room.shortId}/games/${game.shortId}`;
+// A new game's defaults: feed cost 20, R from 3 to 150 ms (2% of the window), scores Σ x^0.85, and a 1,024-byte
+// response cap whose bytes cost energy.
+const fresh = (await api(owner, "GET", g)).game.config;
+assert.deepEqual([fresh.feedCost, fresh.budgets.flower.minMs, fresh.budgets.flower.ms, fresh.maxResponseBytes], [20, 3, 150, 1024]);
+assert.deepEqual([fresh.scoring, fresh.energy], [{ alpha: 0.85, beta: 0.85 }, { bytes: true }]);
 // Half a minute of game time. Flowers earn change budget fast so the test needn't wait; feeding costs 2
-// rounds rather than 10, so bees take turns often. Responses can be any JSON (and big).
-await api(owner, "PATCH", `${g}/config`, { config: { minutes: 0.5, feedCost: 2, responseType: "any", budgets: { flower: { perMinute: 600, cap: 100 } } } });
+// rounds rather than 20, so bees take turns often. Responses can be any JSON, and big (a 64 KiB cap).
+await api(owner, "PATCH", `${g}/config`, { config: { minutes: 0.5, feedCost: 2, responseType: "any", maxResponseBytes: 65536, budgets: { flower: { perMinute: 600, cap: 100 } } } });
 
 const players = [];
 for (const name of ["Ada", "Bo", "Cy", "Di"]) {
@@ -58,6 +63,8 @@ assert.match(view0.interface.bee, /MEMORY/);
 assert.doesNotMatch(view0.interface.bee + view0.interface.flower, /HISTORY\./, "programs get no history");
 assert.equal(view0.game.config.budgets.bee.memory, 50);
 assert.equal(view0.game.config.maxResponseBytes, 65536);
+assert.match(view0.interface.flower, /max_response_bytes"\] - the response's bytes of JSON/, "E's byte factor");
+assert.match(view0.interface.bee, /a challenge it returns replaces the one decide queued/);
 assert.deepEqual(["flower", "bee"].map((k) => view0.game.config.budgets[k].ms), [150, 50], "every time limit is public");
 assert.deepEqual(view0.teams.map((t) => t.ready), view0.teams.map(() => ({ flower: false, bee: false })));
 
@@ -99,11 +106,13 @@ for (const [kind, code, err] of [["flower", "x = 1\n", /must define flower/], ["
 const big = await api(players[0].token, "POST", `${g}/check`, { kind: "flower", code: "def flower(c):\n" + "    c = c + 1\n".repeat(400) + "    return c, 1\n" });
 assert.equal(big.ok, false);
 assert.match(big.errors[0], /Too big: \d+ nodes > budget 1100/);
-const tf = await api(players[0].token, "POST", `${g}/try`, { kind: "flower", code: variants[0].flower, challenges: [1, 2, 500] });
+const tf = await api(players[0].token, "POST", `${g}/try`, { kind: "flower", code: variants[0].flower, challenges: [1, 2, 500], budgetMs: 150 });
 assert.deepEqual(tf.results.map((x) => [x.r, x.percent]), [[4, 30], [7, 30], [501, 30]]);
 assert.ok(tf.results.every((x) => x.energy > 0 && typeof x.ms === "number"));
-// Each flower call has a hidden time budget R (50–150 ms), told to it as GAME["ms"]; try can set it.
-assert.ok(tf.results.every((x) => x.budgetMs >= 50 && x.budgetMs <= 150), "try draws R per challenge by default");
+// Each flower call has a hidden time budget R (3–150 ms), told to it as GAME["ms"]; try can set it.
+const drawn = await api(players[0].token, "POST", `${g}/try`, { kind: "flower", code: variants[0].flower, challenges: [...Array(12).keys()] });
+assert.ok(drawn.results.every((x) => x.budgetMs >= 3 && x.budgetMs <= 150), "try draws R per challenge by default");
+assert.ok(new Set(drawn.results.map((x) => x.budgetMs)).size > 6);
 const tr = await api(players[0].token, "POST", `${g}/try`, { kind: "flower", challenges: [1, 2, 3], budgetMs: [60, 90, 140],
   code: `def flower(c):\n    return int(GAME["ms"]), 50\n` });
 assert.deepEqual(tr.results.map((x) => [x.budgetMs, x.r]), [[60, 60], [90, 90], [140, 140]], "R per challenge, as GAME['ms']");
@@ -115,6 +124,10 @@ assert.ok(clock.results.every((x) => x.r[0] >= 0 && x.r[0] < 20 && x.r[1] === 19
 const tb = await api(players[0].token, "POST", `${g}/try`, { kind: "bee", code: variants[0].bee, rounds: 60 });
 assert.ok(tb.actions.length > 10 && tb.actions.every((a) => a.bee === players[0].team.id && a.flower === players[0].team.id));
 assert.ok(tb.feeds > 0 && tb.nectar > 0 && tb.pollen > 0);
+// fed(nectar) may return the bee's next challenge: it replaces the one decide queued.
+const fedBee = `def first():\n    return 1\ndef decide(c, r):\n    return "feed", 2\ndef fed(nectar):\n    return 77\n`;
+const tb2 = await api(players[0].token, "POST", `${g}/try`, { kind: "bee", code: fedBee, rounds: 30 });
+assert.deepEqual(tb2.actions.filter(isEnd).map((a) => a.c).slice(0, 3), [1, 77, 77], "fed's challenge replaces decide's");
 
 // Only the owner starts it; the clock and the change budgets start with it.
 assert.equal((await api(players[0].token, "POST", `${g}/start`, null, { allow: [403] })).status, 403);
@@ -140,9 +153,10 @@ assert.equal(typeof adaTurn.r, "number");
 for (const a of ends) {
   assert.ok("c" in a && "r" in a && a.pollen !== undefined);
   if (a.action === "feed") {
-    assert.ok(a.energy > 0 && a.nectar > 0 && a.pollen > 0, "a feed is public in full");
-    assert.ok(Math.abs(a.nectar + a.pollen - a.energy) < 1e-6 * a.energy);
-    assert.ok(Math.abs(a.nectar - (a.percent / 100) * a.energy) < 1e-6 * a.energy);
+    // (A flower late for a small R has nothing to give: E = 0.)
+    assert.ok(a.energy === 0 || (a.energy > 0 && a.nectar > 0 && a.pollen > 0), "a feed is public in full");
+    assert.ok(Math.abs(a.nectar + a.pollen - a.energy) <= 1e-6 * a.energy);
+    assert.ok(Math.abs(a.nectar - (a.percent / 100) * a.energy) <= 1e-6 * a.energy);
   } else {
     assert.equal(a.pollen, 0, "a turn without a feed pays nobody");
     assert.ok(!("nectar" in a));
@@ -176,7 +190,7 @@ const spectator = (await api(null, "GET", `${g}/actions?limit=5000`)).actions;
 assert.ok(spectator.length >= seen.actions.length, "spectators see every turn too");
 assert.ok(spectator.every((a) => !("ms" in a) && !("beeMs" in a) && !("log" in a) && !("beeVersion" in a) && !("flowerVersion" in a)));
 assert.ok(spectator.filter((a) => a.action === "leave").every((a) => !("percent" in a) && a.pollen === 0));
-assert.ok(spectator.filter((a) => a.action === "feed").every((a) => typeof a.nectar === "number" && typeof a.percent === "number"));
+assert.ok(spectator.filter((a) => a.action === "feed").every((a) => typeof a.nectar === "number" && (typeof a.percent === "number" || a.r === null)));
 const latest = await api(null, "GET", `${g}/actions?before=${seen.lastSeq + 1}&limit=5`);
 assert.deepEqual(latest.actions.map((a) => a.seq), [4, 3, 2, 1, 0].map((i) => seen.lastSeq - i));
 const mineOnly = await api(players[0].token, "GET", `${g}/actions?mine=1&limit=5000`);
