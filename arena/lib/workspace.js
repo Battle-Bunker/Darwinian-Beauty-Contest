@@ -9,12 +9,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import { ARENA_DIR, all, one } from "./db.js";
+import { Api, gamePath } from "./api.js";
 import { rules } from "./prompts.js";
+import { STREAM_PREVIEW } from "./stream.js";
 
 export const WS_ROOT = process.env.ARENA_WS_ROOT || "/home/user/arena-ws";
 export const TRANSCRIPTS = path.join(ARENA_DIR, "runs", "transcripts");
 const TOOLS_SRC = path.join(ARENA_DIR, "tools");
-const KINDS = ["cosmos", "orchid", "bee"];
+const KINDS = ["flower", "bee"];
 export const wsDir = (arenaId, slug) => path.join(WS_ROOT, arenaId, slug);
 export const extOf = (config) => (config.language === "typescript" ? "ts" : "py");
 const write = (file, data) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, data); };
@@ -24,118 +26,216 @@ const safeName = (s) => String(s).replace(/[^A-Za-z0-9_-]+/g, "_");
 
 // ---------------------------------------------------------------- the files
 
-/** The documents a primed cohort shares as common knowledge (arena.settings.common = { dir }): { dir, files } or null. */
-export function commonFiles(arena) {
+/** The documents a primed cohort shares as common knowledge (arena.settings.common = { dir }), or, for a persona with a
+ * role that has its own documents (arena.settings.roles[slug].common: a folder, or several merged in order), those:
+ * { dir, dirs, files, scope: "all" | "role" } or null. */
+export function commonFiles(arena, persona = null) {
+  const r = persona ? arena?.settings?.roles?.[persona.slug] : null;
+  if (r?.common) {
+    const parts = [r.common].flat().map((d) => commonFiles({ settings: { common: { dir: d } } }));
+    return { dir: parts[0].dir, dirs: parts.map((x) => x.dir), files: [...new Set(parts.flatMap((x) => x.files))].sort(), scope: "role" };
+  }
   const c = arena?.settings?.common;
   if (!c?.dir) return null;
   const dir = path.resolve(ARENA_DIR, "..", c.dir);
-  return { dir, files: fs.readdirSync(dir).filter((f) => !f.startsWith(".") && fs.statSync(path.join(dir, f)).isFile()).sort() };
+  return { dir, dirs: [dir], files: fs.readdirSync(dir).filter((f) => !f.startsWith(".") && fs.statSync(path.join(dir, f)).isFile()).sort(), scope: "all" };
 }
 
-export function readme({ ext, apiBase, examples, common = null }) {
+/** The workspace docs for a game whose response cap is at most 4 KB: nothing about responses over 4 KB (stored as their
+ * size, hash and first characters), which it can't have. */
+const BIG_RESPONSE_TEXT = [
+  [/ \(over 4 KB, its size, hash and first bytes\)/g, ""],
+  [/ \(a response over 4 KB is only its size, hash and first bytes in the files and queries\)/g, ""],
+  [/ A response over\n4 KB reads as None, with its size in `response_bytes` and the SHA-256 of its JSON text in `response_hash` \(equal\nresponses, equal hashes\); `garden\.response\(t\.seq\)` fetches the whole of it\./g, ""],
+  [/ \(null if the flower failed, or if it is over 4 KB\)/g, " (null if the flower failed)"],
+  [/; for a response over 4 KB, the SHA-256 of its JSON text \(`python3 tools\/stream\.py response <seq>` has the whole of it\)/g, "; responseHash stays null in this game"],
+  [/; for one over 4 KB, its SHA-256 and its first \d+ characters \(the whole of it: `python3 tools\/stream\.py response <seq>`\)/g, "; rHash and rPreview stay null in this game"],
+];
+export const forCap = (text, config) => ((config?.maxResponseBytes ?? 65536) > 4096 ? text : BIG_RESPONSE_TEXT.reduce((t, [re, to]) => t.replace(re, to), text));
+
+export function readme({ ext, apiBase, examples, common = null, commonScope = "all", privatePlay = false, prevalenceEveryS = 30 }) {
   return `# Your workspace
 
 | path | what |
 |---|---|
 | RULES.md | the game's rules (exactly what every player sees) |
-| interface.txt | the function signatures and this game's types |
-| config.json | this game's settings: types, minutes, budgets, feed cost, teams, the public API address |
-| cosmos.${ext}, orchid.${ext}, bee.${ext} | YOUR PROGRAMS. While the game runs they hold the versions that were playing when this session started. Editing a file changes nothing in the game: only \`tools/submit.py\` does |
+| interface.txt | the functions each program defines and this game's types |
+| config.json | this game's settings: types, minutes (the shortest the game can last) and endFactor (the longest, as a multiple: 1 is a fixed end), budgets, feed cost, the teams in index order, the public API address |
+| flower.${ext}, bee.${ext} | YOUR PROGRAMS: your flower species and your bee. While the game runs they hold the versions that were playing when this session started. Editing a file changes nothing in the game: only \`tools/submit.py\` does |
 | drafts/ | edits from an earlier session that were never submitted |
 | history/ | every version your team submitted in this game (\`<kind>/v1.${ext}\`, ...) and versions.md: when each went live, its size, its change cost |
 | status.txt | what \`tools/status.py\` said when this session started |
 | notebook.md | your private notes: they carry over to your next sessions and games |
-| stream/actions.jsonl | THE LIVE ACTION STREAM: every bee action in this game so far, one JSON object per line, oldest first. The runner appends new ones about once a second while the game runs. Read it with code; never write to it |
-| stream/mine.jsonl | the actions of your own bee and at your own patch as your team sees them (with your programs' timings, versions and your bee's printouts) |
-| stream/teams.json, stream/SCHEMA.md | team ids and names; what a line holds and how to read the stream |
-| tools/ | the tools below |
+| stream/history.jsonl | YOUR TEAM'S HISTORY: one turn record per finished turn, oldest first, as your team may see it (your programs see no history: this is for you and your scripts). The runner appends new turns about once a second while the game runs. Query it (tools/query.py --local, garden.local); never write to it |
+${privatePlay ? "| stream/actions.jsonl | YOUR OWN action stream (a private game): your own programs' sides of your own turns, nothing of other teams' (see \"What you see during play\" below) |"
+    : "| stream/actions.jsonl | the public action stream: every arrival and every turn's end as anyone sees it |"}
+| stream/mine.jsonl | your own bee's and flower's actions as your team sees them, with your bee's printouts (\`log\`), decision times and errors |
+| stream/teams.json, stream/SCHEMA.md | team ids, names and indices; what each file holds |
+| tools/ | the tools below, and history.py: the typed history query builder, as a Python module |
 | previous-games/ | earlier games in this arena, revealed: every team's final code, the standings, everyone's change timeline, and what the interview panel said about you |
-${examples ? `| examples/ | example programs; every team in this garden has the same files (${examples.join(", ")}) |\n` : ""}${common ? `| common/ | common knowledge: every team in this garden has exactly these files and knows that every other team has them (${common.join(", ")}). Read only: the runner restores them at every game |\n` : ""}
+${examples ? `| examples/ | example programs; every team in this garden has the same files (${examples.join(", ")}) |\n` : ""}${common ? (commonScope === "role" ? `| common/ | documents for your role: every team with your role has exactly these files, and no other team has them (${common.join(", ")}). Read only: the runner restores them at every game |\n`
+  : `| common/ | common knowledge: every team in this garden has exactly these files and knows that every other team has them (${common.join(", ")}). Read only: the runner restores them at every game |\n`) : ""}
 ## Tools (run them with python3 from this folder)
 
 | command | what |
 |---|---|
-| \`python3 tools/status.py [--afford N]\` | the clock and time left, your change budgets right now (available, rate, cap; when you could afford N nodes), the scores (whole game and last 5 minutes), your versions playing now |
+| \`python3 tools/status.py [--afford N] [--memory]\` | the game time played (and the time left when the end is public; with a random end only the range it ends in), your change budgets right now (available, rate, cap; when you could afford N nodes), the live scores, your versions playing now, your bee's MEMORY (size; its value with --memory), and in a game with prevalence every team's F, B, draw chances and fitness so far |
 | \`python3 tools/check.py <kind> [file]\` | free: size against the budget, what submitting would cost now and whether you can afford it, a quick runtime test |
-| \`python3 tools/try.py <kind> [file] [challenge ...]\` | free: run a flower on challenges, or your bee on your own two flowers, on the game's real runner |
-| \`python3 tools/submit.py <kind> [file]\` | submit: in the lobby it's free; during the game it goes live at once and pays its change cost |
-| \`python3 tools/stream.py summary\\|tail\\|answers\\|sql ...\` | read the stream: per-bee and per-flower counts, the latest actions, what each flower answered to a challenge, SQL |
+| \`python3 tools/try.py flower [file] [challenge ...] [--budget MS\\|random]\` | free: run a flower on challenges on the game's real runner, each call with a hidden budget R (one you choose, or a random one as in a game; your flower reads it as GAME["ms"]): response (over 4 KB, its size, hash and first bytes), percent, R, energy and compute time for each |
+| \`python3 tools/try.py bee [file] [--flower FILE] [--rounds N] [--memory JSON]\` | free: run a test bee for N rounds in a garden of just your own flower (FILE, else your latest submitted flower), starting with that MEMORY, with fed() called after each feed as in a game; it never touches your game bee's MEMORY |
+| \`python3 tools/submit.py <kind> [file]\` | submit: in the lobby it's free; during the game it goes live at once and pays its change cost. A new bee version starts with an empty MEMORY |
+| \`python3 tools/query.py '<query>' [--local\\|--room]\` | ask the game's history with the typed query builder (below) |
+| \`python3 tools/query.py summary\` | per species and per bee: turns, feeds, nectar, pollen; your own flower's percent, energy and compute |
+| \`python3 tools/stream.py tail [-n 20]\` | the latest public actions |
+| \`python3 tools/grains.py [--flower I] [--version V] [--show] [--save]\` | your pollen grains (a piece of the code of every flower your bee fed at) per species and version, pieced together where they overlap (best effort); --save writes each completely pieced-together version to grains/ |
+| \`python3 tools/stream.py response <seq>\` | the whole response of a turn (a response over 4 KB is only its size, hash and first bytes in the files and queries) |
 
-\`<kind>\` is cosmos, orchid or bee; \`[file]\` defaults to \`<kind>.${ext}\`. Your own scripts can use the same tools:
+\`<kind>\` is flower or bee; \`[file]\` defaults to \`<kind>.${ext}\`. Your own scripts can use the same tools through
+tools/garden.py (\`import sys; sys.path.insert(0, "tools"); import garden\`), and the scaffold API it documents.
+
+A script you start may run in the background while your session lasts: start it with the Bash tool's
+\`run_in_background\` option and send its output to a file here, e.g. \`python3 follow.py > follow.log 2>&1\` (a trailing
+\`&\` is refused). Everything your session started is stopped when the session ends; only your scaffold outlives sessions.
+
+## Querying history
+
+Your programs see no history (only their arguments, GAME and the bee's MEMORY). Your team queries it, with a typed query
+builder, from tools/query.py or a script:
+
+| where | what it runs on |
+|---|---|
+| \`garden.local\`, \`query.py --local\` | stream/history.jsonl, in memory: your team's history (turns), about a second behind |
+| \`garden.game\`, \`query.py\` | this game, run by the game server as your team may see it: turns, versions (your own), teams (your bee's MEMORY in \`memory\`, \`memory_bytes\`, \`memory_error\`), pairs, scores |
+| \`garden.room\`, \`query.py --room\` | every finished game in this arena, fully revealed (\`game\` tells them apart) |
 
 \`\`\`python
-import sys; sys.path.insert(0, "tools")
-from _runner import call            # call("submit", kind="orchid", code=src) -> {"ok", "text", "cost", "available", ...}
-from stream import Stream           # Stream().actions(since_ms=...), .follow() (waits for new actions), .mine()
+q = garden.game.turns.my_bee().eq("fed", True).group_by("flower").sum("nectar").count()
+q.rows()      # (Row(flower=0, sum_nectar=..., count=...), ...)
+q.ast()       # the query as JSON
+garden.local.turns.rounds(10, 20).eq("flower", 2).order_by("round", desc=True).limit(5).rows()   # (Turn, ...)
+garden.local.turns.count().value()
 \`\`\`
 
-A script you start (for example one that follows the stream and submits changes by itself) may run in the background
-while your session lasts: start it with the Bash tool's \`run_in_background\` option and send its output to a file here,
-e.g. \`python3 follow.py > follow.log 2>&1\` (a trailing \`&\` is refused). Everything your session started is stopped
-when the session ends.
+Every step returns a new query; results are read-only. Conditions: \`eq ne lt le gt ge\` (field, value), \`in_\` (field,
+values), \`between\` (field, lo, hi), \`is_null\` / \`not_null\` (field), \`rounds(lo, hi)\`. Scopes: \`my_bee() my_flower()
+mine()\`. Shape: \`select(*fields) group_by(*fields) count(field=None) sum avg min max (field) order_by(field, desc=False)
+limit(n) offset(n)\`. Run: \`rows() first() value() ast()\`. Aggregates are named \`count\` and \`<fn>_<field>\`. A field your
+team may not see reads as None, in filters and aggregates too. Fields: \`python3 tools/query.py schema\`. A response over
+4 KB reads as None, with its size in \`response_bytes\` and the SHA-256 of its JSON text in \`response_hash\` (equal
+responses, equal hashes); \`garden.response(t.seq)\` fetches the whole of it.
 
-## The live stream over HTTP
+${privatePlay ? `## What you see during play (a private game)
 
-The game's public API needs no login, and you may read it (GET only) at ${apiBase}:
-- \`GET ${apiBase}/events?after=<seq>\`: Server-Sent Events, lines \`data: {...}\` with \`{actions, lastSeq, clockMs}\` as they
-  happen (a few times a second), \`{clockMs, lastSeq}\` when nothing is new, \`{version}\` when the game's public state changed
+During play your team sees only its own programs' sides of its own turns:
+- your flower's turns: the challenge it got, its response, its percent, its CPU time and the call's R; not whose bee
+  visited, and not whether that bee fed (records with \`side: "flower"\`);
+- your bee's turns: the challenge it asked, the response it got, its decision, and on a feed its nectar, the feed price,
+  the net and its balance; not which species answered (records with \`side: "bee"\`);
+- on your bee's feeds, the pollen grains as bare fragments of code (no species, version or code length);
+- every team's prevalence (F, B, draw chances, fitness) every ${prevalenceEveryS} s of game time, rounded to 2 decimals; the
+  scoreboard is the latest of these.
+Everything else (every turn with both teams named, every sample, every team's code) is revealed once the game is over.
+Your files and tools (status.py, query.py, garden) read the game as your team. Read without a login, the API below shows
+the clock, the settings, the prevalence snapshots and the scoreboard during play, and no turns.
+
+` : ""}## The game's public API
+
+The public API needs no login, and you may read it (GET) at ${apiBase}, and post history queries to its query endpoint.
+It shows public fields only (your private ones are in stream/history.jsonl and stream/mine.jsonl, and in garden.game):
+- \`GET ${apiBase}/events?after=<seq>\`: Server-Sent Events, lines \`data: {...}\` with \`{actions, lastSeq, clockMs, round, status}\`
+  as they happen
 - \`${apiBase.replace(/^http/, "ws")}/ws?after=<seq>\`: the same messages over a WebSocket, one JSON text frame each. Python's
   standard library has no WebSocket client and your own code may not open raw sockets, so from Python use the events above
   (\`garden.follow_live()\` does)
-- \`GET ${apiBase}/actions?after=<seq>&limit=<n ≤ 5000>\`: a page of actions, \`{actions, lastSeq, clockMs, status}\`
-- \`GET ${apiBase}/scores\`: just the live numbers, cheap to poll: clock, round, scores (whole game and last 5 minutes),
-  and the feed and nectar ledgers (who fed where, who got nectar where)
+- \`GET ${apiBase}/actions?after=<seq>&limit=<n ≤ 5000>\`: a page of actions
+- \`GET ${apiBase}/scores\`: the live scoreboard, cheap to poll
+- \`GET ${apiBase}/responses/<seq>\`: the whole response of the turn whose end is action \`seq\` (as JSON text)
+- \`POST ${apiBase}/query\`: a history query (the JSON of \`q.ast()\`), public fields only
 - \`GET ${apiBase}\`: the game view (status, clock, scores)
 
-stream/actions.jsonl holds the same actions, so you rarely need this. Read at most a few times a second.
+Read at most a few times a second.
 `;
 }
 
-export const SCHEMA = `# The action stream
+/** On top of SCHEMA.md in a private game: what the files hold during play. */
+export const PRIVATE_SCHEMA_NOTE = `# During play in this private game
 
-\`stream/actions.jsonl\`: one action per line, oldest first, exactly as the game's public API shows it to anyone.
-The runner appends new actions about once a second while the game runs; a line is complete once it ends in a newline.
+The files below hold only your own team's records until the game is over. stream/actions.jsonl has your own programs'
+sides of your own turns: \`side: "flower"\` records ({seq, atMs, round, side, flower (your id), action: "answer", c, r,
+rBytes, percent, ms, budgetMs, flowerError, flowerVersion}: no bee, no outcome) and \`side: "bee"\` records ({seq,
+atMs, round, side, bee (your id), turn, action: "feed" or "leave", c, r, rBytes, beeMs, beeError, beeVersion, log, and on
+a feed nectar, price, net, balance and a bare grain}: no flower). Your bee at your own flower gives both, with the same
+seq. stream/history.jsonl has the same as turn records (the other side's fields null), and stream/mine.jsonl your own
+actions. The descriptions below are of a whole game, as everything is once it is over.
+
+`;
+
+export const SCHEMA = `# The streams
+
+## stream/history.jsonl: your team's history
+
+One turn record per finished turn, oldest first, as your team may see it (GET .../ledger; your programs see no history),
+with \`seq\` (the turn's number in the public stream). Field names are as the API gives them (\`atMs\`, \`flowerVersion\`, ...); the
+query builder and garden use the Python names (\`at_ms\`, \`flower_version\`, ...). Teams are indices \`0\` to \`N - 1\`
+(stream/teams.json maps them to names; yours is \`GAME["team"]\` in your programs, \`"myIndex"\` in teams.json). A field
+your team may not see is null; the server decides (RULES.md, "What everyone can see").
 
 | field | what |
 |---|---|
-| seq | the action's number: 1, 2, 3, ... |
-| atMs | game time when it happened, in milliseconds |
-| round | the round it happened in (a round is 200 ms of game time: one action slot for every bee) |
-| bee | the team id of the bee |
-| patch, kind | the team id of the patch, and which of its flowers: cosmos or orchid (public to every team; bees never learn it) |
-| visit | the bee's visit number: a visit is everything one bee does at one flower until it moves on |
-| action | arrive (the bee was just dealt this flower: public at once, before its first ask), ask, feed, leave or error |
-| c, r, ms, after | ask: the challenge, the response (null if the flower failed: see error), how long the flower took in ms, true if asked after feeding |
-| nectar | feed: true at a cosmos, false at an orchid |
-| error, by | what went wrong, and whose fault: bee, challenge or flower |
+| seq, round, atMs, turn | the turn's place in the public stream, its round (200 ms of game time), its game time, the bee's turn number |
+| bee, flower | whose bee met a flower of whose species (team indices) |
+| challenge, response | what the bee asked and what the flower answered (null if the flower failed, or if it is over 4 KB) |
+| responseBytes, responseHash | the response's size in bytes of JSON (null if the flower failed); for a response over 4 KB, the SHA-256 of its JSON text (\`python3 tools/stream.py response <seq>\` has the whole of it) |
+| fed | whether the bee fed |
+| nectar, pollen | on a feed: the nectar and the pollen the flower gave the bee (on a turn without a feed: null and 0) |
+| percent, energy | the share offered as nectar and the turn's excess energy E: on every feed, and on every turn at your own species (else null) |
+| ms, budgetMs, flowerVersion, flowerError | your own flower's compute time, the call's hidden time budget R, version and error (null elsewhere) |
+| beeMs, beeVersion, beeError | your own bee's decision time, version and error, e.g. a MEMORY over its cap or of the wrong shape (null elsewhere) |
+| grain, grainVersion, grainCodeLength | on your own bee's feeds: the pollen grain (floor(scale × pollen^exponent) characters, config.json's pollenGrain, of the answering flower version's minified code, from a random start, wrapping), that version, and its code's length in characters (null elsewhere, and when the pollen was 0) |
 
-While the game runs some fields are your own team's business: which versions played (\`beeVersion\`, \`flowerVersion\`), how
-long each program actually took (\`ms\` for a flower's answer, \`beeMs\` for a bee's decision), what a bee printed (\`log\`),
-and why the game ended a bee's visit (\`by: "engine"\`). \`stream/mine.jsonl\` has every action of your bee and at your patch
-as your team sees it, with those fields, under the same \`seq\` as in actions.jsonl. Once the game is over everything is
-public. (A field the server doesn't show you is simply missing from a line.)
+## stream/actions.jsonl: the public stream
 
-\`stream/teams.json\`: \`{"teams": {id: name}, "me": your team id, "participants": [ids]}\`.
+Every action as anyone may see it, oldest first; a line is complete once it ends in a newline. A turn makes two
+actions: its \`arrive\` (written at once) and its end, \`feed\` or \`leave\`.
 
-Reading it:
+| field | what |
+|---|---|
+| seq, atMs, round | order, game time in ms, round |
+| turn | the bee's turn number: (bee, turn) identifies a turn |
+| bee, flower | team ids: whose bee, whose species |
+| action | arrive, feed or leave |
+| c, r | on feed and leave: the challenge and the response (null if the flower failed, or if it is over 4 KB) |
+| rBytes, rHash, rPreview | the response's size in bytes of JSON; for one over 4 KB, its SHA-256 and its first ${STREAM_PREVIEW} characters (the whole of it: \`python3 tools/stream.py response <seq>\`) |
+| percent, energy, nectar, pollen | on a feed: the share offered, the excess energy, the nectar and the pollen the flower gave (on a leave only pollen, 0) |
 
-\`\`\`python
-import sys; sys.path.insert(0, "tools")
-from stream import Stream
-s = Stream()
-recent = list(s.actions(since_ms=s.last()["atMs"] - 30000))   # the last 30 seconds
-for a in s.follow():                                            # new actions as they arrive
-    ...
-\`\`\`
+## stream/mine.jsonl: your own team's actions
 
-or \`python3 tools/stream.py summary --since 0.5\`, \`tail -n 20\`, \`answers 42\`, \`sql "SELECT bee_name, count(*) FROM actions GROUP BY 1"\`.
+The actions of your bee and at your species as your team sees them (same \`seq\`), with your private fields: at your
+flower \`percent\` and \`energy\` (also on turns without a feed), \`ms\`, \`budgetMs\` (the call's R), \`flowerError\`, \`flowerVersion\`; for your bee
+\`beeMs\` (decision time), \`beeError\`, \`beeVersion\` and \`log\` (what it printed), and on your bee's feeds its pollen
+grain (\`grain\`, \`grainVersion\`, \`grainCodeLength\`). A field you may not see is simply missing. Once the game is over everything is public.
+
+\`stream/teams.json\`: \`{"teams": {id: name}, "me": your team id, "participants": [ids in index order], "names": [names in
+index order], "myIndex": your index}\` (indices are fixed when the game starts).
+
+Querying them: \`python3 tools/query.py summary\`, \`python3 tools/query.py --local 'turns.my_flower().count()'\`,
+\`python3 tools/stream.py tail -n 20\`, \`python3 tools/grains.py\`; from a script, \`garden.local.turns...\`,
+\`garden.follow()\`, \`garden.grains()\` and \`garden.assemble(flower)\`.
 `;
 
-/** Install the workspace tools (always the runner's own copy: a team's edits to them don't persist). */
+/** The generated Python history client (docs/QUERY.md), installed as tools/history.py. */
+export const HISTORY_CLIENT = path.join(ARENA_DIR, "..", "vendor", "query", "history.py");
+
+/** The runner's own copy of a workspace tool, by file name (tools/*.py, and history.py from vendor/query/). */
+export const toolSource = (name) => (name === "history.py" ? HISTORY_CLIENT : path.join(TOOLS_SRC, name));
+
+/** Install the workspace tools (always the runner's own copy: a team's edits to them don't persist), with the history
+ * client that garden.py and query.py use. */
 export function installTools(dir) {
   const dest = path.join(dir, "tools");
   fs.mkdirSync(dest, { recursive: true }); // the team's own files in tools/ stay; ours are put back as they were
   for (const f of fs.readdirSync(TOOLS_SRC)) if (f.endsWith(".py")) fs.copyFileSync(path.join(TOOLS_SRC, f), path.join(dest, f));
+  if (fs.existsSync(HISTORY_CLIENT)) fs.copyFileSync(HISTORY_CLIENT, path.join(dest, "history.py"));
 }
 
 /** The version of each program playing now (the latest), from the team's own view. */
@@ -172,11 +272,16 @@ export async function prepareWorkspace({ arena, gameRow, persona, view, stream, 
 
   write(path.join(dir, "RULES.md"), rules());
   const examples = arena.settings.examples ? fs.readdirSync(path.resolve(ARENA_DIR, "..", arena.settings.examples)) : null;
-  const common = commonFiles(arena);
-  write(path.join(dir, "README.md"), readme({ ext, apiBase, examples, common: common?.files }));
+  const common = commonFiles(arena, persona);
+  const privatePlay = view.game.config?.visibility === "private";
+  write(path.join(dir, "README.md"), forCap(readme({ ext, apiBase, examples, common: common?.files, commonScope: common?.scope, privatePlay,
+    prevalenceEveryS: view.game.config?.prevalenceEveryS ?? 30 }), view.game.config));
   // Common knowledge (a primed cohort): restored at every game, so every team, new ones included, has the same copy.
   fs.rmSync(path.join(dir, "common"), { recursive: true, force: true });
-  if (common) fs.cpSync(common.dir, path.join(dir, "common"), { recursive: true });
+  // (several folders merge in order; Python's caches and dot files stay behind)
+  for (const d of common?.dirs ?? (common ? [common.dir] : [])) {
+    fs.cpSync(d, path.join(dir, "common"), { recursive: true, filter: (src) => src === d || !/(^|\/)(__pycache__|\.[^/]*)$/.test(path.relative(d, src)) });
+  }
   if (examples) {
     fs.rmSync(path.join(dir, "examples"), { recursive: true, force: true });
     fs.cpSync(path.resolve(ARENA_DIR, "..", arena.settings.examples), path.join(dir, "examples"), { recursive: true });
@@ -184,10 +289,11 @@ export async function prepareWorkspace({ arena, gameRow, persona, view, stream, 
   installTools(dir);
   const it = view.interface;
   write(path.join(dir, "interface.txt"), `challenge: ${it.types.challenge} (${it.types.challengeMeans})\nresponse: ${it.types.response} (${it.types.responseMeans})\n` +
-    `rules: ${(it.types.rules || []).join(" ")}\n\ncosmos and orchid:\n${it.flower}\n\nbee:\n${it.bee}\n`);
-  const teams = (view.participants || view.teams.map((t) => t.id)).map((id) => view.teams.find((t) => t.id === id)).filter(Boolean);
-  write(path.join(dir, "config.json"), json({ ...config, game: gameRow.generation, your_team: view.myTeam?.name, teams: teams.map((t) => t.name), flowers: 2 * teams.length,
-    file_extension: ext, size_unit: "nodes", public_api: apiBase, sample_challenges: sampleFor(config) }));
+    `rules: ${(it.types.rules || []).join(" ")}\n\nflower:\n${it.flower}\n\nbee:\n${it.bee}\n`);
+  const order = view.participants || view.teams.map((t) => t.id);
+  const teams = order.map((id) => view.teams.find((t) => t.id === id)).filter(Boolean);
+  write(path.join(dir, "config.json"), json({ ...config, game: gameRow.generation, your_team: view.myTeam?.name, your_index: order.indexOf(me) >= 0 ? order.indexOf(me) : null,
+    teams: teams.map((t) => t.name), flowers: teams.length, file_extension: ext, size_unit: "nodes", public_api: apiBase, sample_challenges: sampleFor(config) }));
   write(path.join(dir, "notebook.md"), (await one("SELECT notebook FROM arena.personas WHERE id = $1", [persona.id]))?.notebook || "");
 
   // Programs: in play, exactly the versions playing now; a new game starts from the team's final programs of the
@@ -207,14 +313,18 @@ export async function prepareWorkspace({ arena, gameRow, persona, view, stream, 
   writeHistory(dir, ext, view, me);
   if (statusText) write(path.join(dir, "status.txt"), statusText);
 
-  // The stream: the shared public copy (hard link), the team's private view, names.
+  // The streams: the shared public copy (hard link); the team's own history and actions (its token, kept by the runner).
   const sdir = path.join(dir, "stream");
   if (stream) {
     stream.linkInto(path.join(sdir, "actions.jsonl"));
-    stream.trackMine(me, path.join(sdir, "mine.jsonl"), tok);
+    stream.track(me, sdir, tok);
   }
-  write(path.join(sdir, "teams.json"), json({ teams: Object.fromEntries(view.teams.map((t) => [t.id, t.name])), me, participants: view.participants || null }));
-  write(path.join(sdir, "SCHEMA.md"), SCHEMA);
+  const name = Object.fromEntries(view.teams.map((t) => [t.id, t.name]));
+  const participants = view.participants || stream?.participants || null; // in the lobby: none yet (the stream adds them)
+  write(path.join(sdir, "teams.json"), json({ teams: name, me, participants,
+    names: participants ? participants.map((id) => name[id]) : null, myIndex: participants ? participants.indexOf(me) : null }));
+  if (stream?.tracked?.get(me)) stream.tracked.get(me).indexed = participants || null;
+  write(path.join(sdir, "SCHEMA.md"), forCap(privatePlay ? PRIVATE_SCHEMA_NOTE + SCHEMA : SCHEMA, view.game.config));
 
   await writePreviousGames(arena, dir, gameRow.generation, persona.id);
   return { dir, ext, drafts };
@@ -248,30 +358,44 @@ async function writePreviousGames(arena, dir, generation, personaId) {
   const games = await all("SELECT * FROM arena.games WHERE arena_id = $1 AND generation < $2 AND stage IN ('played','interviewed','judged','done') ORDER BY generation", [arena.id, generation]);
   for (const g of games) {
     const gdir = path.join(dir, "previous-games", `game-${g.generation}`);
-    if (!fs.existsSync(path.join(gdir, "standings.md")) && g.game_uuid) await writeGameRecord(gdir, g);
+    if (!fs.existsSync(path.join(gdir, "standings.md")) && g.game_short_id) await writeGameRecord(gdir, g, arena);
     const panel = path.join(gdir, "panel.md");
     if (!fs.existsSync(panel) && ["judged", "done"].includes(g.stage)) await writePanel(panel, g, personaId);
   }
 }
 
-/** A finished game's record from its tables: every team's final code, the standings, everyone's change timeline. */
-export async function writeGameRecord(gdir, g) {
-  const game = await one("SELECT * FROM games WHERE id = $1", [g.game_uuid]);
-  if (!game || game.status !== "finished") return;
-  const ext = extOf(game.config);
-  const teams = await all("SELECT id, name FROM teams WHERE game_id = $1", [g.game_uuid]);
-  const name = Object.fromEntries(teams.map((t) => [t.id, t.name]));
-  const progs = await all("SELECT team_id, kind, version, size, distance, cost, at_ms, problem, code FROM programs WHERE game_id = $1 ORDER BY at_ms, team_id, kind, version", [g.game_uuid]);
-  for (const p of progs) {
-    const latest = !progs.some((x) => x.team_id === p.team_id && x.kind === p.kind && x.version > p.version);
-    if (latest && game.config.revealOnFinish) write(path.join(gdir, "final-code", safeName(name[p.team_id]), `${p.kind}.${ext}`), p.code);
+/** A finished game's record, from the game's API (everything is revealed once it is over): every team's final code,
+ * the standings with the three score shares, everyone's change timeline. */
+export async function writeGameRecord(gdir, g, arena, api = Api) {
+  let view;
+  try { view = await api.view(null, gamePath(arena.room_short_id, g.game_short_id)); } catch { return; }
+  if (!view?.game || view.game.status !== "finished") return;
+  const config = view.game.config;
+  const ext = extOf(config);
+  const name = Object.fromEntries(view.teams.map((t) => [t.id, t.name]));
+  const progs = [];
+  for (const t of view.teams) {
+    for (const k of KINDS) {
+      const vs = t.programs?.[k] || [];
+      vs.forEach((v, i) => {
+        progs.push({ team_id: t.id, kind: k, ...v });
+        if (i === vs.length - 1 && v.code != null) write(path.join(gdir, "final-code", safeName(t.name), `${k}.${ext}`), v.code);
+      });
+    }
+    // Every bee's MEMORY is revealed once the game is over.
+    if (t.memory) write(path.join(gdir, "final-code", safeName(t.name), "bee-memory.json"), JSON.stringify(t.memory, null, 1));
   }
-  const ents = await all("SELECT team_name, fitness, fitness_rank, sat_out FROM arena.entries WHERE game_id = $1 ORDER BY fitness_rank NULLS LAST", [g.id]);
-  write(path.join(gdir, "standings.md"), `# Game ${g.generation}: ${game.config.minutes} minutes, ${Number(game.round || 0)} rounds, ${Number(game.last_seq)} actions\n\n` +
-    `| rank | team | fitness |\n|---|---|---|\n` + ents.map((e) => `| ${e.fitness_rank ?? "-"} | ${e.team_name} | ${e.sat_out ? "sat out" : e.fitness?.toFixed(2) ?? "-"} |`).join("\n") +
-    `\n\n${game.config.revealOnFinish ? "Every team's final code is in final-code/." : "Code stays secret in this game."} changes.md lists every team's program versions.\n`);
+  progs.sort((a, b) => (a.atMs || 0) - (b.atMs || 0) || String(name[a.team_id]).localeCompare(String(name[b.team_id])) || a.kind.localeCompare(b.kind) || a.version - b.version);
+  const scores = Object.fromEntries((view.scores || []).map((x) => [x.teamId, x]));
+  const ents = await all("SELECT team_id, team_name, fitness, fitness_rank, sat_out FROM arena.entries WHERE game_id = $1 ORDER BY fitness_rank NULLS LAST", [g.id]);
+  const f2 = (x) => (x == null ? "-" : Number(x).toFixed(2));
+  write(path.join(gdir, "standings.md"), `# Game ${g.generation}: ${config.minutes} minutes, ${Number(view.game.round || 0)} rounds, ${Number(view.game.lastSeq || 0)} actions\n\n` +
+    `| rank | team | fitness | pollination (share) | forage (share) | pollen given | feeds received / given |\n|---|---|---|---|---|---|---|\n` +
+    ents.map((e) => { const x = scores[e.team_id] || {}; return `| ${e.fitness_rank ?? "-"} | ${e.team_name} | ${e.sat_out ? "sat out" : f2(e.fitness ?? x.fitness)} | ` +
+      `${f2(x.pollination)} (${f2(x.pollinationShare)}) | ${f2(x.forage)} (${f2(x.forageShare)}) | ${f2(x.pollen)} | ${x.feedsReceived ?? "-"} / ${x.feedsGiven ?? "-"} |`; }).join("\n") +
+    `\n\n${config.revealOnFinish ? "Every team's final code is in final-code/, with each bee's final MEMORY." : "Code stays secret in this game; each bee's final MEMORY is in final-code/."} changes.md lists every team's program versions.\n`);
   write(path.join(gdir, "changes.md"), `# Every program version in game ${g.generation}\n\n| game time | team | program | version | size | change cost | first problem |\n|---|---|---|---|---|---|---|\n` +
-    progs.map((p) => `| ${Number(p.at_ms) ? mmss(Number(p.at_ms)) : "lobby"} | ${name[p.team_id]} | ${p.kind} | v${p.version} | ${p.size} | ${p.cost} | ${p.problem ? p.problem.replace(/\|/g, "/").slice(0, 100) : "-"} |`).join("\n") + "\n");
+    progs.map((p) => `| ${Number(p.atMs) ? mmss(Number(p.atMs)) : "lobby"} | ${name[p.team_id]} | ${p.kind} | v${p.version} | ${p.size} | ${p.cost} | ${p.problem ? String(p.problem).replace(/\|/g, "/").slice(0, 100) : "-"} |`).join("\n") + "\n");
 }
 
 async function writePanel(file, g, personaId) {
@@ -371,33 +495,54 @@ const RAW_NET = /(?:^|[;&|(`\n]\s*)(?:nc|ncat|telnet|ssh|scp)\s+(?![=+\-*\/%<>!&
 const WRITE_HTTP = /\s-X\s*['"]?(?:POST|PUT|PATCH|DELETE)\b|--request\s+['"]?(?:POST|PUT|PATCH|DELETE)\b|\s--data(?:-\w+)?[\s=]|\s-d\s|\s-F\s|--form\b|--upload-file|\s-T\s|method\s*=\s*["'](?:POST|PUT|PATCH|DELETE)["']|\brequests\.(?:post|put|patch|delete)\b|\.request\(\s*["'](?:POST|PUT|PATCH|DELETE)["']|\burlopen\([^)]*\bdata\s*=|\bRequest\([^)]*\bdata\s*=/i;
 const CREDENTIALS = /authorization|\bbearer\b|\bcookie|x-api-key|\.dev-secret|dev_login_secret|\bpassword\b/i;
 const DB = /psql|\b5432\b|postgres|pg_|DATABASE_URL/i;
+// A busy-wait or a deliberate CPU burn outside a team's own programs (a loop that does nothing until a clock says so, an
+// empty `while True`, a huge empty range, a shell spin): it takes CPU from the game and every other team's agent on a
+// shared machine. A warning, told to the session (lib/team.js) and logged; never a stop.
+const CLOCK = String.raw`\btime\.(?:time|perf_counter|monotonic|process_time|thread_time)(?:_ns)?\(\)|\bdatetime\.(?:datetime\.)?now\(\)`;
+const SPIN = new RegExp(String.raw`\bwhile\s+(?:True|1|not\s+\w+|[^:\n]*(?:${CLOCK})[^:\n]*)\s*:\s*(?:#[^\n]*)?(?:\n[ \t]*)?(?:pass|continue|\.\.\.)\s*(?:$|[\n;"'#])` +
+  String.raw`|\bfor\s+\w+\s+in\s+(?:x?range)\(\s*(?:10\s*\*\*\s*(?:[89]|\d\d)|\d{9,})\s*\)\s*:\s*(?:\n[ \t]*)?pass\b` +
+  String.raw`|\bwhile\s+(?:true|:)\s*;\s*do\s*(?::|true)?\s*;?\s*done|\byes\s*>\s*/dev/null`, "m");
+export const SPIN_WARNING = /^busy-wait/;
+const SPIN_DETAIL = "busy-wait (CPU burned outside your programs)";
 const ENVDUMP = /(^|[;&|\s])(env|printenv|set)(\s*$|\s*[|;&>])|os\.environ|process\.env|\/proc\/self\/environ/;
 const AUTH = /\/api\/auth|dev\/login|login.*secret|\/api\/me\b|\/api\/my\//i;
 const URLS = /(?:https?|wss?):\/\/[^\s'"`<>()\]\\,]+/g;
 
-/** Is this URL the game's public API on localhost (any path under /api/rooms/, or the bare base)? */
-export function allowedUrl(u, port = "4000") {
-  const m = String(u).match(/^(?:https?|wss?):\/\/(localhost|127\.0\.0\.1)(?::(\d+))?(\/.*)?$/i);
+const LOCAL_URL = /^(?:https?|wss?):\/\/(localhost|127\.0\.0\.1)(?::(\d+))?(\/.*)?$/i;
+
+/** Is this URL the game's public API on localhost (any path under /api/rooms/, the query schema, or the bare base)? */
+export function allowedUrl(u, port = "4100") {
+  const m = String(u).match(LOCAL_URL);
   if (!m || (m[2] || "80") !== String(port)) return false;
   const p = m[3] || "/";
-  return p === "/" || /^\/api\/?$/.test(p) || /^\/api\/rooms(\/|\?|$)/.test(p);
+  return p === "/" || /^\/api\/?$/.test(p) || /^\/api\/rooms(\/|\?|$)/.test(p) || /^\/api\/query\/schema\/?$/.test(p);
 }
 
-/** A network use in a command or in written code: fine if it only reads the game's public API on localhost. */
+/** Is this URL a history query endpoint of the game server (docs/QUERY.md: POST …/games/:g/query or /rooms/:room/query)? */
+export function queryUrl(u, port = "4100") {
+  const m = String(u).match(LOCAL_URL);
+  return !!m && (m[2] || "80") === String(port) && /^\/api\/rooms\/[^/?#]+(?:\/games\/[^/?#]+)?\/query\/?$/.test(m[3] || "");
+}
+
+/** A network use in a command or in written code: fine if it only reads the game's public API on localhost (GET), or
+ * posts history queries to its query endpoints (without credentials: the public fields). */
 export function networkFinding(text, port) {
-  if (RAW_NET.test(text)) return { severity: "violation", detail: "raw network access (only GETs to the game's public API are allowed)" };
-  const urls = text.match(URLS) || [];
-  const bad = urls.filter((u) => !allowedUrl(u.replace(/[.;:]+$/, ""), port));
+  if (RAW_NET.test(text)) return { severity: "violation", detail: "raw network access (only GETs to the game's public API and its history queries are allowed)" };
+  const urls = (text.match(URLS) || []).map((u) => u.replace(/[.;:]+$/, ""));
+  const bad = urls.filter((u) => !allowedUrl(u, port));
   if (bad.length) return { severity: "violation", detail: `network access outside the game's public API: ${bad[0]}` };
   if (CREDENTIALS.test(text)) return { severity: "violation", detail: `credentials in a network request: ${text.match(CREDENTIALS)[0]}` };
-  if (WRITE_HTTP.test(text)) return { severity: "violation", detail: `a write request (only GETs to the public API are allowed; submit with tools/submit.py): ${text.match(WRITE_HTTP)[0].trim()}` };
+  // A write request is allowed only to the query endpoints: every URL in it must be one (and there must be one).
+  if (WRITE_HTTP.test(text) && (!urls.length || urls.some((u) => !queryUrl(u, port)))) {
+    return { severity: "violation", detail: `a write request (only GETs to the public API and POSTs to its query endpoint are allowed; submit with tools/submit.py): ${text.match(WRITE_HTTP)[0].trim()}` };
+  }
   if (!urls.length) return { severity: "warning", detail: "network code without a URL the audit can check" };
   return null;
 }
 
 // Writing to the shared stream: it is hard-linked into every workspace (the runner repairs it, but it's not allowed).
-const STREAM_WRITE_SH = /(?:>>?|\btee\b(?:\s+-a)?)\s*['"]?(?:\.\/)?stream\/|\b(?:rm|truncate|shred)\b[^;&|\n]*\bstream\/(?:actions|mine)|\bsed\s+-i[^;&|\n]*\bstream\/|\b(?:cp|mv|ln)\b[^;&|\n]*\s['"]?(?:\.\/)?stream\/[^\s;&|]*\s*(?:$|[;&|\n])/;
-const STREAM_WRITE_PY = /open\(\s*[^)\n]*stream\/(?:actions|mine)\.jsonl[^)\n]*,\s*['"][^'"]*[wax+]|(?:os\.remove|os\.unlink|shutil\.\w+)\([^)\n]*stream\//;
+const STREAM_WRITE_SH = /(?:>>?|\btee\b(?:\s+-a)?)\s*['"]?(?:\.\/)?stream\/|\b(?:rm|truncate|shred)\b[^;&|\n]*\bstream\/(?:actions|mine|history)|\bsed\s+-i[^;&|\n]*\bstream\/|\b(?:cp|mv|ln)\b[^;&|\n]*\s['"]?(?:\.\/)?stream\/[^\s;&|]*\s*(?:$|[;&|\n])/;
+const STREAM_WRITE_PY = /open\(\s*[^)\n]*stream\/(?:actions|mine|history)\.jsonl[^)\n]*,\s*['"][^'"]*[wax+]|(?:os\.remove|os\.unlink|shutil\.\w+)\([^)\n]*stream\//;
 
 /** Drop the bodies of heredocs that only write data to a file (`cat > f <<'E' … E`, `tee`): notebook prose like
  * "1.1e11 .. 8.9e11" isn't a path. Heredocs fed to an interpreter (`python3 - <<'E'`) keep their bodies. The written
@@ -485,22 +630,30 @@ const hasParent = (p) => /(^|[\/\\])\.\.([\/\\]|$)/.test(p);
  *   passed to a call, as in \`os.chdir("..")\` or \`Path("..")\`). Comments, prose and \`...\` never count; a lone \`'..'\`
  *   that isn't an argument (\`else '..'\`) is a placeholder. */
 export function escapesWorkspace(cmd, dir, start = dir) {
+  return workspaceEscapes(cmd, dir, start).length > 0;
+}
+
+/** Where a command's way out of the workspace leads: for each \`cd\` target outside it and each ".." path that resolves
+ * outside it (see escapesWorkspace), the absolute paths it may resolve to (one per directory the command may be in). */
+export function workspaceEscapes(cmd, dir, start = dir) {
   const { shell: sh0, programs } = splitPrograms(stripDataHeredocs(cmd));
   const sh = stripSubstitutions(stripShellComments(sh0));
   const bases = [start];
+  const out = [];
   for (const m of sh.matchAll(/(?:^|[;&|]\s*|\s)cd\s+([^\s;&|]+)/g)) {
     const target = path.resolve(bases[bases.length - 1], m[1].replace(/^['"]|['"]$/g, ""));
-    if (!target.startsWith(dir)) return true;
+    if (!within(target, dir)) out.push([target]);
     bases.push(target);
   }
-  const outside = (p) => !bases.some((b) => path.resolve(b, p).startsWith(dir));
+  const resolved = (p) => bases.map((b) => path.resolve(b, p));
+  const outside = (p) => !resolved(p).some((r) => within(r, dir));
   for (const m of sh.matchAll(/[^\s'"`;|&<>()=]*\.\.[^\s'"`;|&<>()]*/g)) {
     const tok = m[0];
     if (!/(^|\/)\.\.(\/|$)/.test(tok)) continue; // "..." or "a..b" aren't parent paths
     if (/^https?:/.test(tok)) continue;
     const segment = sh.slice(0, m.index).split(/[;&|\n]/).pop().trim();
     if (/^(echo|printf)\b/.test(segment)) continue; // `echo ..` prints a separator; it touches no file
-    if (outside(tok)) return true;
+    if (outside(tok)) out.push(resolved(tok));
   }
   for (const code of programs) {
     for (const { s, before } of programStrings(code)) {
@@ -508,17 +661,57 @@ export function escapesWorkspace(cmd, dir, start = dir) {
       if (!hasParent(t)) continue;
       if (t === ".." && before !== "(" && before !== ",") continue; // a placeholder ('..'), not an argument
       if (/^https?:/.test(t) || /\s/.test(t)) continue; // URLs and prose ("ring .. recipe") aren't paths
-      if (outside(t)) return true;
+      if (outside(t)) out.push(resolved(t));
     }
   }
-  return false;
+  return out;
 }
+
+const within = (p, d) => p === d || p.startsWith(d + "/");
+const GLOB_CHARS = /[*?[\]{}]/;
+const SCOPE_RANK = { own: 0, unknown: 1, other: 2 };
+const worstScope = (scopes) => scopes.reduce((a, b) => (SCOPE_RANK[b] > SCOPE_RANK[a] ? b : a), "own");
+
+/** Where a path points, for fair play (workspaces are <root>/<arena>/<slug>):
+ *   "own"      this team's workspace, or one of \`own\` (its spill and background-task folders)
+ *   "unknown"  inside this arena's folder, under a name that is nothing there: no team's folder, not the runner's files
+ *              (a mistyped path, like <arena>/tools for the team's own tools/). A warning, never a stop.
+ *   "other"    another team's workspace, the runner's files (.runner, .shared), the arena's folder itself, a glob over
+ *              it, another arena, or anywhere else outside the workspace. A violation.
+ * A relative path resolves against cwd; text that names arena-ws/<arena>/<folder> without an absolute root is judged by
+ * that tail. */
+export function pathScope(p, dir, { cwd = dir, own = [] } = {}) {
+  const s = String(p).trim().replace(/^['"]+|['"]+$/g, "");
+  const root = path.dirname(dir);
+  let abs;
+  if (!s.startsWith("/") && s.includes("arena-ws/")) {
+    if (path.basename(path.dirname(root)) !== "arena-ws") return "other";
+    abs = path.resolve(path.dirname(root), s.slice(s.indexOf("arena-ws/") + "arena-ws/".length));
+  } else abs = path.resolve(cwd, s);
+  if (within(abs, dir) || own.some((d) => d && within(abs, d))) return "own";
+  if (!abs.startsWith(root + "/")) return "other";
+  const seg = abs.slice(root.length + 1).split("/")[0];
+  return GLOB_CHARS.test(seg) || fs.existsSync(path.join(root, seg)) ? "other" : "unknown";
+}
+
+// The paths in a command or in code that the audit judges: absolute paths under the system roots, and anything naming
+// arena-ws/.
+const ABS_PATHS = /(?<=^|[\s'"=(:,])\/(?:home|root|srv|var|etc|proc|opt|sys|run|mnt|media)(?:\/[^\s'"`;|&<>(),]*)?/g;
+const WS_PATHS = /[^\s'"`;|&<>(),]*arena-ws\/[^\s'"`;|&<>(),]*/g;
+/** "warning" when every path of `re` in the text points to nothing in this arena's folder (and at least one does), else
+ * "violation" (whatever the audit's pattern matched stays a violation unless its paths are shown to be harmless). */
+function pathSeverity(text, re, dir, opts) {
+  const paths = [...String(text).matchAll(re)].map((m) => m[0]);
+  const scope = worstScope(paths.map((x) => pathScope(x, dir, opts)));
+  return paths.length && scope === "unknown" ? "warning" : "violation";
+}
+const NO_FOLDER = "a path in the arena's folder that is no team's folder (a mistyped path?)";
 
 /** The shell's working directory after a command (Claude Code's Bash tool keeps it between calls). */
 export function cwdAfter(cmd, dir, start = dir) {
   let cwd = start;
   for (const m of stripDataHeredocs(cmd).matchAll(/(?:^|[;&|]\s*|\s)cd\s+([^\s;&|]+)/g)) cwd = path.resolve(cwd, m[1].replace(/^['"]|['"]$/g, ""));
-  return cwd.startsWith(dir) ? cwd : dir;
+  return within(cwd, dir) ? cwd : dir;
 }
 
 // How the Claude Code CLI reports a Bash command it refused to run.
@@ -527,19 +720,22 @@ const REFUSED = /requires? (explicit )?approval|permission to use|was blocked|no
 /** Checks on code a team wrote (a Write/Edit in a session, or a scaffold before it starts): database, logins, paths
  * outside the workspace, other workspaces, network beyond reading the public API, writes into stream/, environment.
  * otherWs: a RegExp matching other teams' workspaces (or the arena id and slug to build it). */
-export function codeFindings(code, dir, otherWs, port = "4000") {
+export function codeFindings(code, dir, otherWs, port = "4100", { spin = true } = {}) {
   const out = [];
   const add = (severity, detail) => out.push({ severity, detail });
   const text = String(code || "").replaceAll(dir, "WS");
   if (!text) return out;
   if (DB.test(text)) add("violation", `database access in written code: ${text.match(DB)[0]}`);
   if (AUTH.test(text)) add("violation", `auth endpoint in written code: ${text.match(AUTH)[0]}`);
-  if (SENSITIVE.test(text)) add("violation", `path outside workspace in written code: ${text.match(SENSITIVE)[0]}`);
-  if (otherWs.test(text)) add("violation", `other workspace in written code`);
+  // Paths: another team's workspace, the runner's files or outside the arena is a violation; a path that names nothing in
+  // the arena's folder (a mistyped path) only a warning.
+  if (SENSITIVE.test(text)) { const sv = pathSeverity(code, ABS_PATHS, dir); add(sv, `${sv === "warning" ? NO_FOLDER : "path outside workspace"} in written code: ${text.match(SENSITIVE)[0]}`); }
+  if (otherWs.test(text)) { const sv = pathSeverity(code, WS_PATHS, dir); add(sv, sv === "warning" ? `${NO_FOLDER} in written code` : `other workspace in written code`); }
   if (NETWORK.test(text) || /\bsocket\b|\bcurl\b|\bwget\b|aiohttp|httpx/.test(text)) { const f = networkFinding(text, port); if (f) add(f.severity, `${f.detail} (in written code)`); }
   if (STREAM_WRITE_PY.test(text)) add("violation", `writing to the shared stream files in written code`);
   if (/os\.environ|getenv\(|\/proc\/self/.test(text)) add("violation", `environment access in written code`);
   if (/(^|[\s'"])\/tmp\b/.test(text)) add("warning", `uses /tmp in written code`);
+  if (spin && SPIN.test(text)) add("warning", `${SPIN_DETAIL} in written code`);
   return out;
 }
 
@@ -554,7 +750,7 @@ export function otherWorkspaces(arenaId, slug) {
 export function audit(transcript, dir, arenaId, slug, opts = {}) {
   let lines = transcript;
   if (!Array.isArray(lines)) { try { lines = fs.readFileSync(transcript, "utf8").split("\n").filter(Boolean); } catch { return []; } }
-  const port = String(opts.port || "4000");
+  const port = String(opts.port || "4100");
   const found = [];
   const add = (severity, tool, detail) => found.push({ severity, tool, detail: String(detail).slice(0, 400) });
   const otherWs = otherWorkspaces(arenaId, slug);
@@ -585,27 +781,41 @@ export function audit(transcript, dir, arenaId, slug, opts = {}) {
         if (DB.test(cmd)) add("violation", "Bash", `database access: ${cmd}`);
         if (AUTH.test(cmd)) add("violation", "Bash", `auth endpoint: ${cmd}`);
         if (ENVDUMP.test(cmd)) add("violation", "Bash", `environment dump: ${cmd}`);
-        if (otherWs.test(cmd)) add("violation", "Bash", `other workspace: ${cmd}`);
         const real = cmd.replaceAll("WS/", dir + "/").replace(/(^|\s)WS(\s|;|$)/g, `$1${dir}$2`);
-        if (escapesWorkspace(real, dir, shellCwd)) add("violation", "Bash", `parent-directory path leaving the workspace: ${cmd}`);
+        // A path into another team's workspace, the runner's files or anywhere outside the arena is a violation; one
+        // that names nothing in the arena's folder (a mistyped path) is only a warning.
+        const scopeOpts = { cwd: shellCwd, own: [spill, tasks] };
+        if (otherWs.test(cmd)) { const sv = pathSeverity(real, WS_PATHS, dir, scopeOpts); add(sv, "Bash", `${sv === "warning" ? NO_FOLDER : "other workspace"}: ${cmd}`); }
+        const escapes = workspaceEscapes(real, dir, shellCwd);
+        if (escapes.length) {
+          const sv = worstScope(escapes.flat().map((x) => pathScope(x, dir, scopeOpts))) === "unknown" ? "warning" : "violation";
+          add(sv, "Bash", `${sv === "warning" ? NO_FOLDER : "parent-directory path leaving the workspace"}: ${cmd}`);
+        }
         if (!refused.has(c.id)) shellCwd = cwdAfter(real, dir, shellCwd);
-        if (SENSITIVE.test(cmd.replaceAll(dir, "WS"))) add("violation", "Bash", `path outside workspace: ${cmd}`);
+        if (SENSITIVE.test(cmd.replaceAll(dir, "WS"))) { const sv = pathSeverity(real, ABS_PATHS, dir, scopeOpts); add(sv, "Bash", `${sv === "warning" ? NO_FOLDER : "path outside workspace"}: ${cmd}`); }
         if (NETWORK.test(cmd)) { const f = networkFinding(cmd, port); if (f) add(f.severity, "Bash", `${f.detail}: ${cmd}`); }
         if (STREAM_WRITE_SH.test(stripDataHeredocs(cmd).replaceAll(dir + "/", ""))) add("violation", "Bash", `writing to the shared stream files: ${cmd}`);
         if (/\/tmp\b/.test(cmd)) add("warning", "Bash", `uses /tmp: ${cmd}`);
+        if (SPIN.test(stripDataHeredocs(cmd))) add("warning", "Bash", `${SPIN_DETAIL}: ${cmd}`);
       } else {
         // Written content (scripts, harnesses, programs): same checks as shell commands.
         const text = ownSpill(String(input.content ?? input.new_string ?? ""));
-        for (const f of codeFindings(text, dir, otherWs, port)) add(f.severity, c.name, f.detail);
+        // (a busy loop in the team's own programs is theirs to spend: their flower's work, timed against its R)
+        const program = /(^|\/)(flower|bee)\.(py|ts)$|(^|\/)(drafts|history)\//.test(path.relative(dir, path.resolve(dir, String(input.file_path ?? input.notebook_path ?? ""))));
+        for (const f of codeFindings(text, dir, otherWs, port, { spin: !program })) add(f.severity, c.name, f.detail);
         for (const key of ["file_path", "path", "notebook_path"]) {
           const p = input[key];
           if (!p) continue;
           const abs = path.resolve(dir, String(p));
-          if (!abs.startsWith(dir) && !abs.startsWith(spill + "/") && !abs.startsWith(tasks + "/")) add("violation", c.name, `path outside workspace: ${p}`);
+          const sc = pathScope(abs, dir, { own: [spill, tasks] });
+          if (sc !== "own") add(sc === "unknown" ? "warning" : "violation", c.name, `${sc === "unknown" ? NO_FOLDER : "path outside workspace"}: ${p}`);
           if ((c.name === "Write" || c.name === "Edit") && abs.startsWith(path.join(dir, "stream") + "/")) add("violation", c.name, `writing to the shared stream files: ${p}`);
         }
         const pat = String(input.pattern || "");
-        if (c.name === "Grep" || c.name === "Glob") if (/\.\.|^\//.test(pat) && !pat.startsWith(dir)) add("violation", c.name, `pattern outside workspace: ${pat}`);
+        if ((c.name === "Grep" || c.name === "Glob") && /\.\.|^\//.test(pat)) {
+          const sc = pathScope(pat, dir, { own: [spill, tasks] });
+          if (sc !== "own") add(sc === "unknown" ? "warning" : "violation", c.name, `${sc === "unknown" ? NO_FOLDER : "pattern outside workspace"}: ${pat}`);
+        }
       }
     }
   }

@@ -8,6 +8,37 @@ export function showValue(v: unknown, max = 40): string {
   return s.length > max ? s.slice(0, max - 1) + "…" : s;
 }
 
+/**
+ * Energy, nectar and surplus (node·ms), compactly: 950, 12.3k, 4.56M. Exact values go in titles and tables.
+ */
+export function fmtE(x: number | null | undefined): string {
+  if (x === null || x === undefined || !Number.isFinite(x)) return "–";
+  const a = Math.abs(x), s = x < 0 ? "−" : "";
+  if (a < 1000) return s + (a < 10 && a % 1 ? a.toFixed(1) : Math.round(a).toString());
+  if (a < 1e6) return s + (a / 1e3).toFixed(a < 1e4 ? 2 : a < 1e5 ? 1 : 0) + "k";
+  if (a < 1e9) return s + (a / 1e6).toFixed(a < 1e7 ? 2 : a < 1e8 ? 1 : 0) + "M";
+  return s + (a / 1e9).toFixed(2) + "G";
+}
+
+// The unit of E in the game on screen: node·ms·bytes with the byte factor, else node·ms (the game page sets it).
+let energyUnit = "node·ms";
+export const setEnergyUnit = (unit: string) => { energyUnit = unit; };
+export const getEnergyUnit = () => energyUnit;
+
+/** An exact energy figure for titles: 123,486.5 node·ms (or node·ms·bytes). */
+export const fmtEExact = (x: number | null | undefined) =>
+  x === null || x === undefined || !Number.isFinite(x) ? "–" : `${(Math.round(x * 10) / 10).toLocaleString()} ${energyUnit}`;
+
+/** A flower's CPU time: one decimal under 10 ms. */
+export const fmtMs = (x: number | null | undefined) =>
+  x === null || x === undefined || !Number.isFinite(x) ? "–" : x < 10 ? x.toFixed(1) : String(Math.round(x));
+
+/** x raised to a scoring exponent, in words: "√(x)" at 0.5, else "(x)^p" (no brackets around a single word). */
+export function powText(x: string, p: number): string {
+  const base = /^\w+$/.test(x) ? x : `(${x})`;
+  return p === 0.5 ? `√${base}` : `${base}^${+p.toFixed(3)}`;
+}
+
 export const fmt2 = (x: number) => (Number.isFinite(x) ? x.toFixed(2) : "–");
 export const fmt3 = (x: number) => (Number.isFinite(x) ? x.toFixed(3) : "–");
 export const pct = (x: number) => (Number.isFinite(x) ? `${Math.round(x * 1000) / 10}%` : "–");
@@ -48,3 +79,11 @@ export function timeAgo(iso: string | null | undefined): string {
 
 /** "Ada's", but "Honey Hunters'" */
 export const poss = (name: string | undefined) => (!name ? "?'s" : /s$/i.test(name) ? `${name}'` : `${name}'s`);
+
+/** A size in bytes: 512 B, 4.1 KB, 1.00 MB. */
+export function fmtBytes(n: number | null | undefined): string {
+  if (n === null || n === undefined || !Number.isFinite(n)) return "?";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(n < 10240 ? 1 : 0)} KB`;
+  return `${(n / 1024 / 1024).toFixed(n < 10 * 1024 * 1024 ? 2 : 1)} MB`;
+}

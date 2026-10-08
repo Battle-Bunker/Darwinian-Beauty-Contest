@@ -4,13 +4,23 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const BASE = process.env.ARENA_API || "http://localhost:4000";
+export const BASE = process.env.ARENA_API || "http://localhost:4100";
 
 export class ApiError extends Error {
   constructor(status, message, body) { super(message); this.status = status; this.body = body; }
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** A game's drawn end (drawnEndMs: in the owner's view while the end is hidden) is dropped from every response, so nothing
+ * the arena reads can carry it to a team: the runner, like the teams, learns the end only from status "finished". */
+export function withoutDrawnEnd(json) {
+  if (!json || typeof json !== "object") return json;
+  const drop = (o) => { if (o && typeof o === "object" && "drawnEndMs" in o) delete o.drawnEndMs; };
+  drop(json); drop(json.game);
+  for (const k of ["games", "items"]) if (Array.isArray(json[k])) for (const x of json[k]) { drop(x); drop(x?.game); }
+  return json;
+}
 
 export async function api(token, method, path_, body, { okStatuses = [422], retries = 4 } = {}) {
   for (let attempt = 0; ; attempt++) {
@@ -26,7 +36,7 @@ export async function api(token, method, path_, body, { okStatuses = [422], retr
       if (attempt < retries) { await sleep(1000 * (attempt + 1)); continue; }
       throw new ApiError(0, `${method} ${path_}: ${e.message}`);
     }
-    if (res.ok || okStatuses.includes(res.status)) return json;
+    if (res.ok || okStatuses.includes(res.status)) return withoutDrawnEnd(json);
     if (res.status >= 500 && attempt < retries) { await sleep(1000 * (attempt + 1)); continue; }
     throw new ApiError(res.status, `${method} ${path_} -> ${res.status} ${json.error || ""}`, json);
   }
@@ -55,11 +65,40 @@ export const Api = {
   check: (tok, g, kind, code) => api(tok, "POST", `${g}/check`, { kind, code }),
   // A 422 (too big, can't afford it yet, game over) comes back as a body with ok: false and errors.
   submit: (tok, g, kind, code) => api(tok, "POST", `${g}/programs`, { kind, code }, { retries: 1 }),
-  try: (tok, g, kind, code, challenges, flowers) => api(tok, "POST", `${g}/try`, { kind, code, challenges, flowers }),
+  /** A flower on challenges (a response over 4 KB comes back as rBytes, rHash and rPreview with r null), each call with the
+   * hidden budget R `budgetMs`: a number (ms), "random" (one per call) or one per challenge; results carry `budgetMs`. */
+  tryFlower: (tok, g, code, challenges, budgetMs) => api(tok, "POST", `${g}/try`, { kind: "flower", code, challenges, ...(budgetMs !== undefined ? { budgetMs } : {}) }),
+  /** A bee for `rounds` rounds in a garden of just its own flower (`flower`: that code, else the team's latest flower),
+   * fed() called after each feed. memory: what the test bee starts with (default {}); a try never touches the game bee's
+   * MEMORY. */
+  tryBee: (tok, g, code, { flower, rounds, memory } = {}) => api(tok, "POST", `${g}/try`, { kind: "bee", code, flower, rounds, memory }),
   view: (tok, g) => api(tok, "GET", g),
-  /** mine: only the actions of the team's bee and at its patch, as the team sees them (its token). */
+  /** mine: only the turns of the team's bee and at its flower, as the team sees them (its token). Without a token: the
+   * public fields only. */
   actions: (tok, g, after = 0, limit = 5000, { mine = false } = {}) => api(tok, "GET", `${g}/actions?after=${after}&limit=${limit}${mine ? "&mine=1" : ""}`),
-  scores: (g) => api(null, "GET", `${g}/scores`),
+  /** The team ledger: every finished turn as the team may see it (its token); a spectator gets the public fields. */
+  ledger: (tok, g, after = 0, limit = 5000) => api(tok, "GET", `${g}/ledger?after=${after}&limit=${limit}`),
+  scores: (tok, g) => api(tok, "GET", `${g}/scores`),
+  /** The whole response of the turn whose end is action `seq` (public): { text, value } (its JSON text, parsed), or null
+   * if that turn has none. */
+  response: async (tok, g, seq) => {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const res = await fetch(`${BASE}/api${g}/responses/${seq}`, { headers: tok ? { authorization: "Bearer " + tok } : {} });
+        if (res.status === 404) return null;
+        if (!res.ok) throw new ApiError(res.status, `GET ${g}/responses/${seq} -> ${res.status}`);
+        const text = await res.text();
+        return { text, value: JSON.parse(text) };
+      } catch (e) {
+        if (attempt >= 2 || (e instanceof ApiError && e.status < 500)) throw e;
+        await sleep(1000 * (attempt + 1));
+      }
+    }
+  },
+  /** A history query (docs/QUERY.md): one game as the viewer may see it (its token; none: the public fields). */
+  query: (tok, g, ast) => api(tok, "POST", `${g}/query`, ast, { okStatuses: [] }),
+  /** A history query across a room's finished games (fully revealed). */
+  roomQuery: (tok, room, ast) => api(tok, "POST", `/rooms/${room}/query`, ast, { okStatuses: [] }),
   start: (tok, g) => api(tok, "POST", `${g}/start`),
   /** action: pause | resume | finish (the room owner). */
   status: (tok, g, action) => api(tok, "POST", `${g}/status`, { action }, { okStatuses: [409] }),

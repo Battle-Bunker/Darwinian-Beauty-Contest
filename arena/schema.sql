@@ -1,5 +1,5 @@
 -- Arena: LLM-driven teams playing continuous games of Darwinian Beauty Contest through the HTTP API.
--- Lives in its own schema `arena` in the game's database (dbc_live). Idempotent: applied on every run.
+-- Lives in its own schema `arena` in the game's database (dbc_one). Idempotent: applied on every run.
 -- Game data itself (rooms, games, programs, actions) stays in the game's own tables; we keep ids/urls.
 
 CREATE SCHEMA IF NOT EXISTS arena;
@@ -66,8 +66,10 @@ CREATE TABLE IF NOT EXISTS arena.entries (
   sat_out      boolean NOT NULL DEFAULT false,  -- no valid programs when the game started
   fitness      double precision,
   fitness_rank int,
-  allure       double precision,
-  forage       double precision,
+  pollination  double precision,                -- Σ over bee teams of √(pollen its flower kept from them)
+  forage       double precision,                -- Σ over flower teams of √(nectar its bee got there)
+  pollen       double precision,                -- all its flower kept (information only)
+  shares       jsonb,                           -- {pollination, forage}: the two score shares (after the game)
   explanation  text,                            -- the interview ("teach us your code")
   social       double precision,                -- mean judge score, 0..10 (never mixed into fitness)
   social_rank  int,
@@ -246,14 +248,8 @@ CREATE INDEX IF NOT EXISTS scaffolds_game ON arena.scaffolds(game_id, persona_id
 ALTER TABLE arena.requests ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'session';
 ALTER TABLE arena.requests ADD COLUMN IF NOT EXISTS scaffold_id int;
 ALTER TABLE arena.violations ADD COLUMN IF NOT EXISTS scaffold_id int;
--- The rewarding flower was renamed from clover to cosmos (server/db/migrations/004_cosmos.sql). Rename the kind wherever
--- the arena stored it as data: requests, the status budgets they got back, game configs and metrics (kind values,
--- "<team>|<kind>" keys and the clover-named fields). Free text (transcripts, explanations, notebooks, ideas) keeps its words.
-UPDATE arena.requests SET kind = 'cosmos' WHERE kind = 'clover';
-UPDATE arena.requests SET result = jsonb_set(result #- '{budgets,clover}', '{budgets,cosmos}', result -> 'budgets' -> 'clover')
- WHERE jsonb_typeof(result -> 'budgets') = 'object' AND result -> 'budgets' ? 'clover';
-UPDATE arena.games SET config = jsonb_set(config #- '{budgets,clover}', '{budgets,cosmos}', config -> 'budgets' -> 'clover')
- WHERE jsonb_typeof(config -> 'budgets') = 'object' AND config -> 'budgets' ? 'clover';
-UPDATE arena.games
-   SET metrics = replace(replace(replace(metrics::text, '"clover', '"cosmos'), '|clover"', '|cosmos"'), '"rivalClover', '"rivalCosmos')::jsonb
- WHERE metrics::text ~ '"clover|\|clover"|"rivalClover';
+-- One flower, scored by pollination (4ab3eaf) and with surplus renamed pollen (2661f14).
+ALTER TABLE arena.entries ADD COLUMN IF NOT EXISTS pollination double precision;
+ALTER TABLE arena.entries ADD COLUMN IF NOT EXISTS pollen double precision;
+ALTER TABLE arena.entries DROP COLUMN IF EXISTS allure;
+ALTER TABLE arena.entries DROP COLUMN IF EXISTS surplus;

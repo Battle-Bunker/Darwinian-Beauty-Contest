@@ -5,3 +5,5 @@ web/dist
 *.log
 arena/runs/
 .env
+__pycache__/
+*.pyc

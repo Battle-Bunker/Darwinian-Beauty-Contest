@@ -1,0 +1,27 @@
+{
+ "plain": {
+  "status": 0,
+  "signal": null,
+  "stdout": [
+   "listener",
+   "survived"
+  ]
+ },
+ "after_clean": {
+  "status": 0,
+  "signal": null,
+  "stdout": [
+   "listener",
+   "survived"
+  ]
+ },
+ "after_interrupt": {
+  "status": 0,
+  "signal": null,
+  "stdout": [
+   "interrupted: Script execution was interrupted by `SIGINT`",
+   "listener",
+   "survived"
+  ]
+ }
+}

@@ -1,7 +1,8 @@
-// End-to-end check of the API: plays two short continuous games and verifies the rules and what each
-// viewer can see.
-//   BASE=http://localhost:3000 node scripts/smoke.js
+// End-to-end check of the API (one flower per team): plays two short games over HTTP, SSE and WebSocket,
+// and verifies the rules and what each viewer can see.
+//   BASE=http://localhost:3000 node scripts/smoke.js      (the server must use a scratch database, never dbc, dbc_live or dbc_one)
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import { WebSocket } from "ws";
 
 const BASE = process.env.BASE || "http://localhost:3000";
@@ -17,7 +18,7 @@ async function api(token, method, path, body, { allow = [422] } = {}) {
   return { status: res.status, ...json };
 }
 const login = async (name) => (await api(null, "POST", "/auth/dev/login", { name })).token;
-async function until(what, fn, ms = 15000) {
+async function until(what, fn, ms = 20000) {
   const t0 = Date.now();
   for (;;) {
     const v = await fn();
@@ -26,6 +27,7 @@ async function until(what, fn, ms = 15000) {
     await sleep(200);
   }
 }
+const isEnd = (a) => a.action === "feed" || a.action === "leave";
 
 const stamp = Date.now().toString(36);
 const owner = await login("Owner " + stamp);
@@ -34,10 +36,24 @@ console.log("room", room.url);
 const game = await api(owner, "POST", `/rooms/${room.shortId}/games`);
 console.log("game", game.url);
 const g = `/rooms/${room.shortId}/games/${game.shortId}`;
-// Half a minute of game time; cosmos flowers earn change budget fast so the test needn't wait.
-// Feeding costs 2 rounds rather than 10, so bees visit often: flowers are drawn at random, and the checks
-// below wait for visits to particular patches and flowers.
-await api(owner, "PATCH", `${g}/config`, { config: { minutes: 0.5, feedCost: 2, budgets: { cosmos: { perMinute: 600, cap: 100 } } } });
+// A new game's defaults: no sit-out but a feed price, R from 1 to 50 ms in a 150 ms window, slow change budgets,
+// prevalence on both sides, and a 1,024-byte response cap whose bytes cost energy.
+const fresh = (await api(owner, "GET", g)).game.config;
+assert.deepEqual([fresh.feedCost, fresh.budgets.flower.minMs, fresh.budgets.flower.ms, fresh.flowerWindowMs, fresh.maxResponseBytes], [0, 1, 50, 150, 1024]);
+assert.deepEqual([fresh.budgets.flower.perMinute, fresh.budgets.flower.cap, fresh.budgets.bee.perMinute, fresh.budgets.bee.cap], [60, 300, 600, 3000]);
+assert.deepEqual([fresh.feedPrice, (await api(owner, "GET", g)).game.feedPrice], [null, 2816000], "the feed price: 0.05 × Emax");
+assert.deepEqual([fresh.scoring, fresh.energy], [{ alpha: 0.85, beta: 0.85, mode: "final" }, { bytes: true }]);
+assert.deepEqual(fresh.prevalence, { on: true, halfLifeS: 90, cDecay: "sech", cStart: 1, cHalfS: null, cap: 4, slots: 0.25, prior: null, pools: true, endowment: null }, "prevalence, on by default, with the bee nectar pool and a sech c");
+// 5 to 10 minutes, the end drawn at the start and hidden.
+const freshGame = (await api(owner, "GET", g)).game;
+assert.deepEqual([fresh.minutes, fresh.endFactor, freshGame.minMs, freshGame.maxMs, freshGame.endMs, freshGame.drawnEndMs], [5, 2, 300000, 600000, null, null]);
+assert.deepEqual([fresh.visibility, fresh.prevalenceEveryS], ["private", 30], "private play by default");
+// Half a minute to a minute of game time. Flowers earn change budget fast so the test needn't wait; feeding costs 2
+// rounds rather than 20, so bees take turns often. Responses can be any JSON, and big (a 64 KiB cap). c halves
+// at 60 s rather than at 0.2 × the shortest length (6 s here), so every species keeps being visited.
+// This game is public, so everything below is public as it happens; game 2 plays privately.
+await api(owner, "PATCH", `${g}/config`, { config: { minutes: 0.5, feedCost: 2, responseType: "any", maxResponseBytes: 65536, budgets: { flower: { perMinute: 600, cap: 100 } }, prevalence: { cHalfS: 60 }, visibility: "public" } });
+assert.deepEqual([(await api(owner, "GET", g)).game.config.prevalence.cHalfS, (await api(null, "GET", `${g}/scores`)).prevalence.cHalfS], [60, 60]);
 
 const players = [];
 for (const name of ["Ada", "Bo", "Cy", "Di"]) {
@@ -50,143 +66,332 @@ await api(mate, "POST", `${g}/teams/join`, { joinCode: players[0].team.joinCode 
 
 const view0 = await api(players[0].token, "GET", g);
 assert.match(view0.interface.flower, /def flower\(challenge\)/);
-assert.match(view0.interface.bee, /def forage\(seen, visit\)/);
-assert.match(view0.interface.bee, /\["leave", challenge\]/);
-assert.deepEqual(["cosmos", "orchid", "bee"].map((k) => view0.game.config.budgets[k].ms), [150, 100, 50], "every time limit is public");
-const cosmos = (a, b) => `def flower(challenge):\n    return (challenge * ${a} + ${b}) % 1000\n`;
-// A bee that tastes each answer twice. `carry`: it moves on with ["leave", q] (its next challenge
-// queued); otherwise with a plain "leave" (and the game asks it for its next challenge).
-const bee = (q, carry) => {
-  const leave = carry ? `["leave", ${q}]` : `"leave"`;
-  return `tally = {}\ndef forage(seen, visit):\n    if not seen:\n        return ["ask", ${q}]\n    if visit["fed"]:\n        return ${leave}\n    fed, got = tally.get(seen[0][1], [0, 0])\n    return "feed" if fed < 2 or got * 2 >= fed else ${leave}\ndef tasted(seen, nectar):\n    print("tasted", nectar)\n    fed, got = tally.get(seen[0][1], [0, 0])\n    tally[seen[0][1]] = [fed + 1, got + nectar]\n`;
-};
+assert.match(view0.interface.bee, /def first\(\)/);
+assert.match(view0.interface.bee, /def decide\(challenge, response\)/);
+assert.match(view0.interface.bee, /def fed\(nectar\)/);
+assert.match(view0.interface.bee, /MEMORY/);
+assert.doesNotMatch(view0.interface.bee + view0.interface.flower, /HISTORY\./, "programs get no history");
+assert.equal(view0.game.config.budgets.bee.memory, 50);
+assert.equal(view0.game.config.maxResponseBytes, 65536);
+assert.match(view0.interface.flower, /max_response_bytes"\] - the response's bytes of JSON/, "E's byte factor");
+assert.match(view0.interface.bee, /a challenge it returns replaces the one decide queued/);
+assert.deepEqual(["flower", "bee"].map((k) => view0.game.config.budgets[k].ms), [50, 50], "every time limit is public");
+assert.deepEqual(view0.teams.map((t) => t.ready), view0.teams.map(() => ({ flower: false, bee: false })));
+
+const flower = (a, b, pct) => `def flower(challenge):\n    return (challenge * ${a} + ${b}) % 1000, ${pct}\n`;
+// Cy's flower answers the challenge 7 (which Cy's own bee asks) with a response over 4 KB.
+const bigFlower = `def flower(challenge):\n    if challenge == 7:\n        return list(range(2000)), 90\n    return (challenge * 7 + 3) % 1000, 90\n`;
+// A bee that feeds every other turn (it counts its turns in MEMORY); after a feed, fed() adds up the
+// nectar it got, and prints it.
+const bee = (q) => `def first():
+    return ${q}
+def decide(challenge, response):
+    n = MEMORY["n"] = MEMORY.get("n", 0) + 1
+    return ("feed" if n % 2 else "leave"), ${q}
+def fed(nectar):
+    MEMORY["eaten"] = MEMORY.get("eaten", 0) + int(nectar)
+    print("fed", int(nectar))
+`;
 const variants = [
-  { cosmos: cosmos(3, 1), orchid: cosmos(5, 2), bee: bee(42, true) },  // orchid imitates Bo's cosmos
-  { cosmos: cosmos(5, 2), orchid: cosmos(9, 4), bee: bee(500, false) },
-  { cosmos: cosmos(7, 3), orchid: cosmos(7, 3), bee: bee(7, false) },  // orchid is a twin of its own cosmos
+  { flower: flower(3, 1, 30), bee: bee(42) },
+  { flower: flower(5, 2, 60), bee: bee(500) },
+  { flower: bigFlower, bee: bee(7) },
 ];
 for (const [i, p] of players.slice(0, 3).entries()) {
-  for (const kind of ["cosmos", "orchid", "bee"]) {
+  for (const kind of ["flower", "bee"]) {
     const r = await api(p.token, "POST", `${g}/programs`, { kind, code: variants[i][kind] });
     assert.ok(r.ok, `${p.name} ${kind}: ${r.errors}`);
     assert.equal(r.cost, 0, "writing programs before the start is free");
   }
 }
-// Di writes only a cosmos, so Di's team sits the game out.
-await api(players[3].token, "POST", `${g}/programs`, { kind: "cosmos", code: cosmos(1, 1) });
-for (const [kind, code] of [["cosmos", "x = 1\n"], ["bee", "def flower(c):\n    return c\n"], ["orchid", ""]]) {
-  const r = await api(players[0].token, "POST", `${g}/check`, { kind, code });
-  assert.equal(r.ok, false, `${kind} without its entry point`);
-  assert.match(r.errors.join(), kind === "bee" ? /must define forage/ : /must define flower/);
+// Di writes only a flower, so Di's team sits the game out.
+await api(players[3].token, "POST", `${g}/programs`, { kind: "flower", code: flower(1, 1, 50) });
+for (const [kind, code, err] of [["flower", "x = 1\n", /must define flower/], ["bee", "def first():\n    return 1\n", /must define first\(\) and decide/],
+  ["bee", flower(1, 1, 1), /must define first/], ["cosmos", "x", null]]) {
+  const r = await api(players[0].token, "POST", `${g}/check`, { kind, code }, { allow: [400] });
+  if (!err) { assert.equal(r.status, 400, "cosmos is not a program any more"); continue; }
+  assert.equal(r.ok, false, `${kind} without its entry points`);
+  assert.match(r.errors.join(), err);
 }
-const lambdaCosmos = await api(players[0].token, "POST", `${g}/check`, { kind: "cosmos", code: "flower = lambda c: c\n" });
-assert.ok(lambdaCosmos.ok, lambdaCosmos.errors);
-const big = await api(players[0].token, "POST", `${g}/check`, { kind: "cosmos", code: "def flower(c):\n" + "    c = c + 1\n".repeat(400) + "    return c\n" });
+const big = await api(players[0].token, "POST", `${g}/check`, { kind: "flower", code: "def flower(c):\n" + "    c = c + 1\n".repeat(400) + "    return c, 1\n" });
 assert.equal(big.ok, false);
-assert.match(big.errors[0], /Too big: \d+ nodes/);
-const tf = await api(players[0].token, "POST", `${g}/try`, { kind: "orchid", code: variants[0].orchid, challenges: [1, 2, 500] });
-assert.deepEqual(tf.results.map((x) => x.r), [7, 12, 502]);
-const tb = await api(players[0].token, "POST", `${g}/try`, { kind: "bee", code: variants[0].bee });
-assert.ok(tb.actions.length > 10 && tb.actions.every((a) => a.bee === players[0].team.id));
+assert.match(big.errors[0], /Too big: \d+ nodes > budget 1100/);
+const tf = await api(players[0].token, "POST", `${g}/try`, { kind: "flower", code: variants[0].flower, challenges: [1, 2, 500], budgetMs: 50 });
+assert.deepEqual(tf.results.map((x) => [x.r, x.percent]), [[4, 30], [7, 30], [501, 30]]);
+assert.ok(tf.results.every((x) => x.energy > 0 && typeof x.ms === "number"));
+// Each flower call has a hidden time budget R (1–50 ms), told to it as GAME["ms"]; try can set it.
+const drawn = await api(players[0].token, "POST", `${g}/try`, { kind: "flower", code: variants[0].flower, challenges: [...Array(12).keys()] });
+assert.ok(drawn.results.every((x) => x.budgetMs >= 1 && x.budgetMs <= 50), "try draws R per challenge by default");
+assert.ok(new Set(drawn.results.map((x) => x.budgetMs)).size > 6);
+const tr = await api(players[0].token, "POST", `${g}/try`, { kind: "flower", challenges: [1, 2, 3], budgetMs: [10, 30, 45],
+  code: `def flower(c):\n    return int(GAME["ms"]), 50\n` });
+assert.deepEqual(tr.results.map((x) => [x.budgetMs, x.r]), [[10, 10], [30, 30], [45, 45]], "R per challenge, as GAME['ms']");
+assert.equal((await api(players[0].token, "POST", `${g}/try`, { kind: "flower", code: variants[0].flower, budgetMs: "lots" }, { allow: [400] })).status, 400);
+// Every call's clock starts at 0 (as if at the Unix epoch): a program can time itself, not the world.
+const clock = await api(players[0].token, "POST", `${g}/try`, { kind: "flower", challenges: [1, 2],
+  code: `import time\ndef flower(c):\n    return [round(time.time() * 1000, 3), time.gmtime()[0]], 50\n` });
+assert.ok(clock.results.every((x) => x.r[0] >= 0 && x.r[0] < 20 && x.r[1] === 1970), JSON.stringify(clock.results));
+const tb = await api(players[0].token, "POST", `${g}/try`, { kind: "bee", code: variants[0].bee, rounds: 60 });
+assert.ok(tb.actions.length > 10 && tb.actions.every((a) => a.bee === players[0].team.id && a.flower === players[0].team.id));
+assert.ok(tb.feeds > 0 && tb.nectar > 0 && tb.pollen > 0);
+// fed(nectar) may return the bee's next challenge: it replaces the one decide queued.
+const fedBee = `def first():\n    return 1\ndef decide(c, r):\n    return "feed", 2\ndef fed(nectar):\n    return 77\n`;
+const tb2 = await api(players[0].token, "POST", `${g}/try`, { kind: "bee", code: fedBee, rounds: 30 });
+assert.deepEqual(tb2.actions.filter(isEnd).map((a) => a.c).slice(0, 3), [1, 77, 77], "fed's challenge replaces decide's");
 
 // Only the owner starts it; the clock and the change budgets start with it.
 assert.equal((await api(players[0].token, "POST", `${g}/start`, null, { allow: [403] })).status, 403);
 const started = await api(owner, "POST", `${g}/start`);
 assert.equal(started.participants.length, 3);
+const [ada, bo, cy] = players.slice(0, 3).map((p) => p.team.id);
+assert.deepEqual(started.participants, [ada, bo, cy]);
 const lateTeam = await api(await login("Late " + stamp), "POST", `${g}/teams`, { name: "Late" }, { allow: [409] });
 assert.equal(lateTeam.status, 409, "teams can't join a running game");
 
-// What bees do is public as soon as it happens: everyone sees every ask, answer and feed, at whose
-// patch and at which of its flowers.
-const seen = await until("actions", async () => {
-  const a = await api(players[1].token, "GET", `${g}/actions`);
-  return a.actions.filter((x) => x.action === "feed").length >= 6 && a.actions.some((x) => x.patch === players[1].team.id)
-    && a.actions.some((x) => x.patch !== players[1].team.id) && a;
+// Every turn is public as it happens: the arrival, the challenge, the response and whether the bee fed;
+// a feed's percent, energy, nectar and pollen too.
+const seen = await until("turns", async () => {
+  const a = await api(players[1].token, "GET", `${g}/actions?limit=5000`);
+  const ends = a.actions.filter(isEnd);
+  return ends.filter((x) => x.action === "feed").length >= 6 && ends.filter((x) => x.action === "leave").length >= 6
+    && ends.some((x) => x.flower === bo) && ends.some((x) => x.flower !== bo && x.action === "leave") && a;
 });
-const adaAsk = seen.actions.find((a) => a.bee === players[0].team.id && a.action === "ask");
-assert.equal(adaAsk.c, 42, "Bo sees Ada's bee's question");
-assert.equal(typeof adaAsk.r, "number");
-const ada = players[0].team.id, bo = players[1].team.id;
-const isKind = (a) => a.kind === "cosmos" || a.kind === "orchid";
-assert.ok(seen.actions.every(isKind), "which flower is public, at every patch");
-assert.ok(seen.actions.some((a) => a.patch !== bo) && seen.actions.some((a) => a.patch === bo));
-assert.ok(seen.actions.filter((a) => a.action === "feed").every((a) => typeof a.nectar === "boolean"), "whether a feed paid is public");
-const watcher = (await api(null, "GET", `${g}/actions?limit=5000`)).actions;
-assert.ok(watcher.length && watcher.every(isKind), "spectators see which flower too");
-// tasted runs in the call after a feed, so what it prints goes with the action that call decided
-const adaTasted = (acts) => acts.find((a) => a.bee === ada && /tasted/.test(a.log || ""));
-await until("Ada's bee to feed and decide", async () => adaTasted((await api(players[0].token, "GET", `${g}/actions?limit=5000`)).actions));
-assert.ok((await api(players[1].token, "GET", `${g}/actions?limit=5000`)).actions.every((a) => a.bee === bo || a.log === undefined), "what a bee prints stays with its team");
-const spectator = await api(null, "GET", `${g}/actions?limit=5`);
-assert.equal(spectator.actions.length, 5);
-// Lockstep rounds: one ask or feed per bee per round, at the round's start; leaves never show the next challenge.
-const slots = new Set();
+const ends = seen.actions.filter(isEnd);
+const seenPrice = (await api(null, "GET", g)).game.feedPrice; // 0.05 × Emax at this game's 64 KiB byte cap
+assert.equal(seenPrice, 0.05 * 1100 * 50 * 65536);
+const adaTurn = ends.find((a) => a.bee === ada);
+assert.equal(adaTurn.c, 42, "Bo sees Ada's bee's challenge");
+assert.equal(typeof adaTurn.r, "number");
+for (const a of ends) {
+  assert.ok("c" in a && "r" in a && a.pollen !== undefined);
+  if (a.action === "feed") {
+    // (A flower late for a small R has nothing to give: E = 0.)
+    assert.ok(a.energy === 0 || (a.energy > 0 && a.nectar > 0 && a.pollen > 0), "a feed is public in full");
+    assert.ok(Math.abs(a.nectar + a.pollen - a.energy) <= 1e-6 * a.energy);
+    assert.ok(Math.abs(a.nectar - (a.percent / 100) * a.energy) <= 1e-6 * a.energy);
+  } else {
+    assert.equal(a.pollen, 0, "a turn without a feed pays nobody");
+    assert.ok(!("nectar" in a));
+    assert.equal("percent" in a, a.flower === bo, "an unfed turn's percent: the flower's team only");
+    assert.equal("energy" in a, a.flower === bo);
+  }
+  assert.equal("ms" in a, a.flower === bo, "the flower's CPU time: its own team only");
+  assert.equal("budgetMs" in a, a.flower === bo, "the flower's hidden time budget R: its own team only");
+  if (a.flower === bo) assert.ok(a.budgetMs >= 1 && a.budgetMs <= 50, `R ${a.budgetMs}`);
+  if (a.action === "feed") assert.ok(a.price === seenPrice && Math.abs(a.net - (a.nectar - a.price)) < 1e-6 && typeof a.balance === "number", "a feed shows its price, net and the bee's balance after it");
+  assert.equal("beeMs" in a, a.bee === bo, "the bee's decision time: its own team only");
+  assert.ok(a.bee === bo || !("log" in a), "what a bee prints stays with its team");
+}
+assert.ok(ends.some((a) => a.flower === bo && typeof a.ms === "number" && typeof a.percent === "number"));
+// Lockstep rounds: at most one turn per bee per round (ceil(0.25 × 3) = 1 bee a round here); arrivals at the
+// round's start, the end at 150 ms.
+const turns = new Map();
 for (const a of seen.actions) {
-  if (a.action === "ask" || a.action === "feed") {
-    assert.ok(!slots.has(`${a.bee}:${a.round}`), "one slot per bee per round");
-    slots.add(`${a.bee}:${a.round}`);
-    assert.equal(a.atMs, (a.round - 1) * 200);
-  } else if (a.action === "arrive") assert.equal(a.atMs, (a.round - 1) * 200);
+  if (a.action === "arrive") assert.equal(a.atMs, (a.round - 1) * 200);
   else assert.equal(a.atMs, (a.round - 1) * 200 + 150);
-  if (a.action === "leave") assert.equal(a.c, undefined);
+  const k = `${a.bee}:${a.turn}`;
+  if (!turns.has(k)) turns.set(k, []);
+  turns.get(k).push(a);
 }
-// Every assignment of a bee to a flower is public as it happens: each visit opens with an arrival there.
-const visits = new Map();
-for (const a of seen.actions) { const k = `${a.bee}:${a.visit}`; if (!visits.has(k)) visits.set(k, []); visits.get(k).push(a); }
-for (const acts of visits.values()) { // (this page starts at the first action, so every visit's start is in it)
+const rounds = new Set();
+for (const acts of turns.values()) {
   assert.equal(acts[0].action, "arrive");
-  assert.ok(acts.every((a) => a.patch === acts[0].patch && a.kind === acts[0].kind));
+  if (acts[1]) assert.ok(isEnd(acts[1]) && acts[1].round === acts[0].round && acts[1].flower === acts[0].flower);
+  assert.ok(!rounds.has(`${acts[0].bee}:${acts[0].round}`), "one turn per bee per round");
+  rounds.add(`${acts[0].bee}:${acts[0].round}`);
 }
-assert.ok([...visits.values()].some((acts) => acts[0].action === "arrive" && acts[1]?.action === "ask"));
-assert.ok(seen.actions.some((a) => a.bee === ada && a.action === "leave") && seen.actions.some((a) => a.bee === bo && a.action === "leave"));
-// How long programs took is their own team's during play: Bo sees only his own.
-assert.ok(seen.actions.some((a) => typeof a.beeMs === "number"), "bee decision time is recorded");
-assert.ok(seen.actions.every((a) => !("beeMs" in a) || a.bee === bo), "decision times: your own bee's only");
-assert.ok(seen.actions.filter((a) => a.bee === bo && a.action === "ask").every((a) => typeof a.beeMs === "number"));
-assert.ok(seen.actions.filter((a) => a.action === "ask").every((a) => (a.patch === bo) === ("ms" in a)), "answer times: your own patch's");
-assert.ok(spectator.actions.every((a) => !("ms" in a) && !("beeMs" in a)));
-const mineOnly = await api(players[0].token, "GET", `${g}/actions?mine=1&limit=500`);
-assert.ok(mineOnly.actions.length && mineOnly.actions.every((a) => a.bee === players[0].team.id || a.patch === players[0].team.id));
+const spectator = (await api(null, "GET", `${g}/actions?limit=5000`)).actions;
+assert.ok(spectator.length >= seen.actions.length, "spectators see every turn too");
+assert.ok(spectator.every((a) => !("ms" in a) && !("beeMs" in a) && !("log" in a) && !("beeVersion" in a) && !("flowerVersion" in a)));
+assert.ok(spectator.filter((a) => a.action === "leave").every((a) => !("percent" in a) && a.pollen === 0));
+assert.ok(spectator.filter((a) => a.action === "feed").every((a) => typeof a.nectar === "number" && (typeof a.percent === "number" || a.r === null)));
+const latest = await api(null, "GET", `${g}/actions?before=${seen.lastSeq + 1}&limit=5`);
+assert.deepEqual(latest.actions.map((a) => a.seq), [4, 3, 2, 1, 0].map((i) => seen.lastSeq - i));
+const mineOnly = await api(players[0].token, "GET", `${g}/actions?mine=1&limit=5000`);
+assert.ok(mineOnly.actions.length && mineOnly.actions.every((a) => a.bee === ada || a.flower === ada));
+assert.equal((await api(null, "GET", `${g}/actions?mine=1`, null, { allow: [403] })).status, 403);
+// What fed() printed shows up with the bee's next turn: the nectar of the feed before.
+const adaLogs = async () => (await api(players[0].token, "GET", `${g}/actions?limit=5000`)).actions.filter((a) => a.bee === ada && /fed \d+/.test(a.log || ""));
+const logs = await until("Ada's bee's fed() to print", async () => { const l = await adaLogs(); return l.length >= 2 && l; });
+assert.ok(logs.every((a) => Number(a.log.match(/fed (\d+)/)[1]) > 0));
 
-// Changes cost change budget, which accrues with game time; a change goes live at once. During play a
-// team sees only its own versions and budgets.
+// A response over 4 KB: actions (pages and live feeds) carry its size, SHA-256 and first 4 KB; the whole
+// response is one request away, for anyone.
+const bigTurn = await until("a big response", async () => (await api(null, "GET", `${g}/actions?limit=5000`)).actions.find((a) => isEnd(a) && a.rPreview));
+const bigText = JSON.stringify(Array.from({ length: 2000 }, (_, i) => i));
+assert.deepEqual([bigTurn.r, bigTurn.rBytes, bigTurn.rHash, bigTurn.rPreview], [null, bigText.length, crypto.createHash("sha256").update(bigText).digest("hex"), bigText.slice(0, 4096)]);
+const whole = await fetch(BASE + `/api${g}/responses/${bigTurn.seq}`);
+assert.equal(whole.status, 200);
+assert.match(whole.headers.get("content-type"), /application\/json/);
+assert.equal(await whole.text(), bigText, "the whole response, by seq");
+const smallTurn = ends.find((a) => a.r !== null);
+assert.equal(await (await fetch(BASE + `/api${g}/responses/${smallTurn.seq}`)).text(), JSON.stringify(smallTurn.r), "a small one too");
+assert.equal((await fetch(BASE + `/api${g}/responses/${seen.actions.find((a) => a.action === "arrive").seq}`)).status, 404, "an arrival has none");
+
+// Pollen carries genes: each feed's grain of the answering flower's minified code goes to the feeding bee's
+// team (Bo sees its own bee's), and to nobody else during play.
+// ⌊scale × pollen^(1/3)⌋, scale 0.1 by default (E is in node·ms·bytes).
+const { scale: grainScale } = view0.game.config.pollenGrain;
+assert.equal(grainScale, 0.1);
+const grainLen = (pollen) => Math.floor(grainScale * Math.cbrt(pollen) + 1e-9);
+const boFeeds = seen.actions.filter((a) => a.action === "feed");
+assert.ok(boFeeds.some((a) => a.bee === bo) && boFeeds.some((a) => a.bee !== bo));
+for (const a of boFeeds) {
+  if (a.bee !== bo) { assert.ok(!("grain" in a), "another team's grain is hidden"); continue; }
+  if (a.pollen < 1) continue;
+  assert.equal(a.grain.length, Math.min(grainLen(a.pollen), a.grainCodeLength), `${a.pollen} pollen`);
+  assert.ok(Number.isInteger(a.grainVersion) && a.grainCodeLength > 0);
+}
+assert.ok(spectator.every((a) => !("grain" in a)), "a spectator sees no grains");
+
+// The team ledger: every finished turn, with the team's private details.
+const boLedger = await api(players[1].token, "GET", `${g}/ledger?limit=5000`);
+assert.deepEqual(boLedger.participants, [ada, bo, cy]);
+assert.equal(boLedger.team, 1);
+const boActions = new Map((await api(players[1].token, "GET", `${g}/actions?limit=5000`)).actions.filter(isEnd).map((a) => [a.seq, a]));
+assert.ok(boLedger.entries.length >= ends.length);
+for (const e of boLedger.entries) {
+  const a = boActions.get(e.seq);
+  if (!a) continue; // written after the actions page was read
+  assert.deepEqual([e.bee, e.flower, e.challenge, e.response, e.fed, e.round], [boLedger.participants.indexOf(a.bee), boLedger.participants.indexOf(a.flower), a.c, a.r, a.action === "feed", a.round]);
+  assert.equal(e.percent === null, !e.fed && e.flower !== 1, "percent: public on a feed, else Bo's own flower");
+  assert.equal(e.ms === null, e.flower !== 1, "ms: Bo's own flower only");
+  assert.equal(e.nectar === null, !e.fed);
+  assert.equal(e.pollen, e.fed ? a.pollen : 0);
+}
+assert.ok(boLedger.entries.every((e) => (e.beeMs === null) === (e.bee !== 1) || e.beeError), "beeMs: Bo's own bee only");
+const publicLedger = await api(null, "GET", `${g}/ledger?limit=5000`);
+assert.equal(publicLedger.team, null);
+assert.ok(publicLedger.entries.every((e) => e.ms === null && e.beeMs === null && (e.fed || e.percent === null)));
+
+// Querying history: the same records, through the query endpoint, filtered for the viewer.
+const q = (token, body, roomLevel = false) => api(token, "POST", roomLevel ? `/rooms/${room.shortId}/query` : `${g}/query`, body, { allow: [400] });
+const schema = await api(null, "GET", "/query/schema");
+assert.deepEqual(Object.keys(schema.entities), ["turns", "versions", "teams", "pairs", "prevalence", "scores"]);
+const boTurns = await q(players[1].token, { from: "turns", limit: 5000 });
+assert.ok(boTurns.rows.length >= boLedger.entries.length - 3 && boTurns.rows.every((t) => (t.ms === null) === (t.flower !== 1)));
+const boByFlower = await q(players[1].token, { from: "turns", scope: "myBee", where: [{ field: "fed", op: "eq", value: true }], groupBy: ["flower"],
+  aggregates: [{ fn: "count", as: "feeds" }, { fn: "sum", field: "nectar", as: "nectar" }] });
+assert.ok(boByFlower.rows.length && boByFlower.rows.every((r) => r.feeds > 0 && r.nectar >= 0));
+const hidden = await q(null, { from: "turns", where: [{ field: "fed", op: "eq", value: false }], aggregates: [{ fn: "sum", field: "percent", as: "p" }, { fn: "count", field: "ms", as: "ms" }] });
+assert.deepEqual(hidden.rows, [{ p: null, ms: 0 }], "a spectator's aggregates see no private field");
+const upTo = Math.max(...boTurns.rows.map((t) => t.round)); // the game runs on: compare the same rounds
+const mineP = await q(players[1].token, { from: "turns", where: [{ field: "fed", op: "eq", value: false }, { field: "round", op: "le", value: upTo }],
+  aggregates: [{ fn: "count", field: "percent", as: "n" }] });
+const unfedP = boTurns.rows.filter((t) => !t.fed && t.percent !== null);
+assert.ok(unfedP.every((t) => t.flower === 1), "unfed percents: Bo's own flower's only");
+assert.equal(mineP.rows[0].n, unfedP.length, "and the aggregate counts exactly those");
+assert.deepEqual((await q(null, { from: "versions" })).rows, [], "nobody else's versions during play");
+assert.equal((await q(players[1].token, { from: "versions" })).rows.length, 2, "your own");
+assert.match((await q(null, { from: "turns", where: [{ field: "challenge", op: "lt", value: 3 }] })).error, /takes eq, ne, in, isNull/);
+assert.deepEqual((await q(null, { from: "scores" }, true)).rows, [], "the room's finished games: none yet");
+const client = await fetch(BASE + "/vendor/query/history.py");
+assert.equal(client.status, 200);
+assert.match(await client.text(), /def connect\(/, "the generated Python client is served");
+
+// MEMORY: your own bee's during play (read only), nobody else's.
+const ownView = await until("Bo's bee's memory", async () => { const v = await api(players[1].token, "GET", g); const m = v.teams.find((t) => t.id === bo).memory?.value; return m?.n > 2 && m.eaten > 0 && v; });
+const boMemory = ownView.teams.find((t) => t.id === bo).memory;
+assert.deepEqual([boMemory.cap, boMemory.version, typeof boMemory.bytes, boMemory.error], [50, 1, "number", null]);
+assert.ok(boMemory.bytes <= 50);
+assert.ok(ownView.teams.filter((t) => t.id !== bo).every((t) => t.memory === null), "other teams' memory is hidden");
+assert.ok((await api(null, "GET", g)).teams.every((t) => t.memory === null), "and a spectator sees none");
+const boTeamRows = (await q(players[1].token, { from: "teams" })).rows;
+assert.ok(boTeamRows.every((t) => (t.index === 1) === (t.memory !== null)));
+// Nobody can write it: the try tool's memory is the test bee's alone, and no other endpoint takes one.
+const tried = await api(players[1].token, "POST", `${g}/try`, { kind: "bee", code: variants[1].bee, rounds: 20, memory: { n: 1000, from: "try" } });
+assert.ok(tried.memory.value.n > 1000 && tried.memory.value.from === "try", "the test bee started from the memory it was given");
+await api(players[1].token, "POST", `${g}/programs`, { kind: "bee", code: variants[1].bee, memory: { from: "submit" } });
+await api(players[1].token, "POST", `${g}/check`, { kind: "bee", code: variants[1].bee, memory: { from: "check" } });
+// (The resubmission is a new bee version, starting from {}: wait until it has decided; a quarter of the bees
+// visit each round.)
+const after1 = await until("Bo's new bee to decide", async () => {
+  const m = (await api(players[1].token, "GET", g)).teams.find((t) => t.id === bo).memory;
+  return m.value.n >= 1 && m;
+});
+assert.ok(!("from" in after1.value) && after1.value.n < 1000, `Bo's game bee's memory is its own: ${JSON.stringify(after1.value)}`);
+assert.equal((await api(players[1].token, "POST", `${g}/try`, { kind: "bee", code: variants[1].bee, memory: { pad: "x".repeat(60) } }, { allow: [400] })).status, 400,
+  "a test memory over the cap is refused");
+assert.match((await api(players[1].token, "POST", `${g}/try`, { kind: "bee", code: variants[1].bee, memory: { list: [1] } }, { allow: [400] })).error, /is a list/,
+  "and one that isn't a key-value store");
+
+// The scoreboard and the ledgers are live and public.
+const board = await api(null, "GET", `${g}/scores`);
+assert.equal(board.scores.length, 3);
+for (const s of board.scores) {
+  for (const k of ["pollination", "forage", "pollinationShare", "forageShare", "fitness", "pollen"]) assert.equal(typeof s[k], "number", `${k} is public`);
+  for (const k of ["allure", "allureShare", "surplusShare", "surplus"]) assert.ok(!(k in s), `${k} is no longer a score term`);
+}
+assert.ok(board.scores.reduce((x, s) => x + s.pollen, 0) > 0);
+assert.ok(board.ledgers.nectar.flat().every((x) => typeof x === "number") && board.ledgers.pollen.flat().every((x) => typeof x === "number"));
+const sum = (m) => m.flat().reduce((x, y) => x + y, 0);
+assert.ok(sum(board.ledgers.feeds) > 0 && sum(board.ledgers.nectar) > 0);
+// Prevalence is public: its latest sample on the scoreboard and the view, every sample at /prevalence; the
+// scoreboard's fitness is N² × p^F × p^B as it stands, with each team's latest F, B and draw chances.
+assert.equal(board.fitnessBasis, "final");
+// The game's end (drawn from 30 to 60 s) is hidden from every team and spectator during play; the owner, who
+// has no team here, sees it.
+assert.deepEqual([board.minMs, board.maxMs, board.endMs, "drawnEndMs" in board], [30000, 60000, null, false]);
+for (const tok of [null, ...players.map((p) => p.token)]) {
+  const v = await api(tok, "GET", g);
+  assert.deepEqual([v.game.endMs, v.game.drawnEndMs ?? null, v.game.minMs, v.game.maxMs], [null, null, 30000, 60000], "the range only");
+}
+const drawnEnd = (await api(owner, "GET", g)).game.drawnEndMs;
+assert.ok(drawnEnd >= 30000 && drawnEnd <= 60000 && drawnEnd % 200 === 0, `the owner's view: ${drawnEnd}`);
+assert.ok(!JSON.stringify(await api(players[0].token, "GET", g)).includes(`"drawnEndMs"`));
+assert.deepEqual([board.prevalence.slots, board.prevalence.prior, board.prevalence.feedPrice], [0.25, 0.12 * 1100 * 50 * 65536, seenPrice]);
+const smp = board.prevalence.sample;
+assert.ok(smp.round >= 1 && smp.slots === 1 && smp.species.length === 3, JSON.stringify(smp));
+assert.deepEqual(smp.species.map((x) => [x.team, x.index]), board.participants.map((id, i) => [id, i]));
+for (const k of ["flowerP", "beeP"]) assert.ok(Math.abs(smp.species.reduce((x, s) => x + s[k], 0) - 1) < 1e-4, `${k} sums to 1`);
+assert.ok(board.scores.every((s) => ["flowerSuccess", "beeSuccess", "flowerP", "beeP"].every((k) => typeof s[k] === "number")));
+const prevAll = await api(null, "GET", `${g}/prevalence`);
+assert.ok(prevAll.samples.length >= 2 && prevAll.samples.every((x, i) => i === 0 || x.round > prevAll.samples[i - 1].round));
+assert.deepEqual(prevAll.samples.slice(0, 2).map((x) => [x.round, x.atMs]), [[1, 0], [6, 1000]], "about once a second of game time");
+const prevRows = (await q(null, { from: "prevalence", where: [{ field: "round", op: "eq", value: 6 }] })).rows;
+assert.deepEqual(prevRows.map((r) => [r.team, r.flowerSuccess, r.beeSuccess, r.flowerP, r.beeP, r.fitness]),
+  prevAll.samples[1].species.map((x) => [x.index, x.flowerSuccess, x.beeSuccess, x.flowerP, x.beeP, x.fitness]), "the query entity: the same samples");
+
+// Changes cost change budget, which accrues with game time; a change goes live at once. During play a team
+// sees only its own versions and budgets.
 const view1 = await api(players[1].token, "GET", g);
 const adaTeam = view1.teams.find((t) => t.id === ada);
 assert.equal(adaTeam.programs, null, "other teams' code changes are hidden during play");
 assert.equal(adaTeam.banks, null, "so are their change budgets");
-assert.equal(view1.game.config.budgets.orchid.ms, 100, "the orchid's time limit is public");
-const own = (await api(players[0].token, "GET", g)).teams.find((t) => t.id === players[0].team.id);
-assert.equal(own.programs.cosmos.length, 1);
-assert.ok("bank" in own.banks.cosmos);
-assert.ok(seen.actions.every((a) => a.bee === players[1].team.id || !("beeVersion" in a)), "nor which versions played");
-// About 1,200 nodes of change: more than an orchid earns in this whole 30-second game (1,540 a minute).
-const rewrite = await api(players[0].token, "POST", `${g}/programs`, { kind: "orchid", code: `def flower(c):\n    return len("${"ab".repeat(600)}") + c\n` });
+assert.equal(view1.myTeam.index, 1);
+assert.deepEqual(view1.teams.map((t) => t.index), [0, 1, 2, null]);
+const own = (await api(players[0].token, "GET", g)).teams.find((t) => t.id === ada);
+assert.equal(own.programs.flower.length, 1);
+assert.ok("bank" in own.banks.flower && "bank" in own.banks.bee);
+const rewrite = await api(players[0].token, "POST", `${g}/programs`, { kind: "flower", code: `def flower(c):\n    return len("${"ab".repeat(80)}") + c, 30\n` });
 assert.equal(rewrite.ok, false);
 assert.match(rewrite.errors.join(), /Not enough change budget: this change costs \d+ nodes/);
-const small = cosmos(3, 9); // one byte changed: costs 1 node
+const small = flower(3, 9, 30); // one byte changed: costs 1 node
 const versionBefore = (await api(players[1].token, "GET", g)).game.version;
-const r1 = await until("cosmos budget", async () => {
-  const r = await api(players[0].token, "POST", `${g}/programs`, { kind: "cosmos", code: small });
+const r1 = await until("flower budget", async () => {
+  const r = await api(players[0].token, "POST", `${g}/programs`, { kind: "flower", code: small });
   return r.ok && r;
 });
 assert.equal(r1.cost, 1);
 assert.equal(r1.version, 2);
 assert.ok(r1.atMs > 0, "the reply says when it went live");
-const free = await api(players[0].token, "POST", `${g}/programs`, { kind: "cosmos", code: "# same thing, explained\n" + small.replace("challenge", "question").replaceAll("challenge", "question") });
+const free = await api(players[0].token, "POST", `${g}/programs`, { kind: "flower", code: "# same thing, explained\n" + small.replaceAll("challenge", "question") });
 assert.ok(free.ok && free.cost === 0, "comments, formatting and renames are free");
 assert.equal((await api(players[1].token, "GET", g)).game.version, versionBefore, "a submission doesn't announce itself");
-await until("the new cosmos to answer", async () => {
+await until("the new flower to answer", async () => {
   const a = await api(players[0].token, "GET", `${g}/actions?after=${seen.lastSeq}&limit=5000`);
-  return a.actions.some((x) => x.patch === players[0].team.id && x.kind === "cosmos" && x.flowerVersion >= 2 && x.action === "ask" && x.r === (x.c * 3 + 9) % 1000);
+  return a.actions.some((x) => x.flower === ada && x.flowerVersion >= 2 && isEnd(x) && x.r === (x.c * 3 + 9) % 1000);
 });
 
-// A live stream of actions over SSE.
+// A live stream over SSE: arrivals and turns, filtered for the viewer (a spectator here).
 const stream = await fetch(BASE + `/api${g}/events?after=0`);
 const reader = stream.body.getReader();
 let text = "";
-while (!/"actions":\[/.test(text)) text += new TextDecoder().decode((await reader.read()).value);
+while (!/"action":"(feed|leave)"/.test(text)) text += new TextDecoder().decode((await reader.read()).value);
 reader.cancel();
 assert.match(text, /"action":"arrive"/, "arrivals come over the stream");
+assert.doesNotMatch(text, /"beeMs"|"ms":/, "a spectator's stream has no timings");
+assert.match(text, /"prevalence":\{"round":\d+,"atMs":\d+,"c":[\d.]+,"slots":1,"species":\[\{"team":"[^"]+","index":0,"flowerSuccess":/, "the stream carries prevalence samples");
 
 // The same feed over a WebSocket: the same messages, filtered for the viewer (a Bearer token here).
 const socketFeed = (query, token, enough) => new Promise((resolve, reject) => {
@@ -210,18 +415,18 @@ const boSocket = await socketFeed("after=0", players[1].token, caughtUp);
 assert.equal(typeof boSocket[0].version, "number", "it opens with the game's version");
 const boActs = actionsOf(boSocket);
 assert.deepEqual(boActs.map((a) => a.seq), boActs.map((_, i) => i + 1), "every action from the start, in order");
-assert.ok(boActs.some((a) => a.action === "arrive") && boActs.some((a) => a.action === "ask"));
-assert.ok(boActs.every((a) => !("beeMs" in a) || a.bee === bo) && boActs.some((a) => a.bee === bo && "beeMs" in a), "Bo's own decision times");
-assert.ok(boActs.filter((a) => a.action === "ask").every((a) => ("ms" in a) === (a.patch === bo)), "answer times at Bo's patch only");
+assert.ok(boActs.filter(isEnd).every((a) => ("ms" in a) === (a.flower === bo) && ("beeMs" in a) === (a.bee === bo)), "Bo's own timings only");
 const boHttp = (await api(players[1].token, "GET", `${g}/actions?after=0&limit=${boActs.length}`)).actions;
 assert.deepEqual(boActs, boHttp, "exactly what the HTTP API shows Bo");
+assert.ok(boActs.some((a) => a.rPreview) && boActs.filter((a) => a.rPreview).every((a) => a.r === null && a.rPreview.length === 4096), "big responses come as previews");
 const watching = actionsOf(await socketFeed("after=0", null, caughtUp));
-assert.ok(watching.length && watching.every((a) => !("ms" in a) && !("beeMs" in a) && (a.kind === "cosmos" || a.kind === "orchid")), "a spectator: no timings, every flower");
+assert.ok(watching.length && watching.every((a) => !("ms" in a) && !("beeMs" in a)), "a spectator: no timings");
+assert.ok(watching.filter((a) => a.action === "leave").every((a) => !("percent" in a)));
 const resumeFrom = boActs[Math.floor(boActs.length / 2)].seq;
 const resumed = actionsOf(await socketFeed(`after=${resumeFrom}`, null, (m) => actionsOf(m).length > 0));
 assert.equal(resumed[0].seq, resumeFrom + 1, "?after= resumes right after it");
 
-// The owner pauses: the clock stops. Resumes, then finishes early: code and prints are revealed.
+// The owner pauses: the clock stops. Resumes, then finishes early: everything is revealed.
 assert.equal((await api(players[0].token, "POST", `${g}/status`, { action: "pause" }, { allow: [403] })).status, 403);
 await api(owner, "POST", `${g}/status`, { action: "pause" });
 await sleep(800);
@@ -235,35 +440,74 @@ await until("the clock to move", async () => (await api(owner, "GET", g)).game.c
 await api(owner, "POST", `${g}/status`, { action: "finish" });
 const done = await until("finish", async () => { const v = await api(players[1].token, "GET", g); return v.game.status === "finished" && v; });
 assert.ok(done.game.revealed);
-const adaAfter = done.teams.find((t) => t.id === players[0].team.id);
-assert.equal(adaAfter.programs.cosmos[2].code.startsWith("# same thing"), true);
-assert.deepEqual(adaAfter.programs.cosmos.map((v) => v.cost), [0, 1, 0], "once it's over, everyone sees every change");
-assert.ok("bank" in adaAfter.banks.cosmos);
-const after = (await api(players[1].token, "GET", `${g}/actions?limit=5000`)).actions;
-assert.ok(after.slice(0, 50).every((a) => "beeVersion" in a && "flowerVersion" in a));
-assert.ok(after.every(isKind), "and after the game");
-assert.ok(after.filter((a) => a.action === "ask").every((a) => "ms" in a), "every answer time, once it's over");
-assert.ok(after.some((a) => a.bee === ada && "beeMs" in a), "and every decision time");
-assert.ok(done.scores.length === 3 && done.scores.every((s) => Number.isFinite(s.fitness)));
-assert.match(adaTasted(after).log, /tasted/, "revealed after the game");
+const adaAfter = done.teams.find((t) => t.id === ada);
+assert.ok(adaAfter.programs.flower[2].code.startsWith("# same thing"));
+assert.deepEqual(adaAfter.programs.flower.map((v) => v.cost), [0, 1, 0], "once it's over, everyone sees every change");
+assert.ok("bank" in adaAfter.banks.flower);
 // The round in progress when the owner finished it is written with the garden's last flush.
 const lastSeq = async () => (await api(owner, "GET", g)).game.lastSeq;
 let settled = await lastSeq();
 for (let i = 0; i < 10; i++) { await sleep(300); const s = await lastSeq(); if (s === settled) break; settled = s; }
 await sleep(600);
 assert.equal(await lastSeq(), settled, "nothing happens after the end");
-console.log("game 1:", done.scores.map((s) => `${done.teams.find((t) => t.id === s.teamId).name} ${s.fitness.toFixed(2)}`).join(", "));
+const after = (await api(null, "GET", `${g}/actions?limit=5000`)).actions;
+assert.ok(after.every((a) => "beeVersion" in a && "flowerVersion" in a), "a spectator sees every version");
+assert.ok(after.filter(isEnd).every((a) => "ms" in a && "beeMs" in a && "percent" in a && "energy" in a), "and every timing, percent and energy");
+assert.ok(after.filter(isEnd).every((a) => a.budgetMs >= 1 && a.budgetMs <= 50), "and every flower call's R");
+assert.ok(after.some((a) => a.bee === ada && /fed \d+/.test(a.log || "")), "prints are revealed");
+assert.ok(done.teams.filter((t) => t.participant).every((t) => t.memory && typeof t.memory.value === "object"), "every bee's MEMORY is revealed");
+const allGrains = after.filter((a) => a.action === "feed" && a.pollen >= 1);
+assert.ok(allGrains.length && allGrains.every((a) => typeof a.grain === "string" && a.grain.length > 0), "every grain is revealed");
+const lens = allGrains.map((a) => a.grain.length).sort((x, y) => x - y);
+console.log(`grains: ${lens.length}, ${lens[0]}–${lens.at(-1)} characters (median ${lens[lens.length >> 1]}); flower code lengths ${[...new Set(allGrains.map((a) => a.grainCodeLength))].sort((x, y) => x - y).join(", ")}`);
+const roomQuery = await api(null, "POST", `/rooms/${room.shortId}/query`, { from: "turns", groupBy: ["game"], aggregates: [{ fn: "count", as: "n" }, { fn: "count", field: "ms", as: "timed" }] });
+assert.equal(roomQuery.rows.length, 1, "the finished game, across the room");
+assert.ok(roomQuery.rows[0].n > 0 && roomQuery.rows[0].timed > 0, "fully revealed");
+const finalLedger = await api(null, "GET", `${g}/ledger?limit=5000`);
+assert.ok(finalLedger.entries.length && finalLedger.entries.every((e) => e.ms !== null || e.response === null));
+assert.ok(done.scores.length === 3 && done.scores.every((s) => Number.isFinite(s.fitness)));
+assert.equal(done.game.endMs, drawnEnd, "the drawn end, revealed once it's over");
+const totalFitness = done.scores.reduce((x, s) => x + s.fitness, 0);
+console.log("game 1:", done.scores.map((s) => `${done.teams.find((t) => t.id === s.teamId).name} ${s.fitness.toFixed(2)}`).join(", "), `(sum ${totalFitness.toFixed(2)})`);
 
-// A second game runs out its clock by itself.
-const g2r = await api(owner, "POST", `/rooms/${room.shortId}/games`, { config: { minutes: 0.1 } });
+// A second game runs out its clock by itself, at its hidden end: 6 to 12 s. It plays privately (the default), with
+// a prevalence snapshot every 2 s.
+const g2r = await api(owner, "POST", `/rooms/${room.shortId}/games`, { config: { minutes: 0.1, prevalenceEveryS: 2 } });
 const g2 = `/rooms/${room.shortId}/games/${g2r.shortId}`;
 for (const [i, p] of players.slice(0, 2).entries()) {
   await api(p.token, "POST", `${g2}/teams`, { name: p.name });
-  for (const kind of ["cosmos", "orchid", "bee"]) await api(p.token, "POST", `${g2}/programs`, { kind, code: variants[i][kind] });
+  for (const kind of ["flower", "bee"]) await api(p.token, "POST", `${g2}/programs`, { kind, code: variants[i][kind] });
 }
 await api(owner, "POST", `${g2}/start`);
-const end2 = await until("game 2 to end", async () => { const v = await api(owner, "GET", g2); return v.game.status === "finished" && v; }, 20000);
-assert.equal(end2.game.clockMs, 6000, `ended at ${end2.game.clockMs} ms`);
-assert.equal(end2.game.round, 30, "6 s of 200 ms rounds");
+// During private play: a player sees only its own programs' sides, nobody else's team; a spectator nothing but the
+// snapshots; the owner (no team here) everything.
+const ids2 = (await api(owner, "GET", g2)).participants;
+const me2 = (await api(players[0].token, "GET", g2)).myTeam.id;
+const other2 = ids2.find((id) => id !== me2);
+await until("private turns", async () => (await api(players[0].token, "GET", `${g2}/actions?limit=5000`)).actions.length >= 4, 10000);
+const mine2 = await api(players[0].token, "GET", `${g2}/actions?limit=5000`);
+assert.ok(mine2.actions.every((a) => (a.side === "flower" && a.flower === me2 && !("bee" in a) && a.action === "answer") || (a.side === "bee" && a.bee === me2 && !("flower" in a))), "only your own sides");
+assert.ok(!JSON.stringify(mine2.actions).includes(other2), `the other team's id is nowhere in a player's turns: ${JSON.stringify(mine2.actions.find((a) => JSON.stringify(a).includes(other2)))}`);
+assert.deepEqual((await api(null, "GET", `${g2}/actions?limit=5000`)).actions, [], "a spectator sees no turns");
+const board2 = await api(null, "GET", `${g2}/scores`);
+assert.ok(board2.restricted && board2.ledgers === null && board2.prevalence.sample.snapshot && board2.prevalence.sample.atMs % 2000 === 0);
+assert.ok(board2.scores.every((s) => s.feedsGiven === null && (s.fitness === null || Math.round(s.fitness * 100) / 100 === s.fitness)));
+assert.ok((await api(null, "GET", `${g2}/prevalence`)).samples.every((x) => x.snapshot && x.atMs % 2000 === 0), "snapshots only");
+const q2 = (token, body) => api(token, "POST", `${g2}/query`, body);
+assert.deepEqual((await q2(players[0].token, { from: "pairs" })).rows, [], "no pairs");
+assert.ok((await q2(players[0].token, { from: "turns", limit: 5000 })).rows.every((t) => (t.bee === null) !== (t.flower === null)), "query rows are one side each");
+const ownerView2 = await api(owner, "GET", g2);
+assert.ok(!ownerView2.game.restricted && ownerView2.ledgers, "the owner, with no team here, sees it all");
+assert.ok((await api(owner, "GET", `${g2}/actions?limit=5000`)).actions.some((a) => a.action === "arrive"));
+const end2 = await until("game 2 to end", async () => { const v = await api(players[0].token, "GET", g2); return v.game.status === "finished" && v; }, 30000);
+// Over: everything revealed, the final round's sample with it; the final score is N² × p^F × p^B of it.
+const all2 = await api(null, "GET", `${g2}/actions?limit=5000`);
+assert.ok(all2.actions.some((a) => a.action === "arrive" && a.bee && a.flower), "revealed at the end");
+const final2 = (await api(null, "GET", `${g2}/prevalence`)).samples.at(-1);
+assert.equal(final2.round, end2.game.round, "a sample of the final round");
+const n2 = final2.species.length;
+assert.deepEqual(end2.scores.map((s) => s.fitness), final2.species.map((x) => n2 * n2 * x.flowerP * x.beeP), "the final score, exactly, from the published sample");
+assert.ok(end2.game.endMs >= 6000 && end2.game.endMs <= 12000 && end2.game.clockMs === end2.game.endMs, `ended at ${end2.game.clockMs} ms, drawn ${end2.game.endMs}`);
+assert.equal(end2.game.round, end2.game.clockMs / 200, "200 ms rounds");
 console.log(`game 2 ran ${end2.game.lastSeq} actions in ${end2.game.round} rounds, ${end2.game.clockMs} ms of game time`);
 console.log("smoke ok");

@@ -1,5 +1,5 @@
-// The live side of a game page: a bounded ring of recent actions fed by the SSE stream, and the game
-// clock interpolated locally between server updates. Lives outside React: actions can arrive at
+// The live side of a game page: a bounded ring of recent actions fed by the game's stream (WebSocket, or
+// SSE where there's none), and the game clock interpolated locally between server updates. Lives outside React: actions can arrive at
 // hundreds a second, so components read it at their own pace (useLiveTick) instead of re-rendering on
 // every message.
 import { useEffect, useRef, useState } from "react";
@@ -7,17 +7,33 @@ import { api } from "../api";
 import type { Action, ActionsPage, GameStatus } from "../types";
 
 /** How many recent actions a page holds (older ones fall off the front). */
-export const RING = 5000;
+export const RING = 8000;
 /** How many recent actions to load when a page opens. */
 export const BACKLOG = 2500;
 
 type Listener = () => void;
 
-export class LiveStore {
+/** Anything a component can follow at its own pace: a revision counter and change notifications. */
+export interface Ticking {
+  rev: number;
+  subscribe(fn: Listener): () => void;
+}
+
+/** Where a list of actions comes from: the live ring, or a finished game's whole history. */
+export interface ActionSource extends Ticking {
+  actions: Action[];
+  /** Set once the oldest action held is the game's first. */
+  complete: boolean;
+  lastSeq: number;
+}
+
+export class LiveStore implements ActionSource {
   /** Recent actions, oldest first, by seq. */
   actions: Action[] = [];
   /** The newest seq held. */
   lastSeq = 0;
+  /** The newest record held, as seq × 2 (+1 for a private bee side, which may share its seq with a flower side). */
+  private lastKey = 0;
   /** Bumps whenever actions or the clock change. */
   rev = 0;
   /** Set once the older end of the ring is the very first action of the game. */
@@ -41,8 +57,10 @@ export class LiveStore {
   ingest(list: Action[], live = true) {
     let added = 0;
     for (const a of list) {
-      if (a.seq <= this.lastSeq) continue;
+      const key = a.seq * 2 + (a.side === "bee" ? 1 : 0);
+      if (key <= this.lastKey) continue;
       this.actions.push(a);
+      this.lastKey = key;
       this.lastSeq = a.seq;
       if (a.round > this.round) this.round = a.round;
       added++;
@@ -120,7 +138,7 @@ export class LiveStore {
  * Re-render at most every `ms` while the store changes (and, with `always`, on that beat regardless,
  * for clocks). Returns the store's rev so it can key memos.
  */
-export function useLiveTick(store: LiveStore, ms: number, always = false): number {
+export function useLiveTick(store: Ticking, ms: number, always = false): number {
   const [rev, setRev] = useState(store.rev);
   const [, beat] = useState(0);
   useEffect(() => {

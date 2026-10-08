@@ -2,15 +2,15 @@
 import { Garden } from "../../server/engine.js";
 
 /**
- * teams: [{ cosmos, orchid, bee }]; `during(garden)` runs while it plays. Unpaced (rounds back to back)
- * unless `paced`. Returns the drained output.
+ * teams: [{ flower, bee }]; `during(garden)` runs while it plays. Unpaced (rounds back to back) unless
+ * `paced`. Returns the drained output, plus the finished turns (`history`).
  */
 export async function play(config, teams, rounds, during, { paced = false, endMs = Infinity } = {}) {
-  const garden = new Garden({ config, teams: teams.length, endMs, maxRounds: rounds, paced });
+  const garden = new Garden({ config, teams: teams.length, endMs, maxRounds: rounds, paced, keepHistory: true });
   await Promise.all(teams.flatMap((programs, ti) => Object.entries(programs).map(([k, code]) => garden.setProgram(ti, k, code, 1))));
   const t0 = performance.now();
   const run = garden.run();
   if (during) await during(garden);
   await run;
-  return { ...garden.drain(), rounds: garden.rounds, wallMs: performance.now() - t0 };
+  return { ...garden.drain(), history: garden.history, rounds: garden.rounds, wallMs: performance.now() - t0 };
 }

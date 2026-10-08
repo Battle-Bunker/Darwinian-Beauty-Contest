@@ -99,8 +99,6 @@ export function Value({ v, role, max = 28 }: { v: unknown; role?: "challenge" | 
   );
 }
 
-export const isStructured = (v: unknown) => v !== null && typeof v === "object";
-
 function MiniDrawing({ v, type }: { v: unknown; type?: string }) {
   const s = classify(v, type);
   if ((s.kind === "graph" || s.kind === "digraph") && s.nodes >= 1 && s.nodes <= 16) return <MiniGraph n={s.nodes} edges={s.edges} directed={s.kind === "digraph"} labels={s.labels} />;

@@ -1,29 +1,31 @@
-// My team's three programs: write, check, submit and try them. In the lobby writing is free. Once the
-// game runs, a submission pays its change cost (node edits from the live version) from a change budget
-// that fills with game time, and is live at once for new visits: a visit under way keeps the versions it
-// started with (your bee switches at its next visit; bees already at your flower finish their visit).
-
-/** When a submitted change takes effect (versions are pinned per visit). */
-export const takesEffect = (kind: Kind) =>
-  kind === "bee" ? "from your bee's next visit (it finishes the visit it's on with the old one)" : `for visits that start from now (bees already at your ${kind} finish their visit with the old one)`;
+// My team's two programs, the flower and the bee: write, check, submit and try them. In the lobby writing is
+// free. Once the game runs, a submission pays its change cost (node edits from the live version) from a
+// change budget that fills with game time, and is live at once: a turn under way keeps the versions it
+// started with (a new flower answers the turns that start after it; a new bee takes over when its current
+// turn is over, and is asked `first` straight away).
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, ApiError, errorText } from "../api";
+import { api, errorText } from "../api";
 import { storage } from "../hooks";
-import { KINDS, type Bank, type Budget, type CheckResult, type GameStatus, type GameView, type Kind, type ProgramInterface, type ProgramVersion, type Team, type TryBeeResult, type TryFlowerResult } from "../types";
+import { KINDS, byteCapOf, energyBytes, windowMsOf, type Bank, type Budget, type CheckResult, type GameStatus, type GameView, type Kind, type ProgramInterface, type ProgramVersion, type Team, type TryBeeResult, type TryFlowerResult } from "../types";
 import { CodeEditor, type EditorStats } from "./CodeEditor";
 import { Alert, Meter, Spinner } from "./ui";
-import { BeeGlyph, CheckIcon, DropIcon, FlowerHead, FooledIcon } from "./Icons";
-import { fmtClock, fmtNodes, fmtWait, plural, timeAgo } from "../lib/format";
+import { BeeGlyph, CheckIcon, DropIcon, FlowerHead } from "./Icons";
+import { fmtClock, fmtE, fmtEExact, fmtMs, fmtNodes, fmtWait, getEnergyUnit, plural, timeAgo } from "../lib/format";
 import { availableAt, waitFor } from "../lib/budget";
 import { useLiveTick, type LiveStore } from "../lib/live";
 import { Value } from "./Value";
 import { FeedRow } from "./Feed";
 import { beeTiming, flowerTiming, TimingPanel } from "./Timing";
+import { MemoryEntries, memorySize, MemoryView } from "./Memory";
+import { partsOfAction, ResponseView } from "./ResponseView";
 
-const BLURB: Record<Kind, string> = {
-  cosmos: "Your honest flower. Bees that feed here get nectar. flower(challenge) runs fresh for every question: it keeps nothing between questions, but it can use randomness and the clock to search for a good answer within its time limit.",
-  orchid: "Your trickster. Bees that feed here get nothing, but your patch still earns the visit. It can try to pass for any cosmos that bees trust: yours or another team's.",
-  bee: "Your bee visits one flower at a time: ask questions, then feed or leave. Its variables last for as long as this version plays; submitting a new bee (or a crash) starts it afresh. What it prints shows up for your team below and in the action feed.",
+/** When a submitted change takes effect (versions are pinned per turn). */
+export const takesEffect = (kind: Kind) =>
+  kind === "bee" ? "once your bee's current turn is over (it's asked first() straight away)" : "for turns that start from now (a turn under way finishes with the old one)";
+
+const BLURB: Record<Kind, (lo: number, hi: number, byteCap: number | null) => string> = {
+  flower: (lo, hi, byteCap) => `Your flower is a species: every visit is a bee meeting one of its flowers. flower(challenge) returns [response, percent]. It allocates its energy between compute, nectar and pollen: its size and its CPU time use up part of each visit's budget, leaving E = (size cap − size) × max(0, R − CPU ms)${byteCap ? ` × (${byteCap} − the response's bytes), in node·ms·bytes` : ""}, where R is this turn's time limit, in CPU time: hidden from the bee, varying from ${lo} to ${hi} ms, and told to your flower as GAME's ms (budget with time.process_time() or performance.cpuTime(); sleeping returns at once)${byteCap ? `, and ${byteCap} bytes of JSON is the most a response may be (one that long is still an answer, with E = 0)` : ""}; a bee that feeds gets percent% of E as nectar and the rest as pollen, which it carries to other flowers. An unfed visit's E is lost. It runs fresh for every turn and remembers nothing: it sees only its challenge and GAME.`,
+  bee: () => "Your bee takes one turn a round at one flower of a random species, never told whose: first() gives a challenge when it has none queued, and decide(challenge, response) returns [\"feed\" or \"leave\", next challenge]. Feeding gets it nectar (and pollen to carry) and sits it out for the feed cost in rounds; if you define fed(nectar), it runs right after a feed decided in time, in the same program instance as that decide, is told the nectar, and may return the next challenge in place of decide's. Each turn runs fresh: only MEMORY, a tiny key–value store only the bee can write, carries over, and a new version starts it empty. What it prints shows up for your team below and in the feed.",
 };
 
 const SCALARS = ["int", "float", "bool", "str"];
@@ -63,8 +65,7 @@ function parseChallenges(text: string, type: string): unknown[] {
 }
 
 export const KindIcon = ({ kind, size = 18 }: { kind: Kind; size?: number }) =>
-  kind === "bee" ? <BeeGlyph color="#f2a541" size={size + 2} />
-  : kind === "cosmos" ? <FlowerHead color="#e0559a" petals={8} size={size} /> : <FlowerHead color="#9b5de5" size={size} />;
+  kind === "bee" ? <BeeGlyph color="#f2a541" size={size + 2} /> : <FlowerHead color="#e0559a" petals={8} size={size} />;
 
 export function ProgramEditors({ view, base, store }: { view: GameView; base: string; store: LiveStore }) {
   const team = view.myTeam!;
@@ -78,7 +79,7 @@ export function ProgramEditors({ view, base, store }: { view: GameView; base: st
   const live = g.status === "running" || g.status === "paused";
   const participant = !!view.participants?.includes(team.id);
 
-  const [kind, setKind] = useState<Kind>(() => { const t = storage.get("dbc:tab") as Kind; return KINDS.includes(t) ? t : "cosmos"; });
+  const [kind, setKind] = useState<Kind>(() => { const t = storage.get("dbc:tab") as Kind; return KINDS.includes(t) ? t : "flower"; });
   const [code, setCode] = useState<Record<Kind, string>>(() => Object.fromEntries(KINDS.map((k) => [k, storage.get(`${keyBase}:${k}`) ?? baseFor(k)])) as Record<Kind, string>);
   const [stats, setStats] = useState<Partial<Record<Kind, EditorStats | null>>>({});
   const [result, setResult] = useState<Partial<Record<Kind, { check?: CheckResult; error?: string; action: "check" | "submit" }>>>({});
@@ -149,12 +150,12 @@ export function ProgramEditors({ view, base, store }: { view: GameView; base: st
   };
 
   let status: React.ReactNode;
-  if (!playing) status = <span className="warn-text">Not written yet. {g.status === "lobby" ? "Your team needs all three programs, saved, to play when the game starts." : ""}</span>;
+  if (!playing) status = <span className="warn-text">Not written yet. {g.status === "lobby" ? "Your team needs both programs, saved, to play when the game starts." : ""}</span>;
   else if (unchanged) status = <span className="ok-text"><CheckIcon size={15} /> {g.status === "lobby" ? `Saved as v${playing.version} by ${playing.submittedBy} ${timeAgo(playing.submittedAt)}. This is what plays when the game starts.` : `This is v${playing.version}, the live version.`}</span>;
   else status = <span className="warn-text">Unsubmitted changes. {g.status === "lobby" ? `v${playing.version} is what's saved.` : `v${playing.version} keeps playing until you submit.`}</span>;
 
   const r = result[kind];
-  const iface = useMemo(() => <InterfaceBox iface={view.interface} kind={kind} language={cfg.language} />, [view.interface, kind, cfg.language]);
+  const iface = useMemo(() => <InterfaceBox iface={view.interface} kind={kind} language={cfg.language} budgets={cfg.budgets} />, [view.interface, kind, cfg.language, cfg.budgets]);
 
   return (
     <div className="editors">
@@ -179,21 +180,22 @@ export function ProgramEditors({ view, base, store }: { view: GameView; base: st
       <div className="editor-panel" role="tabpanel">
         <div className="editor-layout">
           <div className="editor-main">
-            <p className="muted small">{BLURB[kind]}</p>
+            <p className="muted small">{BLURB[kind](cfg.budgets.flower.minMs ?? 50, cfg.budgets.flower.ms, energyBytes(cfg) ? byteCapOf(cfg) : null)}</p>
             {playing && live && (
               <p className="small playing-line">
                 <b>Live: v{playing.version}</b> · {playing.size.toLocaleString()} nodes · {playing.atMs > 0 ? `since ${fmtClock(playing.atMs)}` : "since the start"} · by {playing.submittedBy}
-                <span className="muted"> · a change applies {kind === "bee" ? "from your bee's next visit" : "to visits that start after it"}</span>
+                <span className="muted"> · a change applies {kind === "bee" ? "once your bee's current turn is over" : "to turns that start after it"}</span>
               </p>
             )}
             {playing?.problem && <Alert kind="error"><b>v{playing.version} hit a problem while playing:</b> <span className="mono">{playing.problem}</span></Alert>}
             <div className="meters">
               <Meter label="Size (nodes)" value={empty ? 0 : s?.size ?? null} max={budget.size} />
+              {kind === "flower" && <EnergyMeter size={empty ? null : s?.size ?? null} cap={budget.size} ms={budget.ms} minMs={budget.minMs ?? 50} byteCap={energyBytes(cfg) ? byteCapOf(cfg) : null} />}
               {live && participant && mine?.banks?.[kind]
                 ? <BudgetMeter store={store} budget={budget} bank={mine.banks[kind]!} cost={unchanged ? 0 : cost} status={g.status} kind={kind} />
                 : <div className="meter-note muted">{g.status === "lobby" ? <>Writing programs before the game starts is <b>free</b>. Once it starts, every change costs change budget, which fills by {budget.perMinute.toLocaleString()} nodes a minute (up to {budget.cap.toLocaleString()}).</> : null}</div>}
             </div>
-            <div className="meter-note muted small">Time limit: {budget.ms} ms per {kind === "bee" ? "call" : "question"}.</div>
+            <div className="meter-note muted small">{kind === "bee" ? `Time limit: ${budget.ms} ms of CPU time to decide (a late reply never feeds).${(g.feedPrice ?? 0) > 0 ? ` Every feed costs your bee ${(g.feedPrice ?? 0).toLocaleString()} of its nectar.` : ""}` : `Your flower's time limit this turn is hidden and varies from ${budget.minMs ?? 50} to ${budget.ms} ms of CPU time (it's the call's hard limit, E counts from it, and your flower reads it as GAME's ms); every millisecond of CPU costs energy. The response still reaches the bee at ${windowMsOf(cfg)} ms.`}</div>
             {s?.syntaxError && !empty && <Alert kind="warn">Syntax error: this code doesn't parse yet, so it can't be submitted.</Alert>}
             {overSize && <Alert kind="error">Too big: {s!.size.toLocaleString()} nodes, but the budget is {budget.size.toLocaleString()}. Make it {(s!.size - budget.size).toLocaleString()} nodes smaller to submit. Comments, spacing and name lengths are free; every byte of a string or number counts.</Alert>}
             {incoming[kind] !== undefined && (
@@ -224,7 +226,7 @@ export function ProgramEditors({ view, base, store }: { view: GameView; base: st
             <p className="small">{status}</p>
             {!canWrite && (
               <p className="small muted">
-                {g.status === "finished" ? "The game is over." : "Your team isn't playing in this game: it hadn't written all three programs when the game started. You can still try programs out."}
+                {g.status === "finished" ? "The game is over." : "Your team isn't playing in this game: it hadn't written both programs when the game started. You can still try programs out."}
               </p>
             )}
             {r?.error && <Alert kind="error">{r.error}</Alert>}
@@ -239,9 +241,15 @@ export function ProgramEditors({ view, base, store }: { view: GameView; base: st
             )}
 
             {live && participant && <LiveTiming store={store} teamId={team.id} kind={kind} limit={budget.ms} />}
+            {kind === "bee" && live && mine?.memory && (
+              <details className="prints" open>
+                <summary><b>Your bee's MEMORY</b> <span className="muted small">(read only; only your team sees it until the game ends)</span></summary>
+                <MemoryView memory={mine.memory} team={mine} view={view} own />
+              </details>
+            )}
             {kind === "bee" && live && <BeePrints store={store} teamId={team.id} />}
             <TryPanel key={`try:${kind}`} kind={kind} code={current} base={base} challengeType={cfg.challengeType}
-              flowers={{ cosmos: code.cosmos, orchid: code.orchid }} view={view} />
+              flowerCode={code.flower} view={view} />
           </div>
           {iface}
         </div>
@@ -317,13 +325,13 @@ function SubmitBar({ store, status, kind, busy, canWrite, blocked, empty, unchan
 /** How long my program has been taking in this game, from the actions held (only my team sees these). */
 function LiveTiming({ store, teamId, kind, limit }: { store: LiveStore; teamId: string; kind: Kind; limit: number }) {
   const rev = useLiveTick(store, 1000);
-  const data = useMemo(() => (kind === "bee" ? beeTiming(store.actions, teamId) : flowerTiming(store.actions, teamId, kind)),
+  const data = useMemo(() => (kind === "bee" ? beeTiming(store.actions, teamId) : flowerTiming(store.actions, teamId)),
     [store, teamId, kind, rev]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <TimingPanel data={data} limit={limit}
-      title={kind === "bee" ? "Your bee's decision times" : `Your ${kind}'s answer times`}
-      unit={kind === "bee" ? "recent decisions" : "recent questions"}
-      missLabel={kind === "bee" ? "too slow (lost a round)" : "no answer in time"} />
+      title={kind === "bee" ? "Your bee's decision times" : "Your flower's compute (CPU) times"}
+      unit={kind === "bee" ? "recent turns" : "recent visits"}
+      missLabel={kind === "bee" ? "too slow (no feed, lost turns)" : "no answer (E = 0)"} />
   );
 }
 
@@ -344,7 +352,7 @@ function BeePrints({ store, teamId }: { store: LiveStore; teamId: string }) {
       {prints.length > 0 && (
         <ol className="prints-list">
           {prints.map((a) => (
-            <li key={a.seq}><span className="mono muted small">{fmtClock(a.atMs, true)} · {a.action}{a.action === "feed" ? (a.nectar ? " (nectar)" : " (fooled)") : ""}</span><pre className="bee-log">{a.log}</pre></li>
+            <li key={a.seq}><span className="mono muted small">{fmtClock(a.atMs, true)} · {a.action}{a.action === "feed" && typeof a.nectar === "number" ? ` (${fmtE(a.nectar)} nectar)` : ""}</span><pre className="bee-log">{a.log}</pre></li>
           ))}
         </ol>
       )}
@@ -353,8 +361,9 @@ function BeePrints({ store, teamId }: { store: LiveStore; teamId: string }) {
 }
 
 /** What every team knows: the functions to define and the game's types. Deliberately no example code. */
-function InterfaceBox({ iface, kind, language }: { iface: ProgramInterface; kind: Kind; language: "python" | "typescript" }) {
+function InterfaceBox({ iface, kind, language, budgets }: { iface: ProgramInterface; kind: Kind; language: "python" | "typescript"; budgets: Record<Kind, Budget> }) {
   const t = iface.types;
+  const lo = budgets.flower.minMs ?? 50, hi = budgets.flower.ms;
   const none = language === "python" ? "None" : "null";
   // Open beside the editor on wide screens; folded above it on phones (tap to read).
   const [open, setOpen] = useState(() => typeof window === "undefined" || window.matchMedia("(min-width: 1000px)").matches);
@@ -362,7 +371,7 @@ function InterfaceBox({ iface, kind, language }: { iface: ProgramInterface; kind
     <details className="iface" open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
       <summary><h3>The interface</h3>{!open && <span className="small muted"> what to define, and the types</span>}</summary>
       <p className="small muted">This is all anyone starts with. There's no example code: what your programs do is up to your team.</p>
-      <div className="iface-label">{kind === "bee" ? "Your bee defines" : `Your ${kind} defines`}</div>
+      <div className="iface-label">{kind === "bee" ? "Your bee defines" : "Your flower defines"}</div>
       <pre className="iface-sig">{kind === "bee" ? iface.bee : iface.flower}</pre>
       <dl className="iface-types">
         <dt>Challenge</dt><dd><code>{t.challenge}</code> {t.challengeMeans}</dd>
@@ -370,23 +379,37 @@ function InterfaceBox({ iface, kind, language }: { iface: ProgramInterface; kind
       </dl>
       {t.rules.length > 0 && <ul className="iface-rules">{t.rules.map((r, i) => <li key={i}>{r}</li>)}</ul>}
       <p className="small muted">
-        Programs can also read <code>GAME</code> ({language === "python" ? 'GAME["feed_cost"]' : "GAME.feed_cost"}, challenge_type, response_type, max_len, max_nodes, round_ms, and ms: this program's time limit per call).
-        {" "}A response of the wrong type, a crash or a timeout reaches the bee as <code>{none}</code>.
+        Programs see only their arguments and <code>GAME</code>: {language === "python" ? 'GAME["team"]' : "GAME.team"} (your team's number), teams, feed_cost, challenge_type, response_type, max_len and max_nodes (challenge limits), max_response_bytes, round_ms, ms (this call's time limit: a bee's {budgets.bee.ms}; a flower's this call's hidden budget R, from {lo} to {hi}), flower_ms ({hi}, the most R can be) and flower_size_cap; a flower also gets size, its own; a bee also memory, its MEMORY cap. No program sees any history: your team can query it over the API. <code>time.time()</code>, <code>Date.now()</code> and <code>performance.now()</code> measure time since this call started (it reads as 1970-01-01); there is no real-world clock, and no round or game time.
+        {kind === "bee" && <>
+          {" "}A bee also has <code>MEMORY</code>: a flat key–value store (string keys; string, number, boolean or {none} values) that it changes inside first, decide and fed ({language === "python" ? "MEMORY[\"n\"] = 3" : "MEMORY.n = 3"}). It's saved after each of them if it fits in {language === "python" ? 'GAME["memory"]' : "GAME.memory"} bytes, each entry counting its key's bytes plus its value's JSON bytes ({'{"n": 7, "best": "a7"}'} is 2 + 8 = 10). It's the only thing a bee keeps from one turn to the next.
+          {" "}Optional: <code>fed(nectar)</code> runs after a feed decided in time, in the same program instance as that decide (its globals still there), within {language === "python" ? 'GAME["ms"]' : "GAME.ms"}; MEMORY is saved after it, and a challenge it returns replaces the one decide queued ({none} or nothing keeps decide's).
+        </>}
+        {" "}A late answer, a crash, a malformed return or a response over max_response_bytes reaches the bee as <code>{none}</code> and makes no energy. A response over 4 KB is shown on the page as its size and first 4 KB.
       </p>
     </details>
   );
 }
 
-function TryPanel({ kind, code, base, challengeType, flowers, view }: {
-  kind: Kind; code: string; base: string; challengeType: string; flowers: { cosmos: string; orchid: string }; view: GameView;
+function TryPanel({ kind, code, base, challengeType, flowerCode, view }: {
+  kind: Kind; code: string; base: string; challengeType: string; flowerCode: string; view: GameView;
 }) {
   const [text, setText] = useState(() => storage.get(`dbc:try:${challengeType}`) ?? "");
+  const [rounds, setRounds] = useState(300);
+  // The flower's time budget R for a try: drawn at random per call (as in a game), or a fixed number of ms.
+  const [budgetMode, setBudgetMode] = useState<"random" | "fixed">("random");
+  const [budgetText, setBudgetText] = useState("100");
+  const [memoryText, setMemoryText] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<{ text: string; soft?: boolean } | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [flower, setFlower] = useState<TryFlowerResult | null>(null);
   const [bee, setBee] = useState<TryBeeResult | null>(null);
   const fmt = challengeFormat(challengeType);
-  const bothFlowers = !!flowers.cosmos.trim() && !!flowers.orchid.trim();
+  const cfg = view.game.config;
+  const hasFlower = !!flowerCode.trim();
+  const memoryCap = cfg.budgets.bee.memory ?? 50;
+  // Whether this bee defines fed(nectar), from its code (the try run calls it after every feed, as a game does).
+  const definesFed = kind === "bee" && (cfg.language === "python" ? /^def\s+fed\s*\(/m.test(code) : /(^|\n)\s*(export\s+)?(async\s+)?function\s+fed\s*\(|(^|\n)\s*(const|let|var)\s+fed\s*=/.test(code));
+  const startSize = (() => { try { return memoryText.trim() ? memorySize(json(memoryText.trim())) : 0; } catch { return null; } })();
   const teams = useMemo(() => Object.fromEntries(view.teams.map((t) => [t.id, t])), [view.teams]);
 
   const run = async () => {
@@ -395,80 +418,164 @@ function TryPanel({ kind, code, base, challengeType, flowers, view }: {
     try {
       if (kind === "bee") {
         if (!code.trim()) throw new Error("Write your bee first.");
-        setBee(await api<TryBeeResult>("POST", `${base}/try`, { kind, code, ...(bothFlowers ? { flowers } : {}) }));
+        const n = Math.max(1, Math.min(5000, Math.round(rounds) || 300));
+        let memory: unknown;
+        if (memoryText.trim()) {
+          try { memory = json(memoryText.trim()); } catch { throw new Error("Couldn't read the starting MEMORY: write it as JSON, like {\"n\": 3}."); }
+          const size = memorySize(memory);
+          if (size === null) throw new Error("A MEMORY is a flat key–value store: string keys, and string, number, boolean or null values (nothing nested).");
+          if (size > memoryCap) throw new Error(`That MEMORY is ${size} bytes, over the cap of ${memoryCap}.`);
+        }
+        setBee(await api<TryBeeResult>("POST", `${base}/try`, { kind, code, rounds: n, ...(hasFlower ? { flower: flowerCode } : {}), ...(memory !== undefined ? { memory } : {}) }));
       } else {
-        if (!code.trim()) throw new Error(`Write your ${kind} first.`);
+        if (!code.trim()) throw new Error("Write your flower first.");
         let challenges: unknown[];
         try { challenges = parseChallenges(text, challengeType); } catch {
           throw new Error(`Couldn't read the challenges. Write them ${fmt.label}, like ${fmt.placeholder}`);
         }
         storage.set(`dbc:try:${challengeType}`, text || null);
-        setFlower(await api<TryFlowerResult>("POST", `${base}/try`, { kind, code, challenges }));
+        let budgetMs: number | "random" = "random";
+        if (budgetMode === "fixed") {
+          const n = Number(budgetText);
+          const lo = cfg.budgets.flower.minMs ?? 50, hi = cfg.budgets.flower.ms;
+          if (!Number.isFinite(n) || n < lo || n > hi) throw new Error(`The time budget R must be a number of ms from ${lo} to ${hi}.`);
+          budgetMs = n;
+        }
+        setFlower(await api<TryFlowerResult>("POST", `${base}/try`, { kind, code, challenges, budgetMs }));
       }
     } catch (e) {
-      // 409: the bee has no flowers to visit yet. That's advice, not a failure.
-      if (e instanceof ApiError && e.status === 409) {
-        setError({ soft: true, text: "Your bee needs flowers to visit. Write both your cosmos and your orchid (Try uses what's in their editors), or submit them, then try your bee again." });
-      } else setError({ text: errorText(e) });
+      setError(errorText(e));
     } finally { setBusy(false); }
   };
 
-  const visits = bee ? new Set(bee.actions.map((a) => a.visit)).size : 0;
+  const turns = bee ? bee.actions.filter((a) => a.action !== "arrive") : [];
+  const fr = flower?.results ?? [];
+  const energies = fr.map((x) => x.energy).filter((x): x is number => typeof x === "number");
   return (
     <div className="try">
       <h3>Try it</h3>
       {kind === "bee" ? (
-        <p className="small muted">
-          {bothFlowers
-            ? "Your bee forages a tiny garden of just your own two flowers, as they are in your cosmos and orchid editors right now, for 300 rounds, run back to back (not in real time), with the real time limits."
-            : "Your bee forages a tiny garden of just your own two flowers for 300 rounds, run back to back with the real time limits. Your cosmos and orchid editors aren't both filled in, so it visits the versions your team saved."}
-        </p>
+        <>
+          <p className="small muted">
+            Your bee plays a garden of just your own flower ({hasFlower ? "as it is in your flower editor right now" : "your team's latest saved flower: your flower editor is empty"}), round after round, back to back rather than in real time, with the real time limits.
+          </p>
+          <details className="try-ledger">
+            <summary className="small">Start the test bee with a MEMORY (optional; {"{}"} by default)</summary>
+            <textarea value={memoryText} onChange={(e) => setMemoryText(e.target.value)} className="mono try-input" spellCheck={false} rows={2} placeholder='{"n": 3, "best": "a7"}'
+              aria-label="Starting MEMORY for the test bee" />
+            <span className={`small ${startSize === null || startSize > memoryCap ? "bad-text" : "muted"}`}>
+              {startSize === null ? "Not a flat key–value store yet: string keys; string, number, boolean or null values." : `${startSize} of ${memoryCap} bytes.`}
+              {" "}For this test run only: your game bee's MEMORY is never changed by anyone but the bee.
+            </span>
+          </details>
+          <label className="field try-rounds"><span className="small">Rounds</span>
+            <input type="number" min={1} max={5000} value={rounds} onChange={(e) => setRounds(Number(e.target.value))} />
+          </label>
+        </>
       ) : (
-        <label className="field">
-          <span className="small">Challenges to ask your {kind} (<code>{challengeType}</code>), {fmt.label}:</span>
-          <textarea value={text} onChange={(e) => setText(e.target.value)} className="mono try-input" spellCheck={false}
-            rows={SCALARS.includes(normType(challengeType)) ? 1 : 3} placeholder={fmt.placeholder} />
-        </label>
-      )}
-      <button className="btn btn-ghost" onClick={run} disabled={busy}>{busy ? <Spinner label="Running…" /> : kind === "bee" ? "Try my bee" : `Ask my ${kind}`}</button>
-      {error && <Alert kind={error.soft ? "info" : "error"}>{error.text}</Alert>}
-
-      {kind !== "bee" && flower && !flower.error && flower.results.length > 0 && (
-        <TimingPanel data={{ values: flower.results.filter((x) => !x.error && typeof x.ms === "number").map((x) => x.ms!), misses: flower.results.filter((x) => x.error).length }}
-          limit={view.game.config.budgets[kind].ms} title={`How long your ${kind} took`} unit="questions" missLabel="no answer" />
-      )}
-      {kind !== "bee" && flower && (
-        flower.error ? <Alert kind="error">{flower.error}</Alert> : (
-          <div className="table-scroll">
-            <table className="data-table try-table">
-              <thead><tr><th className="left">Challenge</th><th className="left">Response</th><th>Time</th></tr></thead>
-              <tbody>
-                {flower.results.map((x, i) => (
-                  <tr key={i}>
-                    <td className="left"><Value v={x.c} role="challenge" max={60} /></td>
-                    <td className={`left ${x.error ? "bad" : ""}`}>{x.error ? <span className="mono">{`None (${x.error})`}</span> : <Value v={x.r} role="response" max={60} />}</td>
-                    <td className="nowrap">{typeof x.ms === "number" ? `${x.ms} ms` : "–"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <>
+          <label className="field">
+            <span className="small">Challenges to ask your flower (<code>{challengeType}</code>), {fmt.label}:</span>
+            <textarea value={text} onChange={(e) => setText(e.target.value)} className="mono try-input" spellCheck={false}
+              rows={SCALARS.includes(normType(challengeType)) ? 1 : 3} placeholder={fmt.placeholder} />
+          </label>
+          <div className="row try-budget">
+            <label className="feed-filter"><span className="small">Time budget R</span>
+              <select value={budgetMode} onChange={(e) => setBudgetMode(e.target.value as "random" | "fixed")} aria-label="Time budget R for the try">
+                <option value="random">random, {cfg.budgets.flower.minMs ?? 50}–{cfg.budgets.flower.ms} ms (as in a game)</option>
+                <option value="fixed">fixed</option>
+              </select>
+            </label>
+            {budgetMode === "fixed" && <label className="feed-filter"><input className="qc-num" inputMode="decimal" value={budgetText} onChange={(e) => setBudgetText(e.target.value)} aria-label="Fixed time budget in ms" /><span className="small muted">ms</span></label>}
           </div>
+        </>
+      )}
+      <button className="btn btn-ghost" onClick={run} disabled={busy}>{busy ? <Spinner label="Running…" /> : kind === "bee" ? "Try my bee" : "Ask my flower"}</button>
+      {error && <Alert kind="error">{error}</Alert>}
+
+      {kind === "flower" && flower && (
+        flower.error ? <Alert kind="error">{flower.error}</Alert> : (
+          <>
+            {energies.length > 0 && (
+              <p className="small">
+                {typeof flower.size === "number" && <>At {flower.size.toLocaleString()} nodes, E = ({cfg.budgets.flower.size.toLocaleString()} − {flower.size.toLocaleString()}) × (R − CPU ms){energyBytes(cfg) ? ` × (${byteCapOf(cfg).toLocaleString()} − response bytes)` : ""}, R being each call's hidden time limit. </>}
+                Excess energy per visit: typically <b>{fmtE(median(energies))}</b>, at most <b>{fmtE(Math.max(...energies))}</b> {getEnergyUnit()}. A bee that feeds gets the percent you offer as nectar and the rest as pollen; a bee that leaves: nobody gets it.
+              </p>
+            )}
+            <TimingPanel data={{ values: fr.filter((x) => !x.error && typeof x.ms === "number").map((x) => x.ms!), misses: fr.filter((x) => x.error).length }}
+              limit={cfg.budgets.flower.ms} title="How long your flower took (CPU)" unit="calls" missLabel="no answer" />
+            <div className="table-scroll">
+              <table className="data-table try-table">
+                <thead><tr><th className="left">Challenge</th><th className="left">Response</th><th>Percent</th><th>E ({getEnergyUnit()})</th><th title="The call's time budget R: its hard limit, and E counts from it">R ms</th><th>CPU ms</th></tr></thead>
+                <tbody>
+                  {fr.map((x, i) => (
+                    <tr key={i}>
+                      <td className="left"><Value v={x.c} role="challenge" max={60} /></td>
+                      <td className={`left ${x.error ? "bad" : ""}`}>{x.error ? <span className="mono">{`None (${x.error})`}</span> : <ResponseView p={partsOfAction(x)} max={60} />}</td>
+                      <td>{x.percent ?? "–"}</td>
+                      <td title={fmtEExact(x.energy)}>{fmtE(x.energy)}</td>
+                      <td className="nowrap">{fmtMs(x.budgetMs)}</td>
+                      <td className="nowrap">{fmtMs(x.ms)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         )
       )}
 
       {kind === "bee" && bee && (
         <div className="try-bee">
           <p>
-            <b>{plural(visits, "visit")}</b> in <b>{bee.rounds.toLocaleString()}</b> rounds · fed <b>{bee.feeds}</b> times · <DropIcon size={14} /> nectar <b>{bee.nectar}</b> · <FooledIcon size={14} /> fooled <b>{bee.feeds - bee.nectar}</b>
+            <b>{plural(turns.length, "turn")}</b> in <b>{bee.rounds.toLocaleString()}</b> rounds · fed <b>{bee.feeds}</b> {bee.feeds === 1 ? "time" : "times"} · <DropIcon size={14} /> nectar <b title={fmtEExact(bee.nectar)}>{fmtE(bee.nectar)}</b> · pollen <b title={fmtEExact(bee.pollen)}>{fmtE(bee.pollen)}</b>
           </p>
-          {bee.problems.map((p, i) => <Alert key={i} kind="error"><b>{p.kind}:</b> {p.error}</Alert>)}
-          <TimingPanel data={beeTiming(bee.actions, null)} limit={view.game.config.budgets.bee.ms} title="Your bee's decision times" unit="decisions" missLabel="too slow" />
+          {bee.problems.map((p, i) => <Alert key={i} kind="error"><b>{p.kind ?? "program"}{p.version ? ` v${p.version}` : ""}:</b> {p.error}</Alert>)}
+          <p className="small">
+            {definesFed
+              ? <><span className="fed-ran">fed(nectar)</span> Your bee defines fed: it ran after each of the {plural(bee.feeds, "feed")}, in the same program instance as the decision, and MEMORY was saved after it (a challenge it returned was played next instead of decide's). What it printed shows with the turn after.</>
+              : <span className="muted">Your bee doesn't define fed(nectar), so nothing runs after a feed.</span>}
+          </p>
+          {bee.memory !== undefined && <TryMemory memory={bee.memory} cap={memoryCap} />}
+          <TimingPanel data={beeTiming(turns, null)} limit={cfg.budgets.bee.ms} title="Your bee's decision times" unit="turns" missLabel="too slow" />
           <ol className="feed-list try-list">
-            {bee.actions.slice(0, 300).map((a) => <FeedRow key={a.seq} a={a} teams={teams} myTeamId={null} own budgets={view.game.config.budgets} />)}
+            {turns.slice(0, 300).map((a) => <FeedRow key={a.seq} a={a} teams={teams} myTeamId={null} own budgets={cfg.budgets} fedRuns={definesFed} />)}
           </ol>
-          {bee.actions.length > 300 && <p className="small muted">…and {(bee.actions.length - 300).toLocaleString()} more actions.</p>}
+          {turns.length > 300 && <p className="small muted">…and {(turns.length - 300).toLocaleString()} more turns.</p>}
         </div>
       )}
+    </div>
+  );
+}
+
+/** The test bee's MEMORY at the end: the server's { value, bytes, cap, error } (or, from an older server, just the value). */
+function TryMemory({ memory, cap }: { memory: unknown; cap: number }) {
+  const m = memory && typeof memory === "object" && "value" in memory && "bytes" in memory
+    ? memory as { value: unknown; bytes: number; cap?: number; error?: string | null }
+    : { value: memory, bytes: memorySize(memory) ?? 0, cap, error: null };
+  return (
+    <details className="try-ledger" open>
+      <summary className="small">The test bee's MEMORY at the end: {m.bytes} of {m.cap ?? cap} bytes</summary>
+      {m.error && <p className="small warn-text memory-empty">Its last save failed: <span className="mono">{m.error}</span></p>}
+      <MemoryEntries value={m.value} label="The test bee's MEMORY at the end" />
+    </details>
+  );
+}
+
+function median(xs: number[]) {
+  const s = [...xs].sort((a, b) => a - b);
+  return s[Math.floor((s.length - 1) / 2)];
+}
+
+/** The flower's energy at this size: the most it can make a visit, (cap − size) × the whole window (× the byte cap, with no response bytes). */
+function EnergyMeter({ size, cap, ms, minMs, byteCap }: { size: number | null; cap: number; ms: number; minMs: number; byteCap: number | null }) {
+  const room = size === null ? null : Math.max(0, cap - size);
+  const best = room === null ? null : room * ms * (byteCap ?? 1);
+  return (
+    <div className="meter energy-meter" title={`E = (size cap − size) × max(0, R − CPU ms)${byteCap ? ` × (${byteCap} − response bytes), in node·ms·bytes` : ""}, R the call's hidden time limit (at most the window): a smaller, faster${byteCap ? ", briefer" : ""} flower makes more`}>
+      <div className="meter-label"><span>Max E a visit</span><b>{best === null ? "–" : fmtE(best)}</b><span className="muted">{byteCap ? "node·ms·bytes" : "node·ms"}</span></div>
+      <div className="meter-track"><div className="meter-fill" style={{ width: `${room === null ? 0 : (room / Math.max(1, cap)) * 100}%` }} /></div>
+      <div className="small muted">({cap.toLocaleString()} − {size ?? "size"}) × (R − CPU ms){byteCap ? <> × ({byteCap.toLocaleString()} − response bytes)</> : null}, with R at most {ms} ms (hidden from the bee, from {minMs} to {ms} ms each turn): every node{byteCap ? ", every millisecond and every byte" : " and every millisecond"} you save is more to give as nectar and pollen.</div>
     </div>
   );
 }

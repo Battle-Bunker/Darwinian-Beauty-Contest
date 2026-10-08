@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // The workspace tools and the runner, end to end, with a fake game API and a stub `claude` (no model calls, no server):
 //   node arena/test-submit.mjs
-// 1. tools/*.py hand requests to the runner (lib/broker.js) and print its answers: submit, check, try, status;
+// 1. tools/*.py hand requests to the runner (lib/broker.js) and print its answers: submit, check, try (flower and bee,
+//    a test bee's MEMORY), status (the bee's MEMORY, read only), history queries;
 //    nothing secret ever reaches the workspace; a refused or failed submission exits non-zero.
 // 2. A stub session (runSession with a session tag) submits through the tool while it "runs", leaves a background
 //    process behind, and the runner stops it afterwards (killLeftovers finds it by its ARENA_SESSION tag).
@@ -22,6 +23,8 @@ const { Broker } = await import("./lib/broker.js");
 const { requestHandler, statusOf } = await import("./lib/team.js");
 const { installTools, audit, killLeftovers, sessionProcesses } = await import("./lib/workspace.js");
 const { runSession } = await import("./lib/llm.js");
+const { setupAgentCgroups, cgroupsOf } = await import("./lib/cgroups.js");
+const contained = setupAgentCgroups(() => {}).ok; // as the runner does at start (lib/cgroups.js)
 const { migrate, pool, q } = await import("./lib/db.js");
 await migrate();
 
@@ -32,22 +35,42 @@ const SECRET = "tok-SECRET-1234567890";
 // ---------------------------------------------------------------- a fake game API (records what the runner sent)
 const calls = [];
 const config = { language: "python", minutes: 2, feedCost: 10, challengeType: "int", responseType: "int", maxLen: 64, maxNodes: 512,
-  budgets: { cosmos: { size: 1100, perMinute: 220, cap: 220, ms: 150 }, orchid: { size: 2200, perMinute: 1540, cap: 1540, ms: 50 }, bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 25 } } };
-let gameOver = false, noFlowersYet = false;
+  budgets: { flower: { size: 1100, perMinute: 220, cap: 220, ms: 150, minMs: 50 }, bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 50, memory: 50 } } };
+let gameOver = false, serverBudget = false, noFlowerYet = false;
 const fakeApi = {
   view: async (tok) => { calls.push(["view", tok]); return {
-    game: { status: "running", clockMs: 30000, endMs: 120000, round: 1234, config },
-    teams: [{ id: "T1", name: "Moonpetal", banks: { cosmos: { bank: 10, atMs: 0 }, orchid: { bank: 0, atMs: 0 }, bee: { bank: 0, atMs: 0 } },
-      programs: { cosmos: [{ version: 1, size: 40, atMs: 0, code: "x" }], orchid: [{ version: 1, size: 30, atMs: 0 }], bee: [{ version: 2, size: 300, atMs: 20000 }] } },
+    game: { status: "running", clockMs: 30000, endMs: 120000, round: 150, config },
+    teams: [{ id: "T1", name: "Moonpetal", banks: { flower: { bank: 10, atMs: 0 }, bee: { bank: 0, atMs: 0 } },
+      programs: { flower: [{ version: 1, size: 40, atMs: 0, code: "x" }], bee: [{ version: 2, size: 300, atMs: 20000 }] },
+      memory: { value: { seen: 34, n: 2 }, bytes: 7, cap: 50, version: 2, error: "fed() failed (KeyError: 'x'): MEMORY is as saved after decide" } },
       { id: "T2", name: "Rival", banks: null, programs: null }],
-    scores: [{ teamId: "T1", fitness: 1.2 }, { teamId: "T2", fitness: 0.8 }], recent: { fromMs: 0, toMs: 30000, scores: [{ teamId: "T1", fitness: 1.2 }, { teamId: "T2", fitness: 0.8 }] },
+    scores: [{ teamId: "T1", fitness: 1.2, pollination: 600, forage: 150, pollinationShare: 0.5, forageShare: 0.6, pollen: 300000, pollinators: 2, nectarSources: 2, feedsReceived: 5, feedsGiven: 4 },
+      { teamId: "T2", fitness: 0.8, pollination: 600, forage: 100, pollinationShare: 0.5, forageShare: 0.4, pollen: 300000, pollinators: 2, nectarSources: 1, feedsReceived: 4, feedsGiven: 5 }],
   }; },
-  check: async (tok, g, kind, code) => { calls.push(["check", tok, kind, code]); return { ok: true, size: 42, budget: config.budgets[kind], distance: 3, cost: 3, available: 120, minified: code, errors: [] }; },
-  try: async (tok, g, kind, code, challenges, flowers) => { calls.push(["try", tok, kind, code, flowers]);
-    if (kind === "bee" && noFlowersYet && !flowers) throw Object.assign(new Error("Your bee needs flowers to visit"), { status: 409 });
-    if (kind === "bee") return { rounds: 300, feeds: 20, nectar: 10, problems: [], actions: [{ kind: "cosmos", action: "ask", c: 1, r: 2 }, { kind: "cosmos", action: "feed", nectar: true }] };
-    if (code.includes("CRASH")) return { results: (challenges || [1]).map((c) => ({ c, r: null, error: "ZeroDivisionError: division by zero", ms: 1 })) };
-    return { results: (challenges || [1]).map((c) => ({ c, r: c * 3 + 1, ms: 1.5 })) }; },
+  check: async (tok, g, kind, code) => { calls.push(["check", tok, kind, code]);
+    // The game's Python refuses introspection (dunder names): the check reports it.
+    if (code.includes("__class__")) return { ok: false, size: 50, budget: config.budgets[kind], distance: 3, cost: 3, available: 120, minified: code, errors: ["line 2: '__class__' is not allowed (no dunder names)"] };
+    return { ok: true, size: 42, budget: config.budgets[kind], distance: 3, cost: 3, available: 120, minified: code, errors: [] }; },
+  tryFlower: async (tok, g, code, challenges, budgetMs) => { calls.push(["try", tok, "flower", code, budgetMs]);
+    // A server that takes the budget runs each call at its R and says which (serverBudget); an older one ignores it.
+    const R = (i) => (Array.isArray(budgetMs) ? budgetMs[i] : typeof budgetMs === "number" ? budgetMs : 77);
+    if (serverBudget) return { size: 42, results: (challenges || [1]).map((c, i) => ({ c, r: c * 3 + 1, rBytes: 2, percent: 40, energy: (1100 - 42) * (R(i) - 1.5), ms: 1.5, budgetMs: R(i) })) };
+    if (code.includes("CRASH")) return { results: (challenges || [1]).map((c) => ({ c, r: null, percent: null, energy: 0, error: "ZeroDivisionError: division by zero", ms: 1 })) };
+    // A response over 4 KB comes back as its size, hash and first 4 KB, with r null.
+    return { results: (challenges || [1]).map((c) => (c === 99 ? { c, r: null, rBytes: 90000, rHash: "ab12cd34ef56" + "0".repeat(52), rPreview: '{"nodes":3000,"edges":[[0,1],[1,2]' , percent: 40, energy: 150000, ms: 9 }
+      : { c, r: c * 3 + 1, rBytes: String(c * 3 + 1).length, percent: 40, energy: 158000, ms: 1.5 })) }; },
+  tryBee: async (tok, g, code, { flower, rounds, memory } = {}) => { calls.push(["try", tok, "bee", code, flower, rounds, memory]);
+    if (noFlowerYet && !flower) throw Object.assign(new Error("Your bee needs a flower to visit"), { status: 409 });
+    const end = { ...(memory || {}), tries: 1 };
+    const bytes = Object.entries(end).reduce((a, [k, v]) => a + k.length + JSON.stringify(v).length, 0);
+    // fed(nectar) runs after each feed (here one); a failing one is a bee problem, and MEMORY stays as decide saved it.
+    const problems = code.includes("FEDCRASH") ? [{ kind: "bee", version: 1, error: "fed() failed (ZeroDivisionError: division by zero): MEMORY is as saved after decide" }] : [];
+    return { rounds: rounds ?? 300, feeds: 1, nectar: 10, pollen: 20, memory: { value: end, bytes, cap: 50, error: null }, problems, actions: [{ action: "arrive" }, { action: "feed", c: 1, r: 4, percent: 33, energy: 30, nectar: 10, beeMs: 2 },
+      { action: "arrive" }, { action: "leave", c: 2, r: 7, percent: 50, energy: 40, beeMs: 3 }] }; },
+  query: async (tok, g, ast) => { calls.push(["query", tok, g, ast]);
+    if (ast.from === "nope") throw Object.assign(new Error(`POST ${g}/query -> 400 unknown entity "nope"`), { status: 400 });
+    return { rows: [{ flower: 0, sum_nectar: 123.5, count: 2 }], truncated: false }; },
+  roomQuery: async (tok, room, ast) => { calls.push(["roomQuery", tok, room, ast]); return { rows: [{ game: "G0", count: 7 }], truncated: false }; },
   submit: async (tok, g, kind, code) => { calls.push(["submit", tok, kind, code]);
     return gameOver ? { ok: false, errors: ["Game over"] } : { ok: true, submitted: true, version: 2, size: 42, distance: 3, cost: 3, available: 117, errors: [] }; },
 };
@@ -56,9 +79,11 @@ const fakeApi = {
 const ws = path.join(process.env.ARENA_WS_ROOT, "A", "luna");
 fs.mkdirSync(ws, { recursive: true });
 installTools(ws);
-fs.writeFileSync(path.join(ws, "cosmos.py"), "def flower(c):\n    return c * 3 + 1\n");
-fs.writeFileSync(path.join(ws, "orchid.py"), "def flower(c):\n    return 1 // 0  # CRASH\n");
-fs.writeFileSync(path.join(ws, "bee.py"), "def forage(seen, visit):\n    return 'feed' if seen else ['ask', 1]\n");
+fs.writeFileSync(path.join(ws, "flower.py"), "def flower(c):\n    return c * 3 + 1, 40\n");
+fs.writeFileSync(path.join(ws, "crash.py"), "def flower(c):\n    return 1 // 0, 40  # CRASH\n");
+fs.writeFileSync(path.join(ws, "bee.py"), "def first():\n    return 1\n\ndef decide(c, r):\n    MEMORY['n'] = MEMORY.get('n', 0) + 1\n    return 'feed', 1\n\ndef fed(nectar):\n    MEMORY['got'] = round(nectar)\n");
+fs.writeFileSync(path.join(ws, "plain_bee.py"), "def first():\n    return 1\n\ndef decide(c, r):\n    return 'feed', 1\n");
+fs.writeFileSync(path.join(ws, "fedcrash_bee.py"), "def first():\n    return 1\n\ndef decide(c, r):\n    return 'feed', 1\n\ndef fed(nectar):\n    return 1 // 0  # FEDCRASH\n");
 const records = [];
 let gateRefusal = null;
 const broker = new Broker({ dir: ws, handle: requestHandler({ api: fakeApi, tok: SECRET, gPath: "/rooms/R/games/G", config, teamId: "T1", dir: ws,
@@ -72,38 +97,102 @@ const tool = (...a) => new Promise((resolve) => {
   c.on("close", (status) => resolve({ status, stdout, stderr }));
 });
 
-let r = await tool("tools/submit.py", "cosmos");
-check("submit: exit 0 and says it's live", r.status === 0 && /cosmos v2 submitted: it cost 3 nodes of change, 117 left/.test(r.stdout), r.stdout + r.stderr);
+let r = await tool("tools/submit.py", "flower");
+check("submit: exit 0 and says it's live", r.status === 0 && /flower v2 submitted: it cost 3 nodes of change, 117 left/.test(r.stdout), r.stdout + r.stderr);
 check("submit: the runner sent the file's code with the team's token", calls.some((c) => c[0] === "submit" && c[1] === SECRET && c[3].includes("c * 3 + 1")));
 check("submit: a runtime test ran first", calls.findIndex((c) => c[0] === "try") < calls.findIndex((c) => c[0] === "submit"));
 check("submit: recorded for the audit (op, kind, code, version, cost)", records.some((x) => x.op === "submit" && x.ok && x.version === 2 && x.cost === 3 && x.code.includes("c * 3")));
-r = await tool("tools/submit.py", "orchid");
-check("submit: a program that crashes in the runtime test is not submitted (exit 1)", r.status === 1 && /runtime test failed/.test(r.stdout) && !calls.some((c) => c[0] === "submit" && c[2] === "orchid"), r.stdout);
-r = await tool("tools/submit.py", "orchid", "--force");
-check("submit --force skips the runtime test", r.status === 0 && calls.some((c) => c[0] === "submit" && c[2] === "orchid"));
-r = await tool("tools/check.py", "cosmos");
-check("check: size, cost now and what's available", r.status === 0 && /42 of 1,100 nodes\. Submitting now would cost 3 of the 120 you have/.test(r.stdout), r.stdout);
-r = await tool("tools/try.py", "cosmos", "cosmos.py", "5", "7");
-check("try (flower): answers to the given challenges", r.status === 0 && /flower\(5\) -> 16/.test(r.stdout) && /flower\(7\) -> 22/.test(r.stdout), r.stdout);
-r = await tool("tools/try.py", "bee");
-check("try (bee): a summary of the forage", /300 rounds in a garden of just your own two flowers: 1 asks, 20 feeds \(10 nectar\)/.test(r.stdout), r.stdout + r.stderr);
+r = await tool("tools/submit.py", "flower", "crash.py");
+check("submit: a program that crashes in the runtime test is not submitted (exit 1)", r.status === 1 && /runtime test failed/.test(r.stdout) && !calls.some((c) => c[0] === "submit" && c[3].includes("CRASH")), r.stdout);
+r = await tool("tools/submit.py", "flower", "crash.py", "--force");
+check("submit --force skips the runtime test", r.status === 0 && calls.some((c) => c[0] === "submit" && c[3].includes("CRASH")));
+fs.writeFileSync(path.join(ws, "dunder.py"), "def flower(c):\n    return ().__class__, 40\n");
+r = await tool("tools/check.py", "flower", "dunder.py");
+check("check: a refused introspection is shown with what the game's Python refuses", r.status === 1 && /'__class__' is not allowed/.test(r.stdout) && /The game.s Python refuses introspection: dunder attributes/.test(r.stdout), r.stdout);
+r = await tool("tools/check.py", "flower");
+check("check: size, cost now and what's available, and the flower's energy", r.status === 0 && /42 of 1,100 nodes\. Submitting now would cost 3 of the 120 you have/.test(r.stdout)
+  && /\(1,100 − 42\) × \(R − CPU ms\), R the call's hidden budget \(50 to 150 ms\): at most 158,700 node·ms/.test(r.stdout), r.stdout);
+r = await tool("tools/try.py", "flower", "flower.py", "5", "7", "--budget", "60");
+check("try (flower) --budget, on a server that doesn't take it yet: E recomputed at that R, and said so", r.status === 0
+  && /flower\(5\) -> 16, percent 40\s+\(R 60\.0 ms, energy 62,242, 1\.5 ms CPU, 2 bytes\)/.test(r.stdout) && /flower\(7\) -> 22/.test(r.stdout)
+  && /doesn't take a budget yet/.test(r.stdout) && calls.filter((c) => c[0] === "try" && c[2] === "flower").pop()[4] === 60, r.stdout + r.stderr);
+serverBudget = true;
+r = await tool("tools/try.py", "flower", "flower.py", "5", "--budget", "120");
+check("try (flower) --budget: the server's R, as it ran the call", r.status === 0 && /\(R 120\.0 ms, energy 125,373, 1\.5 ms CPU/.test(r.stdout) && !/doesn't take a budget/.test(r.stdout), r.stdout + r.stderr);
+r = await tool("tools/try.py", "flower", "flower.py", "5");
+check("try (flower): a random R per call by default", r.status === 0 && calls.filter((c) => c[0] === "try" && c[2] === "flower").pop()[4] === "random" && /\(R 77\.0 ms/.test(r.stdout), r.stdout + r.stderr);
+r = await tool("tools/try.py", "flower", "flower.py", "5", "--budget", "200");
+check("try (flower) --budget outside the range is refused", r.status !== 0 && /from 50 to 150/.test(r.stdout + r.stderr), r.stdout + r.stderr);
+serverBudget = false;
+r = await tool("tools/try.py", "flower", "flower.py", "99");
+check("try (flower): a response over 4 KB as its size, hash and first characters; no history goes with a try", r.status === 0
+  && /flower\(99\) -> <90,000 bytes, sha256 ab12cd34ef56…: \{"nodes":3000/.test(r.stdout) && /90,000 bytes\)/.test(r.stdout)
+  && !/history/.test(fs.readFileSync(path.join(ws, "tools", "try.py"), "utf8")), r.stdout + r.stderr);
+r = await tool("tools/try.py", "bee", "--rounds", "100");
+check("try (bee): a summary of the garden of your own flower, and fed() after each feed", r.status === 0 && /100 rounds in a garden of just your own flower: 2 turns, 1 feeds, 1 leaves; your bee got 10 nectar and 20 pollen/.test(r.stdout)
+  && /fed\(nectar\) ran after each of the 1 feeds\./.test(r.stdout)
+  && /feed c=1 r=4 percent=33 energy=30 nectar=10/.test(r.stdout) && calls.filter((c) => c[0] === "try" && c[2] === "bee").pop()[6] === undefined, r.stdout + r.stderr);
+r = await tool("tools/try.py", "bee", "plain_bee.py");
+check("try (bee): a bee without fed() is told it is optional", r.status === 0 && /Your bee defines no fed\(nectar\) \(optional/.test(r.stdout), r.stdout + r.stderr);
+r = await tool("tools/try.py", "bee", "fedcrash_bee.py", "--json");
+let tj = JSON.parse(r.stdout || "{}");
+check("try (bee): a failing fed() is a problem, counted", r.status === 1 && tj.fed?.defined === true && tj.fed.failures === 1 && /ZeroDivisionError/.test(tj.fed.firstError), r.stdout + r.stderr);
+r = await tool("tools/check.py", "bee", "fedcrash_bee.py");
+check("check: a failing fed() fails the runtime test", r.status === 1 && /fed\(\) failed/.test(r.stdout), r.stdout + r.stderr);
+r = await tool("tools/try.py", "bee", "--memory", '{"seen": 1}', "--rounds", "50");
+check("try (bee) --memory: the TEST bee starts with it, and its final MEMORY is shown", r.status === 0 && JSON.stringify(calls.filter((c) => c[0] === "try" && c[2] === "bee").pop()[6]) === '{"seen":1}'
+  && /The test bee's MEMORY at the end \(11 bytes of 50\): \{"seen":1,"tries":1\}/.test(r.stdout), r.stdout + r.stderr);
+r = await tool("tools/try.py", "bee", "--flower", "flower.py");
+check("try (bee) --flower: plays the named flower file", calls.filter((c) => c[0] === "try" && c[2] === "bee").pop()?.[4]?.includes("c * 3 + 1"), r.stdout + r.stderr);
 r = await tool("tools/status.py", "--afford", "1000");
-check("status: clock, time left, budgets with rate and cap", /Game running: 0:30 of 2:00 played \(1:30 left\), round 1234/.test(r.stdout) && /cosmos\s+120 available, \+220\/min, cap 220/.test(r.stdout), r.stdout);
-check("status: when a change of N nodes is affordable", /cosmos.*1,000 nodes: never \(cap 220/.test(r.stdout) && /orchid.*1,000 nodes: in 0:09/.test(r.stdout) && /bee.*1,000 nodes: now/.test(r.stdout), r.stdout);
-check("status: whole-game and last-5-minutes scores, and the versions playing", /Scores, whole game: 1\. Moonpetal \(you\) 1\.20/.test(r.stdout) && /bee v2 \(live since 0:20/.test(r.stdout), r.stdout);
-noFlowersYet = true;
+check("status: the bee's MEMORY size, read only, and why its last save failed", /Your bee's MEMORY: 7 of 50 bytes \(bee v2; only your bee writes it\); its last save failed: fed\(\) failed \(KeyError/.test(r.stdout) && !/"seen"/.test(r.stdout), r.stdout);
+check("status: clock, time left, budgets with rate and cap", /Game running: 0:30 of 2:00 played \(1:30 left\), round 150/.test(r.stdout) && /flower\s+120 available, \+220\/min, cap 220/.test(r.stdout), r.stdout);
+check("status: when a change of N nodes is affordable", /flower.*1,000 nodes: never \(cap 220/.test(r.stdout) && /bee.*1,000 nodes: now/.test(r.stdout), r.stdout);
+check("status: the live scoreboard with the two shares, and the versions playing", /1\. Moonpetal \(you\): fitness 1\.20; pollination 600\.0 \(share 0\.50, from 2 bee teams\), forage 150\.0 \(share 0\.60, from 2 flower species\); pollen 300\.0k/.test(r.stdout)
+  && /bee v2 \(live since 0:20/.test(r.stdout) && /Your flower's size 40 of 1,100/.test(r.stdout), r.stdout);
+r = await tool("tools/status.py", "--memory");
+check("status --memory: the value of the bee's MEMORY", /\{"seen":34,"n":2\}/.test(r.stdout), r.stdout);
+const py = (code) => tool("-c", `import sys, json; sys.path.insert(0, "tools"); from _runner import call; ${code}`);
+r = await py(`print(json.dumps(call("query", ast={"from": "turns", "scope": "myBee", "groupBy": ["flower"], "aggregates": [{"fn": "sum", "field": "nectar"}]})))`);
+let qr = JSON.parse(r.stdout || "{}");
+check("query: a history query runs through the runner with the team's token", qr.ok && qr.rows[0].sum_nectar === 123.5 && calls.some((c) => c[0] === "query" && c[1] === SECRET && c[2] === "/rooms/R/games/G" && c[3].scope === "myBee"), r.stdout + r.stderr);
+r = await py(`print(json.dumps(call("query", ast={"from": "scores"}, room=True)))`);
+qr = JSON.parse(r.stdout || "{}");
+check("query --room: across the room's finished games", qr.ok && qr.rows[0].count === 7 && calls.some((c) => c[0] === "roomQuery" && c[2] === "R"), r.stdout + r.stderr);
+r = await py(`print(json.dumps(call("query", ast={"from": "nope"})))`);
+qr = JSON.parse(r.stdout || "{}");
+check("query: a bad query comes back as the server's reason", qr.ok === false && /400 unknown entity/.test(qr.error), r.stdout + r.stderr);
+if (fs.existsSync(path.join(ws, "tools", "history.py"))) {
+  // garden.game / garden.room: the generated client's builder, run by the game through the runner (no token here).
+  fs.writeFileSync(path.join(ws, "config.json"), JSON.stringify({ public_api: "http://localhost:4100/api/rooms/R/games/G" }));
+  r = await py(`import garden; rows = garden.game.turns.my_bee().eq("fed", True).group_by("flower").sum("nectar").count().rows(); print(rows[0].sum_nectar, rows[0].flower, garden.room.scores.count().value() if False else "-")`);
+  const last = calls.filter((c) => c[0] === "query").pop();
+  check("garden.game: the programs' builder, run by the game with the team's token (through the runner)", r.stdout.trim() === "123.5 0 -" && last?.[1] === SECRET
+    && last[3].scope === "myBee" && last[3].groupBy[0] === "flower" && last[3].where[0].field === "fed", r.stdout + r.stderr);
+  r = await py(`import garden; print(garden.room.turns.eq("fed", True).count().rows()[0]["count"])`);
+  check("garden.room: across the room's finished games", r.stdout.trim() === "7" && calls.filter((c) => c[0] === "roomQuery").pop()?.[3]?.where?.[0]?.field === "fed", r.stdout + r.stderr);
+  r = await py(`import garden; garden.game.turns.eq("no_such_field", 1).rows()`);
+  check("garden.game: the client checks a query against the schema before sending it", r.status !== 0 && /no field/.test(r.stderr), r.stderr);
+}
+r = await py(`print(json.dumps(call("query", ast="SELECT 1")))`);
+check("query: only query objects", JSON.parse(r.stdout || "{}").ok === false, r.stdout);
+r = await py(`print(json.dumps(call("submit", kind="bee", code=open("bee.py").read(), memory={"x": 1})))`);
+check("no request can set the game bee's MEMORY: a submit carries code only", calls.filter((c) => c[0] === "submit").pop()?.length === 4 && !JSON.stringify(calls.filter((c) => c[0] !== "try")).includes('"x":1'), r.stdout);
+noFlowerYet = true;
 r = await tool("tools/submit.py", "bee");
 const beeTry = calls.filter((c) => c[0] === "try" && c[2] === "bee").pop();
-check("submit (bee, no flowers submitted yet): the runtime test forages the workspace's flower files", r.status === 0 && beeTry?.[4]?.cosmos?.includes("c * 3 + 1"), r.stdout);
-noFlowersYet = false;
+check("submit (bee, no flower submitted yet): the runtime test plays the workspace's flower file", r.status === 0 && beeTry?.[4]?.includes("c * 3 + 1"), r.stdout);
+noFlowerYet = false;
 gameOver = true;
-r = await tool("tools/submit.py", "cosmos");
+r = await tool("tools/submit.py", "flower");
 check("submit after the game ended: refused cleanly", r.status === 1 && /the game is over/.test(r.stdout) && records.some((x) => x.refused === "game over"), r.stdout);
 gameOver = false;
 gateRefusal = "fair-play violation (test): this session is over";
-r = await tool("tools/submit.py", "cosmos");
+r = await tool("tools/submit.py", "flower");
 check("a refusal from the fair-play gate reaches the tool", r.status === 1 && /refused: fair-play violation/.test(r.stdout), r.stdout);
 gateRefusal = null;
+r = await tool("tools/submit.py", "cosmos");
+check("only flower and bee are kinds", r.status !== 0 && /flower or bee/.test(r.stdout + r.stderr), r.stdout + r.stderr);
 const leaked = spawnSync("grep", ["-rl", SECRET, ws], { encoding: "utf8" }).stdout.trim();
 check("the team's token is nowhere in the workspace (requests, answers)", leaked === "", leaked);
 await broker.stop();
@@ -125,7 +214,7 @@ def bash(i, cmd, run=True):
 out({"type": "system", "subtype": "init"})
 if mode == "violation":
     bash(1, "cat /etc/hostname", run=False)
-res = bash(2, "python3 tools/submit.py cosmos")
+res = bash(2, "python3 tools/submit.py flower")
 open("submit-output.txt", "w").write(res)
 subprocess.Popen(["sleep", "60"], start_new_session=True)   # a script the session leaves running
 if mode == "hang":
@@ -151,14 +240,17 @@ async function stubSession(mode, { killAfterMs = null } = {}) {
     timeoutMs: 30000, control, env: { ARENA_SESSION: tag }, holdOnLimit: false, ctx: { purpose: "test", arenaId: "test-submit" } });
   await b.stop();
   const leftBefore = sessionProcesses(tag, null);
+  const groups = leftBefore.map((pid) => cgroupsOf(pid)).filter(Boolean);
   const killed = await killLeftovers(tag, ws);
-  return { s, leftBefore, killed, after: sessionProcesses(tag, null), out: fs.existsSync(path.join(ws, "submit-output.txt")) ? fs.readFileSync(path.join(ws, "submit-output.txt"), "utf8") : "" };
+  return { s, leftBefore, groups, killed, after: sessionProcesses(tag, null), out: fs.existsSync(path.join(ws, "submit-output.txt")) ? fs.readFileSync(path.join(ws, "submit-output.txt"), "utf8") : "" };
 }
 
 let x = await stubSession("ok");
-check("stub session: the submission made during the session went through the runner", /cosmos v2 submitted/.test(x.out), x.out);
+check("stub session: the submission made during the session went through the runner", /flower v2 submitted/.test(x.out), x.out);
 check("stub session: finished normally with the CLI's reported cost", !x.s.killed && Math.abs(x.s.cost - 0.0123) < 1e-9 && !x.s.estimated);
 check("stub session: what it left running carries its tag", x.leftBefore.length >= 1);
+check(`stub session: what it started runs in the agents' cgroups, cpuset and cpu dbc-agents${contained ? "" : " (skipped: no cgroups on this box)"}`,
+  !contained || (x.groups.length >= 1 && x.groups.every((g) => g.cpuset === "/dbc-agents" && g.cpu === "/dbc-agents")), JSON.stringify(x.groups));
 check("stub session: the runner stopped it afterwards", x.killed.length >= 1 && x.after.length === 0);
 x = await stubSession("violation");
 check("fair play, live: a submission after reading outside the workspace is refused", records.some((r) => r.op === "submit" && /fair-play violation/.test(r.refused || "")) && !/submitted/.test(x.out), x.out);
@@ -168,7 +260,37 @@ check("game over mid-session: the session is stopped", x.s.killed === "game over
 check("game over mid-session: its cost is estimated from the usage in the transcript", x.s.estimated && x.s.cost > 0, JSON.stringify(x.s));
 check("game over mid-session: its leftovers are stopped too", x.after.length === 0);
 const st = statusOf(await fakeApi.view("t"), "T1");
-check("statusOf: budgets computed from bank + rate × time (capped)", st.budgets.cosmos.available === 120 && st.budgets.orchid.available === 770 && st.budgets.bee.available === 1100);
+check("statusOf: budgets computed from bank + rate × time (capped); the bee's MEMORY without its value unless asked", st.budgets.flower.available === 120 && st.budgets.bee.available === 1100
+  && Object.keys(st.budgets).join() === "flower,bee" && st.memory.bytes === 7 && /KeyError/.test(st.memory.error) && !("value" in st.memory) && statusOf(await fakeApi.view("t"), "T1", { memory: true }).memory.value.seen === 34);
+
+// A hidden random end: status shows the time played and the public range, never the end or a time left; the arena drops
+// the owner's drawnEndMs from every API response.
+{
+  const v = await fakeApi.view("t");
+  v.game = { ...v.game, status: "running", clockMs: 600000, endMs: null, minMs: 1800000, maxMs: 3600000, config: { ...config, endFactor: 2, minutes: 30 } };
+  const hidden = statusOf(v, "T1", { afford: 200 });
+  const { withoutDrawnEnd } = await import("./lib/api.js");
+  const owner = withoutDrawnEnd({ game: { status: "running", endMs: null, minMs: 1800000, maxMs: 3600000, drawnEndMs: 2712000 }, games: [{ id: "g", drawnEndMs: 1 }] });
+  check("statusOf with a hidden random end: the time played and the range, no end, no time left; the drawn end dropped from API responses",
+    /10:00 played/.test(hidden.text) && /ends at a random moment between 30:00 and 60:00 of game time; nobody knows when/.test(hidden.text)
+    && !/\bleft\b|45:12|of 30:00|of 60:00|after the game ends/.test(hidden.text) && hidden.endMs === null && hidden.leftMs === null && hidden.minMs === 1800000 && hidden.maxMs === 3600000
+    && !("drawnEndMs" in owner.game) && !("drawnEndMs" in owner.games[0]) && owner.game.maxMs === 3600000, hidden.text.split("\n")[0]);
+  // Private play: the scoreboard and the prevalence block are the latest 30 s snapshot, labelled with its game time.
+  const pv = await fakeApi.view("t");
+  const pcfg = { ...config, visibility: "private", prevalenceEveryS: 30, endFactor: 2, minutes: 30, scoring: { alpha: 0.85, beta: 0.85, mode: "final" },
+    prevalence: { on: true, halfLifeS: 90, cDecay: "sech", cStart: 1, cHalfS: null, cap: 4, slots: 0.25, prior: null, pools: true, endowment: null } };
+  pv.game = { ...pv.game, status: "running", clockMs: 95000, endMs: null, minMs: 1800000, maxMs: 3600000, restricted: true, config: pcfg };
+  pv.scores = [{ teamId: "T1", fitness: 1.12, flowerSuccess: 1.1, beeSuccess: 1.02, flowerP: 0.52, beeP: 0.54 }, { teamId: "T2", fitness: 0.88, flowerSuccess: 0.9, beeSuccess: 0.98, flowerP: 0.48, beeP: 0.46 }];
+  pv.prevalence = { on: true, sample: { round: 451, atMs: 90000, c: 0.25, slots: 1, snapshot: true, species: [
+    { team: "T1", index: 0, flowerSuccess: 1.1, beeSuccess: 1.02, flowerP: 0.52, beeP: 0.54, fitness: 1.12, balance: null },
+    { team: "T2", index: 1, flowerSuccess: 0.9, beeSuccess: 0.98, flowerP: 0.48, beeP: 0.46, fitness: 0.88, balance: null }] } };
+  const ps = statusOf(pv, "T1");
+  check("statusOf in private play: the scoreboard and prevalence are the latest snapshot, labelled with its game time; no balances",
+    /Scores \(the latest prevalence snapshot, at 1:30 of game time; rounded\)/.test(ps.text) && /Prevalence at 1:30 of game time \(a snapshot: every 30 s, rounded\)/.test(ps.text)
+    && /fitness: N² × pF × pB now/.test(ps.text) && !/balance/.test(ps.text) && !/pollination|forage/.test(ps.text), ps.text);
+  const fixed = statusOf(await fakeApi.view("t"), "T1");
+  check("statusOf with a fixed end: the end and the time left, as before", /0:30 of 2:00 played \(1:30 left\)/.test(fixed.text) && fixed.leftMs === 90000, fixed.text.split("\n")[0]);
+}
 
 await q("DELETE FROM arena.llm_calls WHERE arena_id = 'test-submit'");
 await pool.end();

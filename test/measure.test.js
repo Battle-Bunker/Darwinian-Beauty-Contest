@@ -88,8 +88,10 @@ test("attribute and keyword-argument names count as written; GAME and the entry 
   const a = await py(`def flower(c):\n    return dict(nodes=1, edges=[], labels=[c.real])\n`);
   assert.match(a.minified, /dict\(nodes=1,edges=\[\],labels=\[\w\.real\]\)/);
   assert.match(a.minified, /^def flower\(/);
-  const b = await ts(`function forage(seen: any[], visit: any) { return GAME.feed_cost > visit.left ? "leave" : ["ask", seen.length]; }`);
-  assert.match(b.minified, /^function forage\(\w,\w\)\{return GAME\.feed_cost>\w\.left\?"leave":\["ask",\w\.length\];\}$/);
+  const b = await ts(`function decide(challenge: number, response: any, ledger: any[]) { return [GAME.feed_cost > ledger.length ? "leave" : "feed", challenge]; }`);
+  assert.match(b.minified, /^function decide\((\w),\w,(\w)\)\{return\[GAME\.feed_cost>\2\.length\?"leave":"feed",\1\];\}$/);
+  const c = await py(`def first(ledger):\n    return len(ledger)\n`);
+  assert.match(c.minified, /^def first\(\w\):/);
 });
 
 test("the minified programs are valid code", async () => {
@@ -98,7 +100,7 @@ test("the minified programs are valid code", async () => {
   const samples = { python: [READABLE_PY, TERSE_PY], typescript: [] };
   for (const language of ["python", "typescript"]) {
     const s = starters(normalizeConfig({ language }));
-    for (const k of ["cosmos", "orchid", "bee"]) samples[language].push(s[k]);
+    for (const k of ["flower", "bee"]) samples[language].push(s[k]);
   }
   samples.python.push(`import random, math as m\nfrom itertools import count\n@staticmethod\ndef g(x, *a, **k):\n    try:\n        return [y for y in a if y] or {z: 1 for z in k}\n    except ValueError as e:\n        raise\n    finally:\n        pass\nclass C:\n    def h(self, q=2):\n        global G\n        if (w := q) > 1: return f"{w!r:>{q}}"\n        elif q: pass\n        else:\n            return not q in (1,)\n`);
   for (const code of samples.python) {

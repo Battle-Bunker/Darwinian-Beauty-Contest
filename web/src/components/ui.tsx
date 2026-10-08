@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Component, useEffect, useRef, useState, type ReactNode } from "react";
 import type { GameStatus, Team } from "../types";
 import { CheckIcon, CopyIcon, InfoIcon } from "./Icons";
 
@@ -114,4 +114,19 @@ export function Meter({ value, max, label }: { value: number | null; max: number
       <div className="meter-track"><div className="meter-fill" style={{ width: `${Math.min(100, ratio * 100)}%` }} /></div>
     </div>
   );
+}
+
+/** Keeps a part of the page from taking the rest down with it when it throws while rendering. */
+export class ErrorBoundary extends Component<{ what: string; children: ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null };
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <Alert kind="error">
+        The {this.props.what} hit a problem: <span className="mono">{this.state.error.message}</span>{" "}
+        <button className="link-btn" onClick={() => this.setState({ error: null })}>Try again</button>
+      </Alert>
+    );
+  }
 }

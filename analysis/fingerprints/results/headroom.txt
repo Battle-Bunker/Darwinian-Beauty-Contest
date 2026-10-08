@@ -1,0 +1,12 @@
+## 1. Integrated arrangement: the stronger annealer against the reference
+{"R": 20, "ref_cpu_ms": 12.0, "ref_U": 15.73, "strong_U_same_cpu": 18.17, "strong_cpu_to_reach_ref_ms": 4.3, "cpu_ratio": 2.79}
+{"R": 76, "ref_cpu_ms": 45.6, "ref_U": 18.36, "strong_U_same_cpu": 19.59, "strong_cpu_to_reach_ref_ms": 11.9, "cpu_ratio": 3.85}
+{"R": 150, "ref_cpu_ms": 90.0, "ref_U": 19.01, "strong_U_same_cpu": 19.77, "strong_cpu_to_reach_ref_ms": 30.2, "cpu_ratio": 2.98}
+## 2. Tally: stronger exact search against the reference, CPU per instance
+{"flower": "fingerprint", "dim": 0, "n": 24, "k": 5, "h": 0, "ref_ms": 0.017, "strong_ms": 0.108, "speedup": 0.16}
+{"flower": "fingerprint", "dim": 1, "n": 30, "k": 7, "h": 1, "ref_ms": 0.123, "strong_ms": 0.203, "speedup": 0.61}
+{"flower": "fingerprint", "dim": 2, "n": 30, "k": 6, "h": 2, "ref_ms": 0.076, "strong_ms": 0.12, "speedup": 0.63}
+{"flower": "fingerprint", "dim": 3, "n": 24, "k": 6, "h": 3, "ref_ms": 0.077, "strong_ms": 0.134, "speedup": 0.57}
+{"flower": "fingerprint_compact", "dim": 0, "n": 24, "k": 5, "h": 0, "ref_ms": 0.017, "strong_ms": 0.106, "speedup": 0.16}
+{"flower": "fingerprint_compact", "dim": 1, "n": 40, "k": 6, "h": 0, "ref_ms": 0.028, "strong_ms": 0.201, "speedup": 0.14}
+{"flower": "fingerprint_compact", "dim": 2, "n": 64, "k": 7, "h": 0, "ref_ms": 0.066, "strong_ms": 0.604, "speedup": 0.11}

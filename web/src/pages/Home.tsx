@@ -37,16 +37,16 @@ export function HomePage() {
         <div className="hero-text">
           <h1>Hi {user.name}! Welcome to the garden.</h1>
           <p>
-            Real flowers and bees are in an arms race. Some flowers pay bees with nectar; others, like the
-            bee orchid, only <em>look</em> like a good deal. Your team writes three little programs and lets evolution sort it out.
+            Real flowers and bees are in an arms race. A flower pays for pollination with nectar, and every drop
+            it gives away is energy it doesn't keep; a bee wants the most nectar for the fewest visits. Your team
+            writes a flower and a bee, and evolution sorts it out.
           </p>
           <button className="btn btn-big" onClick={create} disabled={busy}><PlusIcon /> {busy ? "Planting…" : "Create room"}</button>
           {error && <Alert kind="error">{error}</Alert>}
         </div>
         <div className="hero-cards">
-          <div className="mini-card"><FlowerHead color="#e0559a" petals={8} size={34} /><div><b>Cosmos</b><span>an honest flower: bees that feed here get nectar</span></div></div>
-          <div className="mini-card"><FlowerHead color="#9b5de5" size={34} /><div><b>Orchid</b><span>a trickster: looks tasty, pays nothing</span></div></div>
-          <div className="mini-card"><BeeGlyph color="#f2a541" size={36} /><div><b>Bee</b><span>asks flowers questions and decides where to feed</span></div></div>
+          <div className="mini-card"><FlowerHead color="#e0559a" petals={8} size={34} /><div><b>Flower</b><span>answers every bee that visits, and offers a share of its energy if it feeds</span></div></div>
+          <div className="mini-card"><BeeGlyph color="#f2a541" size={36} /><div><b>Bee</b><span>asks each flower it's sent to a question, then feeds or leaves</span></div></div>
         </div>
       </section>
 

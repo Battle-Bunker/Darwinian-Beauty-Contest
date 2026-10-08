@@ -1,0 +1,14 @@
+{"R": 3, "U_mean": 1.0, "U_sd": 1.0, "dim_sd": 0.3, "angle_med_deg": 60.0, "split_angle_deg": 30.0, "nearest_split_right": 0.14, "check_ms_p50": 0.04, "check_ms_max": 0.26, "bytes_max": 179, "f_p50": 1.004, "f_min": 1.001, "f_max": 1.367}
+{"R": 20, "U_mean": 8.2, "U_sd": 5.0, "dim_sd": 1.1, "angle_med_deg": 7.6, "split_angle_deg": 30.0, "nearest_split_right": 0.87, "check_ms_p50": 0.31, "check_ms_max": 0.78, "bytes_max": 643, "f_p50": 1.001, "f_min": 1.0, "f_max": 1.058}
+{"R": 76, "U_mean": 31.2, "U_sd": 13.3, "dim_sd": 2.6, "angle_med_deg": 0.0, "split_angle_deg": 30.0, "nearest_split_right": 1.0, "check_ms_p50": 1.19, "check_ms_max": 2.26, "bytes_max": 2080, "f_p50": 1.0, "f_min": 1.0, "f_max": 1.022}
+{"R": 150, "U_mean": 57.5, "U_sd": 23.2, "dim_sd": 4.2, "angle_med_deg": 0.0, "split_angle_deg": 30.0, "nearest_split_right": 1.0, "check_ms_p50": 2.19, "check_ms_max": 5.73, "bytes_max": 3842, "f_p50": 1.0, "f_min": 1.0, "f_max": 1.008}
+{"veteran_15_per_feed": 12570947, "veteran_25_per_feed": 20951578, "veteran_15_per_round": 598617, "veteran_25_per_round": 997694}
+{"U_threshold": 0, "fed_share": 1.0, "mean_R_fed": 81.8, "honest_per_feed": 1459054, "honest_per_round": 69479}
+{"U_threshold": 10, "fed_share": 0.83, "mean_R_fed": 94.3, "honest_per_feed": 1307697, "honest_per_round": 61670}
+{"U_threshold": 20, "fed_share": 0.65, "mean_R_fed": 105.3, "honest_per_feed": 624879, "honest_per_round": 29012}
+{"U_threshold": 30, "fed_share": 0.48, "mean_R_fed": 114.8, "honest_per_feed": 25752, "honest_per_round": 1167}
+{"U_threshold": 40, "fed_share": 0.34, "mean_R_fed": 120.9, "honest_per_feed": 0, "honest_per_round": 0}
+{"U_threshold": 50, "fed_share": 0.21, "mean_R_fed": 127.1, "honest_per_feed": 0, "honest_per_round": 0}
+{"U_threshold": 60, "fed_share": 0.1, "mean_R_fed": 134.3, "honest_per_feed": 0, "honest_per_round": 0}
+{"U_threshold": 70, "fed_share": 0.04, "mean_R_fed": 134.1, "honest_per_feed": 0, "honest_per_round": 0}
+{"U_threshold": 80, "fed_share": 0.01, "mean_R_fed": 144.2, "honest_per_feed": 0, "honest_per_round": 0}

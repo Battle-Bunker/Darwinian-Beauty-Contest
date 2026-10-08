@@ -1,9 +1,10 @@
 // How long programs take against their time limits: a row of figures (typical, slow end, slowest, missed)
 // and a small histogram of the times, with the limit marked and the misses in their own labelled bin.
-// During play you see this for your own programs only (other teams' times are private until the end).
+// The flower's figure is its CPU time (what the energy formula charges: E = (cap − size) × (R − ms), times the byte factor); the
+// bee's is its CPU time to decide against its 50 ms. Void turns (server faults) count for neither. During play you see your own only.
 import { useMemo } from "react";
 import type { Action, GameView, Kind, Team } from "../types";
-import { isTooSlow } from "./Feed";
+import { isTooSlow, isVoid } from "./Feed";
 import { TeamChip } from "./ui";
 
 const BINS = 10;
@@ -13,25 +14,25 @@ export interface TimingData { values: number[]; misses: number }
 const quantile = (sorted: number[], q: number) => (sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(q * (sorted.length - 1) + 0.5))] : NaN);
 const fmtMs = (x: number) => (!Number.isFinite(x) ? "–" : x < 10 ? x.toFixed(1) : String(Math.round(x)));
 
-/** A bee's decision times (beeMs) and deadline misses among `actions`. */
+/** A bee's decision times (beeMs) and deadline misses among the turns in `actions`. */
 export function beeTiming(actions: Action[], team: string | null): TimingData {
   const values: number[] = [];
   let misses = 0;
   for (const a of actions) {
-    if (team && a.bee !== team) continue;
+    if (a.action === "arrive" || (team && a.bee !== team) || isVoid(a)) continue;
     if (isTooSlow(a)) misses++;
     else if (typeof a.beeMs === "number") values.push(a.beeMs);
   }
   return { values, misses };
 }
 
-/** A flower's answer times (ms) and failed answers (no answer in time, or a crash) at `team`'s patch. */
-export function flowerTiming(actions: Action[], team: string | null, kind: "cosmos" | "orchid"): TimingData {
+/** A flower's CPU times (ms) and failed answers (late, an error, a malformed return) at `team`'s flower. */
+export function flowerTiming(actions: Action[], team: string | null): TimingData {
   const values: number[] = [];
   let misses = 0;
   for (const a of actions) {
-    if (a.action !== "ask" || a.kind !== kind || (team && a.patch !== team)) continue;
-    if (a.error && a.by === "flower") misses++;
+    if (a.action === "arrive" || (team && a.flower !== team) || isVoid(a)) continue;
+    if (a.flowerError) misses++;
     else if (typeof a.ms === "number") values.push(a.ms);
   }
   return { values, misses };
@@ -95,11 +96,7 @@ export function TimingPanel({ data, limit, title, unit, missLabel }: {
 export function TimingTable({ view, actions }: { view: GameView; actions: Action[] }) {
   const cfg = view.game.config;
   const teams: Record<string, Team> = Object.fromEntries(view.teams.map((t) => [t.id, t]));
-  const rows = (view.participants ?? []).map((id) => {
-    const bee = beeTiming(actions, id);
-    const flowers = (["cosmos", "orchid"] as const).map((k) => flowerTiming(actions, id, k));
-    return { id, bee, flowers };
-  });
+  const rows = (view.participants ?? []).map((id) => ({ id, bee: beeTiming(actions, id), flower: flowerTiming(actions, id) }));
   const med = (d: TimingData) => { const s = [...d.values].sort((a, b) => a - b); return quantile(s, 0.5); };
   const p90 = (d: TimingData) => { const s = [...d.values].sort((a, b) => a - b); return quantile(s, 0.9); };
   const cell = (d: TimingData, limit: number) => (
@@ -107,19 +104,18 @@ export function TimingTable({ view, actions }: { view: GameView; actions: Action
       {fmtMs(med(d))} <span className="muted small">/ {fmtMs(p90(d))}</span>{d.misses ? <span className="small"> · ⏱ {d.misses}</span> : null}
     </td>
   );
-  const kinds: Kind[] = ["bee", "cosmos", "orchid"];
+  const kinds: Kind[] = ["flower", "bee"];
   return (
     <div className="table-scroll">
       <table className="data-table">
         <caption className="sr-only">How long each team's programs took</caption>
-        <thead><tr><th className="left">Team</th>{kinds.map((k) => <th key={k}>{k} ({cfg.budgets[k].ms} ms)</th>)}</tr></thead>
+        <thead><tr><th className="left">Team</th>{kinds.map((k) => <th key={k}>{k === "flower" ? "flower CPU" : "bee decision"} ({cfg.budgets[k].ms} ms)</th>)}</tr></thead>
         <tbody>
           {rows.map((r) => (
             <tr key={r.id} className={r.id === view.me?.teamId ? "mine" : ""}>
               <th scope="row" className="left"><TeamChip team={teams[r.id]} you={r.id === view.me?.teamId} short /></th>
+              {cell(r.flower, cfg.budgets.flower.ms)}
               {cell(r.bee, cfg.budgets.bee.ms)}
-              {cell(r.flowers[0], cfg.budgets.cosmos.ms)}
-              {cell(r.flowers[1], cfg.budgets.orchid.ms)}
             </tr>
           ))}
         </tbody>

@@ -16,8 +16,10 @@ import { spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { ARENA_DIR, one, q } from "./db.js";
-import { codeFindings, installTools, otherWorkspaces, processTree } from "./workspace.js";
+import { codeFindings, installTools, otherWorkspaces, processTree, toolSource } from "./workspace.js";
+import { agentCgroups } from "./cgroups.js";
 
 const LAUNCHER = path.join(ARENA_DIR, "lib", "scaffold_launch.py");
 const BACKOFF = [1, 2, 4, 8, 15, 30];
@@ -27,9 +29,15 @@ export const SCAFFOLD_LIMITS = { cpuShare: 0.15, memMB: 1024, fileMB: 200, nice:
 const SPAWN = /\bsubprocess\b|\bos\s*\.\s*(?:system|popen|fork|forkpty|exec\w*|spawn\w*|posix_spawn\w*|kill|killpg|setsid|setpgid|setpgrp|daemon|nice|setpriority|chdir)\b|\bmultiprocessing\b|\bimport\s+pty\b|\bfrom\s+pty\b|ProcessPoolExecutor|\bctypes\b|\bimportlib\b|__import__|(?<![\w.])(?:exec|eval|compile)\s*\(|\bsys\s*\.\s*modules\b|\bbuiltins\b|\bresource\s*\.\s*setrlimit\b|\bsignal\s*\.\s*(?:signal|SIGSTOP|SIGCONT|pthread_kill)\b/;
 const PY_STRINGS = /(?:'''[\s\S]*?'''|"""[\s\S]*?"""|'(?:\\.|[^'\\\n])*'|"(?:\\.|[^"\\\n])*")/g;
 
-/** Static audit of a scaffold: the entry file and the workspace modules it imports (not tools/, which are the runner's).
- * Returns { files: [{path, text}], found: [{severity, detail}] }. */
-export function auditScaffold(dir, entry, { arenaId, slug, port = "4000" }) {
+/** The runner's own tool files (and the history client), by name: a workspace copy that is byte for byte the runner's
+ * needn't be audited. */
+const pristineTool = (file) => {
+  try { return fs.readFileSync(file, "utf8") === fs.readFileSync(toolSource(path.basename(file)), "utf8"); } catch { return false; }
+};
+
+/** Static audit of a scaffold: the entry file and the workspace modules it imports, including anything in tools/ (on its
+ * import path) except the runner's own tools left unchanged. Returns { files: [{path, text}], found: [{severity, detail}] }. */
+export function auditScaffold(dir, entry, { arenaId, slug, port = "4100" }) {
   const otherWs = otherWorkspaces(arenaId, slug);
   const files = [], found = [];
   const add = (severity, detail) => found.push({ severity, detail });
@@ -40,6 +48,7 @@ export function auditScaffold(dir, entry, { arenaId, slug, port = "4000" }) {
   const visit = (file) => {
     if (seen.has(file)) return;
     seen.add(file);
+    if (path.dirname(file) === path.join(dir, "tools") && pristineTool(file)) return;
     const text = fs.readFileSync(file, "utf8");
     const rel = path.relative(dir, file);
     files.push({ path: rel, text });
@@ -58,9 +67,9 @@ export function auditScaffold(dir, entry, { arenaId, slug, port = "4000" }) {
         add("violation", `${rel}: a path outside the workspace: ${v.slice(0, 80)}`);
       }
     }
-    // Workspace modules it imports (from the workspace root, or a folder it adds to sys.path), except tools/.
-    const bases = [dir, ...[...code.matchAll(/sys\s*\.\s*path\s*\.\s*(?:insert\s*\(\s*\d+\s*,|append\s*\()\s*['"]([^'"]+)['"]/g)].map((x) => path.resolve(dir, x[1]))]
-      .filter((b) => b.startsWith(dir) && !b.startsWith(path.join(dir, "tools")));
+    // Workspace modules it imports: from the workspace root, tools/ (on its PYTHONPATH), or a folder it adds to sys.path.
+    const bases = [dir, path.join(dir, "tools"), ...[...code.matchAll(/sys\s*\.\s*path\s*\.\s*(?:insert\s*\(\s*\d+\s*,|append\s*\()\s*['"]([^'"]+)['"]/g)].map((x) => path.resolve(dir, x[1]))]
+      .filter((b, i, all) => b.startsWith(dir) && all.indexOf(b) === i);
     const mods = new Set();
     for (const mm of code.matchAll(/^[ \t]*from[ \t]+([\w.]+)[ \t]+import\b/gm)) mods.add(mm[1].split(".")[0]);
     for (const mm of code.matchAll(/^[ \t]*import[ \t]+([\w.]+(?:[ \t]+as[ \t]+\w+)?(?:[ \t]*,[ \t]*[\w.]+(?:[ \t]+as[ \t]+\w+)?)*)/gm)) for (const x of mm[1].split(",")) mods.add(x.trim().split(/[ \t]+/)[0].split(".")[0]);
@@ -143,10 +152,12 @@ export class Scaffold {
     fs.writeSync(fd, `\n==== scaffold ${this.file} starting (game time ${Math.round(this.ctx.clockMs() / 1000)} s)\n`);
     const token = crypto.randomBytes(12).toString("hex");
     this.tokens = new Set([token]);
-    const limits = JSON.stringify({ memMB: this.limits.memMB, cpuSeconds: this.limits.cpuSeconds, fileMB: this.limits.fileMB, nice: this.limits.nice });
+    // (it joins the agents' cgroups, when the runner made them, before it becomes the scaffold: lib/cgroups.js)
+    const limits = JSON.stringify({ memMB: this.limits.memMB, cpuSeconds: this.limits.cpuSeconds, fileMB: this.limits.fileMB, nice: this.limits.nice, cgroups: agentCgroups() || [] });
     const child = spawn("python3", [LAUNCHER, limits, this.file], {
       cwd: dir, detached: true, stdio: ["ignore", fd, fd],
-      env: { PATH: "/usr/local/bin:/usr/bin:/bin", HOME: dir, LANG: "C.UTF-8", PYTHONUNBUFFERED: "1", ARENA_SCAFFOLD_TOKEN: token, ARENA_GAME_API: apiBase },
+      // tools/ is on its import path, so `import garden` works without sys.path tricks.
+      env: { PATH: "/usr/local/bin:/usr/bin:/bin", HOME: dir, LANG: "C.UTF-8", PYTHONUNBUFFERED: "1", PYTHONPATH: path.join(dir, "tools"), ARENA_SCAFFOLD_TOKEN: token, ARENA_GAME_API: apiBase },
     });
     fs.closeSync(fd);
     this.child = child;

@@ -1,0 +1,50 @@
+## 1. Level against CPU (W uniform)
+{"R": 3, "cpu_ms": 1.8, "U_mean": 8.6, "U_sd": 1.7, "z_mean": [1.91, 2.38, 2.03, 2.28], "z_sd": [1.16, 1.22, 0.91, 0.73]}
+{"R": 10, "cpu_ms": 6.0, "U_mean": 13.42, "U_sd": 1.25, "z_mean": [3.29, 3.61, 3.26, 3.26], "z_sd": [0.84, 0.93, 0.79, 0.92]}
+{"R": 20, "cpu_ms": 12.0, "U_mean": 15.51, "U_sd": 1.61, "z_mean": [3.76, 4.02, 3.39, 4.35], "z_sd": [0.72, 1.1, 0.74, 0.8]}
+{"R": 42, "cpu_ms": 25.2, "U_mean": 17.29, "U_sd": 1.11, "z_mean": [4.16, 4.5, 3.85, 4.79], "z_sd": [0.74, 0.77, 0.67, 0.81]}
+{"R": 76, "cpu_ms": 45.6, "U_mean": 17.94, "U_sd": 1.39, "z_mean": [4.31, 4.94, 3.82, 4.88], "z_sd": [0.85, 0.71, 0.68, 0.9]}
+{"R": 150, "cpu_ms": 90.0, "U_mean": 18.38, "U_sd": 0.89, "z_mean": [4.25, 4.89, 3.73, 5.51], "z_sd": [0.71, 1.0, 0.69, 0.64]}
+## 1b. Per property, pure-ish W (3:1), mean z of the weighted property
+{"property": 0, "z_by_R": {"3": 3.48, "10": 5.26, "20": 6.24, "42": 7.03, "76": 7.1, "150": 7.35}}
+{"property": 1, "z_by_R": {"3": 3.83, "10": 6.09, "20": 6.87, "42": 7.54, "76": 7.9, "150": 7.89}}
+{"property": 2, "z_by_R": {"3": 3.03, "10": 4.56, "20": 4.82, "42": 5.16, "76": 5.33, "150": 5.42}}
+{"property": 3, "z_by_R": {"3": 3.89, "10": 5.85, "20": 6.54, "42": 7.44, "76": 8.16, "150": 8.32}}
+## 2. Reading R back from one response (W uniform)
+{"R": 3, "median_rel_error": 0.04, "p90_rel_error": 1.06}
+{"R": 10, "median_rel_error": 0.22, "p90_rel_error": 0.72}
+{"R": 20, "median_rel_error": 0.32, "p90_rel_error": 1.01}
+{"R": 42, "median_rel_error": 0.49, "p90_rel_error": 2.57}
+{"R": 76, "median_rel_error": 0.82, "p90_rel_error": 0.97}
+{"R": 150, "median_rel_error": 0.0, "p90_rel_error": 0.76}
+## 3. Direction classes: 11
+{"R": 3, "accuracy": 0.42}
+{"R": 10, "accuracy": 0.74}
+{"R": 20, "accuracy": 0.81}
+{"R": 42, "accuracy": 0.86}
+{"R": 76, "accuracy": 0.88}
+{"R": 150, "accuracy": 0.84}
+## 4. Bee evaluation: {"p50_ms": 1.13, "max_ms": 3.93}
+## 5. Selective feeding
+{"flower_bytes": 85, "veteran_15%_50B_per_feed": 12091395, "veteran_15%_170B_per_feed": 10601696, "veteran_25%_50B_per_feed": 20152326, "veteran_25%_170B_per_feed": 17669493, "veteran_15%_50B_per_round": 575781, "veteran_15%_170B_per_round": 504843, "veteran_25%_50B_per_round": 959635, "veteran_25%_170B_per_round": 841404}
+{"U_threshold": 0.0, "fed_share": 1.0, "mean_R_fed": 78.7, "honest_per_feed": 10175357, "honest_per_round": 484541}
+{"U_threshold": 8.6, "fed_share": 0.99, "mean_R_fed": 79.2, "honest_per_feed": 10241054, "honest_per_round": 487513}
+{"U_threshold": 13.4, "fed_share": 0.94, "mean_R_fed": 83.0, "honest_per_feed": 10740394, "honest_per_round": 509988}
+{"U_threshold": 15.5, "fed_share": 0.86, "mean_R_fed": 88.7, "honest_per_feed": 11476980, "honest_per_round": 542319}
+{"U_threshold": 17.3, "fed_share": 0.73, "mean_R_fed": 94.7, "honest_per_feed": 12251993, "honest_per_round": 573162}
+{"U_threshold": 17.9, "fed_share": 0.54, "mean_R_fed": 98.7, "honest_per_feed": 12767843, "honest_per_round": 584291}
+{"U_threshold": 18.4, "fed_share": 0.41, "mean_R_fed": 102.4, "honest_per_feed": 13244623, "honest_per_round": 590250}
+## 6. Sensitivity: burn and nectar share
+{"veteran_15%_50B_per_feed": 11754329, "veteran_15%_170B_per_feed": 10306157, "veteran_25%_50B_per_feed": 19590549, "veteran_25%_170B_per_feed": 17176929}
+{"burn": 0.3, "direction_accuracy_5_classes": {"3": 0.37, "20": 0.72, "76": 0.91, "150": 0.85}, "R_readback_median_rel_error": {"3": 0.0, "20": 0.16, "76": 0.3, "150": 0.02}, "U_by_R": {"3": 2.1, "20": 13.6, "76": 17.1, "150": 18.1}}
+{"burn": 0.3, "nectar": 0.5, "coop_per_feed_all": 17514247, "vs_15%_50B": {"R_star": 51.9, "turns_above": 0.65, "bee_feeds_share": 0.7, "bee_per_feed": 21834996}, "vs_15%_170B": {"R_star": 46.1, "turns_above": 0.69, "bee_feeds_share": 0.74, "bee_per_feed": 21311371}, "vs_25%_50B": {"R_star": 87.1, "turns_above": 0.46, "bee_feeds_share": 0.39, "bee_per_feed": 24615738}, "vs_25%_170B": {"R_star": 76.0, "turns_above": 0.51, "bee_feeds_share": 0.43, "bee_per_feed": 24293759}}
+{"burn": 0.3, "nectar": 0.65, "coop_per_feed_all": 22768521, "vs_15%_50B": {"R_star": 40.6, "turns_above": 0.74, "bee_feeds_share": 0.78, "bee_per_feed": 27153149}, "vs_15%_170B": {"R_star": 36.6, "turns_above": 0.77, "bee_feeds_share": 0.81, "bee_per_feed": 26691917}, "vs_25%_50B": {"R_star": 67.8, "turns_above": 0.57, "bee_feeds_share": 0.55, "bee_per_feed": 31060008}, "vs_25%_170B": {"R_star": 59.2, "turns_above": 0.62, "bee_feeds_share": 0.62, "bee_per_feed": 30042075}}
+{"burn": 0.3, "nectar": 0.8, "coop_per_feed_all": 28022795, "vs_15%_50B": {"R_star": 32.8, "turns_above": 0.8, "bee_feeds_share": 0.82, "bee_per_feed": 32741309}, "vs_15%_170B": {"R_star": 28.8, "turns_above": 0.84, "bee_feeds_share": 0.83, "bee_per_feed": 32429998}, "vs_25%_50B": {"R_star": 54.7, "turns_above": 0.64, "bee_feeds_share": 0.67, "bee_per_feed": 35602771}, "vs_25%_170B": {"R_star": 47.6, "turns_above": 0.68, "bee_feeds_share": 0.73, "bee_per_feed": 34342496}}
+{"burn": 0.45, "direction_accuracy_5_classes": {"3": 0.47, "20": 0.85, "76": 0.89, "150": 0.95}, "R_readback_median_rel_error": {"3": 0.07, "20": 0.08, "76": 0.41, "150": 0.12}, "U_by_R": {"3": 6.5, "20": 14.9, "76": 18.1, "150": 18.7}}
+{"burn": 0.45, "nectar": 0.5, "coop_per_feed_all": 13756603, "vs_15%_50B": {"R_star": 66.3, "turns_above": 0.58, "bee_feeds_share": 0.53, "bee_per_feed": 17987351}, "vs_15%_170B": {"R_star": 59.2, "turns_above": 0.62, "bee_feeds_share": 0.65, "bee_per_feed": 17139274}, "vs_25%_50B": {"R_star": 110.4, "turns_above": 0.28, "bee_feeds_share": 0.33, "bee_per_feed": 19842075}, "vs_25%_170B": {"R_star": 96.5, "turns_above": 0.38, "bee_feeds_share": 0.35, "bee_per_feed": 19784987}}
+{"burn": 0.45, "nectar": 0.65, "coop_per_feed_all": 17883584, "vs_15%_50B": {"R_star": 51.1, "turns_above": 0.65, "bee_feeds_share": 0.71, "bee_per_feed": 22023226}, "vs_15%_170B": {"R_star": 45.5, "turns_above": 0.7, "bee_feeds_share": 0.77, "bee_per_feed": 21249436}, "vs_25%_50B": {"R_star": 85.2, "turns_above": 0.47, "bee_feeds_share": 0.38, "bee_per_feed": 25126663}, "vs_25%_170B": {"R_star": 75.6, "turns_above": 0.51, "bee_feeds_share": 0.42, "bee_per_feed": 24470195}}
+{"burn": 0.45, "nectar": 0.8, "coop_per_feed_all": 22010565, "vs_15%_50B": {"R_star": 42.6, "turns_above": 0.72, "bee_feeds_share": 0.78, "bee_per_feed": 26158701}, "vs_15%_170B": {"R_star": 36.6, "turns_above": 0.77, "bee_feeds_share": 0.8, "bee_per_feed": 25893124}, "vs_25%_50B": {"R_star": 69.2, "turns_above": 0.55, "bee_feeds_share": 0.47, "bee_per_feed": 29251337}, "vs_25%_170B": {"R_star": 61.0, "turns_above": 0.61, "bee_feeds_share": 0.61, "bee_per_feed": 27985661}}
+{"burn": 0.6, "direction_accuracy_5_classes": {"3": 0.6, "20": 0.89, "76": 0.88, "150": 0.87}, "R_readback_median_rel_error": {"3": 0.05, "20": 0.18, "76": 0.26, "150": 0.02}, "U_by_R": {"3": 8.5, "20": 15.9, "76": 18.3, "150": 19.1}}
+{"burn": 0.6, "nectar": 0.5, "coop_per_feed_all": 9998629, "vs_15%_50B": {"R_star": 91.4, "turns_above": 0.42, "bee_feeds_share": 0.36, "bee_per_feed": 13423592}, "vs_15%_170B": {"R_star": 80.7, "turns_above": 0.48, "bee_feeds_share": 0.4, "bee_per_feed": 13305142}, "vs_25%_50B": {"R_star": null, "turns_above": 0.0, "bee_feeds_share": 0.0, "bee_per_feed": null}, "vs_25%_170B": {"R_star": 133.1, "turns_above": 0.13, "bee_feeds_share": 0.25, "bee_per_feed": 13867602}}
+{"burn": 0.6, "nectar": 0.65, "coop_per_feed_all": 12998218, "vs_15%_50B": {"R_star": 70.2, "turns_above": 0.54, "bee_feeds_share": 0.46, "bee_per_feed": 17201326}, "vs_15%_170B": {"R_star": 61.4, "turns_above": 0.6, "bee_feeds_share": 0.53, "bee_per_feed": 16961487}, "vs_25%_50B": {"R_star": 116.6, "turns_above": 0.25, "bee_feeds_share": 0.3, "bee_per_feed": 18016283}, "vs_25%_170B": {"R_star": 102.7, "turns_above": 0.33, "bee_feeds_share": 0.33, "bee_per_feed": 17695497}}
+{"burn": 0.6, "nectar": 0.8, "coop_per_feed_all": 15997807, "vs_15%_50B": {"R_star": 57.2, "turns_above": 0.63, "bee_feeds_share": 0.58, "bee_per_feed": 20387683}, "vs_15%_170B": {"R_star": 49.9, "turns_above": 0.66, "bee_feeds_share": 0.66, "bee_per_feed": 19933608}, "vs_25%_50B": {"R_star": 94.9, "turns_above": 0.39, "bee_feeds_share": 0.34, "bee_per_feed": 21609707}, "vs_25%_170B": {"R_star": 83.3, "turns_above": 0.48, "bee_feeds_share": 0.38, "bee_per_feed": 21428587}}

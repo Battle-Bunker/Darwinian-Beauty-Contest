@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "A coding game: write a rewarding flower (cosmos), a deceptive flower (orchid) and a bee that tells them apart.",
+  "description": "A coding game: write a flower that offers bees a share of the energy it saves, and a bee that decides where to feed.",
   "engines": { "node": ">=22.13" },
   "scripts": {
     "start": "node server/index.js",
@@ -11,7 +11,8 @@
     "dev": "node --watch server/index.js",
     "dev:web": "npm --prefix web run dev",
     "migrate": "node server/db/migrate.js",
-    "test": "node --test --test-concurrency=1 test/*.test.js",
+    "test": "node --no-warnings --test --test-concurrency=1 test/*.test.js",
+    "gen:query": "node --no-warnings scripts/gen-query/index.js",
     "smoke": "node scripts/smoke.js",
     "demo": "node scripts/demo.js"
   },

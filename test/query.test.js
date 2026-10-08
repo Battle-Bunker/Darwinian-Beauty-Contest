@@ -1,0 +1,873 @@
+// Querying history (docs/QUERY.md): the same ASTs give the same rows from the Python in-memory executor,
+// the TypeScript in-memory executor and SQL; SQL enforces each viewer's visibility (filters, sorts and
+// aggregates included); builders are immutable and build the same AST in both languages; the arena's hooks
+// (local(), connect(post=)) work; the generated clients are up to date; typical queries on a 20,000-turn
+// history take well under a millisecond.
+// Uses its own database (TEST_DATABASE_URL, default dbc_one_test), never dbc, dbc_live or dbc_one.
+import { test, before, after } from "node:test";
+import assert from "node:assert/strict";
+import crypto from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { createRequire } from "node:module";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const TEST_DB = process.env.TEST_DATABASE_URL || "postgres://dbc:dbc@localhost:5432/dbc_one_test";
+assert.ok(!/\/(dbc|dbc_live|dbc_one)$/.test(TEST_DB), "the query tests never run against a real database");
+process.env.DATABASE_URL = TEST_DB;
+const { pool, tx } = await import("../server/db/pool.js");
+const { migrate } = await import("../server/db/migrate.js");
+const { runQuery, MAX_LIMIT } = await import("../server/query/sql.js");
+const { insertActions, insertSamples } = await import("../server/live.js");
+const { mask } = await import("../server/query/mask.js");
+const { SCHEMA } = await import("../server/query/schema.js");
+const { canonicalJson } = await import("../server/engine.js");
+const { normalizeConfig } = await import("../server/lib/gameConfig.js");
+const { uuidToCode } = await import("../server/lib/shortid.js");
+const { stale } = await import("../scripts/gen-query/index.js");
+const { play } = await import("./fixtures/garden.js");
+
+const require = createRequire(import.meta.url);
+const H = require("../vendor/query/history.js");
+const HARNESS = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "history_harness.py");
+const python = (job) => JSON.parse(execFileSync("python3", [HARNESS], { input: JSON.stringify(job), maxBuffer: 1 << 28 }).toString());
+
+const N = 4;
+const db = {}; // ids and the garden's output
+
+// Team 3's flower fails now and then; team 2's answers some challenges with a response over 4 KB (stored
+// apart: its record has response null, with its size and hash).
+const flowerCode = (ti) => ti === 3
+  ? `def flower(c):\n    if c % 5 == 0:\n        return 1 // 0, 1\n    return (c * 7) % 13, 15\n`
+  : ti === 2
+    ? `def flower(c):\n    if c % 4 == 1:\n        return list(range(c, c + 1500)), 30\n    return (c * 5) % 11, 70\n`
+    : `def flower(c):\n    return (c * ${3 + ti}) % 11, ${20 + 25 * ti}\n`;
+const beeCode = (ti) => `def first():\n    return ${ti}\ndef decide(c, r):\n    MEMORY["n"] = MEMORY.get("n", 0) + 1\n    if isinstance(r, list):\n        r = len(r)\n    return ("feed" if r is not None and (r + ${ti}) % 3 == 0 else "leave"), (c * 5 + 3) % 17\n`;
+
+before(async () => {
+  await migrate();
+  // Team 2's big responses fit. Prevalence and a feed price, as a new game has, but every ready bee visits each
+  // round (slots 1), and a feed sits the bee out 2 rounds, so there are turns enough to query.
+  // A public game (private play has its own test, below).
+  const config = normalizeConfig({ feedCost: 2, responseType: "any", maxResponseBytes: 65536, prevalence: { slots: 1 }, visibility: "public" });
+  const out = await play(config, Array.from({ length: N }, (_, ti) => ({ flower: flowerCode(ti), bee: beeCode(ti) })), 80);
+  const uid = () => crypto.randomUUID();
+  db.users = Array.from({ length: N + 1 }, uid); // one per team, and a spectator
+  db.room = uid();
+  db.game = uid();
+  db.other = uid(); // a second game in the room, still running: never in room-level queries
+  db.teams = Array.from({ length: N }, uid);
+  db.short = uuidToCode(db.game); // prefix_len 26: the short id is the whole code
+  db.out = out;
+  db.config = config;
+  await tx(async (c) => {
+    for (const [i, id] of db.users.entries()) await c.query("INSERT INTO users (id, name, auth_provider, auth_subject) VALUES ($1::uuid, $2, 'test', $1::text)", [id, `u${i}`]);
+    await c.query("INSERT INTO rooms (id, code, prefix_len, owner_id) VALUES ($1, $2, 26, $3)", [db.room, uuidToCode(db.room), db.users[0]]);
+    for (const g of [db.game, db.other]) {
+      await c.query(`INSERT INTO games (id, room_id, code, prefix_len, config, status, participants, feeds, nectar, pollen, clock_ms, round, last_seq, fitness, prevalence)
+        VALUES ($1, $2, $3, 26, $4, 'running', $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+      [g, db.room, uuidToCode(g), config, g === db.game ? db.teams : null, JSON.stringify(out.feeds), JSON.stringify(out.nectar), JSON.stringify(out.pollen),
+        out.clockMs, out.round, out.lastSeq, JSON.stringify(out.fitness), JSON.stringify(out.sample)]);
+    }
+    for (const [i, t] of db.teams.entries()) {
+      await c.query("INSERT INTO teams (id, game_id, name, join_code, color, created_by) VALUES ($1, $2, $3, $4, '#000', $5)", [t, db.game, `T${i}`, `j${i}`, db.users[i]]);
+      await c.query("INSERT INTO team_members (team_id, game_id, user_id) VALUES ($1, $2, $3)", [t, db.game, db.users[i]]);
+      for (const [kind, version, atMs, cost] of [["flower", 1, 0, 0], ["bee", 1, 0, 0], ["flower", 2, 4000 + 600 * i, 7 + i], ["bee", 2, 9000, 30]]) {
+        await c.query(`INSERT INTO programs (game_id, team_id, kind, version, code, size, distance, cost, at_ms, submitted_by)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`, [db.game, t, kind, version, `# ${kind} ${version} of T${i}`, 100 + i * 10 + version, version === 1 ? null : cost, cost, atMs, db.users[i]]);
+      }
+    }
+    for (const m of out.memories) {
+      await c.query("INSERT INTO bee_memories (game_id, team_id, bee_version, memory, bytes, error, at_round) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        [db.game, db.teams[m.team], m.version, m.memory, m.bytes, m.error, out.round]);
+    }
+    await insertActions(c, db.game, out.actions, db.teams);
+    await insertSamples(c, db.game, out.samples);
+  });
+  db.records = out.history.map((t) => ({ ...t, game: db.short }));
+});
+
+after(async () => {
+  await pool.query("DELETE FROM games WHERE room_id = $1", [db.room]);
+  await pool.query("DELETE FROM rooms WHERE id = $1", [db.room]);
+  await pool.query("DELETE FROM users WHERE id = ANY($1)", [db.users]);
+  await pool.end();
+});
+
+const setStatus = (status, reveal = true) => pool.query(
+  "UPDATE games SET status = $2, config = jsonb_set(config, '{revealOnFinish}', $3::jsonb) WHERE id = $1", [db.game, status, JSON.stringify(reveal)]);
+const viewers = () => [{ name: "spectator", user: db.users[N], team: null }, ...db.teams.map((_, i) => ({ name: `team ${i}`, user: db.users[i], team: i }))];
+const sql = async (ast, user, where = {}) => (await runQuery(ast, { gameId: db.game, userId: user, ...where })).rows;
+
+/** Rows equal, floats to 1e-9 (sums and averages add up in different orders). */
+function same(a, b, what) {
+  const eq = (x, y) => {
+    if (typeof x === "number" && typeof y === "number") return x === y || Math.abs(x - y) <= 1e-9 * Math.max(1, Math.abs(x), Math.abs(y));
+    if (Array.isArray(x) && Array.isArray(y)) return x.length === y.length && x.every((v, i) => eq(v, y[i]));
+    if (x && y && typeof x === "object" && typeof y === "object") {
+      const kx = Object.keys(x), ky = Object.keys(y);
+      return kx.length === ky.length && kx.every((k, i) => k === ky[i] && eq(x[k], y[k]));
+    }
+    return x === y;
+  };
+  if (!eq(a, b)) assert.deepEqual(a, b, what); // shows the difference
+}
+
+const W = (field, op, value) => ({ field, op, value });
+const TURN_QUERIES = [
+  { from: "turns" },
+  { from: "turns", where: [W("fed", "eq", true)] },
+  { from: "turns", scope: "myBee" },
+  { from: "turns", scope: "myFlower", orderBy: [{ field: "round", dir: "desc" }], limit: 7 },
+  { from: "turns", scope: "mine", limit: 20, offset: 5 },
+  { from: "turns", where: [W("round", "between", [10, 30]), W("flower", "eq", 2)] },
+  { from: "turns", where: [W("round", "gt", 70)], orderBy: [{ field: "energy", dir: "desc" }], limit: 10 },
+  { from: "turns", where: [W("round", "ge", 20), W("round", "lt", 25), W("bee", "eq", 1)] },
+  { from: "turns", where: [W("percent", "isNull", true)] },
+  { from: "turns", where: [W("percent", "gt", 30), W("fed", "eq", false)] },
+  { from: "turns", where: [W("response", "isNull", false), W("challenge", "in", [3, 7, 11])] },
+  { from: "turns", where: [W("challenge", "eq", 7)] },
+  { from: "turns", where: [W("challenge", "ne", 7), W("bee", "in", [0, 2])], select: ["round", "bee", "challenge"] },
+  { from: "turns", where: [W("flowerError", "ne", "x")], select: ["round", "flowerError", "ms"] },
+  { from: "turns", aggregates: [{ fn: "count", as: "n" }] },
+  { from: "turns", groupBy: ["flower"], aggregates: [{ fn: "count", as: "n" }, { fn: "sum", field: "nectar", as: "nectar" },
+    { fn: "avg", field: "percent", as: "p" }, { fn: "min", field: "energy", as: "lo" }, { fn: "max", field: "pollen", as: "hi" }] },
+  { from: "turns", scope: "myBee", where: [W("fed", "eq", true)], groupBy: ["flower"], aggregates: [{ fn: "sum", field: "nectar", as: "s" }, { fn: "count", as: "count" }],
+    orderBy: [{ field: "s", dir: "desc" }] },
+  { from: "turns", where: [W("fed", "eq", false)], aggregates: [{ fn: "sum", field: "percent", as: "s" }, { fn: "count", field: "percent", as: "n" }, { fn: "count", field: "ms", as: "ms" }] },
+  { from: "turns", groupBy: ["bee", "fed"], aggregates: [{ fn: "count", field: "beeMs", as: "timed" }, { fn: "avg", field: "beeMs", as: "avgMs" }] },
+  { from: "turns", where: [W("round", "le", 40)], groupBy: ["flower"], aggregates: [{ fn: "count", as: "n" }], orderBy: [{ field: "n", dir: "asc" }], limit: 2, offset: 1 },
+  { from: "turns", where: [W("round", "le", 40), W("bee", "eq", 2)], groupBy: ["flower"], aggregates: [{ fn: "sum", field: "energy", as: "e" }] },
+  { from: "turns", groupBy: ["flowerError"], aggregates: [{ fn: "count", as: "n" }] },
+  { from: "turns", groupBy: ["percent"], aggregates: [{ fn: "count", as: "n" }] },
+  { from: "turns", where: [W("bee", "eq", 9)], aggregates: [{ fn: "sum", field: "energy", as: "s" }, { fn: "count", as: "n" }] },
+  { from: "turns", where: [W("bee", "eq", 9)], groupBy: ["flower"], aggregates: [{ fn: "count", as: "n" }] },
+  { from: "turns", orderBy: [{ field: "fed", dir: "desc" }, { field: "beeMs", dir: "asc" }], limit: 15 },
+  { from: "turns", where: [W("round", "eq", 5)], orderBy: [{ field: "round", dir: "desc" }] },
+  { from: "turns", orderBy: [{ field: "ms", dir: "asc" }], limit: 12 },
+  { from: "turns", groupBy: ["bee"], orderBy: [{ field: "bee", dir: "desc" }] },
+];
+const OTHER_QUERIES = {
+  versions: [
+    { from: "versions" },
+    { from: "versions", scope: "mine", where: [W("kind", "eq", "flower")], orderBy: [{ field: "atMs", dir: "desc" }] },
+    { from: "versions", groupBy: ["team", "kind"], aggregates: [{ fn: "max", field: "version", as: "latest" }, { fn: "sum", field: "cost", as: "spent" }] },
+    { from: "versions", where: [W("code", "isNull", false)], select: ["team", "kind", "code"] },
+  ],
+  teams: [
+    { from: "teams" },
+    { from: "teams", scope: "mine" },
+    { from: "teams", orderBy: [{ field: "name", dir: "desc" }], select: ["index", "name", "memoryBytes"] },
+    { from: "teams", aggregates: [{ fn: "sum", field: "memoryBytes", as: "b" }, { fn: "count", field: "memory", as: "seen" }] },
+  ],
+  pairs: [
+    { from: "pairs" },
+    { from: "pairs", scope: "myBee", orderBy: [{ field: "nectar", dir: "desc" }] },
+    { from: "pairs", groupBy: ["flower"], aggregates: [{ fn: "sum", field: "feeds", as: "feeds" }, { fn: "sum", field: "pollen", as: "pollen" }] },
+    { from: "pairs", where: [W("feeds", "gt", 0)], aggregates: [{ fn: "count", as: "n" }] },
+  ],
+  prevalence: [
+    { from: "prevalence" },
+    { from: "prevalence", scope: "mine", orderBy: [{ field: "round", dir: "desc" }], limit: 5 },
+    { from: "prevalence", where: [W("round", "ge", 40)], groupBy: ["team"], aggregates: [{ fn: "avg", field: "flowerP", as: "p" }, { fn: "max", field: "beeSuccess", as: "top" }] },
+    { from: "prevalence", groupBy: ["round"], aggregates: [{ fn: "sum", field: "beeP", as: "total" }, { fn: "min", field: "c", as: "c" }] },
+    { from: "prevalence", orderBy: [{ field: "fitness", dir: "desc" }], select: ["round", "team", "fitness"], limit: 7 },
+  ],
+  scores: [
+    { from: "scores" },
+    { from: "scores", orderBy: [{ field: "fitness", dir: "desc" }], limit: 2 },
+    { from: "scores", scope: "mine" },
+    { from: "scores", aggregates: [{ fn: "sum", field: "pollinationShare", as: "p" }, { fn: "avg", field: "fitness", as: "f" }] },
+  ],
+};
+
+// TypeScript in memory: turns through local() (records given in two parts, so append() is exercised).
+const tsRun = (entity, records, team, ast) => {
+  if (entity === "turns") {
+    const local = H.local(records.slice(0, 50), team);
+    local.append(records.slice(50));
+    return [...local.run(ast)];
+  }
+  return [...new H.Table(entity, records).run(ast, team)];
+};
+
+for (const [status, over] of [["running", false], ["finished", true]]) {
+  test(`parity (${status}): Python in memory, TypeScript in memory and SQL give the same rows, for every viewer`, async () => {
+    await setStatus(status);
+    for (const v of viewers()) {
+      // The turns as SQL shows them to this viewer are exactly the engine's records, masked by the schema.
+      const turns = await sql({ from: "turns", limit: MAX_LIMIT }, v.user);
+      assert.ok(turns.length > 150 && turns.length < MAX_LIMIT);
+      same(turns, db.records.map((t) => mask("turns", t, v.team, { over })), `${v.name}: SQL turns = masked engine records`);
+      const py = python({ mode: "run", entity: "turns", records: turns, team: v.team, queries: TURN_QUERIES, split: 60 });
+      for (const [i, ast] of TURN_QUERIES.entries()) {
+        const what = `${v.name}, turns query ${i}: ${JSON.stringify(ast)}`;
+        const fromSql = await sql(ast, v.user);
+        same(tsRun("turns", turns, v.team, ast), fromSql, `${what} (TypeScript)`);
+        assert.ok(!py[i].error, `${what}: ${py[i].error}`);
+        same(py[i].rows, fromSql, `${what} (Python)`);
+      }
+      for (const [entity, queries] of Object.entries(OTHER_QUERIES)) {
+        const all = await sql({ from: entity, limit: MAX_LIMIT }, v.user);
+        const pyo = python({ mode: "run", entity, records: all, team: v.team, queries });
+        for (const [i, ast] of queries.entries()) {
+          const what = `${v.name}, ${entity} query ${i}: ${JSON.stringify(ast)}`;
+          const fromSql = await sql(ast, v.user);
+          same(tsRun(entity, all, v.team, ast), fromSql, `${what} (TypeScript)`);
+          assert.ok(!pyo[i].error, `${what}: ${pyo[i].error}`);
+          same(pyo[i].rows, fromSql, `${what} (Python)`);
+        }
+      }
+    }
+  });
+}
+
+test("visibility in SQL: non-owners never see private fields, through rows, filters, sorts or aggregates", async () => {
+  await setStatus("running");
+  const [spectator, t1] = [db.users[N], db.users[1]];
+  const unfed = db.records.filter((t) => !t.fed);
+  const at1 = unfed.filter((t) => t.flower === 1 && t.percent !== null);
+  assert.ok(at1.length > 3 && unfed.some((t) => t.flower !== 1 && t.percent !== null), "the game has hidden percents to protect");
+  const agg = (fn, field, where = []) => ({ from: "turns", where, aggregates: [{ fn, field, as: "x" }] });
+  const unfedW = [W("fed", "eq", false)];
+  // The percent and energy of unfed turns: the flower's team only, in aggregates too.
+  assert.equal((await sql(agg("sum", "percent", unfedW), spectator))[0].x, null, "a spectator sums nothing");
+  assert.equal((await sql(agg("count", "energy", unfedW), spectator))[0].x, 0);
+  same((await sql(agg("sum", "percent", unfedW), t1))[0].x, at1.reduce((s, t) => s + t.percent, 0), "team 1 sums its own flower's only");
+  assert.equal((await sql(agg("max", "percent", unfedW), t1))[0].x, Math.max(...at1.map((t) => t.percent)));
+  // Filters and sorts on a hidden field see null.
+  const hiddenFilter = await sql({ from: "turns", where: [...unfedW, W("percent", "ge", 0)] }, t1);
+  assert.ok(hiddenFilter.length === at1.length && hiddenFilter.every((t) => t.flower === 1));
+  assert.equal((await sql({ from: "turns", where: [W("ms", "gt", 0)] }, spectator)).length, 0, "nobody else's CPU time");
+  assert.ok((await sql({ from: "turns", where: [W("ms", "isNull", false)] }, t1)).every((t) => t.flower === 1));
+  assert.ok((await sql({ from: "turns", where: [W("beeMs", "isNull", false)] }, t1)).every((t) => t.bee === 1));
+  const sorted = await sql({ from: "turns", orderBy: [{ field: "ms", dir: "desc" }], limit: 50 }, spectator);
+  assert.deepEqual(sorted.map((t) => [t.round, t.bee]), db.records.slice(0, 50).map((t) => [t.round, t.bee]), "sorting by a hidden field leaves the natural order");
+  const groups = await sql({ from: "turns", where: unfedW, groupBy: ["flower"], aggregates: [{ fn: "avg", field: "percent", as: "p" }] }, t1);
+  assert.ok(groups.every((g) => (g.flower === 1) === (g.p !== null)), JSON.stringify(groups));
+  // Feeds are public in full.
+  assert.equal((await sql(agg("count", "percent", [W("fed", "eq", true), W("response", "isNull", false)]), spectator))[0].x,
+    db.records.filter((t) => t.fed && t.response !== null).length);
+  // Versions: your own team's rows only; code your own.
+  const v1 = await sql({ from: "versions" }, t1);
+  assert.ok(v1.length === 4 && v1.every((r) => r.team === 1 && r.code !== null));
+  assert.equal((await sql({ from: "versions" }, spectator)).length, 0);
+  assert.equal((await sql({ from: "versions", aggregates: [{ fn: "count", as: "n" }] }, spectator))[0].n, 0, "not even their number");
+  // Memory: your own team's.
+  const teams = await sql({ from: "teams" }, t1);
+  assert.ok(teams.every((t) => (t.index === 1) === (t.memory !== null && t.memoryBytes !== null)));
+  assert.ok(teams.find((t) => t.index === 1).memory.n > 0);
+  // Pollen grains: the feeding bee's team's (filters and aggregates too); everyone's if the game's grains are public.
+  const grained = db.records.filter((t) => t.grain !== null);
+  assert.ok(grained.length > 5 && grained.some((t) => t.bee !== 1), "the game has grains to protect");
+  assert.equal((await sql(agg("count", "grain"), spectator))[0].x, 0, "a spectator sees none");
+  assert.equal((await sql(agg("count", "grainVersion"), t1))[0].x, grained.filter((t) => t.bee === 1).length, "team 1 its own bee's");
+  assert.ok((await sql({ from: "turns", where: [W("grain", "isNull", false)] }, t1)).every((t) => t.bee === 1 && t.fed));
+  await pool.query("UPDATE games SET config = jsonb_set(config, '{grains}', '\"public\"') WHERE id = $1", [db.game]);
+  assert.equal((await sql(agg("count", "grain"), spectator))[0].x, grained.length, "public grains: everyone's, as they happen");
+  await pool.query("UPDATE games SET config = jsonb_set(config, '{grains}', '\"feeder\"') WHERE id = $1", [db.game]);
+  // After the game, everything; code only if revealed.
+  await setStatus("finished", false);
+  assert.equal((await sql(agg("count", "grain"), spectator))[0].x, grained.length, "every grain, after the game");
+  assert.ok((await sql(agg("count", "percent", unfedW), spectator))[0].x > at1.length);
+  const all = await sql({ from: "versions" }, spectator);
+  assert.equal(all.length, 4 * N);
+  assert.ok(all.every((r) => r.code === null), "not revealed: no code");
+  assert.ok((await sql({ from: "versions" }, t1)).every((r) => (r.team === 1) === (r.code !== null)), "but your own");
+  assert.ok((await sql({ from: "teams" }, spectator)).every((t) => t.memory !== null), "every bee's memory is revealed");
+  await setStatus("finished", true);
+  assert.ok((await sql({ from: "versions" }, spectator)).every((r) => r.code !== null));
+});
+
+test("room queries: across the room's finished games only, fully revealed, scopes meaning the viewer's team in each", async () => {
+  await setStatus("running");
+  const room = async (ast, user) => (await runQuery(ast, { roomId: db.room, userId: user })).rows;
+  assert.deepEqual(await room({ from: "turns" }, db.users[N]), [], "a running game isn't included");
+  await setStatus("finished");
+  const games = await room({ from: "turns", groupBy: ["game"], aggregates: [{ fn: "count", as: "n" }] }, db.users[N]);
+  assert.deepEqual(games, [{ game: db.short, n: db.records.length }]);
+  const mine = await room({ from: "turns", scope: "myBee", aggregates: [{ fn: "count", as: "n" }] }, db.users[2]);
+  assert.equal(mine[0].n, db.records.filter((t) => t.bee === 2).length);
+  assert.equal((await room({ from: "turns", where: [W("ms", "isNull", false)], aggregates: [{ fn: "count", as: "n" }] }, db.users[N]))[0].n,
+    db.records.filter((t) => t.ms !== null).length, "fully revealed");
+});
+
+test("scores use each game's exponents: its config's (0.85 by default), or √ for a game stored without them, in SQL and the views (which say the mode too)", async () => {
+  const { score, scoringOf } = await import("../server/lib/scoring.js");
+  const { viewScores, viewGame } = await import("../server/games.js");
+  // (Fitness itself is the game's rule: checked below.)
+  const pick = (rows) => rows.map((r) => [r.team ?? r.teamId, r.pollination, r.forage, r.pollinationShare, r.forageShare]);
+  const expect = (exps) => pick(score(db.teams, db.out.feeds, db.out.nectar, db.out.pollen, exps).map((s, team) => ({ ...s, team })));
+  const roomRow = (await pool.query("SELECT * FROM rooms WHERE id = $1", [db.room])).rows[0];
+  const check = async (exps, what) => {
+    same(pick(await sql({ from: "scores" }, db.users[N])), expect(exps), `${what}: the scores entity`);
+    same(pick((await viewScores({ id: db.game })).scores.map((s, team) => ({ ...s, team }))), expect(exps), `${what}: the live scoreboard`);
+    const view = await viewGame(roomRow, { id: db.game }, null);
+    assert.deepEqual(view.game.config.scoring, exps, `${what}: the view's config says which`);
+  };
+  try {
+    await setStatus("finished");
+    assert.deepEqual(scoringOf(db.config), { alpha: 0.85, beta: 0.85, mode: "final" });
+    await check({ alpha: 0.85, beta: 0.85, mode: "final" }, "a new game");
+    // The same game as stored before the exponents existed: √, exactly the old numbers (and time-average).
+    await pool.query("UPDATE games SET config = config - 'scoring' WHERE id = $1", [db.game]);
+    await check({ alpha: 0.5, beta: 0.5, mode: "timeAverage" }, "a game from before");
+    const root = (v) => v.reduce((s, x) => s + Math.sqrt(Math.max(0, x)), 0);
+    const rows = await sql({ from: "scores" }, db.users[N]);
+    same(rows.map((r) => [r.pollination, r.forage]), rows.map((r) => [root(db.out.pollen.map((row) => row[r.team])), root(db.out.nectar[r.team])]), "Σ√, as before");
+    await pool.query("UPDATE games SET config = jsonb_set(config, '{scoring}', $2::jsonb) WHERE id = $1", [db.game, JSON.stringify({ alpha: 0.6, beta: 1 })]);
+    await check({ alpha: 0.6, beta: 1, mode: "timeAverage" }, "a game with its own exponents and no mode (v2, v3)");
+  } finally {
+    await pool.query("UPDATE games SET config = $2 WHERE id = $1", [db.game, db.config]);
+  }
+});
+
+test("fitness: with prevalence, by the game's mode: N² × p^F × p^B of the latest round (\"final\", live and final alike), or the time-average of F × B (\"timeAverage\", and games stored without a mode); without, N² × pollination share × forage share", async () => {
+  const { score } = await import("../server/lib/scoring.js");
+  const { instantFitness } = await import("../server/lib/prevalence.js");
+  const { viewScores, viewGame } = await import("../server/games.js");
+  const { fitness, sample } = db.out;
+  assert.equal(fitness.rounds, db.out.round, "one tally a round");
+  const roomRow = (await pool.query("SELECT * FROM rooms WHERE id = $1", [db.room])).rows[0];
+  const latest = (k) => sample[k];
+  const both = async () => [await sql({ from: "scores" }, db.users[N]), (await viewScores({ id: db.game })).scores, (await viewGame(roomRow, { id: db.game }, null)).scores];
+  try {
+    // "final": live, the instant value of the latest round; once over, of the final round. The same numbers.
+    const instant = fitness.last;
+    assert.equal(instant.length, N);
+    for (const status of ["running", "finished"]) {
+      await setStatus(status);
+      for (const rows of await both()) {
+        same(rows.map((r) => r.fitness), instant, `${status}: N² × p^F × p^B`);
+        same(rows.map((r) => [r.flowerSuccess, r.beeSuccess, r.flowerP, r.beeP]), instant.map((_, i) => [latest("F")[i], latest("B")[i], latest("pF")[i], latest("pB")[i]]));
+      }
+      assert.equal((await viewScores({ id: db.game })).fitnessBasis, "final");
+      assert.equal((await viewGame(roomRow, { id: db.game }, null)).game.fitnessBasis, "final");
+    }
+    // The latest sample was taken at a round whose instant value it carries.
+    instantFitness(sample.pF, sample.pB).forEach((x, i) => assert.ok(Math.abs(sample.fitness[i] - x) < 1e-4, `the sample's fitness is its round's N² × p^F × p^B (to its 6 decimals): ${sample.fitness[i]} vs ${x}`));
+    // "timeAverage" (explicitly, or a v3 config stored without a mode): the stored sums' time-average.
+    const want = fitness.sum.map((x) => x / fitness.rounds);
+    for (const scoring of [{ ...db.config.scoring, mode: "timeAverage" }, { alpha: db.config.scoring.alpha, beta: db.config.scoring.beta }]) {
+      await pool.query("UPDATE games SET config = jsonb_set(config, '{scoring}', $2::jsonb) WHERE id = $1", [db.game, JSON.stringify(scoring)]);
+      for (const rows of await both()) same(rows.map((r) => r.fitness), want, `the time-average (${JSON.stringify(scoring)})`);
+      assert.equal((await viewScores({ id: db.game })).fitnessBasis, "timeAverage");
+    }
+    assert.ok(Math.abs(want.reduce((a, b) => a + b, 0) / N - 1) < 0.6, "about par on average");
+    // A v3 game's stored sums had no `last`: still the time-average, unchanged.
+    await pool.query("UPDATE games SET fitness = fitness - 'last' WHERE id = $1", [db.game]);
+    for (const rows of await both()) same(rows.map((r) => r.fitness), want, "v3 sums");
+    await pool.query("UPDATE games SET fitness = $2 WHERE id = $1", [db.game, JSON.stringify(fitness)]);
+    await pool.query("UPDATE games SET config = $2 WHERE id = $1", [db.game, db.config]);
+    await setStatus("finished");
+    // The same ledgers in a game without prevalence: the old rule, and no F or B.
+    await pool.query("UPDATE games SET config = config - 'prevalence' WHERE id = $1", [db.game]);
+    const old = score(db.teams, db.out.feeds, db.out.nectar, db.out.pollen, db.config.scoring).map((s) => s.fitness);
+    for (const rows of [await sql({ from: "scores" }, db.users[N]), (await viewScores({ id: db.game })).scores]) {
+      same(rows.map((r) => r.fitness), old);
+      assert.ok(rows.every((r) => r.flowerSuccess === null && r.beeP === null));
+    }
+    assert.equal((await viewScores({ id: db.game })).fitnessBasis, "shares");
+  } finally {
+    await pool.query("UPDATE games SET config = $2, fitness = $3 WHERE id = $1", [db.game, db.config, JSON.stringify(fitness)]);
+  }
+});
+
+test("the game's end is hidden: no view, score, stream page, ledger, query or interface text a team (or a spectator, or an owner with a team) can read has it until the game is over; then everyone's does", async () => {
+  const G = await import("../server/games.js");
+  const { programInterface } = await import("../server/lib/interface.js");
+  const END = 437_400; // the drawn end: a whole round, between 5 and 10 minutes
+  assert.deepEqual([db.config.minutes, db.config.endFactor], [5, 2]);
+  const roomRow = async () => (await pool.query("SELECT * FROM rooms WHERE id = $1", [db.room])).rows[0];
+  const everything = async (user) => {
+    const room = await roomRow(), game = { id: db.game };
+    const parts = [
+      await G.viewGame(room, game, user ? { id: user } : null), await G.viewScores(game), await G.viewRoom(room, user ? { id: user } : null),
+      await G.viewActions(game, user ? { id: user } : null, { after: 0, limit: 5000 }), await G.viewLedger(game, user ? { id: user } : null, { limit: 5000 }),
+      await G.viewPrevalence(game), programInterface(db.config),
+    ];
+    for (const from of ["scores", "prevalence", "teams", "versions", "pairs", "turns"]) parts.push(await sql({ from, limit: MAX_LIMIT }, user));
+    return parts;
+  };
+  const leaks = (x) => JSON.stringify(x).includes(String(END));
+  try {
+    await pool.query("UPDATE games SET end_ms = $2 WHERE id = $1", [db.game, END]);
+    for (const status of ["running", "paused"]) {
+      await setStatus(status);
+      for (const v of viewers()) {
+        const all = await everything(v.user);
+        assert.ok(!leaks(all), `${status}, ${v.name}${v.team === 0 ? " (the room's owner, on a team)" : ""}: the end shows somewhere`);
+        const g = all[0].game;
+        assert.deepEqual([g.minMs, g.maxMs, g.endMs, g.drawnEndMs ?? null], [300000, 600000, null, null], `${status}, ${v.name}: the range only`);
+        assert.deepEqual([all[1].minMs, all[1].maxMs, all[1].endMs, "drawnEndMs" in all[1]], [300000, 600000, null, false]);
+        assert.ok(all[2].games.filter((x) => x.id === db.game).every((x) => x.endMs === null && x.maxMs === 600000));
+      }
+      // The room's owner, with no team in the game, may see it (the owner's view only).
+      await pool.query("UPDATE rooms SET owner_id = $2 WHERE id = $1", [db.room, db.users[N]]);
+      const owner = await G.viewGame(await roomRow(), { id: db.game }, { id: db.users[N] });
+      assert.deepEqual([owner.game.endMs, owner.game.drawnEndMs], [null, END]);
+      assert.ok(!leaks(await G.viewScores({ id: db.game })), "not in the public scores, whoever asks");
+      await pool.query("UPDATE rooms SET owner_id = $2 WHERE id = $1", [db.room, db.users[0]]);
+    }
+    // Over: revealed in the game record, to everyone.
+    await setStatus("finished");
+    for (const v of viewers()) {
+      const room = await roomRow();
+      assert.equal((await G.viewGame(room, { id: db.game }, { id: v.user })).game.endMs, END, v.name);
+      assert.equal((await G.viewScores({ id: db.game })).endMs, END);
+      assert.equal((await G.viewRoom(room, { id: v.user })).games.find((x) => x.id === db.game).endMs, END);
+    }
+    // A game with a fixed end (endFactor 1, or stored before random ends) shows it all along.
+    await setStatus("running");
+    for (const cfg of [{ ...db.config, endFactor: 1 }, (({ endFactor: _, ...c }) => c)(db.config)]) {
+      await pool.query("UPDATE games SET config = $2, end_ms = NULL WHERE id = $1", [db.game, cfg]);
+      const g = (await G.viewGame(await roomRow(), { id: db.game }, { id: db.users[1] })).game;
+      assert.deepEqual([g.minMs, g.maxMs, g.endMs, g.config.endFactor], [300000, 300000, 300000, 1]);
+    }
+  } finally {
+    await pool.query("UPDATE rooms SET owner_id = $2 WHERE id = $1", [db.room, db.users[0]]);
+    await pool.query("UPDATE games SET config = $2, end_ms = NULL WHERE id = $1", [db.game, db.config]);
+    await setStatus("running");
+  }
+});
+
+test("starting a game draws its end from [minutes, endFactor × minutes], a whole round, into games.end_ms; the start's reply doesn't carry it", async () => {
+  const G = await import("../server/games.js");
+  const room = (await pool.query("SELECT * FROM rooms WHERE id = $1", [db.room])).rows[0];
+  const owner = { id: db.users[0] }, ends = [], made = [];
+  const lobby = async (config) => {
+    const id = crypto.randomUUID();
+    made.push(id);
+    await pool.query("INSERT INTO games (id, room_id, code, prefix_len, config) VALUES ($1, $2, $3, 26, $4)", [id, db.room, uuidToCode(id), config]);
+    for (const i of [1, 2]) {
+      const t = crypto.randomUUID();
+      await pool.query("INSERT INTO teams (id, game_id, name, join_code, color, created_by) VALUES ($1, $2, $3, $4, '#000', $5)", [t, id, `S${i}`, `s${i}${id.slice(0, 6)}`, db.users[i]]);
+      for (const kind of ["flower", "bee"]) {
+        await pool.query("INSERT INTO programs (game_id, team_id, kind, version, code, size, cost, at_ms, submitted_by) VALUES ($1, $2, $3, 1, '#', 1, 0, 0, $4)", [id, t, kind, db.users[i]]);
+      }
+    }
+    return id;
+  };
+  const config = normalizeConfig({ minutes: 0.5, endFactor: 3 }); // 30 s to 90 s
+  try {
+  for (let i = 0; i < 6; i++) {
+    const id = await lobby(config);
+    const reply = await G.startGame(room, { id }, owner);
+    const end = Number((await pool.query("SELECT end_ms FROM games WHERE id = $1", [id])).rows[0].end_ms);
+    assert.ok(!JSON.stringify(reply).includes(String(end)) && !("endMs" in reply), JSON.stringify(reply));
+    assert.ok(end >= 30000 && end <= 90000 && end % 200 === 0, `${end}`);
+    ends.push(end);
+    await pool.query("UPDATE games SET status = 'finished' WHERE id = $1", [id]); // nobody runs it here
+  }
+  assert.ok(new Set(ends).size > 1, `drawn, not fixed: ${ends}`);
+  const fixed = await lobby(normalizeConfig({ minutes: 0.5, endFactor: 1 }));
+  await G.startGame(room, { id: fixed }, owner);
+  assert.equal(Number((await pool.query("SELECT end_ms FROM games WHERE id = $1", [fixed])).rows[0].end_ms), 30000);
+  } finally {
+    await pool.query("DELETE FROM games WHERE id = ANY($1)", [made]);
+  }
+});
+
+test("prevalence: one row per team per sample, the garden's own; public to everyone; each side's draw chances sum to 1", async () => {
+  await setStatus("running");
+  const samples = db.out.samples;
+  assert.ok(samples.length >= 15, `${samples.length} samples in 80 rounds (one every 5)`);
+  for (const v of viewers()) {
+    const rows = await sql({ from: "prevalence", limit: MAX_LIMIT }, v.user);
+    assert.equal(rows.length, samples.length * N, v.name);
+    same(rows, samples.flatMap((x) => x.F.map((F, team) => ({
+      game: db.short, round: x.round, atMs: x.atMs, team, flowerSuccess: F, beeSuccess: x.B[team], flowerP: x.pF[team], beeP: x.pB[team],
+      fitness: x.fitness[team], balance: x.balance[team], c: x.c, slots: x.slots,
+    }))), `${v.name}: the samples`);
+  }
+  const totals = await sql({ from: "prevalence", groupBy: ["round"], aggregates: [{ fn: "sum", field: "flowerP", as: "f" }, { fn: "sum", field: "beeP", as: "b" }] }, db.users[N]);
+  assert.ok(totals.every((r) => Math.abs(r.f - 1) < 1e-5 && Math.abs(r.b - 1) < 1e-5), JSON.stringify(totals));
+  // Feeds show the price, the net and the bee's balance after the feed (pools).
+  const feeds = await sql({ from: "turns", where: [W("fed", "eq", true)], select: ["nectar", "price", "net", "balance"], limit: MAX_LIMIT }, db.users[N]);
+  const { feedPriceOf } = await import("../server/lib/gameConfig.js");
+  assert.equal(feedPriceOf(db.config), 0.05 * 1100 * 50 * 65536, "0.05 × Emax (this game's byte cap is 64 KiB)");
+  assert.ok(feeds.length > 10 && feeds.every((t) => t.price === feedPriceOf(db.config) && Math.abs(t.net - (t.nectar - t.price)) < 1e-6 && typeof t.balance === "number"), JSON.stringify(feeds[0]));
+  assert.ok((await sql({ from: "turns", where: [W("fed", "eq", false)], select: ["price", "net"], limit: 5 }, db.users[N])).every((t) => t.price === null && t.net === null));
+});
+
+test("big responses: the record shows their size and hash; the whole text is stored apart, and served by seq", async () => {
+  const { viewResponse } = await import("../server/games.js");
+  const big = db.records.filter((t) => t.responseHash !== null);
+  assert.ok(big.length >= 3, `${big.length} big responses`);
+  for (const t of big.slice(0, 5)) {
+    assert.equal(t.response, null);
+    assert.ok(t.responseBytes > 4096);
+    const text = await viewResponse({ id: db.game }, t.seq);
+    assert.equal(Buffer.byteLength(text), t.responseBytes);
+    assert.equal(crypto.createHash("sha256").update(text).digest("hex"), t.responseHash);
+    assert.deepEqual(JSON.parse(text), Array.from({ length: 1500 }, (_, i) => t.challenge + i));
+    // The action (what pages and live feeds carry) has the preview.
+    const a = db.out.actions.find((x) => x.seq === t.seq);
+    assert.equal(a.r, null);
+    assert.equal(a.rPreview, text.slice(0, 4096), "(ASCII: the first 4,096 characters)");
+    assert.equal(a.rHash, t.responseHash);
+  }
+  const small = db.records.find((t) => t.responseHash === null && t.response !== null);
+  assert.equal(await viewResponse({ id: db.game }, small.seq), JSON.stringify(small.response));
+  const failed = db.records.find((t) => t.response === null && t.responseBytes === null);
+  assert.equal(await viewResponse({ id: db.game }, failed.seq), null, "a failed flower's turn has no response");
+  // Queries see the same: response null, size and hash public.
+  const rows = await sql({ from: "turns", where: [W("responseHash", "isNull", false)], select: ["seq", "response", "responseBytes"] }, null);
+  assert.deepEqual(rows.map((r) => r.seq).sort((x, y) => x - y), big.map((t) => t.seq).sort((x, y) => x - y));
+  assert.ok(rows.every((r) => r.response === null && r.responseBytes > 4096));
+});
+
+// ---------- private play ----------
+
+/** The same garden output as a second, private game in the room (its own teams, the same users), still running. */
+async function privateGame(extra = {}) {
+  const id = crypto.randomUUID(), teams = Array.from({ length: N }, () => crypto.randomUUID());
+  const config = { ...db.config, visibility: "private", prevalenceEveryS: 5, ...extra };
+  const out = db.out;
+  await tx(async (c) => {
+    await c.query(`INSERT INTO games (id, room_id, code, prefix_len, config, status, participants, feeds, nectar, pollen, clock_ms, round, last_seq, fitness, prevalence)
+      VALUES ($1, $2, $3, 26, $4, 'running', $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+    [id, db.room, uuidToCode(id), config, teams, JSON.stringify(out.feeds), JSON.stringify(out.nectar), JSON.stringify(out.pollen),
+      out.clockMs, out.round, out.lastSeq, JSON.stringify(out.fitness), JSON.stringify(out.sample)]);
+    for (const [i, t] of teams.entries()) {
+      await c.query("INSERT INTO teams (id, game_id, name, join_code, color, created_by) VALUES ($1, $2, $3, $4, '#000', $5)", [t, id, `P${i}`, `p${i}${id.slice(0, 8)}`, db.users[i]]);
+      await c.query("INSERT INTO team_members (team_id, game_id, user_id) VALUES ($1, $2, $3)", [t, id, db.users[i]]);
+      for (const kind of ["flower", "bee"]) {
+        await c.query(`INSERT INTO programs (game_id, team_id, kind, version, code, size, cost, at_ms, submitted_by) VALUES ($1, $2, $3, 1, $4, 50, 0, 0, $5)`,
+          [id, t, kind, `# ${kind} of P${i}`, db.users[i]]);
+      }
+      await c.query("INSERT INTO banks (game_id, team_id, kind, bank, at_ms) VALUES ($1, $2, 'flower', 0, 0), ($1, $2, 'bee', 0, 0)", [id, t]);
+    }
+    for (const m of out.memories) {
+      await c.query("INSERT INTO bee_memories (game_id, team_id, bee_version, memory, bytes, error, at_round) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        [id, teams[m.team], m.version, m.memory, m.bytes, m.error, out.round]);
+    }
+    await insertActions(c, id, out.actions, teams);
+    await insertSamples(c, id, out.samples);
+  });
+  return { id, teams, config, short: uuidToCode(id) };
+}
+
+const is2dp = (x) => x === null || (typeof x === "number" && Math.abs(Math.round(x * 100) / 100 - x) < 1e-12);
+
+test("private play: a member, a spectator and an anonymous reader see only their own programs' sides of their turns, bare grains and 2-decimal prevalence snapshots, on every surface; the room's owner with no team sees it all", async () => {
+  const G = await import("../server/games.js");
+  const { gameFeed } = await import("../server/realtime.js");
+  const { programInterface } = await import("../server/lib/interface.js");
+  const { gameInfo } = await import("../server/engine.js");
+  const P = await privateGame();
+  const game = { id: P.id };
+  const roomRow = async () => (await pool.query("SELECT * FROM rooms WHERE id = $1", [db.room])).rows[0];
+  const ME = 1, meUser = { id: db.users[ME] }, myId = P.teams[ME];
+  const others = P.teams.filter((t) => t !== myId);
+  // Snapshots: the samples at the first round at or after each 5 s of game time; the latest is at 15 s.
+  const snaps = db.out.samples.filter((x) => x.atMs % 5000 === 0);
+  assert.deepEqual(snaps.map((x) => x.atMs), [0, 5000, 10000, 15000]);
+  const last = snaps.at(-1), r2 = (x) => Math.round(x * 100) / 100;
+  // What each turn looks like to team ME, from the garden's own records.
+  const mineTurns = db.records.filter((t) => t.bee === ME || t.flower === ME);
+  const sides = mineTurns.reduce((k, t) => k + (t.bee === ME) + (t.flower === ME), 0);
+  assert.ok(mineTurns.some((t) => t.bee === ME && t.fed && t.grain), "the fixture gives team 1's bee a grain");
+  const leaks = (x, ids = others) => { const j = JSON.stringify(x); return ids.filter((id) => j.includes(id)); };
+  try {
+    for (const [who, user] of [["member", meUser], ["spectator", { id: db.users[N] }], ["anonymous", null]]) {
+      const member = who === "member";
+      const room = await roomRow();
+      // The game view and the live numbers: the latest snapshot's F, B, p^F, p^B and fitness, rounded; nothing else.
+      const view = await G.viewGame(room, game, user);
+      const scores = await G.viewScores(game, user);
+      for (const v of [view, scores]) {
+        assert.equal(v.ledgers, null, `${who}: no ledgers`);
+        assert.equal(v.restricted ?? v.game.restricted, true);
+        assert.deepEqual(v.scores.map((s) => [s.fitness, s.flowerSuccess, s.beeSuccess, s.flowerP, s.beeP]),
+          last.F.map((_, i) => [r2(last.fitness[i]), r2(last.F[i]), r2(last.B[i]), r2(last.pF[i]), r2(last.pB[i])]), `${who}: the scoreboard is the latest snapshot's`);
+        assert.ok(v.scores.every((s) => [s.pollination, s.forage, s.pollinationShare, s.pollen, s.feedsReceived, s.feedsGiven, s.pollinators, s.nectarCollected, s.nectarGiven, s.nectarSources].every((x) => x === null)));
+        const smp = v.prevalence.sample;
+        assert.deepEqual([smp.round, smp.atMs, smp.c, smp.snapshot], [last.round, 15000, r2(last.c), true]);
+        assert.ok(smp.species.every((x) => x.balance === null && [x.flowerSuccess, x.beeSuccess, x.flowerP, x.beeP, x.fitness].every(is2dp)));
+      }
+      assert.ok(view.teams.every((t) => (t.id === myId && member) || (t.programs === null && t.banks === null && t.memory === null)), `${who}: only your own team's versions, budgets and MEMORY`);
+      // Actions (the REST pages and the SSE/WebSocket feed, which reads them): only your own programs' sides.
+      const page = await G.viewActions(game, user, { after: 0, limit: 5000 });
+      const back = await G.viewActions(game, user, { before: db.out.lastSeq + 1, limit: 5000 });
+      assert.deepEqual(back.actions, page.actions, "before= pages the same records");
+      assert.deepEqual([page.prevalence.round, page.prevalence.snapshot], [last.round, true]);
+      if (!member) assert.deepEqual(page.actions, [], `${who}: no turns at all`);
+      else {
+        assert.equal(page.actions.length, sides, "one record per side your team played");
+        assert.deepEqual(leaks(page.actions), [], "no other team's id anywhere");
+        for (const a of page.actions) {
+          assert.ok(a.action !== "arrive", "no arrivals");
+          if (a.side === "flower") {
+            assert.deepEqual([a.flower, a.action, "bee" in a, "turn" in a, "energy" in a, "pollen" in a, "nectar" in a, "beeMs" in a, "grain" in a], [myId, "answer", false, false, false, false, false, false, false]);
+            assert.ok("percent" in a && "budgetMs" in a && "ms" in a && "flowerError" in a);
+          } else {
+            assert.equal(a.side, "bee");
+            assert.deepEqual([a.bee, "flower" in a, "flowerVersion" in a, "percent" in a, "energy" in a, "pollen" in a, "ms" in a, "budgetMs" in a, "flowerError" in a, "grainVersion" in a, "grainCodeLength" in a],
+              [myId, false, false, false, false, false, false, false, false, false, false]);
+            assert.ok(["feed", "leave"].includes(a.action));
+            if (a.action === "feed") assert.ok("nectar" in a && "price" in a && "net" in a && "balance" in a);
+          }
+        }
+        assert.ok(page.actions.some((a) => a.side === "bee" && typeof a.grain === "string"), "your bee's grains, bare");
+      }
+      const feed = [];
+      const stop = gameFeed({ gameId: P.id, teamId: member ? myId : null, version: 1, after: 0, fetchActions: (after) => G.viewActions(game, user, { after, limit: 1000 }), send: (m) => feed.push(m), isOpen: () => true });
+      for (let i = 0; i < 50 && !feed.some((m) => m.lastSeq !== undefined && !m.actions); i++) await new Promise((r) => setTimeout(r, 20));
+      stop();
+      const streamed = feed.flatMap((m) => m.actions ?? []);
+      assert.deepEqual(streamed, page.actions, `${who}: the live feed carries the same records`);
+      assert.ok(feed.filter((m) => m.prevalence).every((m) => m.prevalence.snapshot === true), "and only snapshots");
+      // The team ledger and the history queries.
+      const ledger = await G.viewLedger(game, user, { limit: 5000 });
+      const turns = (await G.queryGame(game, user, { from: "turns", limit: MAX_LIMIT })).rows;
+      if (!member) { assert.deepEqual([ledger.entries, turns], [[], []], who); }
+      else {
+        for (const rows of [ledger.entries, turns]) {
+          assert.equal(rows.length, sides);
+          for (const r of rows) {
+            if (r.flower === ME) assert.deepEqual([r.bee, r.turn, r.fed, r.nectar, r.pollen, r.energy, r.beeMs, r.grain], [null, null, null, null, null, null, null, null]);
+            else assert.deepEqual([r.bee, r.flower, r.percent, r.energy, r.pollen, r.ms, r.budgetMs, r.flowerVersion, r.grainVersion, r.grainCodeLength], [ME, null, null, null, null, null, null, null, null, null]);
+          }
+        }
+        same(turns.map((r) => [r.seq, r.bee, r.flower]).sort(), ledger.entries.map((r) => [r.seq, r.bee, r.flower]).sort(), "SQL and the ledger agree");
+        const byFlower = (await G.queryGame(game, user, { from: "turns", groupBy: ["flower"], aggregates: [{ fn: "count", as: "n" }] })).rows;
+        assert.ok(byFlower.every((r) => r.flower === ME || r.flower === null), "aggregates see nothing else either");
+      }
+      assert.deepEqual((await G.queryGame(game, user, { from: "pairs" })).rows, [], `${who}: no pairs`);
+      const prev = (await G.queryGame(game, user, { from: "prevalence", limit: MAX_LIMIT })).rows;
+      assert.deepEqual([...new Set(prev.map((r) => r.atMs))], [0, 5000, 10000, 15000], `${who}: prevalence only at the snapshots`);
+      assert.ok(prev.every((r) => r.balance === null && [r.flowerSuccess, r.beeSuccess, r.flowerP, r.beeP, r.fitness, r.c].every(is2dp)), "rounded to 2 decimals");
+      const restSamples = (await G.viewPrevalence(game, {}, user)).samples;
+      assert.deepEqual(restSamples.map((x) => x.atMs), [0, 5000, 10000, 15000]);
+      assert.ok(restSamples.every((x) => x.snapshot && is2dp(x.c) && x.species.every((s) => s.balance === null && is2dp(s.fitness) && is2dp(s.flowerP))));
+      const qScores = (await G.queryGame(game, user, { from: "scores" })).rows;
+      same(qScores.map((r) => [r.fitness, r.flowerP, r.pollination]), last.F.map((_, i) => [r2(last.fitness[i]), r2(last.pF[i]), null]));
+      const versions = (await G.queryGame(game, user, { from: "versions" })).rows;
+      assert.ok(versions.every((r) => member && r.team === ME), `${who}: only your own versions`);
+      const teamRows = (await G.queryGame(game, user, { from: "teams" })).rows;
+      assert.ok(teamRows.every((r) => (member && r.index === ME) || r.memory === null));
+      // A response is yours only if the turn was.
+      const otherTurn = db.records.find((t) => t.bee !== ME && t.flower !== ME && t.response !== null);
+      const ownTurn = db.records.find((t) => (t.bee === ME || t.flower === ME) && t.response !== null);
+      assert.equal(await G.viewResponse(game, otherTurn.seq, user), null, `${who}: another team's response is hidden`);
+      assert.equal(await G.viewResponse(game, ownTurn.seq, user) !== null, member);
+      // The room's list.
+      assert.deepEqual(leaks(await G.viewRoom(room, user), P.teams), []);
+    }
+    // The interface text and GAME carry nothing about other species (as in any game).
+    assert.deepEqual(leaks(programInterface(P.config), P.teams), []);
+    assert.deepEqual(Object.keys(gameInfo(P.config, 1, N)).sort(), ["challenge_type", "feed_cost", "feed_price", "flower_ms", "flower_size_cap", "flower_window_ms",
+      "max_len", "max_nodes", "max_response_bytes", "response_type", "round_ms", "team", "teams"]);
+    // The room's owner, with no team in the game, sees it as a public game: every arrival, sample, ledger and row.
+    await pool.query("UPDATE rooms SET owner_id = $2 WHERE id = $1", [db.room, db.users[N]]);
+    const owner = { id: db.users[N] };
+    const ov = await G.viewGame(await roomRow(), game, owner);
+    assert.equal(ov.game.restricted, false);
+    assert.ok(ov.ledgers && ov.scores.every((s) => typeof s.pollination === "number") && ov.prevalence.sample.round === db.out.sample.round);
+    const oa = await G.viewActions(game, owner, { after: 0, limit: 5000 });
+    assert.equal(oa.actions.length, db.out.actions.length);
+    assert.ok(oa.actions.some((a) => a.action === "arrive" && P.teams.includes(a.bee) && P.teams.includes(a.flower)));
+    assert.equal((await G.queryGame(game, owner, { from: "turns", limit: MAX_LIMIT })).rows.length, db.records.length);
+    assert.equal((await G.viewPrevalence(game, {}, owner)).samples.length, db.out.samples.length);
+    assert.equal((await G.viewScores(game, owner)).restricted, false);
+    await pool.query("UPDATE rooms SET owner_id = $2 WHERE id = $1", [db.room, db.users[0]]);
+    // The owner on a team is a player like any other.
+    assert.equal((await G.viewGame(await roomRow(), game, { id: db.users[0] })).game.restricted, true);
+    // Over: everything is revealed, as in any game, the final round's sample with it: the final score is exactly
+    // N² × p^F × p^B of that published sample (during play it was in nothing a player could read: above).
+    await pool.query("UPDATE games SET status = 'finished' WHERE id = $1", [P.id]);
+    const fin = (await G.viewPrevalence(game, {}, null)).samples.at(-1);
+    assert.deepEqual([fin.round, fin.atMs, db.out.samples.at(-2).round], [db.out.round, (db.out.round - 1) * 200, 76], "the last round played (80), off the once-a-second schedule");
+    const { instantFitness } = await import("../server/lib/prevalence.js");
+    const final = instantFitness(fin.species.map((x) => x.flowerP), fin.species.map((x) => x.beeP));
+    for (const rows of [(await G.viewScores(game, null)).scores, (await G.queryGame(game, null, { from: "scores" })).rows]) {
+      assert.deepEqual(rows.map((r) => r.fitness), final, "bit for bit");
+    }
+    const after = await G.viewActions(game, null, { after: 0, limit: 5000 });
+    assert.equal(after.actions.length, db.out.actions.length);
+    assert.ok((await G.viewGame(await roomRow(), game, null)).ledgers);
+    assert.equal((await G.queryGame(game, null, { from: "turns", limit: MAX_LIMIT })).rows.length, db.records.length);
+  } finally {
+    await pool.query("UPDATE rooms SET owner_id = $2 WHERE id = $1", [db.room, db.users[0]]);
+    await pool.query("DELETE FROM games WHERE id = $1", [P.id]);
+  }
+});
+
+test("public games are unchanged: a config stored without visibility is public, its turns, samples and ledgers public as they happen", async () => {
+  const G = await import("../server/games.js");
+  const { normalizeConfig: norm } = await import("../server/lib/gameConfig.js");
+  assert.deepEqual([norm({}).visibility, norm({}).prevalenceEveryS], ["private", 30], "new games are private");
+  const { visibility: _, ...stored } = db.config;
+  assert.equal(norm({ minutes: 3 }, stored).visibility, "public", "a config stored without it stays public");
+  try {
+    await pool.query("UPDATE games SET config = $2 WHERE id = $1", [db.game, stored]);
+    await setStatus("running");
+    const page = await G.viewActions({ id: db.game }, null, { after: 0, limit: 5000 });
+    assert.equal(page.actions.length, db.out.actions.length, "a spectator sees every action");
+    assert.ok(page.actions.some((a) => a.action === "arrive") && page.actions.every((a) => !("side" in a)));
+    assert.equal(page.prevalence.round, db.out.sample.round, "the latest sample, not a snapshot");
+    const scores = await G.viewScores({ id: db.game }, null);
+    assert.ok(scores.ledgers && !scores.restricted && scores.scores.every((s) => typeof s.feedsGiven === "number"));
+    assert.equal((await G.viewPrevalence({ id: db.game }, {}, null)).samples.length, db.out.samples.length);
+    assert.equal((await G.queryGame({ id: db.game }, null, { from: "turns", limit: MAX_LIMIT })).rows.length, db.records.length);
+  } finally {
+    await pool.query("UPDATE games SET config = $2 WHERE id = $1", [db.game, db.config]);
+  }
+});
+
+test("bad queries are refused with a reason; limits are capped", async () => {
+  const bad = [
+    [{ from: "nope" }, /unknown entity/],
+    [{ from: "turns", where: [W("percent", "gt", "x")] }, /isn't a float/],
+    [{ from: "turns", where: [W("challenge", "lt", 3)] }, /takes eq, ne, in, isNull/],
+    [{ from: "turns", where: [W("round", "eq", 1.5)] }, /isn't an int/],
+    [{ from: "turns", where: [W("bee", "eq", null)] }, /use is_?[nN]ull/],
+    [{ from: "turns", groupBy: ["challenge"] }, /can't be grouped/],
+    [{ from: "turns", aggregates: [{ fn: "sum", field: "fed" }] }, /doesn't apply/],
+    [{ from: "turns", select: ["round"], aggregates: [{ fn: "count" }] }, /select can't be combined/],
+    [{ from: "turns", orderBy: [{ field: "challenge" }] }, /can't be sorted/],
+    [{ from: "turns", limit: -1 }, /limit/],
+    [{ from: "turns", drop: "table" }, /unknown query key/],
+    [{ from: "turns", aggregates: [{ fn: "count", as: 'x"; drop' }] }, /valid name/],
+    [{ from: "versions", scope: "myBee" }, /no scope "myBee"/],
+  ];
+  for (const [ast, msg] of bad) {
+    await assert.rejects(runQuery(ast, { gameId: db.game, userId: null }), (e) => e.status === 400 && msg.test(e.message), JSON.stringify(ast));
+    assert.throws(() => new H.Table(ast.from in SCHEMA.entities ? ast.from : "turns").run(ast), msg);
+    const py = python({ mode: "run", entity: ast.from in SCHEMA.entities ? ast.from : "turns", records: [], team: null, queries: [ast] });
+    assert.match(py[0].error, msg, JSON.stringify(ast));
+  }
+  const big = await runQuery({ from: "turns", limit: 100000 }, { gameId: db.game, userId: null });
+  assert.equal(big.truncated, false, "fewer rows than the cap");
+  const small = await runQuery({ from: "turns", limit: 10 }, { gameId: db.game, userId: null });
+  assert.equal(small.rows.length, 10);
+  assert.equal(small.truncated, true);
+});
+
+test("the builders build the same AST in Python and TypeScript", () => {
+  const pairs = [
+    [`T['turns'].eq('fed', True).rounds(5, 9).order_by('round', desc=True).limit(3)`, (T) => T.turns.eq("fed", true).rounds(5, 9).orderBy("round", "desc").limit(3)],
+    [`T['turns'].my_bee().group_by('flower').sum('nectar').count()`, (T) => T.turns.myBee().groupBy("flower").sum("nectar").count()],
+    [`T['turns'].in_('bee', [1, 2]).is_null('percent').not_null('response').select('round', 'bee')`, (T) => T.turns.in("bee", [1, 2]).isNull("percent").notNull("response").select("round", "bee")],
+    [`T['turns'].between('energy', 1, 2).avg('pollen', as_='p').min('energy').max('energy', 'top')`, (T) => T.turns.between("energy", 1, 2).avg("pollen", "p").min("energy").max("energy", "top")],
+    [`T['versions'].mine().eq('kind', 'bee').order_by('at_ms', desc=True).offset(2)`, (T) => T.versions.mine().eq("kind", "bee").orderBy("atMs", "desc").offset(2)],
+    [`T['turns'].count('bee_ms', as_='timed').ne('flower_error', 'x').lt('ms', 3).le('round', 9).gt('pollen', 0).ge('turn', 2)`,
+      (T) => T.turns.count("beeMs", "timed").ne("flowerError", "x").lt("ms", 3).le("round", 9).gt("pollen", 0).ge("turn", 2)],
+    [`T['scores'].mine().order_by('fitness', desc=True).limit(1)`, (T) => T.scores.mine().orderBy("fitness", "desc").limit(1)],
+    [`T['turns'].my_flower().eq('challenge', {'a': [1, 2]})`, (T) => T.turns.myFlower().eq("challenge", { a: [1, 2] })],
+  ];
+  const T = Object.fromEntries(Object.keys(SCHEMA.entities).map((e) => [e, new H.Table(e).query(0)]));
+  const py = python({ mode: "build", team: 0, exprs: pairs.map(([p]) => p) });
+  for (const [i, [p, ts]] of pairs.entries()) assert.deepEqual(py[i], JSON.parse(JSON.stringify(ts(T).ast())), p);
+  // Default aggregate names follow each language's field names.
+  assert.deepEqual(python({ mode: "build", team: 0, exprs: [`T['turns'].count('bee_ms')`] })[0].aggregates, [{ fn: "count", field: "beeMs", as: "count_bee_ms" }]);
+  assert.deepEqual(T.turns.count("beeMs").ast().aggregates, [{ fn: "count", field: "beeMs", as: "count_beeMs" }]);
+});
+
+test("immutability: queries, results, records and local().history can't be changed, in either language", () => {
+  const recs = db.records.slice(0, 30);
+  const local = H.local(recs, 1);
+  const q = local.turns;
+  const q2 = q.eq("fed", true);
+  assert.notEqual(q, q2);
+  assert.deepEqual(q.ast(), { from: "turns" }, "the original query is unchanged");
+  for (const x of [q, q2, q2.ast(), q2.ast().where, q2.ast().where[0], local, local.history]) assert.ok(Object.isFrozen(x));
+  const rows = q.rows();
+  assert.ok(Object.isFrozen(rows) && rows.every((r) => Object.isFrozen(r)));
+  assert.throws(() => { "use strict"; rows[0].round = 9; });
+  assert.throws(() => { "use strict"; rows.push(1); });
+  const agg = q.groupBy("flower").count().rows();
+  assert.ok(Object.isFrozen(agg) && Object.isFrozen(agg[0]));
+  assert.equal(typeof local.history.append, "undefined", "history has no append");
+  assert.equal(local.history.turns.rows().length, 30);
+  local.append(db.records.slice(30, 40));
+  assert.equal(local.history.turns.rows().length, 40, "append() reaches the same history");
+  const py = python({ mode: "immutable" });
+  for (const [check, ok] of Object.entries(py)) assert.ok(ok, `python: ${check}`);
+});
+
+test("the arena's hooks: local(records, team) with append(), and connect(..., post) over a caller's transport", async () => {
+  await setStatus("running");
+  const team = 2, user = db.users[team];
+  const exprs = [
+    [`h.turns.my_bee().eq('fed', True).group_by('flower').sum('nectar').count()`, (h) => h.turns.myBee().eq("fed", true).groupBy("flower").sum("nectar").count()],
+    [`h.turns.rounds(10, 12)`, (h) => h.turns.rounds(10, 12)],
+    [`h.scores.order_by('fitness', desc=True)`, (h) => h.scores.orderBy("fitness", "desc")],
+    [`h.turns.select('round', 'bee_ms').limit(5)`, (h) => h.turns.select("round", "beeMs").limit(5)],
+    [`h.teams.mine()`, (h) => h.teams.mine()],
+  ];
+  // TypeScript: post() runs the query in SQL as this team.
+  const posts = [];
+  const h = H.connect({ room: "R", game: "G", post: async (p, ast) => { posts.push(p); return runQuery(ast, { gameId: db.game, userId: user }); } });
+  const pages = {};
+  for (const [, ts] of exprs) {
+    const ast = ts(h).ast();
+    const expected = await sql(ast, user);
+    same([...(await ts(h).rows())], expected, JSON.stringify(ast));
+    pages[canonicalJson(H.validate(ast))] = { rows: expected, truncated: false };
+  }
+  assert.ok(posts.every((p) => p === "/api/rooms/R/games/G/query"));
+  assert.equal(await h.turns.myBee().count().value(), db.records.filter((t) => t.bee === team).length, "value() works remotely");
+  // Python: the same, through post() returning the pages SQL gave.
+  const py = python({ mode: "remote", pages, exprs: exprs.map(([p]) => p) });
+  for (const [i, [, ts]] of exprs.entries()) same(py.rows[i], pages[canonicalJson(H.validate(ts(h).ast()))].rows, exprs[i][0]);
+  assert.ok(py.posts.every(([p]) => p === "/api/rooms/R/games/G/query"));
+  // local(): a scaffold's history over the turn records it holds, appended as they come, as its programs see it.
+  const records = await sql({ from: "turns", limit: MAX_LIMIT }, user);
+  const local = H.local(records.slice(0, 100), team);
+  local.append(records.slice(100));
+  for (const ast of TURN_QUERIES) same([...local.run(ast)], await sql(ast, user), JSON.stringify(ast));
+  same([...local.turns.myBee().eq("fed", true).groupBy("flower").sum("nectar").rows()],
+    await sql({ from: "turns", scope: "myBee", where: [W("fed", "eq", true)], groupBy: ["flower"], aggregates: [{ fn: "sum", field: "nectar", as: "sum_nectar" }] }, user));
+});
+
+test("the generated clients are up to date with the schema (npm run gen:query)", () => {
+  assert.deepEqual(stale(), [], "vendor/query is stale: run npm run gen:query");
+});
+
+test("performance: typical queries on a 20,000-turn history take well under a millisecond", () => {
+  const history = [];
+  const R = 2500;
+  for (let round = 1; round <= R; round++) {
+    for (let bee = 0; bee < 8; bee++) {
+      const fed = (round + bee) % 3 === 0, flower = (round * 7 + bee * 3) % 8, energy = 100000 + ((round * 31 + bee) % 997) * 50;
+      const own = flower === 3 || bee === 3;
+      history.push({ game: "g", round, atMs: (round - 1) * 200, turn: round, bee, flower, challenge: round % 97, response: (round * 13) % 101, fed,
+        percent: fed || flower === 3 ? 40 : null, energy: fed || flower === 3 ? energy : null, nectar: fed ? 0.4 * energy : null, pollen: fed ? 0.6 * energy : 0,
+        ms: flower === 3 ? 2 : null, flowerVersion: flower === 3 ? 1 : null, flowerError: null, beeMs: bee === 3 ? 3 : null, beeVersion: bee === 3 ? 1 : null, beeError: null, own });
+    }
+  }
+  for (const r of history) delete r.own;
+  const QUERIES = {
+    "count all": [`h.turns.count()`, (h) => h.turns.count()],
+    "my bee's nectar by flower (cells)": [`h.turns.my_bee().eq('fed', True).group_by('flower').sum('nectar').count()`, (h) => h.turns.myBee().eq("fed", true).groupBy("flower").sum("nectar").count()],
+    "avg percent by flower on feeds (cells)": [`h.turns.eq('fed', True).group_by('flower').avg('percent')`, (h) => h.turns.eq("fed", true).groupBy("flower").avg("percent")],
+    "one pair's feeds (cells)": [`h.turns.eq('bee', 2).eq('flower', 5).eq('fed', True).count()`, (h) => h.turns.eq("bee", 2).eq("flower", 5).eq("fed", true).count()],
+    "my flower, last 50 rounds (index + range)": [`h.turns.my_flower().between('round', R - 49, R)`, (h) => h.turns.myFlower().between("round", R - 49, R)],
+    "my bee's last 10 turns (index, newest first)": [`h.turns.my_bee().order_by('round', desc=True).limit(10)`, (h) => h.turns.myBee().orderBy("round", "desc").limit(10)],
+    "the turns since the last call (slice)": [`h.turns.offset(len(h.turns.rows()) - 8)`, (h) => h.turns.offset(history.length - 8)],
+    "flower 5's answers to 7, last 100 rounds (index + range + filter)": [`h.turns.eq('flower', 5).ge('round', R - 100).eq('challenge', 7).select('response', 'fed')`,
+      (h) => h.turns.eq("flower", 5).ge("round", R - 100).eq("challenge", 7).select("response", "fed")],
+    "every turn with challenge 7 (a full scan)": [`h.turns.eq('challenge', 7)`, (h) => h.turns.eq("challenge", 7)],
+  };
+  const SCANS = new Set(["every turn with challenge 7 (a full scan)"]);
+  const local = H.local(history, 3);
+  const ts = {};
+  for (const [name, [, build]] of Object.entries(QUERIES)) {
+    const q = build(local.history);
+    q.rows();
+    const n = 300, t0 = performance.now();
+    for (let i = 0; i < n; i++) q.rows();
+    ts[name] = ((performance.now() - t0) / n) * 1000;
+  }
+  const py = python({ mode: "bench", records: history, team: 3, rounds: R, repeat: 200,
+    queries: Object.fromEntries(Object.entries(QUERIES).map(([name, [expr]]) => [name, expr])) });
+  const table = Object.keys(QUERIES).map((name) => `  ${name.padEnd(68)} ${ts[name].toFixed(1).padStart(8)} µs (TS) ${py[name].toFixed(1).padStart(8)} µs (Python)`);
+  console.log(`query time on a 20,000-turn history, per run:\n${table.join("\n")}`);
+  for (const name of Object.keys(QUERIES)) {
+    if (SCANS.has(name)) continue;
+    assert.ok(ts[name] < 1000, `TypeScript, ${name}: ${ts[name].toFixed(1)} µs`);
+    assert.ok(py[name] < 1000, `Python, ${name}: ${py[name].toFixed(1)} µs`);
+  }
+});

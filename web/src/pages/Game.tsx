@@ -1,25 +1,33 @@
 // One page for a game, from the lobby to long after it's over. The view (teams, programs, scores) is
 // refetched whenever the game's version moves, its status changes or my team's programs change; while it
 // runs, the live numbers (scores, ledgers, clock, round) come from the light /scores endpoint every
-// second or so. The actions stream in over SSE into a bounded ring (lib/live.ts) that the garden, the
-// feed and the clock read at their own pace.
+// second or so. Actions stream in over a WebSocket (or SSE) into a bounded ring (lib/live.ts) that the
+// garden, the feed and the clock read at their own pace; my team's ledger follows GET /ledger. Once the
+// game is over the whole history is loaded for the replay.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errorText, gameBase } from "../api";
 import { Link } from "../router";
 import { useDocumentTitle } from "../hooks";
-import type { GameView, Kind, ScoresView } from "../types";
+import { endOrMax, energyUnitOf, windowMsOf, type GameView, type Kind, type ScoresView } from "../types";
+import { setEnergyUnit } from "../lib/format";
 import { LiveStore, useGameStream, useLiveTick } from "../lib/live";
+import { useHistory, useLedger, type HistoryStore, type LedgerStore } from "../lib/history";
 import { Alert, CopyButton, Section, StatusBadge } from "../components/ui";
-import { Garden } from "../components/Garden";
+import { LiveGarden } from "../components/Garden";
+import { Replay } from "../components/Replay";
 import { OwnerControls, SettingsForm, SettingsSummary } from "../components/OwnerPanel";
 import { TeamsPanel } from "../components/Teams";
 import { ProgramEditors } from "../components/ProgramEditors";
 import { Podium, Scores } from "../components/Scores";
 import { Feed } from "../components/Feed";
+import { LedgerPanel } from "../components/Ledger";
 import { GameClock, roundLine } from "../components/Clock";
 import { TimingTable } from "../components/Timing";
 import { ChangeTimeline, historyTeams, VersionBrowser } from "../components/History";
 import { ValueTypes } from "../components/Value";
+import { QueryConsole } from "../components/QueryConsole";
+import { PollenPanel, type GrainRec } from "../components/Pollen";
+import { PrivateTurns } from "../components/PrivateTurns";
 
 const SCORES_MS = 1500; // how often to poll the live numbers while the game runs
 
@@ -32,7 +40,8 @@ export function GamePage({ room, game }: { room: string; game: string }) {
   const [error, setError] = useState<string | null>(null);
 
   const accept = useCallback((v: GameView) => {
-    store.syncClock(v.game.clockMs, v.game.status, v.game.endMs, v.game.round);
+    store.syncClock(v.game.clockMs, v.game.status, endOrMax(v.game), v.game.round);
+    setEnergyUnit(energyUnitOf(v.game.config)); // before anything of this game is shown
     setView(v);
   }, [store]);
 
@@ -70,7 +79,7 @@ export function GamePage({ room, game }: { room: string; game: string }) {
       busy = true;
       try {
         const s = await api<ScoresView>("GET", `${base}/scores`);
-        store.syncClock(s.clockMs, s.status, s.endMs, s.round);
+        store.syncClock(s.clockMs, s.status, endOrMax(s), s.round);
         setLive(s);
         if (s.status !== status) load();
       } catch { /* the next poll will do */ } finally { busy = false; }
@@ -84,7 +93,7 @@ export function GamePage({ room, game }: { room: string; game: string }) {
     if (!view || !live || live.lastSeq <= view.game.lastSeq || !live.scores) return view;
     return {
       ...view,
-      scores: live.scores, recent: live.recent, ledgers: live.ledgers,
+      scores: live.scores, ledgers: live.ledgers, prevalence: live.prevalence ?? view.prevalence,
       game: { ...view.game, clockMs: live.clockMs, round: live.round, lastSeq: live.lastSeq },
     };
   }, [view, live]);
@@ -104,9 +113,21 @@ function GameBody({ view, base, store }: { view: GameView; base: string; store: 
   const myTeamId = view.myTeam?.id ?? null;
   const playing = !!myTeamId && !!view.participants?.includes(myTeamId);
   const showEditors = !!view.myTeam && (lobby || live);
+  // Private play: this viewer sees only its own programs' sides and the prevalence snapshots until the end.
+  const restricted = live && !!g.restricted;
+
+  // My team's ledger: followed from the start of play for team members (the garden shows what their flower
+  // has lost); for spectators and after the game, once its panel is opened.
+  const [ledgerOpen, setLedgerOpen] = useState(false);
+  const ledger = useLedger(base, !restricted && ((live && playing) || ledgerOpen), g.status, myTeamId ?? "");
+  const history = useHistory(base, view.participants, windowMsOf(cfg), over);
+  const myIndex = myTeamId ? (view.participants ?? []).indexOf(myTeamId) : -1;
+  const wasted = useWasted(ledger, myIndex);
 
   const sections: { id: string; label: string; node: React.ReactNode }[] = [];
-  const garden = { id: "garden", label: "Garden", node: <Section id="garden" title="The garden" className="garden-card"><Garden view={view} store={store} /></Section> };
+  const garden = restricted
+    ? { id: "garden", label: "Your turns", node: <Section id="garden" title="Your programs' turns (private play)"><PrivateTurns view={view} store={store} /></Section> }
+    : { id: "garden", label: "Garden", node: <Section id="garden" title="The garden" className="garden-card"><LiveGarden view={view} store={store} wasted={wasted} /></Section> };
   const teams = { id: "teams", label: "Teams", node: <Section id="teams" title={`Teams (${view.teams.length})`}><TeamsPanel view={view} base={base} /></Section> };
   const programs = showEditors ? {
     id: "programs", label: "Your programs",
@@ -116,18 +137,45 @@ function GameBody({ view, base, store }: { view: GameView; base: string; store: 
       </Section>
     ),
   } : null;
-  const scores = !lobby && view.scores ? { id: "scores", label: "Scores", node: <Section id="scores" title={over ? "Final scores" : "Scores"}><Scores view={view} /></Section> } : null;
-  const feed = !lobby ? {
-    id: "feed", label: over ? "Actions" : "Live actions",
-    node: <Section id="feed" title={over ? "Every action" : "Live actions"}><Feed view={view} store={store} base={base} /></Section>,
+  const scores = !lobby && view.scores ? { id: "scores", label: "Scores", node: <Section id="scores" title={over ? "Final scores" : "Scores, live"}><Scores view={view} base={base} /></Section> } : null;
+  const feed = !lobby && !restricted && (!over || history) ? {
+    id: "feed", label: over ? "Every turn" : "Live turns",
+    node: <Section id="feed" title={over ? "Every turn" : "Live turns"}><Feed view={view} source={over && history ? history : store} base={base} /></Section>,
+  } : null;
+  const ledgerSec = !lobby && !restricted ? {
+    id: "ledger", label: myTeamId && playing ? "Your ledger" : "Ledger",
+    node: (
+      <Section id="ledger" title={myTeamId && playing ? "Your team's ledger" : "The ledger"}>
+        {(live && playing) ? (ledger && <LedgerPanel view={view} ledger={ledger} />) : (
+          <details className="ledger-details" open={ledgerOpen} onToggle={(e) => setLedgerOpen(e.currentTarget.open)}>
+            <summary>{over ? "Show the whole ledger: every turn, every field" : "Show the ledger as a spectator sees it"}</summary>
+            {ledger && <LedgerPanel view={view} ledger={ledger} />}
+          </details>
+        )}
+      </Section>
+    ),
+  } : null;
+  const pollen = live && !restricted && playing && (cfg.grains ?? "feeder") !== "off" && ledger ? {
+    id: "pollen", label: "Pollen collected",
+    node: <Section id="pollen" title="Pollen collected"><LivePollen view={view} ledger={ledger} myIndex={myIndex} /></Section>,
   } : null;
   const changes = live && playing ? { id: "changes", label: "Your changes", node: <Section id="changes" title="Your team's changes"><MyChanges view={view} store={store} /></Section> } : null;
-  const replay = over && historyTeams(view).length ? { id: "replay", label: "Changes", node: <Section id="replay" title="Who changed what, when"><Replay view={view} store={store} /></Section> } : null;
+  const replay = over && history ? { id: "replay", label: "Replay", node: <Section id="replay" title="Replay" className="garden-card"><Replay view={view} history={history} /></Section> } : null;
+  const versions = over && history && historyTeams(view).length ? { id: "versions", label: "Changes", node: <Section id="versions" title="Who changed what, when"><Versions view={view} history={history} /></Section> } : null;
 
+  const orderTeams = (view.participants ?? []).map((pid) => view.teams.find((t) => t.id === pid)!).filter(Boolean);
+  const query = !lobby ? {
+    id: "query", label: "Query",
+    node: (
+      <Section id="query" title="Query the history">
+        <QueryConsole target={{ kind: "game", room: view.room.shortId, game: g.shortId, teams: orderTeams, myIndex: myIndex >= 0 ? myIndex : null }} />
+      </Section>
+    ),
+  } : null;
+  const present = <T,>(x: T | null): x is T => !!x;
   if (lobby) sections.push(teams, ...(programs ? [programs] : []), garden);
-  else if (live) sections.push(garden, ...[programs, scores, feed, changes, teams].filter((x): x is NonNullable<typeof x> => !!x));
-  else sections.push(...[scores, replay, feed, teams].filter((x): x is NonNullable<typeof x> => !!x));
-
+  else if (live) sections.push(garden, ...[programs, scores, feed, ledgerSec, pollen, changes, query, teams].filter(present));
+  else sections.push(...[replay, scores, versions, feed, ledgerSec, query, teams].filter(present));
   return (
     <ValueTypes.Provider value={{ challenge: cfg.challengeType, response: cfg.responseType }}>
       <div className="stack game-page">
@@ -182,6 +230,35 @@ function GameBody({ view, base, store }: { view: GameView; base: string; store: 
   );
 }
 
+/** Energy my flower has lost on visits where the bee didn't feed (from my ledger; only my team sees it during play). */
+function useWasted(ledger: LedgerStore | null, me: number): number | null {
+  const [state] = useState(() => ({ n: 0, sum: 0, store: null as LedgerStore | null }));
+  const dummy = useMemo(() => ({ rev: 0, subscribe: () => () => {} }), []);
+  useLiveTick(ledger ?? dummy, 1000);
+  if (!ledger || me < 0 || ledger.team !== me) return null;
+  if (state.store !== ledger) { state.store = ledger; state.n = 0; state.sum = 0; }
+  const es = ledger.entries;
+  for (; state.n < es.length; state.n++) {
+    const e = es[state.n];
+    if (e.flower === me && !e.fed && typeof e.energy === "number") state.sum += e.energy;
+  }
+  return state.sum;
+}
+
+/** During play: the grains my team's bee has collected (everyone's, if grains are public), from my ledger. */
+function LivePollen({ view, ledger, myIndex }: { view: GameView; ledger: LedgerStore; myIndex: number }) {
+  const rev = useLiveTick(ledger, 2000);
+  const teams = useMemo(() => (view.participants ?? []).map((id) => view.teams.find((t) => t.id === id)!).filter(Boolean), [view.participants, view.teams]);
+  const grains = useMemo(() => {
+    const out: GrainRec[] = [];
+    for (const e of ledger.entries) {
+      if (e.fed && typeof e.grain === "string") out.push({ bee: e.bee, flower: e.flower, version: e.grainVersion ?? 0, grain: e.grain, codeLength: e.grainCodeLength ?? e.grain.length, round: e.round });
+    }
+    return out;
+  }, [ledger, rev]); // eslint-disable-line react-hooks/exhaustive-deps
+  return <PollenPanel view={view} teams={teams} grains={grains} mine={myIndex >= 0 ? myIndex : null} during />;
+}
+
 /** During play: my team's own change timeline (with its budgets) and versions. */
 function MyChanges({ view, store }: { view: GameView; store: LiveStore }) {
   useLiveTick(store, 1000, view.game.status === "running");
@@ -197,19 +274,19 @@ function MyChanges({ view, store }: { view: GameView; store: LiveStore }) {
   );
 }
 
-/** After the game: every team's changes over the game, and their code if revealed. */
-function Replay({ view, store }: { view: GameView; store: LiveStore }) {
-  useLiveTick(store, 1000);
+/** After the game: every team's changes and change budgets over the game, their code if revealed, and timings. */
+function Versions({ view, history }: { view: GameView; history: HistoryStore }) {
+  useLiveTick(history, 1000);
   const teams = historyTeams(view);
   const [picked, setPicked] = useState<{ team: string; kind: Kind; version: number } | null>(null);
   return (
     <div className="stack">
-      <ChangeTimeline view={view} teams={teams} endMs={view.game.clockMs} picked={picked} onPick={(team, kind, version) => { setPicked({ team, kind, version }); document.getElementById("versions")?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }} />
-      <h3 id="versions">{view.game.revealed ? "Code, version by version" : "Versions"}</h3>
+      <ChangeTimeline view={view} teams={teams} endMs={view.game.clockMs} picked={picked} onPick={(team, kind, version) => { setPicked({ team, kind, version }); document.getElementById("version-code")?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }} />
+      <h3 id="version-code">{view.game.revealed ? "Code, version by version" : "Versions"}</h3>
       <VersionBrowser view={view} teams={teams} picked={picked} onPick={setPicked} />
       <h3>How long programs took</h3>
-      <p className="small muted">Typical time / the slowest 10%, against each limit, and how often each missed it (⏱), over the {store.actions.length.toLocaleString()} actions loaded{store.complete ? " (the whole game)" : " (load earlier actions below for more)"}. Secret during play; everyone's now.</p>
-      <TimingTable view={view} actions={store.actions} />
+      <p className="small muted">Typical time / the slowest 10%, against each limit, and how often each missed it (⏱), over {history.done ? "the whole game" : `the ${history.actions.length.toLocaleString()} actions loaded so far`}. The flower's is CPU time, which sets its energy. Private during play; everyone's now.</p>
+      <TimingTable view={view} actions={history.actions} />
     </div>
   );
 }
