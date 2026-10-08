@@ -74,6 +74,7 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
   "challengeType": "int", "responseType": "int", "maxLen": 64, "maxNodes": 512, "maxResponseBytes": 1024,
   "revealOnFinish": true,
   "grains": "feeder", "pollenGrain": { "exponent": 0.3333333333333333, "scale": 0.1 },
+  "visibility": "private", "prevalenceEveryS": 30,
   "scoring": { "alpha": 0.85, "beta": 0.85, "mode": "final" }, "energy": { "bytes": true },
   "prevalence": { "on": true, "halfLifeS": 90, "cDecay": "sech", "cStart": 1, "cHalfS": null, "cap": 4, "slots": 0.25, "prior": null, "pools": true, "endowment": null },
   "budgets": {
@@ -156,6 +157,10 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 - `grains`: who sees a feed's **pollen grain** during play: `"feeder"` (default: the feeding bee's team),
   `"public"` (everyone, as it happens) or `"off"` (no grains). Everyone sees every grain once the game is
   over.
+- `visibility`: `"private"` (the default) or `"public"` (anything else is an error): what anyone but the room's
+  owner with no team in the game sees during play (see "Private play"). A config stored without it (games from
+  before) is `"public"`, and stays so when edited. `prevalenceEveryS` (1 to 3,600, default 30): in private play,
+  how often, in seconds of game time, the prevalence snapshot is published.
 - `pollenGrain`: a grain's length is ⌊`scale` × pollen^`exponent`⌋ characters (defaults 0.1 and 1/3:
   27,000,000 pollen gives 30, about as long as grains were with E in node·ms and scale 1, which games without
   the byte factor keep; `exponent` 0.01 to 1, `scale` 0 to 1,000). It is that many characters of the minified
@@ -209,7 +214,51 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 Types: `int`, `float`, `bool`, `str`, `any`, `list[T]`, `tree[T]`, `graph`, `digraph`, `graph[T]`,
 `digraph[T]` (RULES.md). Languages: `python`, `typescript`.
 
+## Private play
+
+A game with `visibility: "private"` (the default for new games), while it runs or is paused, shows every viewer
+except the room's owner with no team in it (`game.restricted` in the game view, `restricted` on `base/scores`
+and `base/ledger`) only this, on every endpoint (the game view, `base/scores`, `base/actions`, `base/events`,
+`base/ws`, `base/ledger`, `base/prevalence`, `base/responses/:seq`, `base/query`, the room's list and events):
+
+- **Actions** (`base/actions` pages and the stream): only the viewer's team's own programs' sides of its turns,
+  from their `feed`/`leave` actions; never an arrival, never another team's turn; a spectator or an anonymous
+  reader gets none. Each record has `side`:
+  - `"flower"`: `{ seq, atMs, round, side, flower (your id), action: "answer", c, r, rBytes, rHash?, rPreview?,
+    percent, ms, budgetMs, flowerError, flowerVersion }`: no `bee`, `turn`, decision, nectar, pollen or energy.
+  - `"bee"`: `{ seq, atMs, round, side, bee (your id), turn, action: "feed" | "leave", c, r, rBytes, rHash?,
+    rPreview?, beeMs, beeError, beeVersion, log?, and on a feed nectar, price, net, balance, grain? }`: no
+    `flower`, `flowerVersion`, `percent`, `energy`, `pollen` or flower timing; the grain bare (no
+    `grainVersion` or `grainCodeLength`).
+  - Your bee at your own flower gives both records, flower first, with the same `seq`. Pages are still by the
+    actions' `seq` (`after`, `before`; `lastSeq` is the game's).
+- **The team ledger and the `turns` query entity**: the same, as `turns` records, one per side: a flower side
+  has `bee`, `turn`, `fed` and every bee field null; a bee side `flower`, `percent`, `energy`, `pollen` and every
+  flower field (and `grainVersion`, `grainCodeLength`) null. Spectators get none.
+- **Prevalence**: only the **snapshots**: the scheduled samples at the first round at or after each multiple of
+  `prevalenceEveryS` seconds of game time (`base/prevalence`, the `prevalence` entity, the `prevalence` on
+  action pages and stream messages, `prevalence.sample` in the views), with `flowerSuccess`, `beeSuccess`,
+  `flowerP`, `beeP`, `fitness` and `c` rounded to 2 decimals, `balance` null, and `snapshot: true`.
+- **The scoreboard** (`scores` in the views and `base/scores`, the `scores` entity): the latest snapshot's
+  `fitness`, `flowerSuccess`, `beeSuccess`, `flowerP`, `beeP`; every other field null. `ledgers` is null and the
+  `pairs` entity empty.
+- **Responses** (`base/responses/:seq`): only of the viewer's team's own turns (404 otherwise), never cached
+  publicly.
+- Unchanged: the clock and timing, the settings, the teams and their indices, your own team's versions, sizes,
+  budgets and `MEMORY` (as in any game), `interface` and `GAME` (which never had anything about other teams).
+
+The room's owner with no team in the game sees it as a public game throughout (every arrival, turn, sample,
+ledger and query row; other teams' private fields only after the end, as in any game): the way to run, watch and
+analyse it. When the game finishes, everything is revealed to everyone, as in any game.
+
+**The final sample.** When the garden stops it also publishes the sample of the last round played (if the
+once-a-second schedule didn't), with p^F and p^B unrounded, so a `"final"` score is exactly N² × `flowerP` ×
+`beeP` of the game's last sample (round = `game.round`). In private play it is not a snapshot, so it appears
+only once the game is over.
+
 ## Who sees what
+
+The table is for public play (`visibility: "public"`); private play shows less (see "Private play").
 
 | Field | During play | After finish |
 |---|---|---|
@@ -247,6 +296,7 @@ don't bump the public `game.version`, so other teams can't tell when a team chan
             "drawnEndMs",     // only in the view of the room's owner with no team in the game: the drawn end (null
                               // before the start); absent for everyone else
             "fitnessBasis",   // how the scoreboard's fitness is reckoned: "final", "timeAverage" or "shares" (no prevalence)
+            "restricted",     // you see this game privately (see "Private play")
             "round",          // rounds played so far (counting the one in progress)
             "lastSeq",        // the latest action's seq
             "windowMs",       // the flower window the game plays with (config.flowerWindowMs, or flower.ms in old games)
@@ -375,7 +425,8 @@ the JSON query AST, and the generated Python and TypeScript clients (`/vendor/qu
 
 `GET base/ledger` returns the turn records (the `turns` entity of docs/QUERY.md) as your team may see
 them, oldest first by `seq` (the turn's `feed`/`leave` action). Team numbers are indices into
-`participants`.
+`participants`. In private play, only your own team's turns, one record per side (see "Private play"), and
+`restricted: true`; a spectator gets none.
 
 ```jsonc
 { "seq": 812, "game": "7", "round": 41, "atMs": 8000, "turn": 12, "bee": 2, "flower": 0,

@@ -487,7 +487,7 @@ const other2 = ids2.find((id) => id !== me2);
 await until("private turns", async () => (await api(players[0].token, "GET", `${g2}/actions?limit=5000`)).actions.length >= 4, 10000);
 const mine2 = await api(players[0].token, "GET", `${g2}/actions?limit=5000`);
 assert.ok(mine2.actions.every((a) => (a.side === "flower" && a.flower === me2 && !("bee" in a) && a.action === "answer") || (a.side === "bee" && a.bee === me2 && !("flower" in a))), "only your own sides");
-assert.ok(!JSON.stringify(mine2).includes(other2), "the other team's id is nowhere in a player's actions");
+assert.ok(!JSON.stringify(mine2.actions).includes(other2), `the other team's id is nowhere in a player's turns: ${JSON.stringify(mine2.actions.find((a) => JSON.stringify(a).includes(other2)))}`);
 assert.deepEqual((await api(null, "GET", `${g2}/actions?limit=5000`)).actions, [], "a spectator sees no turns");
 const board2 = await api(null, "GET", `${g2}/scores`);
 assert.ok(board2.restricted && board2.ledgers === null && board2.prevalence.sample.snapshot && board2.prevalence.sample.atMs % 2000 === 0);

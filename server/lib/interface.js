@@ -1,7 +1,7 @@
 // What every team knows before writing a line: the function names, their arguments, and the game's
 // types. Deliberately no behaviour: no starter code, so there's no shared starting point to converge on.
 import { parseType } from "./types.js";
-import { RESPONSE_DEPTH, endFactorOf, energyBytes, feedPriceOf, limitsOf, prevalenceOf, roundMs, wallLimits, windowMsOf } from "./gameConfig.js";
+import { RESPONSE_DEPTH, endFactorOf, energyBytes, feedPriceOf, limitsOf, prevalenceOf, roundMs, snapshotsOf, visibilityOf, wallLimits, windowMsOf } from "./gameConfig.js";
 import { scoringOf } from "./scoring.js";
 
 const round6 = (x) => Math.round(x * 1e6) / 1e6;
@@ -96,11 +96,15 @@ function scoreNote(c, config, kind) {
   const cText = p.cDecay === "sech"
     ? `c = ${p.cStart} × sech(1.317 × t / ${round6(p.cHalfS)} s), t the game time: half at ${round6(p.cHalfS)} s, then toward 0`
     : `c runs from ${p.cStart} to ${p.cEnd} over the first ${config.minutes} minutes`;
+  // Private play: the prevalence numbers are published every prevalenceEveryS seconds, to 2 decimals.
+  const shown = visibilityOf(config) === "private"
+    ? `Published every ${snapshotsOf(config).everyMs / 1000} s (to 2 decimals), never in GAME.`
+    : "Public, but not in GAME.";
   const fitness = mode === "final"
     ? `${c} Your team's fitness = N² × p^F × p^B at the game's final round: your species' draw chance p^F = (c + F_s) / Σ (c + F)\n` +
       `${c} times your bee's p^B = (c + B_b) / Σ (c + B), par 1. The game ends at a hidden time between ${config.minutes} and ${round6(config.minutes * endFactorOf(config))}\n` +
-      `${c} minutes, so any round may be the last. Public, but not in GAME.`
-    : `${c} Your team's fitness = the time-average over the game of F × B (your species' times your bee's). Public, but not in GAME.`;
+      `${c} minutes, so any round may be the last. ${shown}`
+    : `${c} Your team's fitness = the time-average over the game of F × B (your species' times your bee's). ${shown}`;
   return `${c} Prevalence: each round ceil(${p.slots} × N) bees visit, drawn without replacement with weights c + B_b, and each visits\n` +
     `${c} a species drawn with weights c + F_s, where ${cText}.\n` +
     `${c} F_s = N × your species' share of Σ over bee teams of (recent pollen it gave them)^${beta}, ${half}:\n` +

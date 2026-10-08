@@ -37,6 +37,13 @@ of truth: entities, fields, types, indexes, scopes and each field's visibility r
 | `prevalence` | (sample, team): prevalence on both sides, about once a second of game time: `flowerSuccess` (F), `beeSuccess` (B), `flowerP`, `beeP`, `fitness` (by the game's scoring mode: N² × p^F × p^B then, or the time-average of F × B so far), `balance` (the bee's nectar balance, pools games), `c`, `slots` (games that have it) | game, round, team | |
 | `scores` | team: the scoreboard (each game with its own `scoring` exponents; √ in games from before them) | game, team | |
 
+**Private play** (a game with `visibility: "private"`, until it's over, for anyone but the room's owner with no
+team in it): `turns` has only your team's own turns, one row per side you played (your flower's: `bee`, `turn`,
+`fed` and the bee's fields null; your bee's: `flower`, `percent`, `energy`, `pollen` and the flower's fields
+null); `pairs` is empty; `prevalence` has only the snapshots (every `prevalenceEveryS` seconds), rounded to 2
+decimals, without balances; `scores` is the latest snapshot's fitness, F, B and draw chances (the rest null).
+A spectator gets no turns at all.
+
 Fields, types and visibility are in the schema (and in `vendor/query/schema.json`). Teams are numbered by
 **index** (0 to N − 1, `GAME.team` in programs), as in the team ledger. `game` is the game's short id.
 

@@ -19,7 +19,9 @@ in node·ms·bytes, so code nodes, compute milliseconds and output bytes are eac
 it into nectar for the bee and pollen the flower keeps, and the bee pays a feed price out of its nectar;
 a turn without a feed pays nobody. Fitness is N² × the team's flower draw chance × its bee draw chance in the
 game's final round (RULES.md "Scoring"), and the game ends at a random time, 5 to 10 minutes in by default,
-that no team is told. Every turn is public as it
+that no team is told. Games play privately by default: until the end each team sees only its own programs'
+side of its turns and everyone's prevalence every 30 s (RULES.md "What you can see during play"). In public
+play every turn is public as it
 happens (who visited whom, the challenge, the response, whether the bee fed, and a feed's percent, energy,
 nectar and pollen), and so is the scoreboard; code, timings and the details of unfed turns stay with
 their teams until the end. Programs see no history; teams, operators and agents query every finished turn

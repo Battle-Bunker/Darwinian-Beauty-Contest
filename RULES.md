@@ -53,9 +53,9 @@ species that have been doing well lately are drawn more often (see "Prevalence")
    **without replacement**: no bee visits twice in a round. A bee not drawn doesn't visit; **its queued
    challenge waits** for a round it is drawn in. A bee with nothing queued can't be drawn.
 2. For each visitor the engine draws a flower **from all N species**, your own included, independently
-   (two bees can meet the same species in a round). This **arrival** (whose bee, whose flower) is public
-   at once to people watching the game, but neither program is told: a turn keeps the versions it started
-   with, so nobody can pass it on.
+   (two bees can meet the same species in a round). Neither program is told whose the other is (in public
+   play this **arrival**, whose bee and whose flower, is public at once to people watching; in private play
+   it's revealed when the game ends): a turn keeps the versions it started with, so nobody can pass it on.
 3. The flower is called: `flower(challenge)`. It has its **hidden time budget R** for this call (1 to 50
    ms of CPU time, drawn at random every call; see "Energy") and returns
    `[response, percent]`: its answer, and the share (0–100, clamped) of this turn's **excess energy** it
@@ -136,9 +136,9 @@ or bee that weighs exactly 0 is never drawn while anyone eligible weighs more; i
 the draw is uniform among them.
 
 **Every team's F, B, flower draw chance p^F = (c + F) / Σ (c + F) and bee draw chance p^B = (c + B) / Σ
-(c + B)**, and its fitness (N² × p^F × p^B), are public, updated about once a second of game time: in the game view,
-the scoreboard, the live action stream and the history queries. **Programs never see them**: nothing about
-prevalence is in `GAME`.
+(c + B)**, and its fitness (N² × p^F × p^B), are public: in private play (the default) in snapshots every 30 s
+of game time, rounded to 2 decimals; in public play about once a second (see "What you can see during play").
+**Programs never see them**: nothing about prevalence is in `GAME`.
 
 The owner sets all of it in the settings (`prevalence`: on, half-life (or none: cumulative), c's curve
 (`cDecay` `"sech"` with `cStart` and `cHalfS`, null for 0.2 × the shortest length; or `"linear"`, from `cStart`
@@ -320,18 +320,20 @@ bytes too) taken from the **minified code of the flower version that answered**,
 starting at a position drawn uniformly at random, and wrapping from the end back to the start, so every
 character is equally likely to leak. If L is at least the code's length, the grain is the whole code.
 
-- With the grain come the flower's **version** and its code's **length** in characters (the minified code
-  your size is measured on), but not where the grain starts.
+- In public play, with the grain come the flower's **version** and its code's **length** in characters (the
+  minified code your size is measured on), but not where the grain starts. In private play the grain comes
+  **bare**: no version, no length, and (as for every turn of your bee) not whose flower it came from.
 - **During play, only the feeding bee's team** sees its grains (on its feed actions, in its ledger and in
-  its queries). When the game ends, everyone sees every grain. (The owner can make grains public as they
-  happen, or switch them off: `grains` in the settings.)
+  its queries). When the game ends, everyone sees every grain. (In public play the owner can make grains
+  public as they happen; in either mode switch them off: `grains` in the settings.)
 - **Programs never get grains**: `fed` gets the nectar only.
 
 ## History is for teams, not programs
 
 No program sees any history: a flower gets its challenge and `GAME`; a bee gets its arguments, `GAME`
-and its `MEMORY`. Your **team** can study every finished turn (what your team may see of it) over the API,
-with typed query clients for Python and TypeScript (docs/QUERY.md), and change its programs at any time.
+and its `MEMORY`. Your **team** can study every finished turn (what your team may see of it: in private play,
+only your own programs' sides of your own turns; see "What you can see during play") over the API, with typed
+query clients for Python and TypeScript (docs/QUERY.md), and change its programs at any time.
 
 ## The programs
 
@@ -493,19 +495,46 @@ budget** starts at zero when the game starts and grows with game time at its rat
 cap. A change you can't afford yet is refused, with how long until you can; one bigger than the cap
 never can be: make it in steps.
 
-## What everyone can see
+## What you can see during play
 
-**Public to everyone, as it happens** (including spectators without a team): for every turn of every bee,
-the **arrival** (whose bee, whose flower), the **challenge**, the **response** and **whether the bee fed**
-(a bee that was late or broke simply didn't). On a **feed**, also the **percent**, the **energy**, and the
-**nectar** and **pollen** the flower gave the bee, the **feed price** the bee paid and its **net**. The
-game's settings, the scoreboard and every team's prevalence (F, B, p^F, p^B) are public too. So whatever two
-programs do together happens in plain view. (If the owner raises the cap, a response over 4 KB is streamed
-to the page as its first 4 KB, its size and its hash; the whole response is one click or one request away.)
+Games play **privately** by default (`visibility: "private"` in the settings): until the game is over, your
+team learns about the garden only what your own programs see, plus a coarse view of everyone's prevalence. To
+copy a rival, you'll have to read its genes (its pollen grains), not watch it play.
 
-**Private during play:**
+**Private play (the default).** While the game runs or is paused, you see:
 
-| What | Who sees it during play |
+1. **Your own programs' sides of your turns, as your programs see them.**
+   - **Your flower's visits**: the challenge, its time budget R (`GAME["ms"]`), its response and percent, its
+     CPU time and errors (a late or failed answer). **Not which bee came, nor whether it fed**: your flower
+     never learns that.
+   - **Your bee's turns**: the challenge, the response, its decision (feed or leave), and on a feed the nectar
+     `fed` got, the feed price, the net and its nectar balance after it; its decision time, errors and prints,
+     and its `MEMORY`. **Not which species answered**, nor that flower's version.
+   - When your bee visits your own flower, you see both sides, as two separate records.
+2. **Your own pollen grains, bare**: the run of code, on your bee's feed, with no team, no version and no code
+   length.
+3. **Everyone's prevalence, in snapshots**: every team's F, B, p^F, p^B and fitness, and c, published every
+   `prevalenceEveryS` seconds of game time (30 by default), **rounded to 2 decimals**. Nothing in between: the
+   scoreboard moves only at a snapshot, and shows only those numbers.
+4. **The game clock** (time played, and the range the end is drawn from), the settings, and your own team's
+   program versions, sizes and change budgets.
+
+**Hidden during play:** every arrival (who visited whom), other teams' turns and their records, the per-round
+prevalence samples, the ledgers (who fed where, the nectar and pollen totals), other teams' versions, sizes,
+budgets, `MEMORY` and code, and the game's end. Spectators see only the clock and the prevalence snapshots. This
+holds everywhere: the game page, the live streams, the scoreboard, the ledger, the history queries and every
+API. (The room's owner, if the owner has no team in the game, sees it all as it happens, to run the game.)
+
+**Public play** (`visibility: "public"`; games from before private play): everyone, spectators included, sees
+**as it happens**, for every turn of every bee, the **arrival** (whose bee, whose flower), the **challenge**,
+the **response** and **whether the bee fed** (a bee that was late or broke simply didn't); on a **feed**, also
+the **percent**, the **energy**, the **nectar** and **pollen** the flower gave the bee, the **feed price** the
+bee paid and its **net**. The scoreboard, the ledgers and every team's prevalence (F, B, p^F, p^B, about once a
+second) are public too. So whatever two programs do together happens in plain view. (If the owner raises the
+cap, a response over 4 KB is streamed to the page as its first 4 KB, its size and its hash; the whole response
+is one click or one request away.) What stays private in public play:
+
+| What | Who sees it during public play |
 |---|---|
 | the **percent** and **energy** of a turn without a feed | the flower's team |
 | the flower's **compute time** and its turn's **time budget R**, on every turn, and why a flower failed | the flower's team |
@@ -514,9 +543,10 @@ to the page as its first 4 KB, its size and its hash; the whole response is one 
 | a feed's **pollen grain** (and the flower's version and code length that come with it) | the feeding bee's team |
 | the game's **end** (drawn when it starts; see "The end is hidden") | nobody playing: only the room's owner, if the owner isn't on a team |
 
-**When the game ends, everything is revealed** for a full replay: the drawn end, every percent, energy and
-timing, every version and change, every budget, every bee's `MEMORY`, every pollen grain, and (unless the owner
-turns it off) all code and printouts.
+**When the game ends, everything is revealed**, in either mode, for a full replay: every arrival and turn, every
+prevalence sample (the last one is of the final round, so the final scores can be checked from it), the drawn
+end, every percent, energy and timing, every version and change, every budget, every bee's `MEMORY`, every
+pollen grain with its version and code length, and (unless the owner turns it off) all code and printouts.
 
 ## Scoring: Darwinian fitness
 
@@ -531,9 +561,11 @@ and your bee are doing **when the game ends**. And since the end is hidden (see 
 round after the shortest length may be the last: **the scoreboard shows every team's N² × p^F × p^B as it
 stands, live**, and the value in the final round is the final score.
 
-**The scoreboard is live and public**: during play everyone, spectators included, sees every team's
-fitness, its latest F, B and draw chances, and its totals: feeds, nectar, pollen, and the old score's
-pollination and forage (below), for information.
+**The scoreboard is public**: in private play it shows every team's fitness, F, B and draw chances at the
+latest prevalence snapshot (every 30 s, rounded); in public play everyone sees, live, every team's fitness,
+its latest F, B and draw chances, and its totals: feeds, nectar, pollen, and the old score's pollination and
+forage (below), for information. When the game ends, the last published prevalence sample is the final
+round's, and each team's final score is exactly N² × its p^F × its p^B in it.
 
 **Games played under earlier rules** keep their rule (`scoring.mode` in the settings: `"final"` for new games,
 `"timeAverage"` for games stored without one): v2 and v3 games are scored with the **time-average, over the

@@ -362,7 +362,17 @@ either) is in `GAME`.
 
 ## What is public
 
-Arrivals, challenges, responses and every feed (with its percent, E, nectar and pollen) are public to
+**Private play** (`visibility: "private"`, the default since metagame v4) turns that around: until the game is
+over a team sees only what its own programs see (its flower's visits without the visiting bee or the decision,
+its bee's turns without the species that answered), its own grains bare, and everyone's prevalence in coarse
+snapshots (every `prevalenceEveryS` seconds of game time, rounded to 2 decimals); spectators only the snapshots.
+Imitation then has to go through genes (pollen grains), not watching. It is enforced where data leaves the
+server (server/games.js restrictedFor, privateActionViews, snapshotView; server/query/mask.js privateTurns;
+server/query/sql.js for the history queries), so every surface, the streams included, gives the same restricted
+view; the room's owner with no team in the game keeps the public view, to run and analyse the game. A
+snapshot is a scheduled sample (the garden's own once-a-second ones), so no derived number is published.
+
+Public play, as games before it: arrivals, challenges, responses and every feed (with its percent, E, nectar and pollen) are public to
 everyone as they happen, spectators included, and so are the scoreboard and prevalence. That was a deliberate change from
 "third-party turns are secret": any self-dealing scheme, such as a handshake between a team's own bee and
 flower, has to work in plain view, where every other team can study and copy it.
@@ -371,6 +381,10 @@ Private during play: the percent and E of a turn without a feed (the flower's te
 time on every turn and why it failed (the flower's team), and each team's code, prints, versions, sizes,
 budgets, bee timings, bee MEMORY and pollen grains (the feeding team's). The secret that remains is the flower's compute time, which can't be read off a
 public E without the flower's size, which stays private with its code. Everything is revealed at the end.
+
+When the garden stops it publishes the sample of the last round played (unless the schedule just did), with
+p^F and p^B unrounded, so a final-instant score can be recomputed exactly from published data; in private play
+it is no snapshot, so it shows only once the game is over.
 
 ## Versions are pinned per turn
 
