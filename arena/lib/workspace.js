@@ -466,8 +466,8 @@ const WRITE_HTTP = /\s-X\s*['"]?(?:POST|PUT|PATCH|DELETE)\b|--request\s+['"]?(?:
 const CREDENTIALS = /authorization|\bbearer\b|\bcookie|x-api-key|\.dev-secret|dev_login_secret|\bpassword\b/i;
 const DB = /psql|\b5432\b|postgres|pg_|DATABASE_URL/i;
 // A busy-wait or a deliberate CPU burn outside a team's own programs (a loop that does nothing until a clock says so, an
-// empty `while True`, a huge empty range, a shell spin): it takes a core from the game's programs, whose time limits are
-// wall clock. A warning, told to the session (lib/team.js) and logged; never a stop.
+// empty `while True`, a huge empty range, a shell spin): it takes CPU from the game and every other team's agent on a
+// shared machine. A warning, told to the session (lib/team.js) and logged; never a stop.
 const CLOCK = String.raw`\btime\.(?:time|perf_counter|monotonic|process_time|thread_time)(?:_ns)?\(\)|\bdatetime\.(?:datetime\.)?now\(\)`;
 const SPIN = new RegExp(String.raw`\bwhile\s+(?:True|1|not\s+\w+|[^:\n]*(?:${CLOCK})[^:\n]*)\s*:\s*(?:#[^\n]*)?(?:\n[ \t]*)?(?:pass|continue|\.\.\.)\s*(?:$|[\n;"'#])` +
   String.raw`|\bfor\s+\w+\s+in\s+(?:x?range)\(\s*(?:10\s*\*\*\s*(?:[89]|\d\d)|\d{9,})\s*\)\s*:\s*(?:\n[ \t]*)?pass\b` +

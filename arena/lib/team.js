@@ -474,8 +474,8 @@ export async function runTeamSession({ desk, arena, gameRow, persona, entry, gPa
     if (!fresh.length) return null;
     for (const f of fresh) warned.add(f.detail);
     log(`  ${persona.name}: fair-play warning in session ${sessionNo}: ${fresh[0].detail.slice(0, 160)}`);
-    return `Fair play (a warning from the runner): ${fresh[0].detail.split(":")[0]}. A busy-wait or a deliberate CPU burn takes a core from ` +
-      `the game's programs, whose time limits are wall clock. To wait, use time.sleep() (or garden.wait_for_budget in a scaffold).`;
+    return `Fair play (a warning from the runner): ${fresh[0].detail.split(":")[0]}. A busy-wait or a deliberate CPU burn takes CPU from ` +
+      `the game and every other team's agent. To wait, use time.sleep() (or garden.wait_for_budget in a scaffold).`;
   };
   const session = { id: sessionId, no: sessionNo, gate, notice, requests: 0, submitted: [] };
   desk.session = session;

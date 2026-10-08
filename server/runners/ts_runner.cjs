@@ -35,7 +35,9 @@
 "use strict";
 const vm = require("node:vm");
 const fs = require("node:fs");
+const path = require("node:path");
 const readline = require("node:readline");
+const { execFileSync } = require("node:child_process");
 const { Worker } = require("node:worker_threads");
 const { stripTypeScriptTypes } = require("node:module");
 
@@ -109,7 +111,28 @@ const newContext = () => vm.createContext(Object.create(null), { microtaskMode: 
 // notices: "late" at its ms of CPU; at the judging wall time "late" or "fault" (most of the call's time was
 // spent waiting for a CPU). It acts only while the state is RUNNING, holding it at BUSY meanwhile; the script's
 // end waits for it, so nothing of one call reaches the next.
-const threadMs = () => { const u = process.threadCpuUsage(); return (u.user + u.system) / 1000; };
+// The exact thread CPU clock: native/cpuclock.c, built here on first use (Node's own threadCpuUsage() is stale
+// by up to a scheduler tick for a running thread, too coarse for budgets of a few ms).
+function loadClock() {
+  const dir = path.join(__dirname, "native");
+  const file = path.join(dir, `cpuclock-${process.platform}-${process.arch}-${process.versions.modules}.node`);
+  try { return { file, clock: require(file) }; } catch {}
+  const tmp = `${file}.${process.pid}.tmp`;
+  for (const cc of ["gcc", "cc", "clang"]) {
+    try {
+      execFileSync(cc, ["-O2", "-shared", "-fPIC", `-I${path.join(path.dirname(process.execPath), "..", "include", "node")}`, "-o", tmp, path.join(dir, "cpuclock.c")],
+        { stdio: "ignore", timeout: 60000 });
+      fs.renameSync(tmp, file);
+      return { file, clock: require(file) };
+    } catch {}
+  }
+  try { fs.unlinkSync(tmp); } catch {}
+  process.stderr.write("ts_runner: no exact thread CPU clock (native/cpuclock.c didn't build); using threadCpuUsage()\n");
+  return { file: null, clock: null };
+}
+const NATIVE = loadClock();
+const threadMs = NATIVE.clock ? NATIVE.clock.threadCpuMs : () => { const u = process.threadCpuUsage(); return (u.user + u.system) / 1000; };
+const MAIN_CLOCK = NATIVE.clock ? NATIVE.clock.clockId() : null;
 const SCHEDSTAT = `/proc/self/task/${process.pid}/schedstat`;
 /** [CPU ms, ms spent runnable but waiting for a CPU] of the main thread, from /proc (tick-stale). */
 const schedstat = () => { try { const [c, w] = fs.readFileSync(SCHEDSTAT, "latin1").split(" "); return [Number(c) / 1e6, Number(w) / 1e6]; } catch { return [0, 0]; } };
@@ -123,7 +146,10 @@ const WATCHDOG = `
 const { workerData } = require("node:worker_threads");
 const fs = require("node:fs");
 const I = new Int32Array(workerData.ctl, 0, 4), F = new Float64Array(workerData.ctl, 16, 8);
-const read = () => { try { const [c, w] = fs.readFileSync(workerData.path, "latin1").split(" "); return [Number(c) / 1e6, Number(w) / 1e6]; } catch { return [0, 0]; } };
+const stat = () => { try { const [c, w] = fs.readFileSync(workerData.path, "latin1").split(" "); return [Number(c) / 1e6, Number(w) / 1e6]; } catch { return [0, 0]; } };
+// The main thread's CPU: exact through the native clock, else /proc (stale by up to a tick, never ahead).
+const C = workerData.clock ? require(workerData.clock) : null;
+const read = C ? () => { const [, w] = stat(); return [C.cpuMsOf(workerData.id) ?? 0, w]; } : stat;
 const wallMs = () => Number(process.hrtime.bigint()) / 1e6;
 const hold = () => Atomics.compareExchange(I, 0, 1, 2) === 1;          // RUNNING -> BUSY, if still inside the call's script
 const release = () => { Atomics.store(I, 0, 1); Atomics.notify(I, 0); };
@@ -149,7 +175,7 @@ for (;;) {
   Atomics.wait(I, 0, 1, Math.max(0.25, Math.min(next, 50)));
 }`;
 function startWatchdog() {
-  const w = new Worker(WATCHDOG, { eval: true, workerData: { ctl: CTL, path: SCHEDSTAT } });
+  const w = new Worker(WATCHDOG, { eval: true, workerData: { ctl: CTL, path: SCHEDSTAT, clock: NATIVE.file, id: MAIN_CLOCK } });
   w.unref();
   w.on("error", (e) => process.stderr.write(`watchdog: ${short(e)}\n`));
 }
@@ -196,11 +222,12 @@ function release(call) {
 }
 
 // The call's script: it takes call.k from a property it deletes first (defined, not assigned, so no setter
-// of the program's runs), marks its start and end, and runs `body` (which may use k) in between.
+// of the program's runs), marks its start and end, and runs `body` (which may use k) in between. The program's
+// clock (and its performance.cpuTime()) starts with the call's budget.
 const KEY = "__dbcCall";
 function inCall(c, call, body) {
   Object.defineProperty(c, KEY, { value: call.k, configurable: true, writable: false, enumerable: false });
-  return vm.runInContext(`(() => { const k = globalThis.${KEY}; delete globalThis.${KEY}; k.enter(); try { ${body} } finally { k.leave(); } })()`,
+  return vm.runInContext(`(() => { const k = globalThis.${KEY}; delete globalThis.${KEY}; k.enter(); __startClock(); try { ${body} } finally { k.leave(); } })()`,
     c, { breakOnSigint: true });
 }
 

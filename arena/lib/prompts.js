@@ -36,16 +36,18 @@ export function timingText(config) {
   ${Math.round((config.minutes * 60000) / 200)} rounds. Every bee that isn't feeding gets one turn per round.
 - Each team's flower program is its flower species. A turn: the bee's queued challenge goes to one flower of a species
   drawn ${prevalenceOf(config) ? "by prevalence (below)" : "at random"} from all species (yours included); that flower call gets a hidden time budget R, drawn uniformly from
-  ${minR} to ${fl.ms} ms afresh for every call: its hard limit to return [response, percent], on the wall clock from the
-  start of the call (the flower is told its R as GAME["ms"]; GAME["flower_ms"] is ${fl.ms}).
+  ${minR} to ${fl.ms} ms afresh for every call: its hard limit to return [response, percent], in CPU time from the start of
+  the call (the flower is told its R as GAME["ms"]; GAME["flower_ms"] is ${fl.ms}).
   The response reaches the bee at ${fl.ms} ms whatever R and the flower's speed, and the bee is never told R; the bee has
-  ${bee.ms} ms to return ["feed" or "leave", next challenge]. Neither is told whose the other is. A feed takes the bee
+  ${bee.ms} ms of CPU time to return ["feed" or "leave", next challenge]. Neither is told whose the other is. A feed takes the bee
   out for ${config.feedCost} rounds.
+- Time limits are CPU time: a program measures its own with time.process_time(). A wall-clock backstop also stops a call
+  that runs far longer in real time (RULES.md has its thresholds), and a call the server itself starved of CPU is voided
+  and counts against no one. time.sleep() does nothing in programs.
 - A flower's energy goes to compute, nectar and pollen. Its excess energy for a turn is
   E = (${n0(fl.size)} − flower size) × max(0, R − the flower's CPU ms)${bytesTerm(config)}${bytesInEnergy(config) ? ", in node·ms·bytes" : ""}.${bytesInEnergy(config)
-    ? `\n  A response's bytes are its JSON text's, at most ${n0(byteCap(config))}: a bigger one is refused (E = 0).` : ""} The CPU ms are CPU time;
-  the limit R is wall time, which also counts any time the machine spends on other programs during the call. If the bee feeds,
-  the flower gives it percent/100 × E as nectar and the rest as pollen. If it doesn't feed, that energy is lost.
+    ? `\n  A response's bytes are its JSON text's, at most ${n0(byteCap(config))}: a bigger one is refused (E = 0).` : ""} If the bee
+  feeds, the flower gives it percent/100 × E as nectar and the rest as pollen. If it doesn't feed, that energy is lost.
 ${prevalenceText(config) ? `${prevalenceText(config)}\n` : ""}- Programs run fresh for every call: flower(challenge), first(), decide(challenge, response), and the bee's optional
   fed(nectar), which runs after a feed decided in time, in the same instance as that decide. Programs see only their
   arguments and GAME (the settings and their team's index): no history, no round or game time. A program's clock reads 0
@@ -245,9 +247,9 @@ ${personaAndSituation(persona, fixed, { simpleCode })}
   output is its log).
 - Scripts you run in a session (the Bash tool's run_in_background option, output to a file in your workspace) are stopped
   when that session ends; only the scaffold outlives sessions.
-- To wait, sleep: \`time.sleep(s)\` (in a scaffold also \`garden.wait_for_budget(kind, cost)\` and \`follow()\`, which block
-  without using the CPU). Never spin in a loop until a clock says so: this machine also runs the game's programs, whose time
-  limits are wall clock, so a busy loop makes other teams' flowers late.
+- In your scripts and scaffold, to wait, sleep: \`time.sleep(s)\` (in a scaffold also \`garden.wait_for_budget(kind, cost)\`
+  and \`follow()\`, which block without using the CPU). Never spin in a loop until a clock says so: this machine also runs
+  the game and every other team's agent, and a busy loop takes CPU from all of them.
 - What everyone sees, the moment it happens: every arrival (whose bee at whose species), challenge, response and feed; on a
   feed, its percent, energy, nectar and pollen; the nectar and pollen ledgers and the live scoreboard. Private to the
   flower's team during play: the percent and energy of turns without a feed, and the flower's compute time on every turn.

@@ -43,7 +43,7 @@ const tt = timingText(config);
 check("timing: 200 ms rounds, the flower's hidden budget R (50 to 150 ms) and the bee's 50 ms, a feed costs 10 rounds", /Rounds of 200 ms/.test(tt) && /about\s+150 rounds/.test(tt)
   && /hidden time budget R, drawn uniformly from\s+50 to 150 ms afresh for every call: its hard limit to return \[response, percent\]/.test(tt) && /told its R as\s+GAME\["ms"\]/.test(tt)
   && /reaches the bee at 150 ms whatever R/.test(tt) && /bee is never told R/.test(tt)
-  && /50 ms to return \["feed" or "leave", next challenge\]/.test(tt) && /out for 10 rounds/.test(tt), tt);
+  && /50 ms of CPU time to return \["feed" or "leave", next challenge\]/.test(tt) && /out for 10 rounds/.test(tt), tt);
 check("timing: species; energy goes to compute, nectar and pollen; the flower gives both on a feed", /flower program is its flower species/.test(tt) && /one flower of a species/.test(tt)
   && /energy goes to compute, nectar and pollen/.test(tt) && /E = \(1,100 − flower size\) × max\(0, R − the flower's CPU ms\)/.test(tt)
   && /the flower gives it\s+percent\/100 × E as nectar and the rest as pollen/.test(tt) && /If it doesn't feed, that energy is lost/.test(tt), tt);
@@ -114,8 +114,8 @@ const hiFixed = toolSystem(persona, config, "/w", { apiBase, teams: 14, fixed: t
 check("adapt-hi: no steer toward simple code (with fixed teams the interview is only described); other arenas keep it",
   !/smart kid|obscure techniques|aged 10-14|understand it/.test(hiFixed) && /Nothing in this\s+tournament depends on those scores/.test(hiFixed)
   && /Clever ideas a smart kid can follow beat obscure techniques/.test(toolSystem(persona, config, "/w", { apiBase, teams: 14, fixed: true })), hiFixed.slice(0, 1500));
-check("system: wait by sleeping, never spin (a busy loop makes other teams' flowers late); a warned-about fair-play matter",
-  /To wait, sleep: `time\.sleep\(s\)`/.test(sysVet) && /garden\.wait_for_budget/.test(sysVet) && /Never spin in a loop/.test(sysVet) && /other teams' flowers late/.test(sysVet)
+check("system: wait by sleeping, never spin (a busy loop takes CPU from the game and the other agents); a warned-about fair-play matter",
+  /to wait, sleep: `time\.sleep\(s\)`/.test(sysVet) && /garden\.wait_for_budget/.test(sysVet) && /Never spin in a loop/.test(sysVet) && /takes CPU from all of them/.test(sysVet)
   && /only warned about.*\n?.*busy-wait loop/.test(sysVet));
 check("timing: a game with the byte factor states it, and the response cap; one without doesn't",
   /max\(0, R − the flower's CPU ms\) × \(1,024 − response bytes\), in node·ms·bytes\.\s+A response's bytes are its JSON text's, at most 1,024: a bigger one is refused/.test(timingText({ ...config, maxResponseBytes: 1024, energy: { bytes: true } }))
@@ -135,6 +135,10 @@ check("timing: species prevalence, when the game has it: the draw, P_s as recent
   /species\s+drawn by prevalence/.test(timingText(prevCfg)) && /p_s = \(c \+ P_s\) \/ \(N \(c \+ 1\)\)/.test(timingText(prevCfg)) && /recent pollination success/.test(timingText(prevCfg))
   && /half-life of 60 s/.test(timingText(prevCfg)) && /c falls from 1 to 0\.1/.test(timingText(prevCfg)) && /tools\/status\.py/.test(timingText(prevCfg)) && /Programs never see them/.test(timingText(prevCfg))
   && !/prevalence/i.test(timingText(config)) && /drawn at random/.test(timingText(config)), timingText(prevCfg));
+check("timing: R and the bee's 50 ms are CPU time (process_time); a wall-clock backstop; a starved call is voided; time.sleep does nothing in programs",
+  /its hard limit to return \[response, percent\], in CPU time/.test(tt) && /50 ms of CPU time to return/.test(tt) && /time\.process_time\(\)/.test(tt)
+  && /wall-clock backstop/.test(tt) && /starved of CPU is voided\s+and counts against no one/.test(tt) && /time\.sleep\(\) does nothing in programs/.test(tt)
+  && !/R is wall time|on the wall clock from/.test(tt), tt);
 check("adapt-hi lobby: its wall time, and what the team can study (the revealed earlier games, room queries)", /about 10 minutes of wall time/.test(hiLobby)
   && /previous-games\//.test(hiLobby) && /tools\/query\.py --room/.test(hiLobby), hiLobby);
 const bothLobby = lobbyBrief({ config, teamName: "Wildmeadow Commons", generation: 1, maxTurns: 100, carried: true, started: ["flower", "bee"], brevity: false, minutes: 10 });
