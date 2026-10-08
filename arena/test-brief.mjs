@@ -130,28 +130,51 @@ check("adapt-hi: no cryptographic words in what the arena writes for a team (RUL
   && !CRYPTO.test(lobbyBrief({ config: smallCfg, teamName: "M", generation: 2, maxTurns: 100, carried: true, brevity: false, minutes: 10 }))
   && !CRYPTO.test(gameBrief({ config: smallCfg, teamName: "M", generation: 1, sessionNo: 2, status: "running", clockMs: 60000, budgets: null, maxTurns: 60, brevity: false })),
   smallSys.match(new RegExp(`.{0,80}(${CRYPTO.source}).{0,80}`, "i"))?.[0]);
-const prevCfg = { ...config, prevalence: { on: true, basis: "pollination", halfLifeS: 60, cStart: 1, cEnd: 0.1 } };
-check("timing: species prevalence, when the game has it: the draw, P_s as recent pollination, public in the tools, never to programs; no strategy",
-  /species\s+drawn by prevalence/.test(timingText(prevCfg)) && /p_s = \(c \+ P_s\) \/ Σ_k \(c \+ P_k\)/.test(timingText(prevCfg)) && /recent success on a par-1 scale/.test(timingText(prevCfg))
-  && /the pollen it gave each bee team lately/.test(timingText(prevCfg)) && /fading by half every 60 s/.test(timingText(prevCfg)) && /c runs from 1 to 0\.1/.test(timingText(prevCfg))
-  && /tools\/status\.py/.test(timingText(prevCfg)) && /garden\.prevalence\(\)/.test(timingText(prevCfg)) && /Programs never see them/.test(timingText(prevCfg))
-  && !/prevalence/i.test(timingText(config)) && /drawn at random/.test(timingText(config)), timingText(prevCfg));
+// Metagame v2 (lib/prevalence.js; server/lib/gameConfig.js): prevalence on both sides with the F × B score, the feed
+// price and the flower window, from the game's config. A config without prevalence, or in the superseded one-sided form
+// (no slots), plays the old way.
+const oneSided = { ...config, prevalence: { on: true, basis: "pollination", halfLifeS: 60, cStart: 1, cEnd: 0.1 } };
+check("timing: a config without prevalence, or in the one-sided form (no slots), plays the old way: species at random, every bee each round",
+  !/prevalence|F × B|feed_price/i.test(timingText(oneSided, 4)) && /drawn at random/.test(timingText(oneSided, 4)) && /Every bee that isn't feeding gets\s+one turn per round/.test(timingText(oneSided, 4))
+  && !/prevalence/i.test(timingText(config)) && /drawn at random/.test(timingText(config)), timingText(oneSided, 4));
+const v2 = { ...config, minutes: 40, feedCost: 0, flowerWindowMs: 150, feedPrice: null, maxResponseBytes: 1024, energy: { bytes: true }, scoring: { alpha: 0.85, beta: 0.85 },
+  prevalence: { on: true, halfLifeS: 90, cStart: 1, cEnd: 0.1, cap: 4, slots: 0.25, prior: null },
+  budgets: { flower: { size: 1100, perMinute: 60, cap: 300, ms: 50, minMs: 1 }, bee: { size: 11000, perMinute: 600, cap: 3000, ms: 50, memory: 50 } } };
+const ct = timingText(v2, 10);
+check("v2 timing: 200 ms rounds; 3 of the 10 bees drawn by bee success; R from 1 to 50 ms; responses at 150 ms (GAME flower_window_ms); no rounds out",
+  /Rounds of 200 ms of game time: a 40 minutes game is about 12000 rounds/.test(ct) && /Each round 3 of the 10 bees\s+are drawn by bee success \(below\), and each takes one turn/.test(ct)
+  && /drawn by prevalence \(below\)/.test(ct) && /drawn uniformly from\s+1 to 50 ms/.test(ct) && /GAME\["flower_ms"\] is 50/.test(ct)
+  && /reaches the bee at 150 ms \(GAME\["flower_window_ms"\]\) whatever R/.test(ct) && /A feed doesn't take the bee out of play/.test(ct)
+  && !/out for 0 rounds/.test(ct) && !/Every bee that isn't feeding/.test(ct), ct);
+check("v2 timing: the feed price as an absolute number from the config (null: 5% of the most a flower can make), out of the bee's nectar; a set price; free",
+  /A feed costs the bee a price of 2,816,000 node·ms·bytes \(5% of the most a flower can make in a turn\) \(GAME\["feed_price"\]\), out of its nectar: its net nectar\s+is nectar − price, which can be negative/.test(ct)
+  && /a price of 1,000,000 node·ms·bytes \(1\.8% of the most/.test(timingText({ ...v2, feedPrice: 1000000 }, 10))
+  && !/feed costs|feed_price/.test(timingText({ ...v2, feedPrice: 0 }, 10)) && !/feed costs|feed_price/.test(tt), ct);
+check("v2 timing: prevalence on both sides: the draws, F from recent pollen^β, B from recent net nectar^α, the prior, the half-life, the cap, c; public, never to programs; no strategy",
+  /Prevalence, on both sides/.test(ct) && /3 of the 10 bees \(⌈0\.25 × N⌉\) take a turn, drawn one after another without replacement/.test(ct)
+  && /bee b with weight c \+ B_b; a bee not drawn doesn't visit that round/.test(ct) && /with weight c \+ F_s, with replacement, its own species included/.test(ct)
+  && /\(the pollen it gave that team's bee lately\)\^0\.85/.test(ct) && /net nectar it got there lately\|\^0\.85/.test(ct) && /nectar minus the feed price, so it can be negative/.test(ct)
+  && /starts at 6,758,400 and halves every 90 s of game time/.test(ct) && /par 1 and are capped at 4/.test(ct) && /c runs from 1 to 0\.1 over the game/.test(ct)
+  && /tools\/status\.py/.test(ct) && /garden\.prevalence\(\)/.test(ct) && /Programs never\s+see them/.test(ct), ct);
+check("v2 timing: the score is F × B's time-average (keyed to prevalence.on); cumulative and uncapped settings; the round count without N",
+  /Your score, your fitness, is the time-average over the rounds played of F × B/.test(ct)
+  && /never fades \(cumulative\)/.test(timingText({ ...v2, prevalence: { ...v2.prevalence, halfLifeS: null, cap: null } }, 10)) && /par 1 \(uncapped\)/.test(timingText({ ...v2, prevalence: { ...v2.prevalence, cap: null } }, 10))
+  && /Each round ⌈0\.25 × N⌉ of the N bees/.test(timingText(v2)) && !/F × B/.test(timingText({ ...v2, prevalence: { ...v2.prevalence, on: false } }, 10)), ct);
+check("v2 settings: Scores names F × B as the score (pollination and forage only shown); other games keep their exponents line",
+  /Scores: your fitness is the time-average of F × B \(above\)/.test(settingsText(v2, 10)) && /they aren't the score/.test(settingsText(v2, 10)) && /R: 1 to 50/.test(settingsText(v2, 10))
+  && /forage sums nectar\^0\.85 over the species your bee fed at/.test(settingsText({ ...config, scoring: { alpha: 0.85, beta: 0.85 } }, 4)), settingsText(v2, 10));
+const v2Scores = [{ teamId: "me", fitness: 1.08, pollinationShare: 0.3, forageShare: 0.2, flowerSuccess: 1.2, beeSuccess: 0.9 }, { teamId: "b", fitness: 0.92 }];
+const v2Brief = gameBrief({ config: v2, teamName: "M", teamId: "me", generation: 1, sessionNo: 3, status: "running", clockMs: 60000, budgets: null, scores: v2Scores, maxTurns: 60, brevity: false });
+check("v2 game brief: fitness with F and B now, no shares", /fitness 1\.08 \(#1 of 2; par is 1\.00\); now: flower success F 1\.20, bee success B 0\.90/.test(v2Brief) && !/shares: pollination/.test(v2Brief), v2Brief);
 check("timing: R and the bee's 50 ms are CPU time (process_time); a wall-clock backstop; a starved call is voided; time.sleep does nothing in programs",
   /its hard limit to return \[response, percent\], in CPU time/.test(tt) && /50 ms of CPU time to return/.test(tt) && /time\.process_time\(\)/.test(tt)
   && /wall-clock backstop/.test(tt) && /starved of CPU is voided\s+and counts against no one/.test(tt) && /time\.sleep\(\) does nothing in programs/.test(tt)
   && !/R is wall time|on the wall clock from/.test(tt), tt);
-// coop-eq: the pinned defector's brief; the round, feed and score text from the game's config (the coop rules' keys are
-// provisional until the engine reports them: lib/prevalence.js coopRules).
+// coop-eq: the pinned defector's brief (its rules: the v2 checks above).
 const pinned = roleText("defector", { brief: "pinned" });
 check("coop-eq defector: pinned, percent 0, any other strategy, its bee to win; nothing cryptographic", /pinned defector/.test(pinned) && /percent 0 on every\s+answer/.test(pinned)
   && /any strategy is yours/.test(pinned) && /Your bee plays\s+to win/.test(pinned) && !CRYPTO.test(pinned), pinned);
-const coopCfg = { ...config, minutes: 40, feedCost: 0, prevalence: { on: true, basis: "pollination", halfLifeS: 90, cStart: 1, cEnd: 0.1, cap: 4, bees: { on: true, basis: "net nectar" } },
-  feedPrice: { share: 0.05 }, scoring: { alpha: 0.85, beta: 0.85, mode: "prevalence" } };
-const ct = timingText(coopCfg);
-check("coop-eq timing: ⌈N/4⌉ bees a round drawn by bee prevalence, no rounds out, a feed price in nectar, the F × B score", /Each round ⌈N\/4⌉ bees\s+are drawn by bee prevalence/.test(ct)
-  && /A feed doesn't take the bee out of play/.test(ct) && /a price in nectar \(5% of the most excess energy/.test(ct) && /Bee prevalence works the same way/.test(ct)
-  && /time-average over the game of F × B/.test(ct) && !/out for 0 rounds/.test(ct) && !/Every bee that isn't feeding/.test(ct), ct);
-check("coop-eq: other games keep their round and feed text", /Every bee that isn't feeding gets\s+one turn per round/.test(tt) && /out for 10 rounds/.test(tt) && !/price in nectar|Bee prevalence/.test(tt));
+check("old games keep their round and feed text", /Every bee that isn't feeding gets\s+one turn per round/.test(tt) && /out for 10 rounds/.test(tt) && !/price|Prevalence|F × B/.test(tt));
 check("adapt-hi lobby: its wall time, and what the team can study (the revealed earlier games, room queries)", /about 10 minutes of wall time/.test(hiLobby)
   && /previous-games\//.test(hiLobby) && /tools\/query\.py --room/.test(hiLobby), hiLobby);
 const bothLobby = lobbyBrief({ config, teamName: "Wildmeadow Commons", generation: 1, maxTurns: 100, carried: true, started: ["flower", "bee"], brevity: false, minutes: 10 });
