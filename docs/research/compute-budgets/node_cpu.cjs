@@ -82,7 +82,26 @@ async function newWorker(sab) {
   return { w, startMs: performance.now() - t };
 }
 
+// A fixed flower-like workload, run in a fresh context per call as the runner does: its CPU time by this
+// thread's clock and by the whole process's (today's runner reports the process's, which includes V8's
+// background compiler and GC threads).
+const WORK = `(() => { const m = new Map(); let acc = 0;
+  for (let i = 0; i < 300000; i++) { const k = (i * 2654435761) % 4093; m.set(k, (m.get(k) || 0) + i); acc ^= k; }
+  const items = [...m.entries()].sort((a, b) => a[0] - b[0]); const s = JSON.stringify(items);
+  let h = 0; for (let r = 0; r < 20; r++) for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return acc ^ h; })()`;
+
+function noise(n) {
+  for (let i = 0; i < n; i++) {
+    const ctx = vm.createContext({});
+    const t0 = threadMs(), p0 = cpuMs(), w0 = performance.now();
+    vm.runInContext(WORK, ctx, { timeout: 10000 });
+    W({ test: "noise", thread: threadMs() - t0, process: cpuMs() - p0, wall: performance.now() - w0 });
+  }
+}
+
 async function main() {
+  noise(Number(process.env.NOISE_N || 30));
   const plan = [];
   for (const mech of ["vm_wall", "sigint_perf", "sigint_poll", "worker_kill"]) for (const r of RS) for (let i = 0; i < N; i++) plan.push([mech, r]);
   plan.sort(() => Math.random() - 0.5);

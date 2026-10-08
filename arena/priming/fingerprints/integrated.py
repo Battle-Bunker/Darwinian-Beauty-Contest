@@ -35,6 +35,9 @@ def flower(c):
                 inc[d][v].append((u, t))
     p = list(range(n))
 
+    # A swap of u and v changes the terms of every pair at u or v, except a pair joining u and v themselves:
+    # each property depends only on |p[u] - p[v]| and on which halves the two are in, so that pair's term is
+    # the same after the swap and cancels between the before and after sums. The delta below is exact.
     def part(v):        # node v's share of the weighted objective (lower is better)
         return sum(W[d] / S[d] * (abs(p[v] - p[u]), -abs(p[v] - p[u]), -((p[v] < n / 2) != (p[u] < n / 2)),
                                   abs(abs(p[v] - p[u]) - t))[d] for d in range(len(W)) for u, t in inc[d][v])

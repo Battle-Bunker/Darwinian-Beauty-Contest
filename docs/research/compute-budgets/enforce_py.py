@@ -18,6 +18,8 @@ Mechanisms (where the stop is decided):
   prof          child: setitimer(ITIMER_PROF, R)        (user + system CPU; checked on the 4 ms tick)
   virtual       child: setitimer(ITIMER_VIRTUAL, R)     (user CPU only; tick)
   posix         child: timer_create(CLOCK_PROCESS_CPUTIME_ID) (tick)
+  prof_kill     child: setitimer(ITIMER_PROF, R) with SIGPROF left at its default action, so the kernel
+                terminates the process on expiry: no handler, no perf, tick precision, C calls can't delay it
   rearm         child: ITIMER_REAL armed for the CPU still left, re-armed until process_time reaches R
   watchdog      parent: reads the child's process CPU clock (clock_gettime), sleeps for the CPU left
                 (select on the reply pipe), SIGKILL at R. Another process's clock is only as fresh as its
@@ -67,6 +69,9 @@ def child(mech, r_ms, work, r_go, w_rep, beat):
         if mech == "real":
             signal.setitimer(signal.ITIMER_REAL, r)
         elif mech == "prof":
+            signal.setitimer(signal.ITIMER_PROF, r)
+        elif mech == "prof_kill":
+            signal.signal(signal.SIGPROF, signal.SIG_DFL)
             signal.setitimer(signal.ITIMER_PROF, r)
         elif mech == "virtual":
             signal.setitimer(signal.ITIMER_VIRTUAL, r)
@@ -194,7 +199,7 @@ def trial(mech, r_ms, work):
 def main():
     args = sys.argv[1:]
     out = args[0]
-    opt = {"mechs": "real,prof,virtual,posix,rearm,watchdog,schedstat,watchdog_perf,watchdog_rt,perf_kill,perf_sigtrap",
+    opt = {"mechs": "real,prof,virtual,posix,prof_kill,rearm,watchdog,schedstat,watchdog_perf,watchdog_rt,perf_kill,perf_sigtrap",
            "rs": "3,10,50,150", "n": "15", "nc": "4", "tag": "", "works": "py,c"}
     for i in range(1, len(args), 2):
         opt[args[i][2:]] = args[i + 1]

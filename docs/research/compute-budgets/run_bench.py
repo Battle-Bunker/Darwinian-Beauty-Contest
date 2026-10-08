@@ -6,6 +6,7 @@ Runs every measurement under each load condition, on a machine that is otherwise
 
 Conditions (the load is load.py's: spin:3, mem:1, bursty:4, i.e. 8 processes wanting ~5 cores of 4):
   idle          no load
+  idle1slot     no load, one runner slot (no other program on the machine at all)
   autogroup     the hogs each in their own session at nice 15: the arena's scaffolds and session tools
                 today. With sched_autogroup_enabled=1, each session is its own autogroup of equal weight,
                 so the nice value counts for nothing against a runner in another session.
@@ -27,6 +28,7 @@ import load as L
 LOAD = "spin:3,mem:1,bursty:4"
 CONDITIONS = {
     "idle": {},
+    "idle1slot": {"slots": 1},
     "autogroup": {"load": {"setsid": True, "nice": "15"}},
     "agnice": {"load": {"setsid": True, "nice": "15", "autogroup_nice": "15"}},
     "cpuidle": {"load": {"setsid": True, "nice": "15", "cpu_cgroup": "cb-idle"}},
@@ -35,6 +37,7 @@ CONDITIONS = {
 }
 STEPS_BY_COND = {
     "idle": ["micro", "noise", "enforce", "node", "det", "fuel"],
+    "idle1slot": ["noise"],
     "autogroup": ["noise", "enforce", "node", "det", "fuel"],
     "agnice": ["noise"],
     "cpuidle": ["noise", "enforce"],
@@ -82,8 +85,9 @@ def main():
         if a == "--steps":
             steps = args[i + 1].split(",")
     py = sys.executable
-    pylib = os.path.join(out, "pylib")
-    fuel_dir = os.path.join(out, "fuel-build")
+    # wasmtime (pip install --target) and the compiled workload live outside the results (CB_PYLIB, CB_FUEL)
+    pylib = os.environ.get("CB_PYLIB", os.path.join(out, "pylib"))
+    fuel_dir = os.environ.get("CB_FUEL", os.path.join(out, "fuel-build"))
     log = open(os.path.join(out, "run.log"), "a")
     setup_cgroups()
     try:
@@ -107,7 +111,8 @@ def main():
                     if step == "micro":
                         run([py, f"{HERE}/micro.py", f"{out}/micro.json"], cond, log)
                     elif step == "noise":
-                        cmd = [py, f"{HERE}/noise_py.py", f"{out}/noise.jsonl", "--tag", tag, "--calls", "10" if quick else "30"]
+                        cmd = [py, f"{HERE}/noise_py.py", f"{out}/noise.jsonl", "--tag", tag, "--calls", "10" if quick else "30",
+                               "--slots", str(cond.get("slots", 2))]
                         run(cmd + (["--fifo"] if cond.get("fifo") else []), cond, log)
                     elif step == "enforce":
                         cmd = [py, f"{HERE}/enforce_py.py", f"{out}/enforce.jsonl", "--tag", tag]

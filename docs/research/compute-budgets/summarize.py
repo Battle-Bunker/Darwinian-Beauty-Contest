@@ -31,7 +31,7 @@ def table(head, body):
     print()
 
 
-COND_ORDER = ["idle", "autogroup", "agnice", "cpuidle", "cpuset", "fifo"]
+COND_ORDER = ["idle1slot", "idle", "autogroup", "agnice", "cpuidle", "cpuset", "fifo"]
 order = lambda t: COND_ORDER.index(t) if t in COND_ORDER else 99
 
 # --- noise and misses ----------------------------------------------------------------------------------------
@@ -74,7 +74,7 @@ if enf:
     g = collections.defaultdict(list)
     for r in enf:
         g[(r["tag"], r["work"], r["mech"])].append(r)
-    mechs = ["real", "prof", "virtual", "posix", "rearm", "watchdog", "schedstat", "watchdog_perf", "watchdog_rt", "perf_kill", "perf_sigtrap"]
+    mechs = ["real", "prof", "virtual", "posix", "prof_kill", "rearm", "watchdog", "schedstat", "watchdog_perf", "watchdog_rt", "perf_kill", "perf_sigtrap"]
     for work in ("py", "c"):
         body = []
         for tag in sorted({t for t, _, _ in g}, key=order):
@@ -122,6 +122,19 @@ if node:
         body.append([tag, m, f(s["p50"], 3), f(s["p95"], 3), f(s["min"], 3), f(s["max"], 3), " ".join(f"{k:g}:{f(x, 2)}" for k, x in by_r.items()),
                      f(wall["p50"]), extra])
     table(["condition", "mechanism", "over p50", "over p95", "min", "max", "p50 by R", "wall÷R p50", "costs"], body)
+    nz = collections.defaultdict(list)
+    for r in node:
+        if r.get("test") == "noise":
+            nz[r["tag"]].append(r)
+    body = []
+    for tag, v in sorted(nz.items(), key=lambda kv: order(kv[0])):
+        v = v[3:]  # the first calls warm the JIT up
+        for k in ("thread", "process", "wall"):
+            s = stats([r[k] for r in v])
+            body.append([tag, k, f(s["p50"]), f(100 * s["cv"], 1), f(s["p5"]), f(s["p95"]), f(s["max"])])
+    if body:
+        print("Fixed JS workload in fresh contexts (ms):\n")
+        table(["condition", "clock", "p50", "CV %", "p5", "p95", "max"], body)
     for r in node:
         if r.get("test") == "worker_cpuUsage_live":
             ss = r["samples"]
