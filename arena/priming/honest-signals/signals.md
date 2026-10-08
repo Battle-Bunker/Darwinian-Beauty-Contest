@@ -1,9 +1,13 @@
 # Candidate honest wealth signals
 
-**Shared by the five flowers that specialise in honesty:** each shows its true wealth this turn by doing
-some checkable work, and gives 50% nectar on every turn. How much work to do is each flower's own choice.
-Below are candidate signals, not rules or a ranking. Code is sketch-level. Rates were measured in pure
-Python on the game machine; yours will differ.
+**Shared by the five flowers that specialise in honesty.** Two things define the role:
+- **Generosity, fixed:** every flower answers with percent 50 on every turn, so half of whatever E it has
+  left goes to the bee as nectar.
+- **Wealth, shown:** each flower does some costly, checkable work that reveals its wealth this turn. How much
+  work to do is each flower's own choice, turn by turn.
+
+Below are candidate signals, not rules or a ranking. Code is sketch-level. Rates were measured in pure Python
+on this machine, outside the engine; yours will differ.
 
 ## The arithmetic
 
@@ -16,9 +20,10 @@ Python on the game machine; yours will differ.
   what feeds pay.
 - **Every signal must be bound to the challenge.** It has to be seeded by the bee's fresh challenge c, so
   nothing can be precomputed or reused.
-- **Recognisable by family.** Put the family and its parameters in a label: `labels[0] = {"fam": "walk",
-  "m": 1000}`. Bees can then learn that this family at this level paid this much.
-- **Energy left.** With a flower of 300 nodes (so 800 × (R − t)), as nectar at 50%:
+- **Recognisable by family.** Put the family and its parameters in a label: `labels[0] = {"fam": "tally",
+  "n": 30}`. Bees can then learn that this family at this level paid this much.
+- **The trade-off.** More work shows a higher level and leaves less E for nectar and pollen. With a flower
+  of 300 nodes (so E = 800 × (R − t)), the nectar at 50% is:
 
   | R | t = 0 | t = 25 | t = 50 | t = 100 |
   |---|---|---|---|---|
@@ -28,28 +33,7 @@ Python on the game machine; yours will differ.
 
 ## Candidates
 
-### 1. Checkpointed walk on a challenge-seeded graph
-
-- **Construction.** An implicit graph on 40-bit node ids: neighbour j of v is `mix(c, v, j)`, where `mix` is
-  a fixed integer scrambler both sides share. The walk starts at v₀ = c and moves to neighbour
-  `v mod 3`. Every m steps it records a checkpoint. The response is the checkpoint list.
-  ```
-  v = c; cps = [v]
-  while time.process_time() * 1000 < t:   # t: this call's choice, at most R
-      for _ in range(m): v = mix(c, v, v % 3) % 2**40
-      cps.append(v)
-  ```
-- **Level.** Steps = m × (checkpoints − 1). That's about 1,900 steps a ms in Python, with almost no spread:
-  the most exact measure of t here.
-- **Bee check.** Re-walk k random segments, from checkpoint i to i+1. At m = 1,000 and k = 20 that's about
-  11 ms.
-- **Faking.**
-  - Junk checkpoints after an honest prefix. A level inflated by a factor x is caught with probability
-    1 − (1/x)^k: 85% for x = 1.1 and k = 20.
-  - A faster implementation of the same walk, so the level overstates t.
-  - A step function with a shortcut (keep it structureless).
-
-### 2. Puzzle tally
+### 1. Puzzle tally
 
 - **Construction.** Instance i is a random graph seeded by (c, i). Measured: 30 nodes, 60 edges, 3-colouring
   by backtracking with a work cap.
@@ -65,20 +49,21 @@ Python on the game machine; yours will differ.
   - Bad certificates, if the bee only samples.
   - Index ranges chosen so the bee's rebuilds are slow (cap the bee's work).
 
-### 3. Certificate chain
+### 2. Linked puzzles
 
-- **Construction.** The same puzzles, but instance k+1 is seeded by (c, the solution of instance k). The
-  response is the chain.
-- **Level.** The chain's length. Measured at the same rate and spread as the tally: 45 ms gives 35 ± 6, and
-  90 ms gives 72 ± 12.
-- **Bee check.** Any link can be checked on its own: rebuild instance k+1 from certificate k, then check its
+- **Construction.** The same puzzles, but the graph generator for instance k+1 is seeded with c and the
+  colours of instance k's solution, so each puzzle depends on the one before. The response is the sequence
+  of solutions.
+- **Level.** How many linked puzzles were solved. Measured at the same rate and spread as the tally: 45 ms
+  gives 35 ± 6, and 90 ms gives 72 ± 12.
+- **Bee check.** Any link can be checked on its own: rebuild instance k+1 from solution k, then check its
   solution.
 - **Faking.**
   - Cherry-picking is gone: the next instance is fixed by the last solution, though a reseed rule for
     instances the flower gives up on reopens a little of it.
   - Otherwise as for the tally.
 
-### 4. Anytime tour
+### 3. Anytime tour
 
 - **Construction.** About 150 points seeded by c. The flower improves a tour (2-opt, or anything better) for
   as long as it chooses. The response is the node order.
@@ -93,7 +78,7 @@ Python on the game machine; yours will differ.
     t.
   - A lucky start.
 
-### 5. Difficulty ladder
+### 4. Difficulty ladder
 
 - **Construction.** Rungs are seeded instances of growing size (3-colouring at average degree 4.2:
   n = 40, 50, 60, …). The response is a certificate for the highest rung reached.
@@ -121,7 +106,7 @@ These hold whichever families the five flowers choose:
   3. Feed when what this family at this level has paid is worth the 10 rounds out.
   4. In `fed(nectar)`, still in the same instance, update the family's figure:
      ```
-     def fed(nectar):  MEMORY["w"] = round(0.8 * MEMORY.get("w", 0) + 0.2 * nectar / level)
+     def fed(nectar):  MEMORY["w"] = round(0.8 * MEMORY.get("w", 0) + 0.2 * nectar / level)  # level: from decide
      ```
   5. A falling figure means the family is being worn by flowers that pay less.
 
