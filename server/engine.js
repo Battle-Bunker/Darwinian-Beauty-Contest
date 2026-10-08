@@ -53,7 +53,7 @@ import { ProgramProcess } from "./runners/proc.js";
 import { createHash, randomInt } from "node:crypto";
 import { checkValue, parseType } from "./lib/types.js";
 import { zeroLedger } from "./lib/scoring.js";
-import { KINDS, drawBudget, excessEnergy, feedPriceOf, limitsOf, responseLimits, roundMs, wallLimits, windowMsOf } from "./lib/gameConfig.js";
+import { KINDS, drawBudget, excessEnergy, feedPriceOf, limitsOf, responseLimits, roundMs, sampleEveryOf, wallLimits, windowMsOf } from "./lib/gameConfig.js";
 import { size as measure } from "./lib/measure.js";
 import { Prevalence, drawWeighted, sampleWithout } from "./lib/prevalence.js";
 
@@ -365,7 +365,7 @@ export class Garden {
     this.weights = null;
     this.samples = [];                // prevalence samples not yet drained: { round, atMs, c, slots, F, B, pF, pB, fitness }
     this.sample = null;               // the latest
-    this.sampleEvery = Math.max(1, Math.round(1000 / this.roundMs)); // rounds: about once a second of game time
+    this.sampleEvery = sampleEveryOf(config); // rounds: about once a second of game time
     this.out = [];                    // actions not yet drained
     this.problems = [];               // { team, kind, version, error }: the first error of each program version
     this.seenProblem = new Set();

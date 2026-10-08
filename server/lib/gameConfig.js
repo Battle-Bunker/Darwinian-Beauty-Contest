@@ -30,6 +30,8 @@ const BUDGETS = {
 
 export const KINDS = ["flower", "bee"];
 export const GRAINS = ["feeder", "public", "off"];
+/** Who sees what during play: "private" (new games), each team only what its own programs see; "public", everyone everything public. */
+export const VISIBILITIES = ["private", "public"];
 /** The default feed price, as a share of Emax (prevalence.js): 0.05 × 56,320,000 = 2,816,000 at the defaults. */
 export const FEED_PRICE_SHARE = 0.05;
 /** The default prior of every prevalence pollen cell, as a share of Emax. */
@@ -60,6 +62,14 @@ export const DEFAULT_CONFIG = Object.freeze({
                                // with energy.bytes, also the byte cap of the energy formula
   revealOnFinish: true,        // when the game ends, everyone can see all code and every bee's print output
   grains: "feeder",            // who sees a feed's pollen grain during play: "feeder" (the bee's team) | "public" | "off"
+  // What anyone but the room's owner (with no team in the game) sees during play. "private": each team sees only
+  // its own programs' side of their turns (its flower's: the challenge, R, its response and percent, its CPU and
+  // errors; its bee's: the challenge, the response, its decision, nectar, price, balance, its grains bare), its
+  // own versions, budgets and MEMORY, and everyone's prevalence (F, B, p^F, p^B, fitness, c) in snapshots every
+  // prevalenceEveryS seconds of game time, rounded to 2 decimals: no arrivals, nobody else's turns, no ledgers.
+  // "public": as before (a config stored without it). Once the game is over, everything is revealed either way.
+  visibility: "private",
+  prevalenceEveryS: 30,
   // A grain is ⌊scale × pollen^exponent⌋ characters of code. Scale 0.1 ≈ 1024^(−1/3): with E in node·ms·bytes,
   // grains keep about the length they had when E was in node·ms (and scale 1).
   pollenGrain: Object.freeze({ exponent: 1 / 3, scale: 0.1 }),
@@ -149,6 +159,27 @@ export function prevalenceOf(config) {
 /** A sech c's default cHalfS, as a share of the game's minimum length (in seconds). */
 export const C_HALF_SHARE = 0.2;
 
+/** A config's visibility during play: "private" only if it says so (a config stored without it: "public"). */
+export const visibilityOf = (config) => (config?.visibility === "private" ? "private" : "public");
+
+/** The prevalence samples' spacing, in rounds: about once a second of game time. */
+export const sampleEveryOf = (config) => Math.max(1, Math.round(1000 / roundMs(config)));
+
+/**
+ * The prevalence snapshots of a private game: { everyMs, sampleMs }. A sample (taken every sampleMs of game
+ * time, at multiples of it) is a snapshot when it is the first at or after a multiple of everyMs (isSnapshot).
+ */
+export function snapshotsOf(config) {
+  const everyMs = Math.round((Number.isFinite(config?.prevalenceEveryS) ? config.prevalenceEveryS : DEFAULT_CONFIG.prevalenceEveryS) * 1000);
+  return { everyMs, sampleMs: sampleEveryOf(config) * roundMs(config) };
+}
+
+/** Whether the prevalence sample taken at game time atMs is one of the game's snapshots. */
+export function isSnapshot(atMs, config) {
+  const { everyMs, sampleMs } = snapshotsOf(config);
+  return atMs === 0 || Math.floor(atMs / everyMs) > Math.floor((atMs - sampleMs) / everyMs);
+}
+
 /** A config's endFactor: the most its game can last, as a multiple of `minutes` (1 for a config stored without one). */
 export const endFactorOf = (config) => (Number.isFinite(config?.endFactor) && config.endFactor >= 1 ? config.endFactor : 1);
 
@@ -182,6 +213,13 @@ const exponent = (v, name, dflt) => {
   const x = typeof v === "number" || typeof v === "string" ? Number(v) : NaN;
   if (!Number.isFinite(x) || x <= 0 || x > 1) throw new Error(`scoring.${name} must be a number in (0, 1]`);
   return x;
+};
+
+/** One of `options`, else an error; left out, `dflt`. */
+const oneOf = (v, options, name, dflt) => {
+  if (v === null || v === undefined || v === "") return dflt;
+  if (!options.includes(v)) throw new Error(`${name} must be ${options.map((o) => `"${o}"`).join(" or ")}`);
+  return v;
 };
 
 /** A scoring mode: "final" or "timeAverage", else an error; left out, `dflt`. */
@@ -236,6 +274,9 @@ export function normalizeConfig(input = {}, base = DEFAULT_CONFIG) {
     maxResponseBytes: int(c.maxResponseBytes, 16, 16777216, base.maxResponseBytes ?? DEFAULT_CONFIG.maxResponseBytes),
     revealOnFinish: bool(c.revealOnFinish, base.revealOnFinish),
     grains: GRAINS.includes(c.grains) ? c.grains : GRAINS.includes(base.grains) ? base.grains : DEFAULT_CONFIG.grains,
+    // Left out, the base's: "public" for a base stored without it.
+    visibility: oneOf(c.visibility, VISIBILITIES, "visibility", visibilityOf(base)),
+    prevalenceEveryS: num(c.prevalenceEveryS, 1, 3600, base.prevalenceEveryS ?? DEFAULT_CONFIG.prevalenceEveryS),
     pollenGrain: {
       exponent: num(c.pollenGrain?.exponent, 0.01, 1, base.pollenGrain?.exponent ?? DEFAULT_CONFIG.pollenGrain.exponent),
       scale: num(c.pollenGrain?.scale, 0, 1000, base.pollenGrain?.scale ?? (energyBytes(base) ? DEFAULT_CONFIG.pollenGrain.scale : 1)),
