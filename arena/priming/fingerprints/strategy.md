@@ -1,7 +1,7 @@
 # Fingerprints under the three-part energy rule: theory and proposal
 
-Draft for the next honest-specialist experiment (adapt-hi). The numbers here are arithmetic and quick single
-checks; measured numbers will be added.
+For the honest-specialist experiment (adapt-hi). Measured on the game machine (idle, Python, the game's real
+runner).
 
 ## The rule, and what one unit of each resource costs
 
@@ -61,9 +61,22 @@ from the flower team's own ledger, which records each call's CPU ms and R.
 
 | proof of work | bytes | how its level relates to work | spread at fixed work | notes |
 |---|---|---|---|---|
-| quality of the arrangement itself (integrated) | 0 extra | concave: fast gains, then slower | to measure | its identity comes free; at risk from a better optimiser (headroom test) |
-| one witness on a ladder of growing instances | about 10 | logarithmic (one rung about doubles the work) | high (luck) | one check; coarse |
-| clique tally | about 6 per ms of work | linear | about 10% at R = 150 | bytes grow with wealth: unusable beyond a few units |
+| quality of the arrangement itself (integrated) | 0 extra | concave: fast gains, then nearly flat beyond about 25 ms of CPU | about 1 in U | its identity comes free; a better annealer reaches the same U with about a third of the CPU |
+| one witness on a ladder of growing instances | about 10 | logarithmic | high: an instance's solve time varies 1.3 to 2.3 times its mean | one check; coarse |
+| tally of certified instances | 8 to 9 per unit | linear | count varies about 40% | over the 1,024-byte cap from about R = 20 in the list format; at 9 bytes a unit, still about 500 bytes at R = 150 |
+
+**Measured: the arrangement's level against CPU** (equal weights, one fresh challenge per call):
+
+| R (ms) | 3 | 10 | 20 | 42 | 76 | 150 |
+|---|---|---|---|---|---|---|
+| CPU (0.6 R) | 1.8 | 6 | 12 | 25 | 46 | 90 |
+| U, mean ± spread | 8.6 ± 1.7 | 13.4 ± 1.3 | 15.5 ± 1.6 | 17.3 ± 1.1 | 17.9 ± 1.4 | 18.4 ± 0.9 |
+| profile read right (11 weightings) | 42% | 74% | 81% | 86% | 88% | 84% |
+
+- U separates poor turns from the rest well. Above about R = 40 it is nearly flat, so one response can't tell R = 76
+  from R = 150.
+- Reading R back from U has a median error of 22–50% between R = 10 and 42, and more above.
+- A bigger arrangement (90 nodes, 127 bytes) only moves the flattening to about 25 ms of CPU.
 
 ## Proposal for the pinned cooperators
 
@@ -91,11 +104,26 @@ from the flower team's own ledger, which records each call's CPU ms and R.
   - A cooperator's U shows its R, so a bee can feed only on rich turns. A cooperator turn beats that 15% veteran
     above R ≈ 91 ms, and the 170-byte one above about 80 ms.
   - Against 25% veterans it wins only above about 133 ms (at 170 bytes) and never at 50 bytes.
-  - Still to measure: this with the real read-back of wealth, across burn and nectar shares.
+  - Measured, with the bee reading U:
+
+    | bee's rule | share of cooperator turns fed | mean R fed | nectar per feed |
+    |---|---|---|---|
+    | feed at every cooperator turn | 100% | 79 | 10.2M |
+    | feed when U ≥ 17.3 | 73% | 95 | 12.3M |
+    | feed when U ≥ 18.4 | 41% | 102 | 13.2M |
+    | (blind at a 40-node veteran, 15%, 50 bytes) | | | 12.1M |
+    | (blind at a 40-node veteran, 25%, 50 bytes) | | | 20.2M |
+
+    So at 60% CPU and 50% nectar, a selective bee does about as well at cooperators as blind at a 15% veteran,
+    and far worse than at a 25% one.
+- **The starter bee** checks a response in about 1.1 ms. On the real runner a whole decision, including the
+  program's start-up, takes 5 ms at the median and under 9 ms at the 99th percentile. Its reference curve
+  (CURVE) and threshold (TAU = 17, about R ≥ 40) come from the table above.
 - **The levers that help most,** in order:
   1. a smaller flower (each 10 nodes is 1.5% of E)
   2. a sharper wealth read-back on rich turns
   3. bytes, which are already near their floor
 - **The hybrid tally is out,** because its bytes grow with wealth.
-- **If the arrangement's concavity or optimiser headroom is too large,** the fallbacks for wealth are a one-witness
-  ladder (about 10 bytes, logarithmic and coarse) or a small tally of a few units.
+- **Fallbacks for wealth are weak under this rule.** A tally exceeds the byte cap on rich turns, and a one-witness
+  ladder is coarse and noisy. The arrangement alone remains the recommendation. The tally files (fingerprint.py,
+  fingerprint_compact.py, bee.py) are kept only as a fallback.

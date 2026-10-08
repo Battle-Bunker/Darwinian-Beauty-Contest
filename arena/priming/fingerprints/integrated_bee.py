@@ -12,8 +12,9 @@ n, M = 48, 96             # must match the flowers (integrated.py)
 K = 4
 KEYS = "abcd"             # MEMORY: the learned adjustment per property, in tenths (-9..9)
 WEIGHT = (1,) * K         # the fingerprint weights
-TAU = 12                  # feed when the weighted score reaches this (a feed costs 20 rounds)
-CURVE = ((0, 0.0), (2, 4.0), (12, 9.0), (45, 13.0), (90, 15.0))   # (CPU ms, U) for W = (1, 1, 1, 1): calibrate
+TAU = 17                  # feed when the weighted score reaches this (a feed costs 20 rounds): about R >= 40
+# (CPU ms, U) for an honest flower with equal weights, measured on the game machine (one response varies by about 1):
+CURVE = ((0, 0.0), (1.8, 8.6), (6, 13.4), (12, 15.5), (25.2, 17.3), (45.6, 17.9), (90, 18.4))
 PER_MS = 129600           # nectar (node·ms·bytes) an honest 50% flower gives per ms of R: 0.5 × 690 × 0.4 × 939
 NT, KT = 40, 6            # the hybrid's tally (hybrid.py): cliques of KT nodes in graphs of NT nodes
 UNIT_MS = 1.0             # CPU per tally clique (from calibration)

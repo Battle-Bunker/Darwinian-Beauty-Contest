@@ -14,7 +14,7 @@
 import random, time
 
 # Dimensions (n, k, h): h = 0 clique, 1 induced path, 2 induced cycle, 3 random pattern.
-T = ((24, 5, 0), (30, 7, 1), (30, 6, 2), (24, 6, 3))
+T = ((80, 8, 0), (64, 9, 1), (90, 9, 2), (48, 8, 3))   # measured: 0.50, 0.82, 0.62, 0.28 ms a unit on the game machine
 W = "0123"
 
 
