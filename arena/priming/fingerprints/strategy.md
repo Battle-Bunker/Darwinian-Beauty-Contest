@@ -82,7 +82,7 @@ With CPU = BURN × R, a turn pays PERCENT/100 × (1100 − size) × (1 − BURN)
   - Editing a constant costs the byte edit of its literal. BURN 0.6 → 0.4 is 1 node, PERCENT 50 → 35 is 2, and
     T (8, 32) → (12, 40) is 4.
   - Rewriting the 250-node starter takes most of a full 300-node bank, which takes 5 minutes to refill.
-  - A bee's 3,000-node bank holds the 939-node starter bee about 3 times over.
+  - A bee's 3,000-node bank holds the 1,283-node starter bee about 2.3 times over.
 
 ## The profile, T
 
@@ -99,7 +99,7 @@ With CPU = BURN × R, a turn pays PERCENT/100 × (1100 − size) × (1 − BURN)
   response's reading of a target up to 20 is off by 0.6 to 2.4 (standard deviation), and of 32 to 47 by 2.8 to 4.5,
   with 47 read about 3.6 low on average.
 - **How the starter bee groups profiles:** two flowers whose T are at most NEAR = 6 apart, measured as a
-  distance in (t1, t2), are one profile to it. To that bee they share one learned rate, honest or not. Measured
+  distance in (t1, t2), are one profile to it. To that bee they share one learned trust, honest or not. Measured
   from R = 8 at BURN 0.2 and 0.6, 81% of readings land within 4 of the true T, 87% within 6 and 94% within 8.
 
 ## Imitation, as arithmetic
@@ -128,23 +128,32 @@ With CPU = BURN × R, a turn pays PERCENT/100 × (1100 − size) × (1 − BURN)
   - no self-reported spend record. A bee can't check that record anyway, and the ledger keeps each call's CPU
     ms and R.
 
-**Bee: `integrated_bee.py`, 939 nodes.**
+**Bee: `integrated_bee.py`, 1,283 nodes.**
 - It replays the pairs from the challenge. For each class it finds the target t that the pairs beat random by the
-  most standard deviations, and that pair of t values is the profile.
-- Its wealth reading q is the share of random's distance the flower removed at those targets: 0 for random, 1 for
-  perfect. q is read as CPU ms through CURVE, the measured mean q at each CPU (below).
-- It never sees BURN, PERCENT or T. It learns per profile, from fed(nectar), what a feed pays per ms of CPU.
-  - **MEMORY** has one entry per profile, up to 50 bytes. The key is chr(40 + t) per class; the value is the
-    rate in thousands.
-  - **The prior** for an unknown profile is the starter's rate, 266 thousand per ms of CPU.
-  - **Updates:** each feed moves the profile's rate halfway toward what it paid, in log terms. One feed that pays
-    near nothing drops that profile's rate near the floor, so the bee isn't fooled twice by the same profile.
-- **Feeding:** it feeds when the predicted nectar, rate × CPU, is at least MARGIN × the price (MARGIN = 1.5, so
-  4.2M), and on 2% of other arrangements so that a rate learned too low can recover.
-  - For the starter at its prior rate, that means a reading of at least 15.9 ms, q ≥ 0.41. Measured, the starter
-    at BURN 0.6 reads 0.40 at R = 20 and 0.426 at R = 50, with 0.045 of spread, so near that threshold the
-    decision follows the spread more than R.
-  - Each exploring feed costs the price.
+  most standard deviations; that pair of t values is the profile. q is the share of random's distance the flower
+  removed at those targets: 0 for random, 1 for perfect.
+- **What it expects:** REF(q), the starter flower's mean nectar at that q, times the profile's trust m, which is 1
+  for the starter.
+  - REF was measured on the real runner with R drawn as in a game (2,000 calls).
+  - It is the mean nectar given q, not an inverse of q against CPU, so choosing turns by q doesn't bias what the
+    bee learns.
+- **Feeding:** it feeds when m × REF(q) is at least MARGIN × the price (MARGIN = 1.2, so 3.4M). For the starter
+  that means q ≥ about 0.405.
+- **Learning:** it never sees BURN, PERCENT or T; fed(nectar) is all it learns.
+  - After each feed, m moves 0.2 of the way toward nectar / REF(q).
+  - After a dud, a feed that paid under a quarter of what the bee expected, m moves 0.5 of the way instead. So
+    one feed that pays nothing halves m, and then even the richest reading falls short.
+  - Each time the bee passes a profile it trusts less than the starter, trust comes back 3% of the way, so that
+    profile gets tried again later.
+- **Other shapes:** a response that isn't an arrangement gets a coarse shape: "~", the number of digits in its node
+  count, and the kind of its first label.
+  - The bee tries an unknown shape 30% of the time.
+  - It learns the shape's mean nectar, 0.2 of the way per feed, starting at the margin.
+  - It feeds while that mean clears the margin, and on 5% of other turns.
+- **MEMORY:** one entry per profile (key chr(40 + t) per class, value 100 m) or per shape (value: mean nectar in
+  100,000s), within 50 bytes.
+  - Profile keys within NEAR = 6 of each other merge.
+  - When MEMORY is full, the entry nearest its prior goes.
 
 ## Measured on the real runner
 
@@ -178,18 +187,36 @@ it among the four profiles tried: (8, 32), (0, 47), (40, 4) and (14, 20), which 
 | 0.4 | 2.1 ms, 0.26 | 5.0 ms, 0.36 | 8.2 ms, 0.38 | 20.2 ms, 0.42 |
 | 0.6 | 3.1 ms, 0.32 | 7.4 ms, 0.38 | 12.2 ms, 0.40 | 30.2 ms, 0.43 |
 
-- q depends on CPU, not on BURN: the three burns agree at equal CPU, so one CURVE serves them all.
+- q depends on CPU, not on BURN: the three burns agree at equal CPU.
+- Its scale differs by profile, though. The starter's own (8, 32) reads 0.44 to 0.53 on most turns from R ≈ 20 up,
+  above this four-profile mean (`results/coop_eq_ref.txt`).
 - It climbs steeply over the first 4 ms or so of CPU, then flattens: from 5 to 30 ms it rises from 0.355 to 0.426,
   about 1.6 times one response's spread.
 - So one response separates poor turns from the rest well, but rich turns from each other only coarsely.
 
-**The bee.**
-- Each decision takes 2.0 ms of CPU at the median, 3.5 ms at the 99th percentile and 3.6 ms at most, against a
-  50 ms limit.
-- In 300 rounds against the starter flower (BURN 0.6, 50%), with the measured CURVE, it fed 18 times and got 4.6M
-  per feed on average, against the 2.8M price. Its MEMORY ended at 15 bytes.
-- That run still had NEAR = 4, and it split the starter's profile over three entries (its second target read as
-  28, 32 and 37). NEAR has since been raised to 6; that hasn't been re-run.
+**Why the previous bee barely fed** (the coop-eq dry run):
+- Its CURVE was the mean q over four profiles, which tops out at 0.426. The starter's own profile reads higher on
+  most turns, so the bee's wealth reading sat at the cap and ignored R.
+- It learned a rate by dividing nectar by that CPU reading, in log terms. Turns chosen for a high reading had their
+  CPU overstated, and the log update is biased low, so the rate ratcheted down below the margin.
+
+**The bee now** (on the real engine: tryBee, 400 rounds per run, the price 2,816,000; MEMORY carried from run to
+run within each group):
+
+| run | feed rate | on turns worth ≥ 1.5× the price (R ≥ 26.4) | on the rest | net per feed | duds | m at the end |
+|---|---|---|---|---|---|---|
+| the starter (BURN 0.6, 50%) | 73% | 95% | 49% | +2.1M | 12% | 0.89 |
+| the starter again | 73% | 96% | 51% | +2.1M | 15% | 0.86 |
+| then a copy at 0% on half the turns | 7% | 12% | 3% | −0.6M | 63% | 0.44 |
+| then the starter alone again | 67% | 88% | 46% | +2.1M | 16% | 1.00 |
+| and later | 73% | 94% | 52% | +2.1M | 16% | 1.05 |
+| a 3-node graph at 25% | 99% | | | +3.8M | 19% | shape mean 6.0M |
+| then the same shape at 0% | 4% | | | −2.8M | 100% | shape mean 0.2M |
+
+- **By R,** on the starter's turns, it fed 4% at R 1–10, 65% at 10–20, 92% at 20–26, 89% at 26–35 and 100% at
+  35–50.
+- **Over six more runs** against the starter (2,400 turns), m stayed between 0.85 and 1.10.
+- **Decision time:** 2.1 ms of CPU at the median and 5.8 ms at most, against the 50 ms limit.
 
 **The four-property version (267 nodes), for comparison.**
 - Its start-up takes 1.5 ms of CPU at the median and up to 2.2 ms, because it draws 384 pairs.
