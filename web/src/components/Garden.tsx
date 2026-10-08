@@ -403,7 +403,7 @@ export const GardenLegend = memo(function GardenLegend({ own }: { own: boolean }
   return (
     <ul className="garden-legend" aria-label="What the garden shows">
       <li><span className="lg lg-ask">?</span> a bee asks a flower (it glows while it answers), then shows the response (→)</li>
-      <li><DropIcon size={16} /> it fed: the nectar it got; it sits out its rounds on the flower</li>
+      <li><DropIcon size={16} /> it fed: the nectar it got (less the feed price, if the game has one)</li>
       <li><span className="lg lg-left">→</span> a faded bubble: it left</li>
       <li><span className="lg lg-mine" /> the followed team's bee; <span className="lg lg-visitor" /> a bee at its flower</li>
       {own && <li><span className="lg lg-readout">E</span> your flower's latest visit: its hidden time budget R, compute time, excess energy E and the percent offered, then the nectar and pollen it gave, or what was lost (only your team sees unfed visits)</li>}

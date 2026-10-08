@@ -296,8 +296,12 @@ const tried = await api(players[1].token, "POST", `${g}/try`, { kind: "bee", cod
 assert.ok(tried.memory.value.n > 1000 && tried.memory.value.from === "try", "the test bee started from the memory it was given");
 await api(players[1].token, "POST", `${g}/programs`, { kind: "bee", code: variants[1].bee, memory: { from: "submit" } });
 await api(players[1].token, "POST", `${g}/check`, { kind: "bee", code: variants[1].bee, memory: { from: "check" } });
-await sleep(600);
-const after1 = (await api(players[1].token, "GET", g)).teams.find((t) => t.id === bo).memory;
+// (The resubmission is a new bee version, starting from {}: wait until it has decided; a quarter of the bees
+// visit each round.)
+const after1 = await until("Bo's new bee to decide", async () => {
+  const m = (await api(players[1].token, "GET", g)).teams.find((t) => t.id === bo).memory;
+  return m.value.n >= 1 && m;
+});
 assert.ok(!("from" in after1.value) && after1.value.n < 1000, `Bo's game bee's memory is its own: ${JSON.stringify(after1.value)}`);
 assert.equal((await api(players[1].token, "POST", `${g}/try`, { kind: "bee", code: variants[1].bee, memory: { pad: "x".repeat(60) } }, { allow: [400] })).status, 400,
   "a test memory over the cap is refused");

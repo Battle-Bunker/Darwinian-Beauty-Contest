@@ -166,6 +166,11 @@ export const FeedRow = memo(function FeedRow({ a, teams, myTeamId, tenths = true
           </span>
         )}
         {isFed && <span className="ok-text nowrap"><DropIcon size={15} /> fed{typeof a.nectar === "number" && <>: <b title={fmtEExact(a.nectar)}>{fmtE(a.nectar)}</b> nectar</>}</span>}
+        {isFed && typeof a.price === "number" && a.price > 0 && typeof a.net === "number" && (
+          <span className={`nowrap ${a.net < 0 ? "lost-text" : "muted"}`} title={`The feed price, ${fmtEExact(a.price)}, comes out of the nectar: net ${fmtEExact(a.net)}`}>
+            − {fmtE(a.price)} price = <b>{a.net < 0 ? "−" : ""}{fmtE(Math.abs(a.net))}</b> net
+          </span>
+        )}
         {a.action === "leave" && (voided
           ? <span className="muted" title="A call spent most of its wall time waiting for a CPU: the server's fault, so the turn is void. Nothing was given, nobody is charged, and the bee asks the same challenge again.">void (server fault)</span>
           : <span className="muted">left</span>)}

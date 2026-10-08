@@ -2,7 +2,7 @@
 // behind it, the breakdown team by team, and the whole-game ledgers (who fed where, the nectar each bee got
 // at each flower, and the pollen each flower gave each bee). A value the server holds back shows "–".
 import { useMemo } from "react";
-import { scoringOf, type GameView, type Scoring, type Team, type TeamScore } from "../types";
+import { prevalenceOn, scoringOf, type GameView, type Scoring, type Team, type TeamScore } from "../types";
 import { fmt2, fmt3, fmtClock, fmtE, fmtEExact, pct, poss, powText } from "../lib/format";
 import { InfoTip, TeamChip } from "./ui";
 import { TrophyIcon } from "./Icons";
@@ -12,8 +12,10 @@ import { PrevalencePanel } from "./Prevalence";
 const fmtPow = (x: number, p: number, times = 1) => Math.round(times * Math.pow(x, p)).toLocaleString();
 
 /** The scoring words, with the game's exponents (alpha for forage, beta for pollination). */
-const termsOf = ({ alpha, beta }: Scoring) => ({
-  fitness: "N² × pollination share × forage share. Par is 1.0 however many teams play: above 1, you're out-evolving the average team.",
+const termsOf = ({ alpha, beta }: Scoring, prevalence: boolean) => ({
+  fitness: prevalence
+    ? "The time-average, over the game so far, of F × B: your species' flower success times your bee's success (each par 1, capped; see Prevalence above). Par is 1.0 however many teams play: above 1, you're out-evolving the average team."
+    : "N² × pollination share × forage share. Par is 1.0 however many teams play: above 1, you're out-evolving the average team.",
   pollination: `Σ over bee teams of ${powText("the pollen your flower gave that team's bee", beta)}. Bees carry pollen to other flowers: how widely, and how much, your flower is pollinated.`,
   forage: `Σ over flower teams of ${powText("the nectar your bee got there", alpha)}. How widely your bee eats.`,
   pollen: "Everything your flower gave as pollen: (1 − percent/100) × E on every feed at it. A visit without a feed gives nothing.",
@@ -31,7 +33,8 @@ const shareText = (x: number | null) => (num(x) ? pct(x) : "–");
 export function Scores({ view, base }: { view: GameView; base?: string }) {
   const g = view.game;
   const sc = scoringOf(g.config);
-  const TERMS = termsOf(sc);
+  const prev = prevalenceOn(g.config);
+  const TERMS = termsOf(sc, prev);
   const teams = useMemo(() => Object.fromEntries(view.teams.map((t) => [t.id, t])), [view.teams]);
   const myTeamId = view.me?.teamId ?? null;
   const n = view.participants?.length ?? 0;
@@ -89,7 +92,7 @@ export function Scores({ view, base }: { view: GameView; base?: string }) {
         </table>
       </div>
 
-      {sorted.some((s) => num(s.fitness)) && (
+      {!prev && sorted.some((s) => num(s.fitness)) && (
         <details className="legend-box breakdown" open={over}>
           <summary>How each team's fitness adds up</summary>
           <ol className="breakdown-list">

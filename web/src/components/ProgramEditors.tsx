@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, errorText } from "../api";
 import { storage } from "../hooks";
-import { KINDS, byteCapOf, energyBytes, type Bank, type Budget, type CheckResult, type GameStatus, type GameView, type Kind, type ProgramInterface, type ProgramVersion, type Team, type TryBeeResult, type TryFlowerResult } from "../types";
+import { KINDS, byteCapOf, energyBytes, windowMsOf, type Bank, type Budget, type CheckResult, type GameStatus, type GameView, type Kind, type ProgramInterface, type ProgramVersion, type Team, type TryBeeResult, type TryFlowerResult } from "../types";
 import { CodeEditor, type EditorStats } from "./CodeEditor";
 import { Alert, Meter, Spinner } from "./ui";
 import { BeeGlyph, CheckIcon, DropIcon, FlowerHead } from "./Icons";
@@ -195,7 +195,7 @@ export function ProgramEditors({ view, base, store }: { view: GameView; base: st
                 ? <BudgetMeter store={store} budget={budget} bank={mine.banks[kind]!} cost={unchanged ? 0 : cost} status={g.status} kind={kind} />
                 : <div className="meter-note muted">{g.status === "lobby" ? <>Writing programs before the game starts is <b>free</b>. Once it starts, every change costs change budget, which fills by {budget.perMinute.toLocaleString()} nodes a minute (up to {budget.cap.toLocaleString()}).</> : null}</div>}
             </div>
-            <div className="meter-note muted small">{kind === "bee" ? `Time limit: ${budget.ms} ms of CPU time to decide (a late reply never feeds).` : `Your flower's time limit this turn is hidden and varies from ${budget.minMs ?? 50} to ${budget.ms} ms of CPU time (it's the call's hard limit, E counts from it, and your flower reads it as GAME's ms); every millisecond of CPU costs energy. The response still reaches the bee at ${budget.ms} ms.`}</div>
+            <div className="meter-note muted small">{kind === "bee" ? `Time limit: ${budget.ms} ms of CPU time to decide (a late reply never feeds).${(g.feedPrice ?? 0) > 0 ? ` Every feed costs your bee ${(g.feedPrice ?? 0).toLocaleString()} of its nectar.` : ""}` : `Your flower's time limit this turn is hidden and varies from ${budget.minMs ?? 50} to ${budget.ms} ms of CPU time (it's the call's hard limit, E counts from it, and your flower reads it as GAME's ms); every millisecond of CPU costs energy. The response still reaches the bee at ${windowMsOf(cfg)} ms.`}</div>
             {s?.syntaxError && !empty && <Alert kind="warn">Syntax error: this code doesn't parse yet, so it can't be submitted.</Alert>}
             {overSize && <Alert kind="error">Too big: {s!.size.toLocaleString()} nodes, but the budget is {budget.size.toLocaleString()}. Make it {(s!.size - budget.size).toLocaleString()} nodes smaller to submit. Comments, spacing and name lengths are free; every byte of a string or number counts.</Alert>}
             {incoming[kind] !== undefined && (
