@@ -98,22 +98,31 @@ const MAX_CHARS = 262144;
 // ledger, live feeds, queries); its whole text is stored apart and served by seq.
 export const INLINE_BYTES = 4096;
 const MAX_LOG = 2000; // characters of a bee's print output kept per action
-// A bee's 50 ms is a deadline, not an interruption: the call runs on, and only this hard limit stops it.
+// A bee's 50 ms of CPU is a deadline, not an interruption: the call runs on, and only this hard limit (CPU
+// time too) stops it.
 const BEE_LIMIT_MS = 2000;
 const flowerSetup = (config, team, teams, code, size) => ({
   code, ms: config.budgets.flower.ms, maxResponseBytes: config.maxResponseBytes,
+  wallMs: Math.max(FLOWER_WALL_MS, 2 * config.budgets.flower.ms), faultShare: FAULT_SHARE,
   game: { ...gameInfo(config, team, teams), ms: config.budgets.flower.ms, size },
 });
 const beeSetup = (config, team, teams, code) => ({
   code, ms: config.budgets.bee.ms, limitMs: Math.max(BEE_LIMIT_MS, 2 * config.budgets.bee.ms), maxChars: MAX_CHARS,
+  wallMs: Math.max(BEE_WALL_MS, 4 * config.budgets.bee.ms), hardWallMs: Math.max(BEE_HARD_WALL_MS, 2 * BEE_LIMIT_MS), faultShare: FAULT_SHARE,
   game: { ...gameInfo(config, team, teams), ms: config.budgets.bee.ms, memory: config.budgets.bee.memory },
 });
 
-// Time limits must be fair, so never run more programs at once than there are CPU cores, across every
-// game this process runs. Each program then has a core to itself, and its wall-clock time limit is
-// effectively a CPU limit. A late bee keeps its core until it replies, which only stretches the round in
-// wall time.
-const CPU_SLOTS = Math.max(1, Number(process.env.CPU_SLOTS) || os.availableParallelism?.() || os.cpus().length);
+// Limits are CPU time, measured on each call's own thread clock (the runners: docs/research/compute-budgets/
+// REPORT.md), so a busy machine doesn't make a program late; it only stretches rounds in wall time. Runners
+// run on cores of their own (proc.js: the dbc-runners cpuset, 2 cores), and at most CPU_SLOTS programs run at
+// once across every game this process runs, so each has a core to itself and rounds stay close to real time.
+const CPU_SLOTS = Math.max(1, Number(process.env.CPU_SLOTS) || 2);
+// Wall-clock backstops (ms) for calls that aren't computing, or are starved far beyond reason. A flower still
+// going at FLOWER_WALL_MS is stopped. A bee's first or decide with no reply at BEE_WALL_MS is judged then (it
+// is told late once it has used its 50 ms of CPU anyway) and stopped at BEE_HARD_WALL_MS (or at its 2 s of
+// CPU); fed is stopped at BEE_WALL_MS. A call stopped or judged by a backstop is the server's fault, not the
+// program's, if it spent at least FAULT_SHARE of its wall time runnable but waiting for a CPU: its turn is void.
+export const FLOWER_WALL_MS = 400, BEE_WALL_MS = 250, BEE_HARD_WALL_MS = 4000, FAULT_SHARE = 0.5;
 let cpuBusy = 0;
 const cpuWaiters = [];
 async function withCpu(fn) {
@@ -195,8 +204,10 @@ export class FlowerPool {
  */
 export function readAnswer(config, rType, res, size, budgetMs = config.budgets.flower.ms) {
   const ms = typeof res.cpu === "number" && Number.isFinite(res.cpu) ? Math.round(res.cpu * 1000) / 1000 : null;
-  const fail = (e) => ({ r: null, rBytes: null, percent: null, energy: 0, ms, budgetMs, flowerError: String(e).slice(0, 300) });
+  const fail = (e) => ({ r: null, rBytes: null, percent: null, energy: 0, ms, budgetMs, flowerError: String(e).slice(0, 300), ...(res.fault ? { fault: true } : {}) });
   if (res.e) return fail(res.e);
+  // Late iff its CPU time (this call's, on its own thread's clock, writing the response included) passed R.
+  if (ms !== null && res.cpu > budgetMs) return fail(`Timeout: used ${ms} ms of CPU, over its ${budgetMs} ms`);
   const v = res.v;
   if (!Array.isArray(v) || v.length !== 2) return fail(`flower must return [response, percent] (got ${JSON.stringify(v)?.slice(0, 60)})`);
   const bad = checkValue(rType, v[0], responseLimits(), "response");
@@ -301,7 +312,8 @@ export class Garden {
     this.limits = limitsOf(config);
     this.roundMs = roundMs(config);
     this.windowMs = config.budgets.flower.ms; // the flower window: responses are delivered at its end
-    this.beeMs = config.budgets.bee.ms;       // the bees' decision window
+    this.beeMs = config.budgets.bee.ms;       // the bees' decision window: CPU time
+    this.beeWallMs = Math.max(BEE_WALL_MS, 4 * config.budgets.bee.ms); // when a decision with no reply is judged (wall)
     this.paced = paced;
     this.game = game;
     this.memoryCap = config.budgets.bee.memory;
@@ -578,7 +590,7 @@ export class Garden {
    * One request to the bee, on a core of its own: { gen, started (the performance.now() it got its core,
    * after any fed() ahead of it, and `before`), done ({ res, ms }) }. The core stays held until the reply.
    */
-  #call(b, req, before = null) {
+  #call(b, req, before = null, onNotice = null) {
     const proc = b.proc;
     let began;
     const started = new Promise((resolve) => { began = resolve; });
@@ -588,7 +600,7 @@ export class Garden {
       return withCpu(async () => {
         const t0 = performance.now();
         began(t0);
-        const res = await proc.call({ ...req, memory: b.memory }); // MEMORY as saved after its last call
+        const res = await proc.call({ ...req, memory: b.memory }, undefined, onNotice); // MEMORY as saved after its last call
         return { res, ms: performance.now() - t0 };
       });
     })();
@@ -611,7 +623,7 @@ export class Garden {
       this.#onFirst(b, res);
     }));
     // An unpaced garden waits for it before the next round, as long as it answers within the bee's time.
-    asking.inTime = call.started.then((t) => byDeadline(handled, t, this.beeMs));
+    asking.inTime = call.started.then((t) => byDeadline(handled, t, this.beeWallMs));
     b.asking = asking;
   }
 
@@ -649,6 +661,7 @@ export class Garden {
   async #answer(t) {
     const res = await t.pool.call(t.c, t.budgetMs);
     Object.assign(t, readAnswer(this.config, this.rType, res, t.size, t.budgetMs));
+    if (t.fault) return; // the server's fault: the turn is void (#decide), and nobody's problem
     if (t.flowerError) this.#problem(t.flower, "flower", t.flowerVersion, t.flowerError);
     const b = t.b;
     if (t.gen === b.gen && b.proc && !b.proc.dead && !this.stopped) {
@@ -658,7 +671,12 @@ export class Garden {
     }
   }
 
-  /** The bee decides, by its deadline; then the turn is settled. */
+  /**
+   * The bee decides; then the turn is settled. In time iff decide used at most beeMs (50 ms) of CPU: the runner
+   * says "late" as soon as it has, or at beeWallMs of wall time says "late" or "fault" (the call spent most of its
+   * time waiting for a CPU: the server's fault, and the turn is void). A late call runs on, and its reply is
+   * handled when it comes (#onLate).
+   */
   async #decide(t) {
     const b = t.b;
     if (t.gen !== b.gen || !b.proc || b.proc.dead || this.stopped) {
@@ -666,17 +684,45 @@ export class Garden {
       if (t.gen === b.gen) b.busy = false;
       return this.#settle(t);
     }
-    const staged = t.staged ? await t.staged : null;
-    const req = staged?.ok ? { op: "decide", staged: true } : { op: "decide", c: t.c, r: t.r };
-    const call = this.#call(b, req);
-    const res = await byDeadline(call.done, await call.started, this.beeMs);
-    if (res !== LATE) {
-      if (call.gen === b.gen) b.busy = false;
-      this.#onDecision(t, res.res, res.ms);
+    // The flower's call was the server's fault: the turn is void. Nobody decides or pays, and the bee asks the
+    // same challenge again.
+    if (t.fault) {
+      if (t.gen === b.gen) { b.busy = false; if (!b.queued) b.queued = { c: t.c }; }
       return this.#settle(t);
     }
-    // Too slow: the turn is settled as no feed, but the engine keeps listening for the next challenge.
-    t.beeError = `too slow: no reply within ${this.beeMs} ms`;
+    const staged = t.staged ? await t.staged : null;
+    const req = staged?.ok ? { op: "decide", staged: true } : { op: "decide", c: t.c, r: t.r };
+    let heard;
+    const noticed = new Promise((r) => { heard = r; });
+    const call = this.#call(b, req, null, (kind) => heard(kind));
+    // (The runner judges at beeWallMs; this is only in case it can't.)
+    const res = await byDeadline(Promise.race([call.done, noticed]), await call.started, this.beeWallMs + 1000);
+    if (res !== LATE && typeof res === "object") {
+      if (call.gen === b.gen) b.busy = false;
+      const cpu = typeof res.res.cpu === "number" ? res.res.cpu : null;
+      if (cpu === null || cpu <= this.beeMs || res.res.e) {
+        this.#onDecision(t, res.res, cpu ?? res.ms);
+        return this.#settle(t);
+      }
+      // Replied, but over its CPU time: late, and its reply is a late one.
+      t.beeMs = round3(cpu);
+      t.beeError = `too slow: used ${round3(cpu)} ms of CPU, over ${this.beeMs}`;
+      this.#problem(b.ti, "bee", b.version, t.beeError);
+      if (call.gen === b.gen && !this.closed) this.#onLate(b, res.res);
+      return this.#settle(t);
+    }
+    if (res === "fault") {
+      // The server's fault: void. Its reply, when it comes, still gives its next challenge (feed or leave).
+      t.beeError = "server fault: the bee waited for a CPU most of its time; the turn is void";
+      logged(call.done.then(({ res: late }) => {
+        if (call.gen !== b.gen || this.closed) return;
+        b.busy = false;
+        this.#onVoided(b, late);
+      }));
+      return this.#settle(t);
+    }
+    // Late: used its CPU time (or no word by the backstop). Settled as no feed; the call runs on.
+    t.beeError = `too slow: used over ${this.beeMs} ms of CPU`;
     this.#problem(b.ti, "bee", b.version, t.beeError);
     logged(call.done.then(({ res: late }) => {
       if (call.gen !== b.gen || this.closed) return;
@@ -684,6 +730,18 @@ export class Garden {
       this.#onLate(b, late);
     }));
     return this.#settle(t);
+  }
+
+  /** The reply of a decision whose turn was void (the server's fault): its MEMORY, and its next challenge if any. */
+  #onVoided(b, res) {
+    this.#keepLog(b, res.out);
+    this.#saveMemory(b, res);
+    const a = res.a;
+    if (!res.e && Array.isArray(a) && a.length === 2 && (a[0] === "feed" || a[0] === "leave") && !checkValue(this.cType, a[1], this.limits, "challenge")) {
+      b.queued = { c: a[1] };
+      return;
+    }
+    if (!res.dead) this.#askFirst(b);
   }
 
   /** A reply in time: the feed or leave counts; a usable next challenge is queued. */
@@ -819,7 +877,7 @@ export class Garden {
   #fed(b, nectar) {
     const gen = b.gen, proc = b.proc;
     const queued = b.queued; // decide's challenge (null: it gave none)
-    const run = withCpu(() => proc.call({ op: "fed", nectar }, this.beeMs + 1500)).then((res) => {
+    const run = withCpu(() => proc.call({ op: "fed", nectar }, this.beeWallMs + 1500)).then((res) => {
       if (gen !== b.gen || this.closed) return;
       this.#keepLog(b, res.out);
       if (res.skipped) return;
