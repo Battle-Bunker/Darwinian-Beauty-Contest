@@ -18,8 +18,9 @@ A flower now *chooses* how much to pay, out of energy it can only have by being 
 | (1 − percent/100) × E, kept by the flower if the bee feeds | **pollen** | a turn without a feed pays nobody. A flower allocates its energy between compute, nectar and pollen |
 | what every feed costs the bee, out of its nectar (0.05 × Emax) | **feed price** | net nectar = nectar − price, can be negative |
 | size cap × R's cap × byte cap (56,320,000) | **Emax** | the most E can be; the price and the prior are shares of it |
-| N × a species' share of Σ_b (decayed pollen)^β, capped | **flower success** F | par 1; weights the species draw with c(t) |
-| N × a bee's share of max(0, Σ_s signed (decayed net nectar)^α), capped | **bee success** B | par 1; weights the bee draw with c(t) |
+| N × a species' share of Σ_b (decayed pollen it gave bee b)^β, capped | **flower success** F | par 1; weights the species draw with c(t); per-bee cells, so spread pollen counts for more |
+| N × a bee's share of its decayed nectar balance (pools), capped | **bee success** B | par 1; weights the bee draw with c(t) |
+| a bee's single running nectar balance (pools) | **balance** | starts at the endowment, +net nectar a feed, relaxes to the endowment; below the price a bee can't feed |
 | the time-average of F × B | **fitness** (new games) | par 1 |
 | `feeds[b][f]`, `nectar[b][f]`, `pollen[b][f]` | **feed / nectar / pollen ledgers** | row = bee team, column = flower team |
 | every finished turn, as one team may see it | **history** | for teams and agents, over HTTP and the generated query clients; programs get none |
@@ -293,11 +294,25 @@ flower's team's business during play.
 A species or a bee that does well becomes more common, as in an ecosystem (server/lib/prevalence.js; RULES.md
 "Prevalence"). Each round ceil(slots × N) bees (a quarter by default) are drawn without replacement with
 weights c(t) + B_b, and each visits a species drawn with weights c(t) + F_s; the bees not drawn keep their
-challenges for later. F_s is N × the species' share of Σ_b (decayed pollen it gave b)^β; B_b is N × the bee's
-share of max(0, Σ_s signed (decayed net nectar it got at s)^α); both capped at 4, par 1. c(t) falls from 1 to
-0.1 over the game, so early on everyone is seen and late on success matters. Every ledger cell starts at a
-prior of 0.12 × Emax and halves every 90 s of game time (rounds, so a pause doesn't decay), so the first few
-feeds can't swing the shares and an old success fades.
+challenges for later.
+
+**Flower success** F_s is N × the species' share of Σ_b (decayed pollen it gave bee b)^β. The pollen is kept
+per bee team and raised to the 0.85 power, so the same total pollen spread over many bee teams counts for
+more than a lump to one: a flower can't make itself common by pollinating a single partner bee, which keeps
+one team's flower and bee from becoming a self-dealing singleton pair. Each pollen cell starts at a prior of
+0.12 × Emax and halves every 90 s of game time (rounds, so a pause doesn't decay).
+
+**Bee success** B_b (v3, `pools`, the default) is N × the bee's share of its single nectar **balance**,
+floored at 0 for the share. Unlike the per-flower pollen, nectar is one running balance per bee: it starts at
+the endowment (10 × the feed price), each feed adds its net nectar (nectar − price), and each round it relaxes
+toward the endowment on the same half-life — spending above the endowment like metabolism, recovering toward
+it from below. A bee whose balance is below the price **can't feed** (its feed becomes a leave, "too poor to
+feed") and recovers over time. This is linear, so a crash can rebuild it exactly from the feeds. The older v2
+bee success (N × share of max(0, Σ_s signed (decayed net nectar)^α), per flower) stays under `pools` false,
+so an in-flight v2 game stays reproducible.
+
+Both F and B are capped at 4, par 1. c(t) falls from 1 to 0.1 over the game, so early on everyone is seen and
+late on success matters.
 
 **The feed price** (0.05 × Emax, 2,816,000 at the defaults) is taken out of every feed's nectar: net = nectar −
 price. It replaces the 20-round sit-out as the cost of feeding, and makes feeding at a stingy or a 0% flower
@@ -314,16 +329,19 @@ and change budgets are 60 nodes a minute for a flower (bank 300) and 600 for a b
 imitating a strategy is meant to be hard work. All of it is per-game config; a config stored before these
 rules (no `prevalence`, `feedPrice` or `flowerWindowMs`) plays as it did.
 
-The engine keeps the decayed ledgers in the garden and multiplies them by d = 2^(−round_s / halfLifeS) as
-each round begins (scale-free: F and B depend only on shares). As each round begins it also adds the round's
-F × B to each team's fitness sum. The ledgers are not stored: a garden adopted after a crash rebuilds them
-exactly from the game's feed actions (prior × d^R + Σ x × d^(R − round), the price stored on each feed); the
-fitness sums are stored on the game (`games.fitness`, `{ sum, rounds }`, written with the ledgers). Every
-⌈1000 / round_ms⌉ rounds, as a round begins, the garden samples every team's F, B, p^F, p^B and fitness with c
-and the slots: the latest goes on the game row (`games.prevalence`), every sample into the `prevalence` table
-(server/db/migrations/007_prevalence.sql, 008_metagame.sql), written with the actions. The view, the
-scoreboard, the action stream (a message carries a new sample once), `GET .../prevalence` and the
-`prevalence` query entity publish them. Programs never see them: nothing about prevalence is in `GAME`.
+The engine keeps the decayed ledgers (per-bee pollen cells, and each bee's nectar balance) in the garden. As
+each round begins they decay — pollen by d = 2^(−round_s / halfLifeS) toward 0, the balance toward its
+endowment by the same d (the endowment is the relaxation's fixed point) — and it adds the round's F × B to
+each team's fitness sum. The ledgers are not stored: a garden adopted after a crash rebuilds them exactly
+from the game's feed actions (pollen = prior × d^R + Σ pollen × d^(R − round); balance = endowment + Σ net ×
+d^(R − round); the price and the balance stored on each feed). The fitness sums are on the game
+(`games.fitness`, `{ sum, rounds }`, written with the ledgers). Every ⌈1000 / round_ms⌉ rounds, as a round
+begins, the garden samples every team's F, B, p^F, p^B, fitness and nectar balance with c and the slots: the
+latest goes on the game row (`games.prevalence`), every sample into the `prevalence` table
+(server/db/migrations/007_prevalence.sql, 008_metagame.sql, 009_pools.sql), written with the actions. The
+view, the scoreboard, the action stream (a message carries a new sample once), `GET .../prevalence` and the
+`prevalence` query entity publish them. Programs never see them: nothing about prevalence (not the balance
+either) is in `GAME`.
 
 ## What is public
 

@@ -87,10 +87,14 @@ function scoreNote(c, config, kind) {
       : `${c} Your team scores forage = Σ over flower teams of (the nectar your bee got there)^${alpha};\n${c} fitness = N² × pollination share × forage share.`;
   }
   const half = p.halfLifeS ? `halving every ${p.halfLifeS} s of game time` : "over the whole game";
+  const bee = p.pools
+    ? `B_b = N × your bee's share of its single nectar balance (floored at 0). The balance starts at ${Math.round(p.endowment)}, each feed adds\n` +
+      `${c} nectar − feed price, and it relaxes toward that start ${half}; a bee below the price can't feed.`
+    : `B_b = N × your bee's share of max(0, Σ over species of signed (recent net nectar, nectar − feed price, it got there)^${alpha}), ${half}.`;
   return `${c} Prevalence: each round ceil(${p.slots} × N) bees visit, drawn without replacement with weights c + B_b, and each visits\n` +
     `${c} a species drawn with weights c + F_s (c from ${p.cStart} to ${p.cEnd} over the game). F_s = N × your species' share of Σ over bee\n` +
-    `${c} teams of (recent pollen it gave them)^${beta}; B_b = N × your bee's share of max(0, Σ over species of signed (recent net nectar,\n` +
-    `${c} nectar − feed price, it got there)^${alpha}); recent: ${half}${p.cap != null ? `; each capped at ${p.cap}` : ""}. Par 1.\n` +
+    `${c} teams of (recent pollen it gave them)^${beta}, ${half}: spread pollen counts for more.\n` +
+    `${c} ${bee}${p.cap != null ? ` Each of F, B capped at ${p.cap}.` : ""} Par 1.\n` +
     `${c} Your team's fitness = the time-average over the game of F × B (your species' times your bee's). Public, but not in GAME.`;
 }
 

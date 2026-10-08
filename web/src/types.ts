@@ -39,13 +39,13 @@ export interface GameConfig {
  * As stored: each round ceil(slots × N) bees are drawn by c + B (bee success), each visiting a species drawn by
  * c + F (flower success); halfLifeS null = cumulative, prior null = 0.12 × Emax, cap null = none.
  */
-export interface PrevalenceConfig { on: boolean; halfLifeS: number | null; cStart: number; cEnd: number; cap: number | null; slots: number; prior: number | null }
+export interface PrevalenceConfig { on: boolean; halfLifeS: number | null; cStart: number; cEnd: number; cap: number | null; slots: number; prior: number | null; pools?: boolean; endowment?: number | null }
 /** One team in a sample: its flower and bee success (par 1), their draw chances, and its fitness so far. */
-export interface PrevalenceSpecies { team: string; index: number; flowerSuccess: number; beeSuccess: number; flowerP: number; beeP: number; fitness: number }
+export interface PrevalenceSpecies { team: string; index: number; flowerSuccess: number; beeSuccess: number; flowerP: number; beeP: number; fitness: number; balance?: number | null }
 /** A sample, about once a second of game time: the round whose draws it gave, and that round's start. */
 export interface PrevalenceSample { round: number; atMs: number; c: number; slots: number; species: PrevalenceSpecies[] }
 /** The game's prevalence (settings with the prior and the feed price resolved) and its latest sample (null before the first). */
-export type PrevalenceView = Omit<PrevalenceConfig, "prior"> & { prior: number; feedPrice: number; sample: PrevalenceSample | null };
+export type PrevalenceView = Omit<PrevalenceConfig, "prior" | "endowment"> & { prior: number; endowment: number; feedPrice: number; sample: PrevalenceSample | null };
 /** Whether a game has prevalence (and so its fitness is the time-average of F × B). */
 export const prevalenceOn = (cfg: { prevalence?: PrevalenceConfig } | null | undefined) => cfg?.prevalence?.on === true && "slots" in (cfg.prevalence ?? {});
 /** The flower window: when every response is delivered (flower.ms in games from before). */
@@ -155,6 +155,7 @@ export interface Action {
   nectar?: number | null;   // feed only: percent/100 × E
   price?: number | null;    // feed only: the feed price the bee paid out of its nectar (0 in games without one)
   net?: number | null;      // feed only: nectar − price (can be negative)
+  balance?: number | null;  // feed only, pools games: the bee's nectar balance after this feed
   // public on a feed; on a leave the flower's team only (everyone after finish):
   percent?: number | null;
   energy?: number | null;   // E, node·ms·bytes (node·ms in games without the byte factor)

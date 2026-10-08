@@ -211,7 +211,7 @@ export function SettingsSummary({ cfg }: { cfg: GameConfig }) {
         <span className="chip" title="Each flower call's hidden time budget R is drawn uniformly from this range">flower R {cfg.budgets.flower.minMs ?? 50}–{cfg.budgets.flower.ms} ms · bee {cfg.budgets.bee.ms} ms</span>
         {(cfg.feedPrice === null || (cfg.feedPrice ?? 0) > 0) && <span className="chip" title="What every feed costs the bee, out of its nectar: net = nectar − price">feed price {cfg.feedPrice === null ? "5% of Emax" : fmtE(cfg.feedPrice!)}</span>}
         {cfg.feedCost > 0 && <span className="chip">a feed costs {cfg.feedCost} rounds</span>}
-        <span className="chip" title={prevalenceOn(cfg) ? "fitness = the time-average of flower success × bee success (each N × a share of Σ pollen^β, Σ net nectar^α)" : "forage = Σ over flower teams of nectar^α; pollination = Σ over bee teams of pollen^β; fitness = N² × pollination share × forage share"}>
+        <span className="chip" title={prevalenceOn(cfg) ? "fitness = the time-average of flower success × bee success (F: N × share of Σ pollen^β per bee team; B: N × share of the bee's nectar balance)" : "forage = Σ over flower teams of nectar^α; pollination = Σ over bee teams of pollen^β; fitness = N² × pollination share × forage share"}>
           {prevalenceOn(cfg) ? "fitness: avg F × B" : "score"}: {powText("nectar", scoringOf(cfg).alpha)}, {powText("pollen", scoringOf(cfg).beta)}
         </span>
         <span className="chip" title={`E = (flower size cap − flower size) × max(0, R − CPU ms)${energyBytes(cfg) ? ` × (${byteCapOf(cfg)} − response bytes), in node·ms·bytes` : ", in node·ms"}, R each call's hidden time budget`}>energy cap {cfg.budgets.flower.size.toLocaleString()} nodes</span>

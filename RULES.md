@@ -89,18 +89,23 @@ A species or a bee that does well becomes more common, as in an ecosystem. Two n
 par-1 scale (their average is 1 when nobody is capped):
 
 - **F_s, flower success**: N × your species' share of Σ over bee teams of (the pollen it gave that team's
-  bee lately)^0.85, the scoreboard's old pollination with old pollen fading. Pollen is what the flower
-  keeps, so generosity costs it here.
-- **B_b, bee success**: N × your bee's share of max(0, Σ over species of ±|net nectar it got there
-  lately|^0.85), where every feed's **net nectar** is its nectar less the feed price, so a feed at a stingy
-  flower counts against the bee: losses offset gains, and a bee whose recent feeds lost nectar overall
-  has B = 0.
+  bee lately)^0.85, the scoreboard's old pollination with old pollen fading. Pollen is kept per bee team and
+  raised to the 0.85 power, so **pollen spread across many bees counts for more** than the same total to one:
+  no flower and bee can become a self-dealing singleton pair. Pollen is what the flower keeps, so generosity
+  costs it here.
+- **B_b, bee success**: N × your bee's share of its **nectar balance**. Your bee has one running balance of
+  nectar, not a tally per flower. It starts at an **endowment** (10 × the feed price, 28,160,000 at the
+  defaults); every feed adds its **net nectar** (the nectar less the feed price, which can be negative); and
+  each round it **relaxes toward the endowment** by the half-life — spending above it like metabolism,
+  recovering toward it from below. A bee whose balance is **below the price can't feed**: its feed decision
+  becomes a leave (recorded "too poor to feed"), and it recovers over time. Balances are floored at 0 for the
+  share, so a bee deep in deficit weighs nothing.
 
-"Lately": every ledger cell (one per species and bee team) starts at a **prior** of 0.12 × Emax
+"Lately" (the pollen): every cell (one per species and bee team) starts at a **prior** of 0.12 × Emax
 (6,758,400 at the defaults; Emax is below) and, as each round begins, is multiplied by 2^(−0.2 s / 90 s):
-it **halves every 90 s of game time** (a paused game doesn't fade); then the round's feeds are added. Each
-of F and B is **capped at 4**. When nobody has any success yet, everyone's is 1. Your own bee's feeds at
-your own flower count like any other.
+it **halves every 90 s of game time** (a paused game doesn't fade); then the round's pollen is added. The
+nectar balance relaxes to its endowment on the same half-life. Each of F and B is **capped at 4**. When
+nobody has any success yet, everyone's is 1. Your own bee's feeds at your own flower count like any other.
 
 Each round:
 
@@ -116,8 +121,9 @@ the scoreboard, the live action stream and the history queries. **Programs never
 prevalence is in `GAME`.
 
 The owner sets all of it in the settings (`prevalence`: on, half-life (or none: cumulative), c's start and
-end, cap, slots, prior). A game from before these rules plays as it did: every bee visits every round,
-species are drawn uniformly, feeds are free and it is scored with pollination and forage.
+end, cap, slots, prior, endowment, and `pools` — the single nectar balance; with `pools` off the bee's
+success is the older per-flower formula instead). A game from before these rules plays as it did: every bee
+visits every round, species are drawn uniformly, feeds are free and it is scored with pollination and forage.
 
 ### The feed price
 
@@ -125,7 +131,7 @@ species are drawn uniformly, feeds are free and it is scored with pollination an
 (`GAME["feed_price"]`; the owner can change it, or set it to 0). The bee's **net nectar** for a feed is
 nectar − price, and can be negative: feeding at a flower that offers little, or at a 0% flower, loses
 nectar, and that lowers the bee's success B. `fed(nectar)` still gets the nectar itself (before the price).
-Every feed record shows the nectar, the price and the net.
+Every feed record shows the nectar, the price, the net and the bee's **nectar balance after the feed**.
 
 ### The clock
 

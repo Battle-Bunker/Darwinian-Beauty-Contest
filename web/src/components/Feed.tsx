@@ -167,8 +167,8 @@ export const FeedRow = memo(function FeedRow({ a, teams, myTeamId, tenths = true
         )}
         {isFed && <span className="ok-text nowrap"><DropIcon size={15} /> fed{typeof a.nectar === "number" && <>: <b title={fmtEExact(a.nectar)}>{fmtE(a.nectar)}</b> nectar</>}</span>}
         {isFed && typeof a.price === "number" && a.price > 0 && typeof a.net === "number" && (
-          <span className={`nowrap ${a.net < 0 ? "lost-text" : "muted"}`} title={`The feed price, ${fmtEExact(a.price)}, comes out of the nectar: net ${fmtEExact(a.net)}`}>
-            − {fmtE(a.price)} price = <b>{a.net < 0 ? "−" : ""}{fmtE(Math.abs(a.net))}</b> net
+          <span className={`nowrap ${a.net < 0 ? "lost-text" : "muted"}`} title={`The feed price, ${fmtEExact(a.price)}, comes out of the nectar: net ${fmtEExact(a.net)}${typeof a.balance === "number" ? `; the bee's nectar balance is now ${fmtEExact(a.balance)}` : ""}`}>
+            − {fmtE(a.price)} price = <b>{a.net < 0 ? "−" : ""}{fmtE(Math.abs(a.net))}</b> net{typeof a.balance === "number" && <> · balance <b>{fmtE(a.balance)}</b></>}
           </span>
         )}
         {a.action === "leave" && (voided

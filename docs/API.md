@@ -73,7 +73,7 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
   "revealOnFinish": true,
   "grains": "feeder", "pollenGrain": { "exponent": 0.3333333333333333, "scale": 0.1 },
   "scoring": { "alpha": 0.85, "beta": 0.85 }, "energy": { "bytes": true },
-  "prevalence": { "on": true, "halfLifeS": 90, "cStart": 1, "cEnd": 0.1, "cap": 4, "slots": 0.25, "prior": null },
+  "prevalence": { "on": true, "halfLifeS": 90, "cStart": 1, "cEnd": 0.1, "cap": 4, "slots": 0.25, "prior": null, "pools": true, "endowment": null },
   "budgets": {
     "flower": { "size": 1100,  "perMinute": 60,  "cap": 300,  "ms": 50, "minMs": 1 },
     "bee":    { "size": 11000, "perMinute": 600, "cap": 3000, "ms": 50, "memory": 50 }
@@ -160,15 +160,21 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
   game stored without `scoring` was created before it existed and is scored with √ (0.5 and 0.5), as it was
   then; the game view's `config.scoring` is always the pair the game is scored with.
 - `prevalence`: **prevalence on both sides** (server/lib/prevalence.js). With `on`:
-  - D^F_{s,b}: the pollen species s gave bee team b; D^B_{b,s}: the net nectar (nectar − feedPrice per feed)
-    bee b got at species s. Every cell starts at `prior` (null: 0.12 × Emax, 6,758,400 at the defaults; 0
-    to 10^15) and, as each round begins, is multiplied by 2^(−round_ms / 1000 / `halfLifeS`) (90 by default,
-    1 to 86,400; null: cumulative), before that round's feeds are added. Rounds are game time, so a paused
-    game doesn't decay.
-  - **F_s** = N × Q^F_s / Σ_k Q^F_k, Q^F_s = Σ_b (D^F_{s,b})^β; **B_b** = N × Q^B_b / Σ_k Q^B_k, Q^B_b =
-    max(0, Σ_s sign(D^B_{b,s}) |D^B_{b,s}|^α) (α, β = `scoring`). Each is 1 for everyone when its Σ Q is 0,
-    and at most `cap` (4 by default, at least 1; null: no cap). Par 1.
-  - c(t) runs linearly from `cStart` (1) at game time 0 to `cEnd` (0.1) at `minutes` (each 0 to 100).
+  - **Flower side.** D^F_{s,b}: the pollen species s gave bee team b. Each cell starts at `prior` (null: 0.12
+    × Emax, 6,758,400 at the defaults; 0 to 10^15) and, as each round begins, is multiplied by 2^(−round_ms /
+    1000 / `halfLifeS`) (90 by default, 1 to 86,400; null: cumulative), before that round's pollen is added.
+    **F_s** = N × Q^F_s / Σ_k Q^F_k, Q^F_s = Σ_b (D^F_{s,b})^β (β = `scoring.beta`): per-(species, bee) cells,
+    so pollen spread across many bee teams counts for more and no flower–bee pair can go singleton.
+  - **Bee side (`pools`, the default, v3).** Each bee has one nectar **balance**, not a per-flower tally. It
+    starts at the `endowment` (null: 10 × the feed price, 28,160,000 at the defaults; 0 to 10^15); each feed
+    adds its net nectar (nectar − feedPrice, which can be negative); and as each round begins it relaxes
+    toward the endowment by the same half-life (balance ← endowment + (balance − endowment) × d). A bee whose
+    balance is below the feed price can't feed (its feed decision becomes a leave, "too poor to feed"), and it
+    recovers over time. **B_b** = N × balance_b / Σ_k max(0, balance_k) (balances floored at 0 for the share).
+    With `pools` false (v2): B_b = N × Q^B_b / Σ_k Q^B_k, Q^B_b = max(0, Σ_s sign(D^B_{b,s}) |D^B_{b,s}|^α),
+    D^B the per-(bee, species) decayed net nectar (α = `scoring.alpha`).
+  - Each of F and B is 1 for everyone when its total is 0, and at most `cap` (4 by default, at least 1; null:
+    no cap). Par 1. c(t) runs linearly from `cStart` (1) at game time 0 to `cEnd` (0.1) at `minutes`.
   - Each round, K = ceil(`slots` × N) (`slots` 0.25 by default, 0.01 to 1) distinct bees are drawn, one
     after another without replacement, with weights c + B_b (among the bees that can visit); each draws a
     species with weights c + F_s, with replacement, its own included. Published: p^F_s = (c + F_s) / Σ (c +
@@ -177,8 +183,8 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
     bee's; 1 before the first round).
   A game stored without `prevalence`, or with the earlier one-sided form (no `slots`), is from before: every
   bee visits every round, species are drawn uniformly, and it is scored with pollination × forage (`on`
-  false; the game view's `config.prevalence` always has every key). Programs never see prevalence (it is
-  not in `GAME`).
+  false). A stored v2 config (has `slots`, no `pools`) keeps `pools` false, so its bee formula is unchanged.
+  The game view's `config.prevalence` always has every key. Programs never see prevalence (it is not in `GAME`).
 
 Types: `int`, `float`, `bool`, `str`, `any`, `list[T]`, `tree[T]`, `graph`, `digraph`, `graph[T]`,
 `digraph[T]` (RULES.md). Languages: `python`, `typescript`.
@@ -199,7 +205,7 @@ Types: `int`, `float`, `bool`, `str`, `any`, `list[T]`, `tree[T]`, `graph`, `dig
 | program versions, sizes, costs, change budgets, problems | own team | everyone |
 | the bee's `MEMORY` (`teams[i].memory`; query `teams.memory`, `teams.memoryBytes`, `teams.memoryError`) | own team, read only | everyone |
 | the scoreboard (every team's totals, shares and fitness) and `ledgers` (feeds, nectar, pollen) | everyone, live | everyone |
-| prevalence (every team's F, B, p^F, p^B and fitness so far, about once a second) and every feed's price and net | everyone, live | everyone |
+| prevalence (every team's F, B, p^F, p^B, fitness so far and bee nectar balance, about once a second) and every feed's price, net and balance-after | everyone, live | everyone |
 
 A field you may not see is **absent** from actions, and **null** in ledger entries and query rows.
 Every way of reading actions (pages, `before=`, `mine=1`, the SSE and WebSocket streams) and the team
@@ -233,8 +239,9 @@ don't bump the public `game.version`, so other teams can't tell when a team chan
   "interface": { "flower", "bee", "types": { "challenge", "response", "challengeMeans", "responseMeans", "rules": [..] } },
   "scores": [teamScore] | null,
   "ledgers": { "feeds": [[int]], "nectar": [[number]], "pollen": [[number]] } | null,
-  "prevalence": { "on": true, "halfLifeS", "cStart", "cEnd", "cap", "slots",
+  "prevalence": { "on": true, "halfLifeS", "cStart", "cEnd", "cap", "slots", "pools",
                   "prior",                  // resolved: 0.12 × Emax when the config's is null
+                  "endowment",              // resolved: 10 × feedPrice when the config's is null (the bee balance's baseline)
                   "feedPrice",              // resolved
                   "sample": sample | null } | null   // the latest sample (below; null before the first);
                                           // null: a game without prevalence
@@ -267,7 +274,8 @@ the game view and `base/scores`, `prevalence` on `base/actions` pages and stream
                 "beeSuccess",      // B_b, par 1 (capped)
                 "flowerP",         // p^F_s: the chance a visit is to this species
                 "beeP",            // p^B_b: this bee's share of the bee weights
-                "fitness" }] }     // its fitness so far: the time-average of F × B
+                "fitness",         // its fitness so far: the time-average of F × B
+                "balance" }] }     // its bee's nectar balance (pools games), else null
 ```
 
 All public, as it happens. The history queries have every sample as the `prevalence` entity, one row per
@@ -294,6 +302,7 @@ A turn makes two actions: its **arrival**, written to the stream at once, and it
   "nectar",                      // feed only: what the bee got, percent/100 × E
   "price",                       // feed only: the feed price the bee paid out of it (0 in games without one)
   "net",                         // feed only: nectar − price (can be negative)
+  "balance",                     // feed only, pools games: the bee's nectar balance after this feed (else null)
   // on a feed public; on a leave the flower's team only (everyone after finish):
   "percent",                     // 0–100 (null if the flower failed)
   "energy",                      // E, node·ms·bytes (node·ms without the byte factor; 0 if the flower failed)
@@ -347,6 +356,8 @@ them, oldest first by `seq` (the turn's `feed`/`leave` action). Team numbers are
                                               // (GET base/responses/812 has it)
   "percent": 25, "energy": 123486.0, // public on a feed; on a leave null except at your own flower
   "nectar": 30871.5,                 // on a feed; null on a leave
+  "price": 2816000, "net": -2785128.5, // on a feed: the feed price and nectar − price (0 / nectar in games without a price)
+  "balance": 25000000,               // on a feed in a pools game: the bee's nectar balance after it (else null)
   "pollen": 92614.5,                 // on a feed; 0 on a leave
   "ms": 2.1, "budgetMs": 92.4, "flowerVersion": 3, "flowerError": null,   // null except at your own flower
   "beeMs": 0.4, "beeVersion": 2, "beeError": null,      // null except for your own bee

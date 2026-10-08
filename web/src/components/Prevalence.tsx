@@ -47,9 +47,13 @@ export function PrevalencePanel({ view, base }: { view: GameView; base: string }
   const myTeamId = view.me?.teamId ?? null;
   const now = sample ? [...sample.species].sort((a, b) => b.fitness - a.fitness) : [];
   const maxP = Math.max(2 / Math.max(1, n), ...now.flatMap((s) => [s.flowerP, s.beeP]));
+  const pools = pv.pools !== false;
+  const beeHow = pools
+    ? `B is the bee's recent success: N × its share of its single nectar balance (it starts at ${fmtE(pv.endowment)}, each feed adds nectar − the feed price of ${fmtE(pv.feedPrice)}, and it relaxes back toward the start; a bee below the price can't feed)`
+    : `B is the bee's recent success: N × its share of the net nectar it got (nectar − the feed price of ${fmtE(pv.feedPrice)} a feed, losses counting against it)`;
   const how = `Each round ceil(${pv.slots} × N) bees visit, drawn without replacement with weights c + B; each visits a species drawn with weights c + F. ` +
-    `F is the species' recent flower success: N × its share of the pollen it gave (each bee team's, to the power β); B is the bee's: N × its share of the net nectar it got ` +
-    `(nectar − the feed price of ${fmtE(pv.feedPrice)} a feed, losses counting against it). Recent: ${pv.halfLifeS ? `halving every ${pv.halfLifeS} s of game time` : "the whole game"}` +
+    `F is the species' recent flower success: N × its share of the pollen it gave, counted per bee team (so spread pollen counts for more); ${beeHow}. ` +
+    `Recent: ${pv.halfLifeS ? `halving every ${pv.halfLifeS} s of game time` : "the whole game"}` +
     `${pv.cap != null ? `; each capped at ${pv.cap}` : ""}; par is 1. c gives everyone a share whatever their success, falling from ${pv.cStart} to ${pv.cEnd} over the game. ` +
     "Fitness is the time-average of F × B. Programs never see any of it.";
   const bar = (v: number, color: string | undefined) => (
@@ -73,8 +77,9 @@ export function PrevalencePanel({ view, base }: { view: GameView; base: string }
                 <th title="The time-average of F × B so far: the team's score">Fitness</th>
                 <th title="F: its species' recent flower success, par 1">F</th>
                 <th className="left" title="p^F: the chance a visit is to its species">flower drawn</th>
-                <th title="B: its bee's recent success, net of the feed price, par 1">B</th>
+                <th title="B: its bee's recent success, par 1">B</th>
                 <th className="left" title="p^B: its bee's share of the bee draw (the chance it fills a given slot first)">bee drawn</th>
+                {pools && <th title="its bee's nectar balance now (it can't feed below the feed price)">nectar</th>}
               </tr>
             </thead>
             <tbody>
@@ -86,6 +91,7 @@ export function PrevalencePanel({ view, base }: { view: GameView; base: string }
                   <td className="left"><span className="prev-cell">{bar(s.flowerP, teams[s.team]?.color)}<span className="prev-num">{pct(s.flowerP)}</span></span></td>
                   <td>{fmt2(s.beeSuccess)}</td>
                   <td className="left"><span className="prev-cell">{bar(s.beeP, teams[s.team]?.color)}<span className="prev-num">{pct(s.beeP)}</span></span></td>
+                  {pools && <td title={typeof s.balance === "number" && s.balance < pv.feedPrice ? "below the feed price: too poor to feed" : undefined} className={typeof s.balance === "number" && s.balance < pv.feedPrice ? "lost-text" : undefined}>{typeof s.balance === "number" ? fmtE(s.balance) : "–"}</td>}
                 </tr>
               ))}
             </tbody>
