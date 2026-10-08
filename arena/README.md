@@ -28,7 +28,7 @@ metrics, interviews, the teen judges and (unless membership is fixed) selection 
 | `run.js` | the runner: creates rooms and games, runs the lobby sessions, starts the game, runs every team's sessions while it plays, stops them when it ends; then metrics, interviews, judges, retirements and breeding |
 | `analyze.js` | a Markdown report of the arena schema: spend, each game (energy, percent, nectar and pollen over time and their distributions, the scores and their two shares, every species and bee, each bee's MEMORY and how often teams changed their bee, self-feeding and handshakes, discrimination, flower size and compute against energy, copies, the change timeline, scaffolds, sessions, storage), the panel, games side by side, ideas, breeders, the fair-play audit |
 | `cohorts.js` | the cohort analysis of an experiment (or any arenas): per cohort and game, what the flowers and bees do (keyword evidence or the haiku classifier of `lib/mechanisms.js`), sophistication, signal families, innovation, diversity, dominance turnover, imitation and detection, the energy split, the arms race (rotations, cracks, percent over time), collapse, minute by minute (`lib/dynamics.js`), and the cohorts side by side |
-| `server.sh` | (re)starts the arena's own game server on port 4100 (dbc_one, the dev-login secret, `CPU_SLOTS=3`); refuses `dbc` and `dbc_live` |
+| `server.sh` | (re)starts the arena's own game server on port 4100 (dbc_one, the dev-login secret, `CPU_SLOTS=2`; the pilot and signals ran at 3); refuses `dbc` and `dbc_live` |
 | `schema.sql` | the `arena` Postgres schema in dbc_one, applied on every run |
 | `tools/` | the workspace tools copied into every workspace (Python, stdlib only): `submit.py`, `check.py`, `try.py`, `status.py`, `query.py`, `stream.py`, `scaffold.py`, `garden.py` (the scaffold API), and `_runner.py`, their link to the runner; every workspace also gets `vendor/query/history.py`, the generated query client, as `tools/history.py` |
 | `lib/llm.js` | `claude -p` wrapper: concurrency limiter, retries, usage-limit pause, spend guard, cost ledger (`arena.llm_calls`); sessions with live transcripts, a stop control, and estimated costs for sessions stopped mid-way |
@@ -168,8 +168,15 @@ conformance, costly honesty and feeds; the defectors' conformance, imitation lat
 apart; and an adaptation summary per veteran. `adapt-dry` is its capacity check with the stub `claude` (14 teams,
 1-minute games; the stub's honest flowers burn 0.9 × R of CPU, a load test only).
 
+Capacity (`adapt-dry` on a scratch database, 4 cores, 1-minute games: 2 at `CPU_SLOTS=3`, 6 at 2; output in
+`arena/runs/capacity2/`): the burners never made another team's call miss. Veteran and defector flowers had no timeouts
+at either setting, bees were too slow on at most 1% of turns, and rounds took 203–210 ms. The burners' own misses (a
+flower's hard limit R is wall-clock time while E counts CPU, so other processes taking its core make it late) fell from
+44–51% of their turns at 3 slots to 19–42% at 2; on an idle machine they don't miss. Program CPU was 73–87 ms a round
+against 400 at 2 slots, at 2.1–2.4 turns a round, against the 0.6–0.8 of the signals arenas. Hence `CPU_SLOTS=2`.
+
 ```
-arena/server.sh
+CPU_SLOTS=2 arena/server.sh
 ARENA_BUDGET_USD=250 nohup node arena/run.js --experiment adapt >> arena/runs/adapt.out 2>&1 &
 node arena/adapt.js > arena/runs/analysis-adapt.md                               # afterwards, no spend
 ```

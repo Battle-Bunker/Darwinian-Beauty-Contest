@@ -31,6 +31,8 @@ const pct = (x) => (x == null || Number.isNaN(x) ? "-" : `${Math.round(100 * x)}
 const f2 = (x) => (x == null || Number.isNaN(x) ? "-" : Number(x).toFixed(2));
 const mmss = (ms) => { if (ms == null) return "-"; const s = Math.round(ms / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
 const rate = (ts) => (ts.length ? ts.filter((t) => t.fed).length / ts.length : null);
+// costly / cheap (lib/wealth.js), or effort that follows R with no visible work to show it, or neither.
+const honesty = (w) => (!w || !(w.turns >= 30) ? "-" : honestyOf(w) ?? ((w.effort ?? 0) >= 0.3 ? "costly, not visible" : "none"));
 
 async function main() {
   const arena = await one("SELECT * FROM arena.arenas WHERE id = $1", [arenaId]);
@@ -93,12 +95,13 @@ async function main() {
       "its bee's feed rate at honest / defector / veteran flowers", "at poor / rich R", "fitness (rank)"], vrows);
     // Honest specialists.
     const W = m.wealth?.species || [];
-    p("Honest specialists (conformance: answers at 50%; costly honesty: effort and visible work both follow R):");
-    table(["team", "conformance", "median percent", "CPU share", "effort ~ R", "work ~ R", "signal", "feeds from rival bees", "rival feed rate", "fitness (rank)"],
+    p("Honest specialists (conformance: answers at 50%; honesty: costly when effort and visible work both follow R, cheap when only the work does):");
+    table(["team", "conformance", "median percent", "CPU share", "effort ~ R", "work ~ R", "honesty", "feeds from rival bees", "rival feed rate", "fitness (rank)"],
       ents.filter((x) => role(x.team_id) === "honest").map((e) => {
         const id = e.team_id, t = m.teams?.[id], w = W.find((s) => s.teamId === id), rv = T.filter((x) => x.flower === id && x.bee !== id);
-        return [e.team_name, pct(m.roles?.[id]?.conform ?? t?.flower?.percentAt50), f2(t?.flower?.percent?.p50), pct(t?.flower?.computeShare), f2(w?.effort), f2(w?.bytes ?? w?.nodes),
-          honestyOf(w) ?? "-", rv.filter((x) => x.fed).length, pct(rate(rv)), `${f2(final[id]?.fitness)} (#${rank.indexOf(id) + 1})`];
+        const work = [w?.bytes, w?.nodes].filter((x) => x != null);
+        return [e.team_name, pct(m.roles?.[id]?.conform ?? t?.flower?.percentAt50), f2(t?.flower?.percent?.p50), pct(t?.flower?.computeShare), f2(w?.effort), f2(work.length ? Math.max(...work) : null),
+          honesty(w), rv.filter((x) => x.fed).length, pct(rate(rv)), `${f2(final[id]?.fitness)} (#${rank.indexOf(id) + 1})`];
       }));
     // Defectors.
     p("Defectors (conformance: answers at 0%; imitation: their versions' first close copies of another species' answers; detection: rival bees' feed rate falling below half the model's):");
