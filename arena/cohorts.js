@@ -15,6 +15,7 @@ import { Api, gamePath } from "./lib/api.js";
 import { callModel } from "./lib/llm.js";
 import { BASE_LEVEL, beeLevelOf, classifyPrograms, definesFed, keywordBee, keywordFlower, levelOf, unlabelled } from "./lib/mechanisms.js";
 import { dynamics } from "./lib/dynamics.js";
+import { honestyOf } from "./lib/wealth.js";
 import { computeGameMetrics, queryAll } from "./lib/metrics.js";
 import { EXPERIMENTS } from "./lib/presets.js";
 
@@ -218,9 +219,11 @@ async function cohortReport(arenaId) {
       x.rotations, x.predictions, pct(x.selfShare), x.autarkic ?? "-", x.collapse]));
   if (sums.some((x) => x.wealth)) {
     p("Wealth signals (each flower call's hidden time budget R: is visible work an honest signal of it, and do bees feed more at rich instances? " +
-      "Spearman's rho of R with each species' visible work; honest = rho ≥ 0.3 over 30+ answered turns):");
-    table(["game", "honest species", "per species: work ~ R (effort ~ R)", "rival feed rate at poor / middle / rich instances", "fed ~ R", "bees feeding more at rich instances"],
-      sums.filter((x) => x.wealth).map((x) => [x.G.gen, x.wealth.honestSpecies, x.wealth.species.map((s) => `${s.team} ${f2(s.bytes ?? s.nodes)} (${f2(s.effort)})${s.honest ? " honest" : ""}`).join("; "),
+      "Spearman's rho of R with each species' visible work, and with its effort (CPU ms); honest = visible work rho ≥ 0.3 over 30+ answered turns: " +
+      "costly when effort follows R too (a poor instance couldn't afford it), cheap when it doesn't (R shown without spending it: a poor flower could claim the same)):");
+    table(["game", "costly / cheap honest species", "per species: work ~ R (effort ~ R)", "rival feed rate at poor / middle / rich instances", "fed ~ R", "bees feeding more at rich instances"],
+      sums.filter((x) => x.wealth).map((x) => [x.G.gen, `${x.wealth.species.filter((s) => honestyOf(s) === "costly").length} / ${x.wealth.species.filter((s) => honestyOf(s) === "cheap").length}`,
+        x.wealth.species.map((s) => `${s.team} ${f2(s.bytes ?? s.nodes)} (${f2(s.effort)})${honestyOf(s) ? ` ${honestyOf(s)}` : ""}`).join("; "),
         `${pct(x.wealth.feedRate.poor)} / ${pct(x.wealth.feedRate.middle)} / ${pct(x.wealth.feedRate.rich)}`, f2(x.wealth.feedRho),
         x.wealth.bees.filter((b) => (b.lift ?? 0) >= 0.1).map((b) => `${b.team} +${pct(b.lift)}`).join(", ") || "none"]));
   }
@@ -358,7 +361,7 @@ async function main() {
       ["copies detected by game (median rival feeds before)", ...per((x) => `${x.detected}/${x.copiesN} (${x.feedsBeforeDetection ?? "-"})`)],
       ["rotations / cracks by game", ...per((x) => `${x.rotations}/${x.predictions}`)],
       ["autarkic species by game", ...per((x) => x.autarkic ?? "-")],
-      ["honest wealth signallers by game (visible work follows R)", ...per((x) => (x.wealth ? `${x.wealth.honestSpecies}/${x.G.teams.length}` : "-"))],
+      ["costly / cheap honest wealth signallers by game", ...per((x) => (x.wealth ? `${x.wealth.species.filter((s) => honestyOf(s) === "costly").length}/${x.wealth.species.filter((s) => honestyOf(s) === "cheap").length}` : "-"))],
       ["rival feed rate at poor / rich instances by game", ...per((x) => (x.wealth ? `${pct(x.wealth.feedRate.poor)}/${pct(x.wealth.feedRate.rich)}` : "-"))],
       ["grain characters leaked per minute by game", ...per((x) => big(x.grains.perMinute))],
       ["flower versions fully held by another team (median time) by game", ...per((x) => `${x.grains.versionsFullyHeld ?? 0}/${x.grains.versionsWithGrains ?? 0} (${x.grains.medianMsToFullyHeld != null ? mmss(x.grains.medianMsToFullyHeld) : "-"})`)],

@@ -9,6 +9,7 @@
 import { all, migrate, one, pool, q } from "./lib/db.js";
 import { gamePath } from "./lib/api.js";
 import { breederScores } from "./lib/population.js";
+import { honestyOf } from "./lib/wealth.js";
 import { computeGameMetrics, scaffoldsOf, submitsOf } from "./lib/metrics.js";
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((acc, a, i, arr) => { if (a.startsWith("--")) acc.push([a.slice(2), arr[i + 1] && !arr[i + 1].startsWith("--") ? arr[i + 1] : true]); return acc; }, []));
@@ -189,9 +190,10 @@ for (const a of arenas) {
       p(`Wealth signals (each flower call's hidden time budget R${Wl.range?.[0] != null ? `, ${Wl.range[0]}-${Wl.range[1]} ms` : ""}: does a species' effort and visible work follow R, ` +
         `and do bees feed more at rich instances? Spearman's rho over answered turns; honest = visible work rising with R, rho ≥ 0.3 over 30+ turns). ` +
         `Rival bees' feed rate at poor / middle / rich instances (R terciles, cuts ${Wl.cuts?.map((x) => f2(x)).join(" / ")} ms): ` +
-        `${pc(Wl.feedRate.poor)} / ${pc(Wl.feedRate.middle)} / ${pc(Wl.feedRate.rich)} (rho ${f2(Wl.feedRho)}); ${Wl.honestSpecies} honest species.`);
+        `${pc(Wl.feedRate.poor)} / ${pc(Wl.feedRate.middle)} / ${pc(Wl.feedRate.rich)} (rho ${f2(Wl.feedRho)}); honest species: ` +
+        `${Wl.species.filter((x) => honestyOf(x) === "costly").length} costly (effort follows R too), ${Wl.species.filter((x) => honestyOf(x) === "cheap").length} cheap (R shown without spending it).`);
       table(["species of", "answered turns", "effort (CPU ms) ~ R", "response bytes ~ R", "graph nodes ~ R", "fed ~ R", "honest?"],
-        Wl.species.map((x) => [x.team, x.turns, f2(x.effort), f2(x.bytes), f2(x.nodes), f2(x.fed), x.honest ? "yes" : "-"]));
+        Wl.species.map((x) => [x.team, x.turns, f2(x.effort), f2(x.bytes), f2(x.nodes), f2(x.fed), honestyOf(x) ?? "-"]));
       table(["bee of", "turns at rival flowers", "feed rate at poor / rich instances", "lift", "fed ~ R"],
         Wl.bees.map((x) => [x.team, x.turns, `${pc(x.poor)} / ${pc(x.rich)}`, f2(x.lift), f2(x.rho)]));
     }

@@ -1643,6 +1643,133 @@ a feed):
     game 5 (quiet bees).
   - Levels are ordinal: hash proof of work (2) isn't necessarily simpler than a certificate puzzle (3) in practice.
 
+## 23. One flower: does a range of type-specific signals produce dynamism? (pilot + signals, 2026-10)
+
+**Short answers** (one run per arm and seed, 2–3 games of 10 minutes: strong anecdote, not statistics):
+1. **No: there was variety, but no dynamics.** Every one of 371 flower versions in 14 games was a cheap rule. Of 67
+   distinct flower programs the classifier labelled 65 "rule" and 2 "keyed" (secret own-bee handshakes). There were
+   no puzzles, no proof of work and no signature-plus-work. Teams did vary their *styles*: 3–6 distinct named signals
+   per game (echo, label motif, ring, check digit, "price tag", "receipt"), at 1.3–2.6 bits of entropy. But the
+   mechanism never changed hands (mechanism turnover 0 in every game), the flower level stayed 0, and every game
+   ended "frozen". Priming with the graph-signal document changed nothing measurable: the primed arm read it and
+   took only its cheap "reputation: styles" half.
+2. **Why, and the levers.** No flower did costly work, and no bee checked any. A bee had no reason to discriminate:
+   it fed at 58–98% of visits regardless of R (rich vs poor within ±6 points in every game), and √-breadth forage
+   rewards eating everywhere. So any CPU a flower spent was pure loss. Levers to break this follow the evidence
+   below.
+
+**Design as run:**
+- **Experiments.**
+  - `pilot`: kiln-a, unprimed, 2 games, $14.03.
+  - `signals`: fen-a and fen-c unprimed, fen-b and fen-d primed with `arena/priming/one-flower-ideas/` (graph
+    certificates for wealth, motif styles for reputation, no cryptography). 3 games each, interleaved, $73.79.
+- **Founders.** Mallory, Kenji and Ada on opus; Rosalind, Priya and Theo on sonnet. Evolution on.
+- **Rules.** int → graph[any], 10-minute games. Every flower call has a hidden budget R, uniform on 50–150 ms, read as
+  `GAME["ms"]`; E = (1100 − size) × max(0, R − CPU ms). No history for programs. Bee MEMORY of 50 bytes, with
+  `fed(nectar)`. Pollen grains go to feeders; responses are capped at 64 KiB.
+- **Analysis.**
+  - `node arena/cohorts.js --experiment {pilot,signals} --classify`; tables in `arena/runs/analysis-{pilot,signals}.md`
+    and `arena/runs/analysis-one-flower.md`.
+  - The haiku classifier was called 26 times, for $0.09. Labels are classifier labels, with keyword evidence only
+    where the classifier gave no reply (none did).
+
+### The two arms
+
+| measure (per game, in game order) | unprimed: kiln-a | fen-a | fen-c | primed: fen-b | fen-d |
+|---|---|---|---|---|---|
+| flower mechanism (classified) | rule ×2 | rule ×3 (+keyed 1 in g3) | rule (+keyed 1 in g2, g3) | rule ×3 | rule ×3 |
+| flower level, mean / max | 0 / 0 | 0 / 0 | 0, 0.50 / 3, 0.33 / 2 (keyed) | 0 / 0 | 0 / 0 |
+| bee level, mean (0–3) | 0.67, 0.67 | 0.67, 0.83, 0.67 | 0.50, 0.67, 1.50 | 0.33, 0.83, 0.83 | 0.83, 0.50, 0.67 |
+| distinct signals (cohort total) | 2, 2 | 5, 4, 6 (9) | 3, 5, 5 (7) | 4, 6, 5 (8) | 3, 3, 3 (6) |
+| signal entropy, mean (bits) | 0.29, 0.65 | 2.22, 1.92, 2.25 | 1.46, 2.25, 1.93 | 1.92, 2.58, 2.12 | 1.46, 1.25, 1.25 |
+| innovations per minute | 0.6, 0.1 | 0.9, 0.2, 0.4 | 0.7, 0.5, 0.3 | 0.7, 0.4, 0.1 | 0.7, 0.1, 0.2 |
+| dominance turnover: mechanism / species | 0/3, 0/2 | 0/3, 0/0, 0/2 | 0/7, 0/1, 0/0 | 0/8, 0/5, 0/6 | 0/4, 0/1, 0/1 |
+| signals copied (median lag) | 15 (107 s), 9 (92 s) | 2 (321 s), 1 (101 s), 4 (51 s) | 1 (40 s), 2 (101 s), 5 (197 s) | 3 (111 s), 1 (103 s), 15 (198 s) | 0, 0, 4 (167 s) |
+| flower versions fully held by one other team via grains (median time after going live) | 17/22 (16 s), 16/18 (16 s) | 23/25 (18 s), 20/26 (27 s), 10/29 (41 s) | 10/19 (37 s), 8/18 (18 s), 10/18 (31 s) | 13/20 (20 s), 23/31 (20 s), 29/40 (26 s) | 13/16 (53 s), 17/34 (53 s), 12/31 (42 s) |
+| acting on leaked code: secrets / copies | 0/4, 0/0 | 0/1, 0/0, 0/1 | 0/1, 0/0, 0/1 | 0/3, 0/4, 0/0 | 0/1, 0/0, 0/0 |
+| honest wealth signallers: costly / cheap | 0/0, 0/0 | 0/1, 0/1, 0/1 | 0/1, 0/1, 0/0 | 0/2, 0/0, 0/0 | 0/2, 0/0, 0/0 |
+| rival feed rate at poor / rich R | 63/63%, 73/72% | 91/91%, 95/94%, 86/88% | 89/88%, 57/61%, 60/65% | 81/87%, 97/96%, 98/97% | 83/86%, 97/98%, 83/87% |
+| nectar per rival feed, poor / rich R | 18k/37k, 10k/18k | 20k/40k, 15k/28k, 12k/23k | 22k/45k, 13k/29k, 16k/28k | 29k/61k, 25k/45k, 14k/28k | 32k/65k, 20k/39k, 16k/33k |
+| median percent | 10, 5 | 30, 15, 15 | 30, 15, 15 | 45, 35, 20 | 50, 30, 30 |
+| percent policies at the end | fixed 6; fixed 3, by-visitor 3 | fixed 6; fixed 4, by-visitor 2; by-visitor 3, fixed 3 | fixed 6; fixed 5, by-visitor 1; fixed 4, by-challenge 1, by-visitor 1 | fixed 6; fixed 4, other 1, by-visitor 1; by-visitor 3, fixed 3 | fixed 5, by-visitor 1; by-visitor 3, fixed 3; by-visitor 3, fixed 3 |
+| self-feeds of feeds (1/6 = 17% at random) | 17%, 23% | 16%, 17%, 18% | 15%, 26%, 23% | 17%, 17%, 17% | 18%, 13%, 18% |
+| median flower size (nodes) / compute share of 150 ms | 36, 41 / 1% | 40, 50, 59 / 1% | 53, 44, 83 / 0–1% | 49, 44, 51 / 0–1% | 50, 58, 61 / 1% |
+| signature + work species | 0 | 0 | 0 | 0 | 0 |
+
+### What the numbers say
+- **Signals were all cheap.** Every species used a recognisable style: the "signature" family for 6/6 species in
+  every game. None added work.
+  - Median compute was 0.65–0.70 ms of a 50–150 ms budget in every game.
+  - Not one of 371 flower versions has a time-paced loop, a hash library or a search.
+- **Honest wealth signals were cheap talk, never costly.**
+  - Effort didn't track R: for every species in every game |rho(CPU ms, R)| ≤ 0.16.
+  - The "honest" species (visible work rho 0.31–0.78 with R) wrote R into a label: "price tag", "receipt", "budget
+    receipt". A poor flower could claim the same.
+  - Cheap honesty faded: 1–2 species per game in game 1, and only fen-a's and fen-c's "quiet bees" and "Fast Path
+    Flora" kept it, because no bee paid for it.
+- **Bees didn't discriminate by wealth or by honesty.**
+  - Feed rates at rich and poor instances differ by at most 6 points.
+  - Nectar per feed at rich instances is about twice that at poor ones. That is E ∝ R, mechanically; no bee chose it.
+  - 46 of 84 bee programs learned per-style nectar through `fed()` ("learned-value"). They still fed at almost
+    everything, because the learned values barely differed.
+- **Percent drifted down, unpunished.** Median percent fell 30 → 15 (unprimed) and 45–50 → 20–30 (primed). The
+  primed arm stayed higher, but fell the same way.
+  - "by-visitor" policies spread from game 2 (paying one's own bee differently), but self-feeding stayed near the 1/6
+    random draw. The exceptions are fen-c g2/g3 at 23–26%, where rival feeding fell to 57–65%.
+- **Copying: easy, but rarely needed.** Grains put whole flower versions (35–80 nodes, 70–170 characters) into
+  another team's hands within 16–53 s (median). But teams acted on leaked code only 0–4 times a game, and never used
+  a leaked secret.
+  - The cheap rules were just as easy to copy from public responses. Answer-level copies ran up to 359 a game in the
+    pilot and 52 in fen-c g3.
+  - Imitation lags of 40–320 s reflect that there was little worth copying, not that copying was hard.
+- **Checking the coordinator's mid-run notes:**
+  - "Cheap rules at about 40–60 nodes, about 1% compute": yes (36–83 nodes, 0–1%).
+  - "Bees fed at 85–97% regardless of R": regardless of R, yes. The rate was 84–98% in fen-a, fen-b and fen-d, but
+    58–73% in the pilot and in fen-c g2/g3.
+  - "Median percent drifted down": yes.
+  - "Copying rampant, with grains making whole versions available within about 20 s": available, yes (16–53 s). But
+    rampant copying was of public answers, and acting on grains was rare.
+  - "Some honest signals were cheap talk": all of them were.
+
+### Why the primed cohorts didn't take up the graph ideas (transcripts)
+- **Every primed founder read `common/ideas.md` in the first lobby** (8 lobby sessions in each primed cohort opened
+  it).
+- **They took the doc's cheap half: "Reputation: recognisable styles".** That meant motif rings, label motifs and
+  receipts, plus `fed()`-based style memories in the bee.
+- **They rejected its costly half, "Wealth: certificates", on energy grounds.** Some of their own words:
+  - "It does no proof of work, because work burns the energy it would prove." (Mallory, fen-b)
+  - "Anything a flower claims costs it nothing to fake … It does no proof-of-work, so bees that check proofs of work
+    will skip us; I've accepted that." (Mallory, fen-d)
+  - "I'm guessing that's more than flowers that spend their time on puzzles will pay." (Kenji, fen-d)
+  - "The rules set E = (1100 − size) × (R − CPU ms), so a tiny flower that does almost no work keeps the most
+    energy." (Theo, in four of the five cohorts)
+- **None tried a certificate and abandoned it.** No version in either primed cohort contains a search, a puzzle or a
+  checker. The bees that would have rewarded work never existed. A bee rebuilding a seeded instance in 50 ms was
+  more work than its authors chose to write, while learning nectar per style was cheap.
+- **Bees chose breadth over selectivity.** "I didn't make it feed only at the best, because the score takes square
+  roots and rewards eating at many flowers." (Ada, fen-d)
+
+### Levers for a broader, more interesting repertoire (from this evidence)
+
+| problem seen | lever | why it should help |
+|---|---|---|
+| bees feed everywhere (58–98%, flat in R): telling flowers apart doesn't pay | make forage reward quality as well as breadth, e.g. Σ nectar instead of Σ √nectar, or a forage share per feed; or raise `feedCost` so a poor feed costs more | a bee that skips poor or stingy flowers must out-earn one that feeds everywhere, or no flower gains from signalling |
+| R's 50–150 range gives only a 2× nectar spread | widen it (e.g. 10–150, or log-uniform) so poor instances are near-worthless | then telling rich from poor pays, and showing wealth has a buyer |
+| any CPU is pure loss (E ∝ R − CPU) | make checkable work cost less than it signals, e.g. E counting down from R − θ·CPU with θ < 1 for work the bee verifies, or a verification hook in `fed()` (the bee learns the flower's CPU ms after a feed) | today the only rational flower does no work; a bee that can audit work after the fact can build reputations for costly honesty |
+| cheap R claims ("price tags") are free and unpunished | give bees `fed(nectar, …)` enough to check a claim (nectar = percent × E reveals R × percent after the feed), and seed one or two founder bees that punish liars | 46/84 bees already learn through `fed()`, but per style, not per claim; per-claim checking makes lying costly |
+| percent drifts down unpunished | the same: a bee that measures nectar per feed against a claimed percent, and leaves on a lie | stinginess must cost feeds |
+| graph-type variety stays cosmetic | reward species distinctiveness directly (a small novelty term on pollination), or make styles cost something to copy (grains off, or `grains: "public"` so copying is mutual) | variety today is free and pointless: 3–6 styles a game, all at level 0 |
+| chicken and egg: no checker, so no work; no work, so no checker | prime both sides together (csig B in §22 coordinated on PoW when bees and flowers were both primed), or give every bee a library checker for one certificate family | coordination needs both a signal and a buyer on day one |
+
+**Caveats.**
+- One cohort per arm per seed (two seeds per arm, plus the pilot), and only 2–3 games each.
+- Evolution was on, so later games mix founders with bred teams.
+- Levels and families are classifier labels (haiku, cached by program skeleton). "Distinct signals" counts the
+  classifier's free-text names: echo, ring and cycle may split one idea in two.
+- "Honest" needs 30+ answered turns and visible-work rho ≥ 0.3. Costly needs effort rho ≥ 0.3 as well.
+- Grain copies require 24+ characters in a row of held code, excluding shared boilerplate and public answers, so they
+  undercount re-implementation.
+
 ## Most interesting games
 
 1. [/room/T/game/W](/room/T/game/W) baseline gen 2: primed lock-in, starter clovers with secret handshakes, one team
