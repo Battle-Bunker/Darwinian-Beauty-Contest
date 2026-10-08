@@ -2,7 +2,7 @@
 // Honest wealth signalling (lib/wealth.js) on hand-made turns: a species whose visible work follows its hidden budget R is
 // honest, one with a fixed answer isn't; a bee that feeds at rich instances lifts its feed rate there. No server.
 //   node arena/test-wealth.mjs
-import { spearman, wealthMetrics, workOf } from "./lib/wealth.js";
+import { honestyOf, spearman, wealthMetrics, workOf } from "./lib/wealth.js";
 
 let failed = 0;
 const check = (name, ok, extra) => { console.log(`${ok ? "ok  " : "FAIL"} ${name}${ok || extra === undefined ? "" : ": " + JSON.stringify(extra).slice(0, 600)}`); if (!ok) failed++; };
@@ -27,6 +27,8 @@ const w = wealthMetrics({ turns, ids: ["A", "B", "C", "D"], name: { A: "Alpha", 
 const A = w.species.find((s) => s.teamId === "A"), B = w.species.find((s) => s.teamId === "B");
 check("species: effort and visible work follow R for an honest signaller", A.effort > 0.9 && A.nodes > 0.9 && A.bytes > 0.9 && A.honest, A);
 check("species: a fixed answer shows nothing of R", B.nodes === null && !B.honest && w.honestSpecies === 1, B);
+check("costly vs cheap: work and effort both follow R is costly; R written into the answer with no effort is cheap", A.signal === "costly" && w.costlySpecies === 1
+  && honestyOf({ turns: 50, bytes: 0.8, nodes: null, effort: 0.02 }) === "cheap" && honestyOf({ turns: 50, bytes: 0.1, effort: 0.9 }) === null && honestyOf({ turns: 10, bytes: 0.9, effort: 0.9 }) === null, A);
 const C = w.bees.find((b) => b.teamId === "C"), D = w.bees.find((b) => b.teamId === "D");
 check("bees: one that feeds at rich instances (through what they show) has a lift; one at random hasn't", C.lift > 0.3 && C.rho > 0.2 && Math.abs(D.lift) < 0.3, [C, D]);
 check("overall: feed rate by R tercile", w.feedRate.rich > w.feedRate.poor && w.cuts[0] < w.cuts[1], w.feedRate);

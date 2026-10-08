@@ -105,7 +105,9 @@ export function dynamics({ turns, ids, flowerLabel, beeLabel, windowMs, duration
       if (t.flower !== id) continue;
       const l = flowerLabel(id, t.flowerVersion);
       if (l?.signal && !String(l.signal).endsWith("?")) used.add(l.signal);
-      if (l && ((l.tags || []).includes("signature-plus-work") || ((l.families || []).includes("signature") && ((l.families || []).includes("puzzle") || (l.level ?? 0) >= 2)))) combo = true;
+      // Work is costly work: a puzzle family or a costly mechanism (a keyed handshake is a secret, not work).
+      const costly = (l?.families || []).includes("puzzle") || ["work-unchecked", "hash-pow", "sequential", "certificate", "anytime"].includes(l?.mechanism);
+      if (l && ((l.tags || []).includes("signature-plus-work") || ((l.families || []).includes("signature") && costly))) combo = true;
     }
     for (const x of used) signals[x] = (signals[x] || 0) + 1;
     if (combo) signatureWork++;

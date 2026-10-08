@@ -3,7 +3,9 @@
 // finished game's turns, each with `R` (ms), `ms` (CPU), the response's size in bytes, its visible work (see workOf) and
 // whether the bee fed:
 //   per species  does its effort (CPU ms) and its visible work (response size, graph size, labels) follow R? Spearman
-//                correlations; honest when visible work rises with R (rho ≥ 0.3 over 30+ answered turns)
+//                correlations; honest when visible work rises with R (rho ≥ 0.3 over 30+ answered turns), and then
+//                costly when its effort rises with R too (rho ≥ 0.3: a poor instance couldn't afford it), else cheap
+//                (R shown without spending it, e.g. written into a label: a poor flower could claim the same)
 //   per bee      does it feed more at rich instances (the top third of R) than at poor ones (the bottom third)? And
 //                overall: feed rate by R tercile, and the correlation of R with feeding
 // R is uniform per call, so a species whose visible work tracks R is signalling its wealth honestly: richer instances
@@ -31,6 +33,15 @@ function pearson(a, b) {
   for (let i = 0; i < n; i++) { const x = a[i] - ma, y = b[i] - mb; sab += x * y; saa += x * x; sbb += y * y; }
   return saa > 0 && sbb > 0 ? sab / Math.sqrt(saa * sbb) : null;
 }
+/** A species' wealth signal from its correlations (works on stored metrics too): "costly" (visible work and effort
+ * both follow R), "cheap" (visible work follows R, effort doesn't) or null. */
+export function honestyOf(s) {
+  if (!s || !(s.turns >= 30)) return null;
+  const work = Math.max(s.bytes ?? -1, s.nodes ?? -1);
+  if (work < 0.3) return null;
+  return (s.effort ?? 0) >= 0.3 ? "costly" : "cheap";
+}
+
 /** Spearman's rank correlation of pairs [x, y] (null with fewer than 3, or when either doesn't vary). */
 export function spearman(pairs) {
   const ps = pairs.filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y));
@@ -62,8 +73,10 @@ export function wealthMetrics({ turns, ids, name = {}, range = null }) {
     const w = ts.map((t) => ({ R: t.R, ms: t.ms, ...workOf(t), fed: t.action === "feed" ? 1 : 0 }));
     const rho = (k) => r3(spearman(w.map((x) => [x.R, x[k]])));
     const rhoWork = rho("bytes") ?? rho("nodes");
-    return { team: nm(id), teamId: id, turns: ts.length, effort: rho("ms"), bytes: rho("bytes"), nodes: rho("nodes"), edges: rho("edges"), fed: rho("fed"),
+    const row = { team: nm(id), teamId: id, turns: ts.length, effort: rho("ms"), bytes: rho("bytes"), nodes: rho("nodes"), edges: rho("edges"), fed: rho("fed"),
       honest: ts.length >= 30 && Math.max(rhoWork ?? -1, rho("nodes") ?? -1) >= 0.3 };
+    row.signal = honestyOf(row);
+    return row;
   });
   const [lo, hi] = terciles(withR.map((t) => t.R));
   const rate = (ts) => (ts.length ? ts.filter((t) => t.action === "feed").length / ts.length : null);
@@ -78,6 +91,7 @@ export function wealthMetrics({ turns, ids, name = {}, range = null }) {
     range, turns: withR.length, cuts: [r3(lo), r3(hi)],
     feedRate: { poor: r3(rate(rival.filter((t) => t.R <= lo))), middle: r3(rate(rival.filter((t) => t.R > lo && t.R <= hi))), rich: r3(rate(rival.filter((t) => t.R > hi))) },
     feedRho: r3(spearman(rival.map((t) => [t.R, t.action === "feed" ? 1 : 0]))),
-    honestSpecies: species.filter((s) => s.honest).length, species, bees,
+    honestSpecies: species.filter((s) => s.honest).length, costlySpecies: species.filter((s) => s.signal === "costly").length,
+    cheapSpecies: species.filter((s) => s.signal === "cheap").length, species, bees,
   };
 }
