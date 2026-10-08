@@ -11,7 +11,8 @@
 //   session        warmupSeconds: the first in-game sessions start this long before the game does;
 //                  gapSeconds: pause between one team's sessions, doubling after each session that submitted nothing
 //                  (up to maxIdleGapSeconds; back to gapSeconds after a submission; idleBackoff false: always gapSeconds);
-//                  endMarginSeconds: no new session with less game time left than this; maxMinutes: wall-clock cap of one
+//                  endMarginSeconds: no new session with less game time left than this (games with a public, fixed end only:
+//                  with a hidden random end sessions run until the game finishes); maxMinutes: wall-clock cap of one
 //                  session (the game ending stops it anyway); lobbyMinutes: wall-clock cap of a lobby session (told to the
 //                  team); effort: the CLI's --effort for every team session; nice: the sessions' CPU priority (default 5);
 //                  penaltyMinutes: how long a team waits after a session with a fair-play violation (default maxMinutes)
@@ -53,7 +54,7 @@ const expectOf = (rules) => Object.fromEntries(leaves(rules));
 // responses, √ scores (exponents 0.5: exactly the legacy √), grains of ⌊pollen^(1/3)⌋ characters, and no prevalence
 // (every bee each round, species drawn uniformly). OLD_EXPECT checks them all on each new game (a metagame v2 engine
 // stores feedPrice and flowerWindowMs; one from before it fails the check on those two).
-const OLD_RULES = { feedCost: 10, feedPrice: 0, flowerWindowMs: FLOWER_MAX_MS, maxResponseBytes: MAX_RESPONSE_BYTES, maxLen: 64, maxNodes: 512,
+const OLD_RULES = { endFactor: 1, feedCost: 10, feedPrice: 0, flowerWindowMs: FLOWER_MAX_MS, maxResponseBytes: MAX_RESPONSE_BYTES, maxLen: 64, maxNodes: 512,
   revealOnFinish: true, grains: GRAINS, pollenGrain: POLLEN_GRAIN, energy: { bytes: false }, scoring: { alpha: 0.5, beta: 0.5 }, prevalence: { on: false },
   budgets: { flower: { size: 1100, perMinute: 220, cap: 220, ...FLOWER_R }, bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 50, memory: 50 } } };
 const OLD_EXPECT = expectOf(OLD_RULES);
@@ -106,7 +107,7 @@ const ADAPT_HI_LINEUP = [
 // exponents 0.85, E with the byte factor and a 1,024-byte response cap, grains of ⌊0.1 × pollen^(1/3)⌋ characters. It was
 // built with the one-sided species prevalence, which a v2 engine no longer has (it reads that form as off): prevalence is
 // off. HI_EXPECT checks every key on each new game.
-const HI_RULES = { feedCost: 20, feedPrice: 0, flowerWindowMs: FLOWER_MAX_MS, maxResponseBytes: 1024, maxLen: 64, maxNodes: 512, revealOnFinish: true,
+const HI_RULES = { endFactor: 1, feedCost: 20, feedPrice: 0, flowerWindowMs: FLOWER_MAX_MS, maxResponseBytes: 1024, maxLen: 64, maxNodes: 512, revealOnFinish: true,
   grains: GRAINS, pollenGrain: { exponent: 1 / 3, scale: 0.1 }, energy: { bytes: true }, scoring: { alpha: 0.85, beta: 0.85 }, prevalence: { on: false },
   budgets: { flower: { size: 1100, perMinute: 220, cap: 220, ms: FLOWER_MAX_MS, minMs: 3 }, bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 50, memory: 50 } } };
 const HI_CONFIG = { language: "python", challengeType: "int", responseType: "graph[any]", ...HI_RULES };
@@ -130,10 +131,12 @@ const COOP_LINEUP = [
 // null: 2,816,000 node·ms·bytes) out of the bee's nectar and no rounds out; responses delivered at 150 ms (rounds stay
 // 200 ms) while R runs from 1 to 50 ms; change budgets of 1 node a second for flowers (banking 300) and 10 for bees
 // (3,000); E with the byte factor, a 1,024-byte response cap, exponents 0.85, grains of ⌊0.1 × pollen^(1/3)⌋ characters.
-const COOP_RULES = { feedCost: 0, flowerWindowMs: 150, feedPrice: null, maxResponseBytes: 1024, maxLen: 64, maxNodes: 512, revealOnFinish: true,
-  grains: GRAINS, pollenGrain: { exponent: 1 / 3, scale: 0.1 }, energy: { bytes: true }, scoring: { alpha: 0.85, beta: 0.85 }, prevalence: { on: true, halfLifeS: 90, cStart: 1, cEnd: 0.1, cap: 4, slots: 0.25, prior: null, pools: false, endowment: null },
+const COOP_RULES = { endFactor: 1, feedCost: 0, flowerWindowMs: 150, feedPrice: null, maxResponseBytes: 1024, maxLen: 64, maxNodes: 512, revealOnFinish: true,
+  grains: GRAINS, pollenGrain: { exponent: 1 / 3, scale: 0.1 }, energy: { bytes: true }, scoring: { alpha: 0.85, beta: 0.85, mode: "timeAverage" },
+  prevalence: { on: true, halfLifeS: 90, cDecay: "linear", cStart: 1, cEnd: 0.1, cap: 4, slots: 0.25, prior: null, pools: false, endowment: null },
   budgets: { flower: { size: 1100, perMinute: 60, cap: 300, ms: 50, minMs: 1 }, bee: { size: 11000, perMinute: 600, cap: 3000, ms: 50, memory: 50 } } };
-// (pools false: coop-eq ran v2's per-cell bee success; the engine's default is v3's balance since 35b3b5d.)
+// (As coop-eq ran: a fixed end, the time-averaged score, c linear from 1 to 0.1, v2's per-cell bee success. The engine's
+// defaults moved on: v3's balance since 35b3b5d, a hidden random end, the final-round score and sech c since b9c9c9a.)
 const COOP_CONFIG = { language: "python", challengeType: "int", responseType: "graph[any]", ...COOP_RULES };
 // ...every one of them checked on the game (an engine without v2 would drop or default some).
 const COOP_EXPECT = expectOf(COOP_RULES);
@@ -154,10 +157,15 @@ const EXPLORE_LINEUP = [
   // (Priya plain seeded: her mesa-c persona is already without her coding limits, so uncap would find nothing to remove.)
   ["from:mesa-c/mallory", "opus", VETERAN], ["from:mesa-c/priya", "opus", VETERAN],
 ];
-// Its rules: metagame v3 (prevalence.pools: the bee's single linear nectar balance, starting at the endowment, null =
-// 10 × the feed price = 28,160,000, relaxing toward it with the half-life; no feeding below the price; flowers keep
-// per-bee-team pollen cells with ^0.85), everything else as coop-eq; every key set and checked.
-const EXPLORE_RULES = { ...COOP_RULES, prevalence: { ...COOP_RULES.prevalence, pools: true, endowment: null } };
+// Its rules: metagame v4. The bee's single linear nectar balance (prevalence.pools: it starts at the endowment, null =
+// 10 × the feed price = 28,160,000, and relaxes toward it with the half-life; no feeding below the price), flowers' per-
+// bee-team pollen cells with ^0.85; a hidden random end, uniform between `minutes` (30) and endFactor × minutes (60),
+// public only as that range until the game is over; the score N² × the final round's flower draw share × bee draw share
+// (scoring.mode "final"); c = sech-shaped from 1, halving at cHalfS (null: 0.2 × the minimum length = 6 minutes) toward 0
+// with no floor. Everything else as coop-eq; every key set and checked.
+const { cEnd: _linearEnd, ...EXPLORE_PREVALENCE } = COOP_RULES.prevalence;
+const EXPLORE_RULES = { ...COOP_RULES, endFactor: 2, scoring: { alpha: 0.85, beta: 0.85, mode: "final" },
+  prevalence: { ...EXPLORE_PREVALENCE, cDecay: "sech", cHalfS: null, pools: true, endowment: null } };
 const EXPLORE_CONFIG = { language: "python", challengeType: "int", responseType: "graph[any]", ...EXPLORE_RULES };
 const EXPLORE_EXPECT = expectOf(EXPLORE_RULES);
 
@@ -284,9 +292,9 @@ export const PRESETS = {
   },
   // Its dry-run twin with the stub `claude`: a 3-minute game after a 1-minute lobby.
   explore10: {
-    description: "explore-1: 5 pinned cooperators, 3 pinned defectors and 2 veterans carried over from mesa-c (Vikram from mesa-a, Joel new), all on opus at high effort; one 60-minute game, metagame v3",
+    description: "explore-1: 5 pinned cooperators, 3 pinned defectors and 2 veterans carried over from mesa-c (Vikram from mesa-a, Joel new), all on opus at high effort; one game ending at a hidden random moment between 30 and 60 minutes, metagame v4",
     config: EXPLORE_CONFIG,
-    minutesByGame: [60],
+    minutesByGame: [30], // the shortest it can last: it ends between 30 and 60 minutes (endFactor 2), at a moment nobody knows
     lineup: EXPLORE_LINEUP,
     session: { warmupSeconds: 10, gapSeconds: 5, idleBackoff: false, maxIdleGapSeconds: 5, endMarginSeconds: 20, maxMinutes: 10, penaltyMinutes: 6, lobbyMinutes: 10, effort: "high", nice: 15 },
     limits: { lobby: { opus: { turns: 100, usd: 6 } }, game: { opus: { turns: 60, usd: 3 } } },
@@ -300,9 +308,9 @@ export const PRESETS = {
     social: false,
   },
   "dry-explore10": {
-    description: "dry run of explore-1: the same 10 teams with the stub claude, one 3-minute game",
+    description: "dry run of explore-1: the same 10 teams with the stub claude, one game ending at a hidden random moment between 2 and 4 minutes",
     config: EXPLORE_CONFIG,
-    minutesByGame: [3],
+    minutesByGame: [2],
     lineup: EXPLORE_LINEUP,
     session: { warmupSeconds: 3, gapSeconds: 2, idleBackoff: false, maxIdleGapSeconds: 2, endMarginSeconds: 3, maxMinutes: 2, lobbyMinutes: 1, effort: "high", nice: 15 },
     prompts: { brevity: false, simpleCode: false },
@@ -411,7 +419,7 @@ export const EXPERIMENTS = {
     cohorts: [{ id: "mesa-c", arm: "coop-eq", label: "coop-eq" }],
   },
   "explore-1": {
-    description: "explore-1: 5 pinned cooperators, 3 pinned defectors and 2 veterans, the metagame carried on from mesa-c, in one 60-minute game of metagame v3",
+    description: "explore-1: 5 pinned cooperators, 3 pinned defectors and 2 veterans, the metagame carried on from mesa-c, in one game of metagame v4 ending at a hidden random moment between 30 and 60 minutes",
     preset: "explore10",
     games: 1,
     gameUsd: 300, // the game starts only if this much fits under the cap (10 opus teams: lobby up to $6, play up to $3 a session)
@@ -419,7 +427,7 @@ export const EXPERIMENTS = {
     cohorts: [{ id: "mesa-d", arm: "explore-1", label: "explore-1" }],
   },
   "explore-1-dry": {
-    description: "dry run of explore-1 with the stub claude: 10 teams, one 3-minute game (its seeds need mesa-c and mesa-a in the database)",
+    description: "dry run of explore-1 with the stub claude: 10 teams, one game ending between 2 and 4 minutes (its seeds need mesa-c and mesa-a in the database)",
     preset: "dry-explore10",
     games: 1,
     gameUsd: 0,

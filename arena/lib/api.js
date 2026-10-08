@@ -12,6 +12,16 @@ export class ApiError extends Error {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** A game's drawn end (drawnEndMs: in the owner's view while the end is hidden) is dropped from every response, so nothing
+ * the arena reads can carry it to a team: the runner, like the teams, learns the end only from status "finished". */
+export function withoutDrawnEnd(json) {
+  if (!json || typeof json !== "object") return json;
+  const drop = (o) => { if (o && typeof o === "object" && "drawnEndMs" in o) delete o.drawnEndMs; };
+  drop(json); drop(json.game);
+  for (const k of ["games", "items"]) if (Array.isArray(json[k])) for (const x of json[k]) { drop(x); drop(x?.game); }
+  return json;
+}
+
 export async function api(token, method, path_, body, { okStatuses = [422], retries = 4 } = {}) {
   for (let attempt = 0; ; attempt++) {
     let res, json;
@@ -26,7 +36,7 @@ export async function api(token, method, path_, body, { okStatuses = [422], retr
       if (attempt < retries) { await sleep(1000 * (attempt + 1)); continue; }
       throw new ApiError(0, `${method} ${path_}: ${e.message}`);
     }
-    if (res.ok || okStatuses.includes(res.status)) return json;
+    if (res.ok || okStatuses.includes(res.status)) return withoutDrawnEnd(json);
     if (res.status >= 500 && attempt < retries) { await sleep(1000 * (attempt + 1)); continue; }
     throw new ApiError(res.status, `${method} ${path_} -> ${res.status} ${json.error || ""}`, json);
   }

@@ -21,6 +21,11 @@
 // whose balance is below the price can't feed (its feed is settled as a leave, beeError "too poor to feed"). F is as in
 // v2. Samples' species entries, feed actions and turns (and the query entities) carry `balance`. A stored v2 config (with
 // `slots`, no `pools`) keeps the v2 bee formula.
+// Metagame v4 (b9c9c9a): c's curve (prevalence.cDecay) "sech", c(t) = cStart × sech(arccosh 2 × t / cHalfS) (cHalfS null:
+// 0.2 × the minimum length; no cEnd: it falls toward 0) or "linear" (v2, v3: a config stored without cDecay), from cStart
+// to cEnd over `minutes`; scoring.mode "final" (N² × p^F × p^B at the last round; the default) or "timeAverage" (v2, v3:
+// a config stored without a mode); and an end drawn at random between `minutes` and endFactor × minutes, hidden until
+// the game is over (endFactor 1, or none stored: a fixed end).
 import { emaxOf, energyUnit } from "./energy.js";
 
 /** The engine's defaults: the feed price and every ledger cell's prior, as shares of Emax; a bee's endowment, in prices. */
@@ -35,18 +40,32 @@ export const ENDOWMENT_FEEDS = 10;
 export function prevalenceOf(config) {
   const p = config?.prevalence;
   if (!p || typeof p !== "object" || !("slots" in p) || p.on !== true) return null;
-  const or = (v, d) => (v === undefined ? d : v), pools = p.pools === true;
-  return { halfLifeS: or(p.halfLifeS, 90), cStart: p.cStart ?? 1, cEnd: p.cEnd ?? 0.1, cap: or(p.cap, 4), slots: p.slots ?? 0.25,
+  const or = (v, d) => (v === undefined ? d : v), pools = p.pools === true, cDecay = p.cDecay === "sech" ? "sech" : "linear";
+  const curve = cDecay === "sech" ? { cDecay, cStart: p.cStart ?? 1, cHalfS: p.cHalfS ?? C_HALF_SHARE * (config?.minutes ?? 0) * 60, cEnd: null }
+    : { cDecay, cStart: p.cStart ?? 1, cEnd: p.cEnd ?? 0.1, cHalfS: null };
+  return { halfLifeS: or(p.halfLifeS, 90), ...curve, cap: or(p.cap, 4), slots: p.slots ?? 0.25,
     prior: p.prior ?? PRIOR_SHARE * emaxOf(config), pools, endowment: pools ? p.endowment ?? ENDOWMENT_FEEDS * feedPriceOf(config) : null };
 }
 
-/** c at game time t (ms) of a game lasting durationMs: linear from cStart to cEnd. */
-export function cAt(config, tMs, durationMs) {
+/** A sech c's default cHalfS, as a share of the game's minimum length (in seconds); arccosh 2, where sech is 1/2. */
+export const C_HALF_SHARE = 0.2;
+export const SECH_K = Math.log(2 + Math.sqrt(3));
+const sech = (x) => { const e = Math.exp(-Math.abs(x)); return (2 * e) / (1 + e * e); };
+
+/** c at game time t (ms), as the engine has it: sech, cStart × sech(arccosh 2 × t / cHalfS); linear, from cStart at the
+ * start to cEnd at the game's minimum length (`minutes`; durationMs for a config without it), then cEnd. */
+export function cAt(config, tMs, durationMs = null) {
   const p = prevalenceOf(config);
   if (!p) return null;
-  const x = durationMs > 0 ? Math.min(1, Math.max(0, tMs / durationMs)) : 0;
+  if (p.cDecay === "sech") return p.cHalfS > 0 ? p.cStart * sech((SECH_K * Math.max(0, tMs)) / 1000 / p.cHalfS) : 0;
+  const span = config?.minutes ? config.minutes * 60000 : durationMs;
+  const x = span > 0 ? Math.min(1, Math.max(0, tMs / span)) : 0;
   return p.cStart + (p.cEnd - p.cStart) * x;
 }
+
+/** The scoring mode of a game with prevalence: "final" (N² × p^F × p^B at the last round) or "timeAverage" (a config
+ * without a mode: v2, v3). */
+export const scoringModeOf = (config) => (config?.scoring?.mode === "final" ? "final" : "timeAverage");
 
 /** The least a draw chance can be at time t among N teams (success 0, uncapped): c / (N (c + 1)). */
 export function floorAt(config, tMs, durationMs, n) {
@@ -76,11 +95,12 @@ export function windowOf(config) {
 
 /** The game's metagame rules, from its config: { on (prevalence on both sides), slots (its share), perRound (bees a round,
  * given n teams), price (the feed price, E's unit; 0 free), priceShare (of Emax), emax, unit, windowMs, roundMs,
- * timeAverage (the score is the time-average of F × B) }. */
+ * mode ("final" or "timeAverage"), timeAverage (the score is the time-average of F × B), final (N² × p^F × p^B at the last
+ * round) }. */
 export function coopRules(config, n = null) {
-  const p = prevalenceOf(config), emax = emaxOf(config), price = feedPriceOf(config), windowMs = windowOf(config);
+  const p = prevalenceOf(config), emax = emaxOf(config), price = feedPriceOf(config), windowMs = windowOf(config), mode = p ? scoringModeOf(config) : null;
   return { on: !!p, pools: !!p?.pools, endowment: p?.endowment ?? null, slots: p?.slots ?? null, perRound: n ? slotsOf(config, n) : null, price, priceShare: emax > 0 ? price / emax : null, emax,
-    unit: energyUnit(config), windowMs, roundMs: windowMs + (config?.budgets?.bee?.ms ?? 50), timeAverage: !!p };
+    unit: energyUnit(config), windowMs, roundMs: windowMs + (config?.budgets?.bee?.ms ?? 50), mode, timeAverage: mode === "timeAverage", final: mode === "final" };
 }
 
 const num = (v) => { const x = Number(v); return v != null && v !== "" && Number.isFinite(x) ? x : null; };
@@ -119,6 +139,8 @@ export function currentOf(view) {
 }
 
 const n0 = (x) => Math.round(x).toLocaleString("en-US");
+/** "6 minutes", "24 s", "1 minute 30 s" */
+const mmssText = (s) => { const m = Math.floor(s / 60), r = Math.round(s - 60 * m); return m ? `${m} minute${m === 1 ? "" : "s"}${r ? ` ${r} s` : ""}` : `${r} s`; };
 const pc = (x) => `${+(x * 100).toFixed(1)}%`;
 
 /** The feed price in words: "2,816,000 node·ms·bytes, 5% of the most a flower can make in a turn"; "" when feeds are free. */
@@ -146,9 +168,14 @@ ${p.pools ? `  B_b, a bee's success: N × its share of the bees' nectar balances
   "Lately" for F: every pollen cell (one per species and bee team) starts at ${n0(p.prior)} and ${fade}.` : `  B_b, a bee's success: N × its share of max(0, Σ over species of sign(D) |D|^${alpha}), D the net nectar it got at that
   species lately; a feed's net nectar is its nectar minus the feed price, so D can be negative. "Lately": every ledger
   cell (one per species and bee team) starts at ${n0(p.prior)} and ${fade}.`}
-  F and B have par 1${p.cap == null ? " (uncapped)" : ` and are capped at ${p.cap}`}; c runs from ${p.cStart} to ${p.cEnd} over the game.
-- Your score, your fitness, is the time-average over the rounds played of F × B: your species' flower success times your
-  bee's success (par 1). Every F, B, draw chance${p.pools ? ", nectar balance" : ""} and fitness is public, about once a second: tools/status.py,
+  F and B have par 1${p.cap == null ? " (uncapped)" : ` and are capped at ${p.cap}`}${p.cDecay === "sech"
+    ? `. c starts at ${p.cStart} and falls smoothly toward 0, with no floor:
+  it is half that at ${mmssText(p.cHalfS)} of game time (c = ${p.cStart} × sech(arccosh(2) × t / ${+p.cHalfS.toFixed(1)} s), t in seconds of game time).`
+    : `; c runs from ${p.cStart} to ${p.cEnd} over the game.`}
+${co.final ? `- Your score, your fitness, is N² × your species' draw chance pF × your bee's draw chance pB at the game's last round
+  (par 1): where prevalence stands when the game ends. During the game the scoreboard shows that product for the latest
+  round.` : `- Your score, your fitness, is the time-average over the rounds played of F × B: your species' flower success times your
+  bee's success (par 1).`} Every F, B, draw chance${p.pools ? ", nectar balance" : ""} and fitness is public, about once a second: tools/status.py,
   garden.status(), garden.prevalence(), the scoreboard and the history queries (garden.game.prevalence). Programs never
   see them.`;
 }

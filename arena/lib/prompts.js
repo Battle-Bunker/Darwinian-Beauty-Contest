@@ -16,6 +16,19 @@ export const mmss = (ms) => { const s = Math.max(0, Math.round((ms || 0) / 1000)
 const n0 = (x) => Math.floor(x).toLocaleString("en-US");
 /** "30 seconds", "1 minute", "2 minutes", "1.5 minutes" */
 export const durationText = (minutes) => minutes < 1 ? `${Math.round(minutes * 60)} seconds` : minutes === 1 ? "1 minute" : `${+minutes.toFixed(2)} minutes`;
+/** The most a game can last, as a multiple of its minimum (config.endFactor; 1, a fixed end, for a config without it). */
+export const endFactorOf = (config) => (Number.isFinite(config?.endFactor) && config.endFactor >= 1 ? config.endFactor : 1);
+/** Does the game end at a hidden random moment (its end drawn between minutes and endFactor × minutes)? */
+export const randomEnd = (config) => endFactorOf(config) > 1;
+/** The public range of a random end: "between 30 and 60 minutes" (the real end is never in a brief, a tool or a file). */
+export function endRangeText(config) {
+  const lo = config.minutes, hi = config.minutes * endFactorOf(config);
+  return lo >= 1 ? `between ${+lo.toFixed(2)} and ${durationText(hi)}` : `between ${durationText(lo)} and ${durationText(hi)}`;
+}
+/** How long the game runs, as a team may know it: "lasts 10 minutes of game time", or with a hidden random end "ends at a
+ * random moment between 30 and 60 minutes of game time; nobody knows when". */
+export const lengthText = (config) => (randomEnd(config) ? `ends at a random moment ${endRangeText(config)} of game time; nobody knows when`
+  : `lasts ${durationText(config.minutes)} of game time`);
 
 /** The floor of a flower call's hidden budget R: the game's own (budgets.flower.minMs), else the engine's default, 2% of
  * the most R can be, at least 1 ms (1 ms of 50, 3 of 150). */
@@ -38,7 +51,8 @@ export function timingText(config, n = null) {
   const price = co.price > 0 ? `\n  A feed costs the bee a price of ${priceText(config)}\n  (GAME["feed_price"]), out of its nectar: its net nectar is nectar − price, which can be negative.` : "";
   // (named only where it differs from R's most: the old presets' window is their flower ms, as their briefs had it)
   const windowKey = co.windowMs !== fl.ms ? `, GAME["flower_window_ms"] ${co.windowMs}` : "";
-  return `- Rounds of ${co.roundMs} ms of game time: a ${durationText(config.minutes)} game is about ${Math.round((config.minutes * 60000) / co.roundMs)} rounds. ${co.on
+  const rounds = randomEnd(config) ? `about ${Math.round(60000 / co.roundMs)} a minute.` : `a ${durationText(config.minutes)} game is about ${Math.round((config.minutes * 60000) / co.roundMs)} rounds.`;
+  return `- Rounds of ${co.roundMs} ms of game time: ${rounds} ${co.on
     ? `Each round ${co.perRound ? `${co.perRound} of the ${n} bees` : `⌈${co.slots} × N⌉ of the N bees`}\n  are drawn by bee success (below), and each takes one turn.` : "Every bee that isn't feeding gets\n  one turn per round, all bees in lockstep."}
 - Each team's flower program is its flower species. A turn: the bee's queued challenge goes to one flower of a species
   drawn ${co.on ? "by prevalence (below)" : "at random"} from all species (yours included); that flower call gets a hidden time budget R, drawn uniformly from
@@ -79,7 +93,7 @@ export function grainText(config) {
 /** This game's settings, compactly (budgets in nodes). */
 export function settingsText(config, teams) {
   const b = config.budgets;
-  return `- ${teams} teams: ${teams} flower species and ${teams} bees. The game lasts ${durationText(config.minutes)} of game time.
+  return `- ${teams} teams: ${teams} flower species and ${teams} bees. The game ${lengthText(config)}.
 - Challenges are ${config.challengeType}, responses are ${config.responseType} (interface.txt). Language: ${config.language}.
 ${timingText(config, teams)}
 - Budgets (nodes; time per call in ms; a flower's is its call's hidden R):
@@ -97,7 +111,7 @@ ${KINDS.map((k) => `| ${k} | ${n0(b[k].size)} | ${n0(b[k].perMinute)} | ${n0(b[k
 function exponentsText(config) {
   if (config?.scoring?.alpha == null) return "";
   const { alpha, beta } = scoreExponents(config);
-  if (prevalenceOf(config)) return `\n  Scores: your fitness is the time-average of F × B (above). The scoreboard also shows, over the whole game, each team's
+  if (prevalenceOf(config)) return `\n  Scores: your fitness is ${coopRules(config).final ? "N² × pF × pB at the game's last round" : "the time-average of F × B"} (above). The scoreboard also shows, over the whole game, each team's
   pollination (pollen^${beta} summed over the bee teams its species fed) and forage (nectar^${alpha} summed over the species its bee
   fed at); they aren't the score.`;
   return `\n  Scores: forage sums nectar^${alpha} over the species your bee fed at, pollination sums pollen^${beta} over the bee teams your
@@ -120,14 +134,14 @@ sessions and games; and it gets RULES.md in full.`;
 /** Persona and situation, shared by the sessions and the interview. `fixed`: the arena keeps the same teams.
  * `simpleCode` false (adapt-hi: prompts.simpleCode): no steer toward code a kid can follow; with fixed teams the interview
  * is only described, since nothing depends on its scores. */
-function personaAndSituation(persona, fixed, { simpleCode = true } = {}) {
+function personaAndSituation(persona, fixed, { simpleCode = true, config = null } = {}) {
   return `# Who you are
 ${persona.persona_prompt.trim()}
 
 # Your situation
 You are one team in an ongoing tournament ("arena") of Darwinian Beauty Contest. Every team is run by an AI agent playing a
 persona, standing in for a human+AI team. You play as team "${persona.team_name}".
-- Each game is one continuous stretch of play, a few minutes of game time. Before it starts (the lobby) you write your two
+- Each game is one continuous stretch of play, ${config && randomEnd(config) ? "ending at a random moment nobody knows in advance" : "a few minutes of game time"}. Before it starts (the lobby) you write your two
   programs, your flower species and your bee. While it runs, the bees forage without pause and you may change your programs at any
   moment, paying for each change from a budget that refills as the game goes on.
 ${fixed && !simpleCode
@@ -220,7 +234,7 @@ Tools: Read (absolute paths inside your workspace; use offset/limit for big file
 Glob and Grep (search inside your workspace), and Bash inside your workspace: simple shell commands (ls, grep, wc, head) and
 python3. Use python3 to analyse the action stream and to test your programs; the workspace tools in tools/ run with python3 too.
 ${brevity ? "Work step by step, then stop with a short summary.\n" : ""}
-${personaAndSituation(persona, fixed, { simpleCode })}
+${personaAndSituation(persona, fixed, { simpleCode, config })}
 
 # How you work
 - Your team's private workspace is the current directory. README.md explains every file and tool.
@@ -243,7 +257,7 @@ ${personaAndSituation(persona, fixed, { simpleCode })}
   them together where they overlap (garden.grains(), garden.assemble(flower)).
 - Your bee's MEMORY is written only by your deployed bee. You can read it; nothing you or your tools do can set it, and it
   is emptied whenever your bee's code changes.
-- Games are short (this one: ${durationText(config.minutes)}), and a session is slow by comparison: you think in seconds to
+- Games are short (this one ${lengthText(config)}), and a session is slow by comparison: you think in seconds to
   minutes, the garden moves every 200 ms. So in a game what reacts is what you prepared: a bee that adapts by itself
   (through its MEMORY and fed), and your SCAFFOLD.
 - Your scaffold is a program of your own that runs outside the game engine for the rest of the game, even between and after
@@ -338,7 +352,7 @@ export function lobbyBrief({ config, teamName, generation, maxTurns, carried, st
   parts.push(`Writing is free in the lobby: only the size budgets apply (flower ${n0(b.flower.size)}, bee ${n0(b.bee.size)} nodes; ` +
     `a flower's size also sets its energy; the bee's MEMORY holds ${n0(b.bee.memory ?? 50)} bytes). Test with tools/check.py and tools/try.py, then submit both with ` +
     `\`python3 tools/submit.py <kind>\`: a team needs both submitted to play. ${startsWith ? startsWith : ""}`.trim());
-  parts.push(`When every team is done, the game starts and runs for ${durationText(config.minutes)} of game time, without stopping. As it starts ` +
+  parts.push(`When every team is done, the game starts and ${randomEnd(config) ? `runs without stopping until it ${lengthText(config)}` : `runs for ${durationText(config.minutes)} of game time, without stopping`}. As it starts ` +
     `you get another session, while it runs. The game won't wait for you, and it will likely be over before that session ends. ` +
     `Change budgets during the game: flower ${n0(b.flower.perMinute)} and bee ${n0(b.bee.perMinute)} nodes a minute, banking at most ` +
     `${n0(b.flower.cap)} / ${n0(b.bee.cap)}. So whatever should react during the game must be ready now: programs that adapt by ` +
@@ -359,17 +373,19 @@ export function lobbyBrief({ config, teamName, generation, maxTurns, carried, st
 /** The brief of a session while the game runs (or is about to start): headline numbers only. */
 export function gameBrief({ config, teamName, teamId = null, generation, sessionNo, status, clockMs, budgets, scores = null, names = {}, head, memory = null, drafts = [], maxTurns, scripts = [], scaffold = null, automatic = 0, brevity = true }) {
   const x = ext(config);
-  const endMs = config.minutes * 60000;
   const parts = [];
-  if (status === "lobby") parts.push(`# Game ${generation} starts in a few seconds and lasts ${durationText(config.minutes)}. You are team "${teamName}". Session ${sessionNo}.`);
-  else parts.push(`# Game ${generation} is running: ${mmss(clockMs)} of ${mmss(endMs)} played. You are team "${teamName}". Session ${sessionNo}.`);
+  // (A hidden random end: only the time played and the public range, never the end or a time left.)
+  const played = randomEnd(config) ? `${mmss(clockMs)} played (it ${lengthText(config)})` : `${mmss(clockMs)} of ${mmss(config.minutes * 60000)} played`;
+  if (status === "lobby") parts.push(`# Game ${generation} starts in a few seconds and ${lengthText(config).replace(/ of game time/, "")}. You are team "${teamName}". Session ${sessionNo}.`);
+  else parts.push(`# Game ${generation} is running: ${played}. You are team "${teamName}". Session ${sessionNo}.`);
   const lines = [];
   const mine = scores?.find((s) => s.teamId === teamId);
   if (mine) {
     const ranked = [...scores].sort((a, b) => (b.fitness ?? -1) - (a.fitness ?? -1));
     const f = (v) => (v == null ? "-" : Number(v).toFixed(2));
     lines.push(`Your scores so far: fitness ${f(mine.fitness)}${mine.fitness != null ? ` (#${ranked.indexOf(mine) + 1} of ${scores.length}; par is 1.00)` : ""}; ` +
-      (prevalenceOf(config) ? `now: flower success F ${f(mine.flowerSuccess)}, bee success B ${f(mine.beeSuccess)} (fitness is F × B's time-average).`
+      (prevalenceOf(config) ? `now: flower success F ${f(mine.flowerSuccess)}, bee success B ${f(mine.beeSuccess)} (${coopRules(config).final
+        ? "fitness is N² × pF × pB now; the score is that at the game's last round" : "fitness is F × B's time-average"}).`
         : `shares: pollination ${f(mine.pollinationShare)}, forage ${f(mine.forageShare)}.`));
   }
   if (head && head.turns) {
@@ -406,7 +422,7 @@ ${rules()}`;
 
 /** final: { standings: [{name, fitness, me}], programs: {kind: code}, changes: n, config } */
 export function interviewPrompt({ standings, programs, changes, config, notebook }) {
-  return `# The game is over (${durationText(config.minutes)}). Interview time!
+  return `# The game is over${randomEnd(config) ? "" : ` (${durationText(config.minutes)})`}. Interview time!
 
 ## Final standings
 ${standings.map((s, i) => `${i + 1}. ${s.name}${s.me ? " (you)" : ""}: fitness ${s.fitness.toFixed(2)}`).join("\n")}
