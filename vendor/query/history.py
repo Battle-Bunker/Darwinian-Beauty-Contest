@@ -134,8 +134,8 @@ class Score(NamedTuple):
     """The scoreboard: each team's pollination, forage, shares and fitness over the whole game. (entity "scores")"""
     game: str  # the game's short id
     team: int  # the team's index
-    pollination: float  # Σ over bee teams of √(pollen this species gave their bee)
-    forage: float  # Σ over flower teams of √(nectar this bee got there)
+    pollination: float  # Σ over bee teams of (pollen this species gave their bee)^beta (the game's scoring.beta; √ in games without one)
+    forage: float  # Σ over flower teams of (nectar this bee got there)^alpha (the game's scoring.alpha; √ in games without one)
     pollination_share: float  # pollination ÷ everyone's (1/N if that is 0)
     forage_share: float  # forage ÷ everyone's (1/N if that is 0)
     fitness: float  # N² × pollination share × forage share (par 1)

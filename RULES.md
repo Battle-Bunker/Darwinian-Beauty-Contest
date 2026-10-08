@@ -39,7 +39,7 @@ Every bee that isn't busy feeding gets **one turn per round**: one challenge, on
 2. The engine draws a flower **uniformly at random from all N flowers**, your own included, independently
    every time. This **arrival** (whose bee, whose flower) is public at once to people watching the game,
    but neither program is told: a turn keeps the versions it started with, so nobody can pass it on.
-3. The flower is called: `flower(challenge)`. It has its **hidden time budget R** for this call (50 to 150
+3. The flower is called: `flower(challenge)`. It has its **hidden time budget R** for this call (3 to 150
    ms, drawn at random every call; see "Energy") and returns
    `[response, percent]`: its answer, and the share (0–100, clamped) of this turn's **excess energy** it
    gives the bee if the bee feeds. A late answer (stopped at R of wall time), an error, or a malformed
@@ -52,9 +52,10 @@ Every bee that isn't busy feeding gets **one turn per round**: one challenge, on
    it decides whether to feed from the challenge and the response alone (and its `MEMORY`). A flower's
    reputation can only be carried by what its responses look like, never by who it is.
 5. **The turn is settled** (see "Energy: compute, nectar and pollen"). If the bee fed, it sits out the next
-   **10 rounds** (`feed_cost`; the owner can change it), then plays again with the challenge it queued.
+   **20 rounds** (`feed_cost`; the owner can change it), then plays again with the challenge it queued.
    If it fed and its program defines `fed`, the engine then calls `fed(nectar)` in the same program
-   instance that made the decision (see "After a feed").
+   instance that made the decision. `fed` may return a next challenge, which replaces the one `decide`
+   queued (see "After a feed").
 
 **Late replies.** A bee that takes more than 50 ms isn't cut off: its call keeps running (up to 2 s, when
 it is stopped), but the turn is settled without it. **A late reply never feeds.** If the late reply is
@@ -64,8 +65,9 @@ a call is running, so a slow bee also loses turns.
 
 **No next challenge.** A reply in time that gives no usable next challenge (a bare `"feed"` or `"leave"`,
 a challenge of the wrong type or size) still counts as a feed or a leave; then, as above, `first` is
-called at once. A crash or a reply of any other shape counts as a leave. While replies keep giving no
-challenge, `first` is called again at most once a round. A quick answer makes the next round.
+called at once (after a feed, once `fed` is done, if it returned no challenge either). A crash or a reply
+of any other shape counts as a leave. While replies keep giving no challenge, `first` is called again at
+most once a round. A quick answer makes the next round.
 
 **Every call runs fresh.** Each turn your bee meets a different flower of a species, and every flower of
 a species is independent of the others: so your flower program runs fresh for every call, and nothing it
@@ -103,11 +105,17 @@ decision**: the same process (Python) or context (TypeScript), with every global
 `decide` computed still there. `nectar` is the nectar the bee just got (percent/100 × E; 0 if the flower
 failed).
 
-- It has **50 ms** (`GAME["ms"]`), and that is a hard limit: at 50 ms it is stopped. Its return value is
-  ignored. What it prints shows up with your bee's next turn.
+- It has **50 ms** (`GAME["ms"]`), and that is a hard limit: at 50 ms it is stopped. What it prints shows
+  up with your bee's next turn.
+- **It may return the next challenge.** The challenge `decide` queued is the default: your bee plays it
+  at its next turn unless `fed` returns a challenge of the game's type, within its limits, which replaces
+  it. So `decide`'s stays if your bee has no `fed`, or `fed` returns `None` (`null` or `undefined` in
+  TypeScript) or nothing, crashes, or is stopped. Anything else it returns keeps `decide`'s too, and the
+  error is shown to your team. (With `feed_cost` 0 the next turn can start before a slow `fed` is done:
+  that turn plays `decide`'s challenge, and `fed`'s is dropped.)
 - After it returns, `MEMORY` is saved (as after `decide`); then the instance is gone. A `fed` that
-  crashes or is stopped saves nothing (the saved `MEMORY` stays as it was after `decide`) and the error
-  is shown to your team.
+  crashes or is stopped saves nothing (`MEMORY` stays as saved after `decide`, and `decide`'s challenge
+  stays queued) and the error is shown to your team.
 - It runs while your bee sits out its feed, so it never costs a turn.
 - It is not called after a leave, a late or failed reply, or when a new version of your bee takes over as
   that turn ends.
@@ -154,7 +162,8 @@ reset it every call): change it inside `first`, `decide` and `fed`.
 ## Energy: compute, nectar and pollen
 
 A flower allocates its energy between three things:
-- **compute**: the CPU time it spends answering (and its size, which shrinks the whole budget);
+- **compute**: the CPU time it spends answering (and its size and the bytes of its answer, which shrink the
+  whole budget);
 - **nectar**: what it gives a bee that feeds, for the bee to eat;
 - **pollen**: what else it gives a bee that feeds, for the bee to carry to other flowers of its species.
 
@@ -162,12 +171,12 @@ The bee wants nectar. The flower wants to give as much pollen as it can: pollen 
 
 Each turn, the energy left after compute is the flower's **excess energy**, in node·ms:
 
-> **E = (flower size cap − your flower's size) × max(0, R − compute ms)**
+> **E = (flower size cap − your flower's size) × max(0, R − compute ms) × (byte cap − response bytes) / byte cap**
 
 - **size** is the size in nodes of the flower version that answered (see "What counts toward size"); the
   cap is 1,100. A smaller flower has more to give.
 - **R** is **this call's hidden time budget**: a number of milliseconds drawn fresh and uniformly at random
-  from 50 to 150 for every flower call, independently. It is this call's time limit, measured on the wall
+  from 3 to 150 for every flower call, independently. It is this call's time limit, measured on the wall
   clock from the start of the call (when the call's clock reads 0; see "The clock"): when the call's wall
   time reaches R, the flower is stopped. It is also the ceiling the energy counts down from. **Your flower
   is told its R as `GAME["ms"]`** for that call (`GAME["flower_ms"]` stays 150, the most R can be). The bee
@@ -178,8 +187,14 @@ Each turn, the energy left after compute is the flower's **excess energy**, in n
   programs). The time limit R counts all of it, since it is wall time: other programs on the server can
   make a call take longer on the wall clock than its CPU time, so a call can reach R of wall time, and be
   stopped, having used less than R of CPU time.
-- A late answer (stopped at R of wall time), an error, a malformed return or a response over the cap (see
-  "What the challenge and response look like"): E = 0.
+- **response bytes** is the size of the response: the UTF-8 bytes of its JSON as the game writes it (see
+  "What the challenge and response look like"). The **byte cap** is the most a response may be: 1,024
+  bytes. An answer of 24 bytes keeps 1,000/1,024 of the energy; one of exactly 1,024 bytes is still an
+  answer, and a bee can feed on it, but E = 0.
+- A late answer (stopped at R of wall time), an error, a malformed return or a response over the cap: E = 0.
+
+Code nodes, compute milliseconds and response bytes are each free only when you don't use them. (Games
+played before the byte factor had E without it, and a 64 KiB cap.)
 
 So a given stretch of real work costs the same energy whatever R is, but you can only *do* t ms of
 checkable work, and still have energy left, when R happens to be more than t this turn and the call ends
@@ -242,7 +257,7 @@ def decide(challenge, response):
 
 def fed(nectar):
     # optional: after a feed decided in time, in the same instance as that decide (its globals intact)
-    pass                            # the return value is ignored; MEMORY is saved afterwards
+    return None                     # or a challenge, played next instead of decide's; MEMORY is saved afterwards
 ```
 
 ### TypeScript
@@ -260,7 +275,7 @@ function decide(challenge: number, response: number | null): ["feed" | "leave", 
   return ["leave", Math.floor(Math.random() * 10)]; // ["feed" | "leave", next challenge]
 }
 
-function fed(nectar: number): void {}               // optional, as in Python
+function fed(nectar: number): number | void {}      // optional, as in Python: may return the next challenge
 ```
 
 In TypeScript, `tree[T]` is `{ value: T; children: Tree<T>[] }` and a graph is
@@ -270,11 +285,12 @@ In TypeScript, `tree[T]` is `{ value: T; children: Tree<T>[] }` and a graph is
 Every program can read a `GAME` dictionary/object: `team` (your team's index), `teams` (N), `feed_cost`,
 `challenge_type`, `response_type`, `max_len`, `max_nodes` (limits on challenges), `max_response_bytes`
 (the response size cap), `round_ms` (200), `ms` (your program's own time limit for **this call**, in ms of
-wall time: a bee's is always 50; a flower's is this call's hidden budget R, 50–150), `flower_ms` (150, the
+wall time: a bee's is always 50; a flower's is this call's hidden budget R, 3–150), `flower_ms` (150, the
 most a flower's R can be) and `flower_size_cap` (1,100). A bee also gets `memory`, its `MEMORY` cap in bytes.
-A flower also gets `size`, its own size, so E = (`flower_size_cap` − `size`) × max(0, `ms` − compute ms) with
-`ms` this call's R. In Python, `time.process_time()` measures the CPU time the energy counts, and
-`time.perf_counter()` the wall time the limit counts, both from 0 at the start of the call (see "The clock").
+A flower also gets `size`, its own size, so E = (`flower_size_cap` − `size`) × max(0, `ms` − compute ms) ×
+(`max_response_bytes` − response bytes) / `max_response_bytes`, with `ms` this call's R. In Python,
+`time.process_time()` measures the CPU time the energy counts, and `time.perf_counter()` the wall time the
+limit counts, both from 0 at the start of the call (see "The clock").
 
 ## What programs can use
 
@@ -318,13 +334,13 @@ Each game sets a **challenge type** and a **response type**. There is no starter
 
 **Challenges** are small: strings and lists at most 64 long, and trees and graphs at most 512 nodes (graphs
 at most 2,048 edges), `any` values at most 32 levels deep. **Responses** are limited by size instead:
-at most **64 KiB** (`max_response_bytes`, 65,536 bytes by default; the owner can change it) of JSON as the
-game writes it (UTF-8, no spaces), and at most 256 levels deep (a tree at most 256 levels). Graphs never have self-loops or repeated
-edges. The owner can change all of these limits.
+at most **1,024 bytes** (`max_response_bytes`; the owner can change it) of JSON as the game writes it
+(UTF-8, no spaces), and at most 256 levels deep (a tree at most 256 levels). Graphs never have self-loops
+or repeated edges. The owner can change all of these limits.
 
-The size cap is checked inside the flower's 150 ms, and writing the response as JSON is part of its
-compute. A response over it counts as a failure: a `null` response and no energy. A big response reaches
-the bee already read in, before its 50 ms start.
+The size cap is checked inside the flower's time limit R, and writing the response as JSON is part of its
+compute. A response over it counts as a failure: a `null` response and no energy. Every byte under it costs
+energy too (see "Energy"). A big response reaches the bee already read in, before its 50 ms start.
 
 ## Budgets
 
@@ -332,7 +348,7 @@ the bee already read in, before its 50 ms start.
 |---|---|---|
 | **size** (nodes, see below) | 1,100 | 11,000 |
 | **change** (nodes earned per minute of play; you can bank up to a minute's worth) | 220 | 2,200 |
-| **time** per call | 150 ms | 50 ms |
+| **time** per call | R, 3 to 150 ms | 50 ms |
 | **memory** (bytes of `MEMORY`, see "Bee memory") | | 50 |
 
 The owner can change all of them. The flower's size cap is also the "size cap" in the energy formula.
@@ -376,8 +392,8 @@ never can be: make it in steps.
 the **arrival** (whose bee, whose flower), the **challenge**, the **response** and **whether the bee fed**
 (a bee that was late or broke simply didn't). On a **feed**, also the **percent**, the **energy**, and the
 **nectar** and **pollen** the flower gave the bee. The game's settings and the scoreboard are public too. So whatever two
-programs do together happens in plain view. (A response over 4 KB is streamed to the page as its first
-4 KB, its size and its hash; the whole response is one click or one request away.)
+programs do together happens in plain view. (If the owner raises the cap, a response over 4 KB is streamed
+to the page as its first 4 KB, its size and its hash; the whole response is one click or one request away.)
 
 **Private during play:**
 
@@ -399,17 +415,19 @@ Two numbers per team, each from the whole game:
 
 | Name | What it is |
 |---|---|
-| **pollination** | the sum over bee teams of √(the pollen your species gave that team's bee). How widely your pollen travels |
-| **forage** | the sum over flower teams of √(the nectar your bee got there). How widely your bee eats |
+| **pollination** | the sum over bee teams of (the pollen your species gave that team's bee)^0.85. How widely your pollen travels |
+| **forage** | the sum over flower teams of (the nectar your bee got there)^0.85. How widely your bee eats |
 
 Each becomes a **share**: your value ÷ the sum over all teams (when that sum is 0, every share is 1/N).
 
 > **fitness = N² × pollination share × forage share.** Par is 1.0 however many teams play.
 
-The square roots reward variety. A species that gave 400 pollen to one team's bee has pollination
-√400 = 20; one that gave 100 to each of four teams' bees has 4 × √100 = 40, though both gave 400 in all. A bee
-that got 900 nectar from one flower has forage 30; 300 from each of three flowers gives about 52. Your own
-team's bee and flower count like any other team's.
+The exponent 0.85 rewards variety. A species that gave 400 pollen to one team's bee has pollination
+400^0.85 ≈ 163; one that gave 100 to each of four teams' bees has 4 × 100^0.85 ≈ 200, though both gave 400 in
+all. A bee that got 900 nectar from one flower has forage 900^0.85 ≈ 324; 300 from each of three flowers gives
+3 × 300^0.85 ≈ 383. Your own team's bee and flower count like any other team's. (The owner can change both
+exponents, `scoring` in the settings: each is more than 0 and at most 1. Games played before this rule were
+scored with √, an exponent of 0.5.)
 
 **The scoreboard is live and public**: during play everyone, spectators included, sees every team's
 pollination, forage, shares and fitness as they change, along with its feed counts, nectar and pollen.

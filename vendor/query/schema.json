@@ -818,11 +818,11 @@
           "visibility": "public"
         },
         "pollination": {
-          "doc": "Σ over bee teams of √(pollen this species gave their bee)",
+          "doc": "Σ over bee teams of (pollen this species gave their bee)^beta (the game's scoring.beta; √ in games without one)",
           "visibility": "public"
         },
         "forage": {
-          "doc": "Σ over flower teams of √(nectar this bee got there)",
+          "doc": "Σ over flower teams of (nectar this bee got there)^alpha (the game's scoring.alpha; √ in games without one)",
           "visibility": "public"
         },
         "pollinationShare": {

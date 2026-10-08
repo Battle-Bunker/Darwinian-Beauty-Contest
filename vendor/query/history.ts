@@ -132,9 +132,9 @@ export interface Score {
   readonly game: string;
   /** the team's index */
   readonly team: number;
-  /** Σ over bee teams of √(pollen this species gave their bee) */
+  /** Σ over bee teams of (pollen this species gave their bee)^beta (the game's scoring.beta; √ in games without one) */
   readonly pollination: number;
-  /** Σ over flower teams of √(nectar this bee got there) */
+  /** Σ over flower teams of (nectar this bee got there)^alpha (the game's scoring.alpha; √ in games without one) */
   readonly forage: number;
   /** pollination ÷ everyone's (1/N if that is 0) */
   readonly pollinationShare: number;

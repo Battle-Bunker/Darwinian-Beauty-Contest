@@ -17,7 +17,9 @@
 //   bee:    {op: "first", memory}         -> {a, out, memory} | {e, out}
 //           {op: "stage", c, r}           -> {ok}: the next decide's fresh context, its arguments read in
 //           {op: "decide", staged: true, memory} (or with c and r) -> {a, out, memory} | {e, out}
-//           {op: "fed", nectar}           -> {ok, out, memory} | {e, out} | {skipped}
+//           {op: "fed", nectar}           -> {ok, a?, aError?, out, memory} | {e, out} | {skipped}
+//           (a: what fed returned unless null or undefined, the next challenge for the engine to check;
+//           aError instead when that isn't plain data or is too large: MEMORY is still saved)
 // Any request other than fed drops a kept context. The reply (and a bee's MEMORY) is encoded to JSON text
 // inside the context, on the clock and under the time limit, so hooks (toJSON, getters, proxies) are the
 // program's own compute; only a string leaves the context. A flower's `cpu` is this process's CPU time for
@@ -252,8 +254,19 @@ function callFed(req) {
   try {
     // The context has run the program's code, so nothing of it is trusted now: the nectar goes in as a literal.
     const nectar = typeof req.nectar === "number" && Number.isFinite(req.nectar) ? req.nectar : 0;
-    vm.runInContext(`__fns.fed(${JSON.stringify(nectar)});`, c, { timeout: rest() });
-    const reply = { ok: true, ...encodeMemory(c, rest()) };
+    vm.runInContext(`globalThis.__a = __fns.fed(${JSON.stringify(nectar)});`, c, { timeout: rest() });
+    const reply = { ok: true };
+    if (!vm.runInContext("globalThis.__a === undefined || globalThis.__a === null", c, { timeout: rest() })) {
+      try {
+        const s = encode(c, "__a", "fed", rest());
+        if (s.length > maxChars()) reply.aError = "fed returned something too large";
+        else reply.a = JSON.parse(s);
+      } catch (e) {
+        if (timedOut(e)) throw e;
+        reply.aError = short(e);
+      }
+    }
+    Object.assign(reply, encodeMemory(c, rest()));
     reply.out = takeOut(c);
     return out(reply);
   } catch (e) {

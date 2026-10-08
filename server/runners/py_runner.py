@@ -22,7 +22,9 @@
 #           {"op": "stage", "c", "r"}        -> {"ok": true}: the next decide's arguments, read in ahead of its call
 #           {"op": "decide", "staged": true, "memory": json}   (or with "c" and "r" instead of "staged")
 #                                            -> {"a": ["feed" | "leave", challenge], "out", "memory": json} | {"e", "out"}
-#           {"op": "fed", "nectar": x}       -> {"ok": true, "out", "memory": json} | {"e", "out"} | {"skipped": true}
+#           {"op": "fed", "nectar": x}       -> {"ok": true, "a"?: challenge, "out", "memory": json} | {"e", "out"} | {"skipped": true}
+#           "a" only when fed returned something other than None (the next challenge, for the engine to check);
+#           "aError" instead when that isn't plain data or is too large (MEMORY is still saved)
 #   A bee's reply carries "memoryError" instead of "memory" when MEMORY isn't a plain key-value store.
 #   Any request other than fed ends a kept instance.
 # A flower's `cpu` is the CPU time of its forked process for the call: running the program, flower(), and
@@ -506,8 +508,8 @@ def main(role, setup):
             nectar = json.loads(got)["nectar"]
             start_clock()
             timer(ms / 1000)
-            ns["fed"](nectar)
-            line, _ = bee_reply("fed", None, ns)
+            v = ns["fed"](nectar)
+            line, _ = bee_reply("fed", v, ns)
         except BaseException as e:
             timer(0)
             line = json.dumps({"e": "Timeout: took too long" if isinstance(e, Timeout) else short(e)})
@@ -517,12 +519,23 @@ def main(role, setup):
 
     def bee_reply(op, v, ns):
         """
-        Still on the clock: the reply (none for fed) and MEMORY as plain data, then the clock stops.
-        Returns (the reply's JSON text, the plain reply or None).
+        Still on the clock: the reply (for fed, what it returned unless None) and MEMORY as plain data, then
+        the clock stops. Returns (the reply's JSON text, the plain reply or None).
         """
         out = {"ok": True}
         a = None
-        if op != "fed":
+        if op == "fed":
+            # A bad return from fed is reported, and MEMORY is saved as if it had returned None.
+            if v is not None:
+                try:
+                    a = plain(v)
+                    if len(json.dumps(a)) > max_chars:
+                        out["aError"] = f"fed returned something too large (over {max_chars} characters)"
+                    else:
+                        out["a"] = a
+                except NotPlain as e:
+                    out["aError"] = f"fed returned something that is not plain data ({e})"
+        else:
             try:
                 a = plain(v)
             except NotPlain as e:
