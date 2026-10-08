@@ -27,8 +27,8 @@ A game is one continuous stretch of play, 2 minutes of game time by default (the
 
 The game runs in **rounds** of **200 ms** of game time: a **150 ms flower window**, then a **50 ms
 decision window**. A 2-minute game is 600 rounds. Rounds are played in real time; if the server is
-short of CPU cores a round takes longer on the wall clock. The round's pacing changes nothing in the game,
-but a flower's time limit R is wall-clock time (see "Energy"), so a busy server can make a flower late.
+short of CPU cores a round takes longer on the wall clock. The round's pacing changes nothing in the game:
+every time limit is **CPU time**, the time your program spends computing (see "Time limits are CPU time").
 
 ## A turn
 
@@ -42,11 +42,11 @@ Every bee that isn't busy feeding gets **one turn per round**: one challenge, on
 3. The flower is called: `flower(challenge)`. It has its **hidden time budget R** for this call (3 to 150
    ms, drawn at random every call; see "Energy") and returns
    `[response, percent]`: its answer, and the share (0–100, clamped) of this turn's **excess energy** it
-   gives the bee if the bee feeds. A late answer (stopped at R of wall time), an error, or a malformed
+   gives the bee if the bee feeds. A late answer (over R of CPU time), an error, or a malformed
    return (not a pair, a response of the wrong type, a percent that isn't a number) gives a `null` response
    and no energy.
 4. **150 ms.** The response is delivered to the bee, always at 150 ms however fast the flower was, so
-   timing tells the bee nothing. The bee has **50 ms**: `decide(challenge, response)` returns
+   timing tells the bee nothing. The bee has **50 ms** of CPU time: `decide(challenge, response)` returns
    `["feed", next_challenge]` or `["leave", next_challenge]`. The next challenge is queued for its next
    turn. **The bee is never told which team's flower it is facing**, and no program sees any history:
    it decides whether to feed from the challenge and the response alone (and its `MEMORY`). A flower's
@@ -57,8 +57,8 @@ Every bee that isn't busy feeding gets **one turn per round**: one challenge, on
    instance that made the decision. `fed` may return a next challenge, which replaces the one `decide`
    queued (see "After a feed").
 
-**Late replies.** A bee that takes more than 50 ms isn't cut off: its call keeps running (up to 2 s, when
-it is stopped), but the turn is settled without it. **A late reply never feeds.** If the late reply is
+**Late replies.** A bee that uses more than 50 ms of CPU time isn't cut off: its call keeps running (up to
+2 s of CPU time, when it is stopped), but the turn is settled without it. **A late reply never feeds.** If the late reply is
 `["leave", c]`, then `c` is queued for the bee's next turn. Anything else (a late `["feed", c]`, a crash)
 gives no next challenge, so the engine at once calls `first()` for one. The bee can't play while
 a call is running, so a slow bee also loses turns.
@@ -89,10 +89,31 @@ speed, in fine steps.
   forms) and `time.clock_gettime(...)` give the time since the call started (`time.time()` → `0.0123`).
   `time.process_time()` and `time.thread_time()` give this call's CPU time. `time.localtime()`,
   `time.gmtime()`, `time.ctime()`, `time.asctime()` and `time.strftime(fmt)` without a time use that clock
-  (`1970-01-01 00:00:00` and a fraction). `time.sleep()` works.
+  (`1970-01-01 00:00:00` and a fraction). `time.sleep()` returns at once (see "Time limits are CPU time").
 - **TypeScript**: `Date.now()`, `new Date()` and `Date()` without arguments, and `Intl` formatting
   without a date, use the same clock (`Date.now()` → `12`). `performance.now()` gives the time since the
-  call started in fractions of a millisecond; `performance.timeOrigin` is 0.
+  call started in fractions of a millisecond; `performance.timeOrigin` is 0. `performance.cpuTime()`
+  gives this call's CPU time in milliseconds. `Atomics.wait` returns at once.
+
+### Time limits are CPU time
+
+Every limit counts **CPU time**: the time your call spends computing, on its own clock, which starts at 0
+with the call (`time.process_time()` in Python, `performance.cpuTime()` in TypeScript). A busy server
+makes a call take longer on the wall clock, but not longer in CPU time, so it can't make a program late.
+Budget with the CPU clock, not the wall clock.
+
+- **A flower** is stopped when it has used R of CPU time (see "Energy"), and it is late if its CPU time,
+  writing the response as JSON included, is over R.
+- **A bee's `decide`** is in time if it used at most 50 ms of CPU time; past 2 s of CPU time it is
+  stopped. **`first`** is stopped at 2 s, and **`fed`** at 50 ms.
+- **Waiting earns nothing.** `time.sleep()` and `Atomics.wait` return at once.
+- **A wall-clock backstop** stops a call that isn't computing: a flower still running after 400 ms of wall
+  time, and `fed` after 250 ms. A `decide` with no reply after 250 ms of wall time is judged then, and
+  `first` and `decide` are stopped after 4 s.
+- **If the server is at fault, the turn is void.** A call stopped or judged by the backstop that spent at
+  least half its wall time waiting for a CPU (not running, but ready to run) is the server's fault, not your
+  program's. Its turn is void: nothing is given, the turn shows as a leave with the reason, nobody is charged
+  for it, and the bee asks the same challenge again. Otherwise the call is late.
 
 `GAME` holds the game's settings only: no round, turn or game time. A bee can count its own turns in
 `MEMORY`: that is its own experience, not the world's clock.
@@ -105,7 +126,7 @@ decision**: the same process (Python) or context (TypeScript), with every global
 `decide` computed still there. `nectar` is the nectar the bee just got (percent/100 × E; 0 if the flower
 failed).
 
-- It has **50 ms** (`GAME["ms"]`), and that is a hard limit: at 50 ms it is stopped. What it prints shows
+- It has **50 ms** of CPU time (`GAME["ms"]`), and that is a hard limit: at 50 ms it is stopped. What it prints shows
   up with your bee's next turn.
 - **It may return the next challenge.** The challenge `decide` queued is the default: your bee plays it
   at its next turn unless `fed` returns a challenge of the game's type, within its limits, which replaces
@@ -175,31 +196,28 @@ Each turn, the energy left after compute is the flower's **excess energy**, in n
 
 - **size** is the size in nodes of the flower version that answered (see "What counts toward size"); the
   cap is 1,100. A smaller flower has more to give.
-- **R** is **this call's hidden time budget**: a number of milliseconds drawn fresh and uniformly at random
-  from 3 to 150 for every flower call, independently. It is this call's time limit, measured on the wall
-  clock from the start of the call (when the call's clock reads 0; see "The clock"): when the call's wall
-  time reaches R, the flower is stopped. It is also the ceiling the energy counts down from. **Your flower
-  is told its R as `GAME["ms"]`** for that call (`GAME["flower_ms"]` stays 150, the most R can be). The bee
-  is never told R, and the response still reaches it at the fixed 150 ms, so timing hides R.
-- **compute ms** is the **CPU time** your flower's process used for this call: running the program,
-  calling `flower`, and writing its response as JSON. It is CPU time, not wall time: the energy doesn't
-  count time your flower spends not computing (waiting, sleeping, or held up while the server runs other
-  programs). The time limit R counts all of it, since it is wall time: other programs on the server can
-  make a call take longer on the wall clock than its CPU time, so a call can reach R of wall time, and be
-  stopped, having used less than R of CPU time.
+- **R** is **this call's hidden time budget**: a number of milliseconds of CPU time drawn fresh and
+  uniformly at random from 3 to 150 for every flower call, independently. It is this call's time limit:
+  when the call has used R of CPU time, counted from its start (when the call's clocks read 0; see "The
+  clock"), the flower is stopped. It is also the ceiling the energy counts down from. **Your flower is told
+  its R as `GAME["ms"]`** for that call (`GAME["flower_ms"]` stays 150, the most R can be). The bee is never
+  told R, and the response still reaches it at the fixed 150 ms, so timing hides R.
+- **compute ms** is the **CPU time** your flower used for this call: running the program, calling
+  `flower`, and writing its response as JSON. It is the same clock R counts, so a call over R has no
+  energy left. Time your flower spends not computing (held up while the server runs other programs)
+  counts for neither.
 - **response bytes** is the size of the response: the UTF-8 bytes of its JSON as the game writes it (see
   "What the challenge and response look like"). The **byte cap** is the most a response may be: 1,024
   bytes. An answer of 24 bytes multiplies by 1,000; one of exactly 1,024 bytes is still an answer, and a
   bee can feed on it, but E = 0. A 550-node flower with 50 ms of compute and a 24-byte answer, at R = 150,
   has E = 550 × 100 × 1,000 = 55,000,000.
-- A late answer (stopped at R of wall time), an error, a malformed return or a response over the cap: E = 0.
+- A late answer (over R of CPU time), an error, a malformed return or a response over the cap: E = 0.
 
 Code nodes, compute milliseconds and response bytes are each free only when you don't use them. (Games
 played before the byte factor had E without it, in node·ms, and a 64 KiB cap.)
 
 So a given stretch of real work costs the same energy whatever R is, but you can only *do* t ms of
-checkable work, and still have energy left, when R happens to be more than t this turn and the call ends
-within R of wall time. Each flower instance has its own hidden reserve for the turn — its R — and the bee
+checkable work, and still have energy left, when R happens to be more than t this turn. Each flower instance has its own hidden reserve for the turn — its R — and the bee
 has to judge from the answer alone whether this one is rich and generous.
 
 Then:
@@ -287,12 +305,12 @@ In TypeScript, `tree[T]` is `{ value: T; children: Tree<T>[] }` and a graph is
 Every program can read a `GAME` dictionary/object: `team` (your team's index), `teams` (N), `feed_cost`,
 `challenge_type`, `response_type`, `max_len`, `max_nodes` (limits on challenges), `max_response_bytes`
 (the response size cap), `round_ms` (200), `ms` (your program's own time limit for **this call**, in ms of
-wall time: a bee's is always 50; a flower's is this call's hidden budget R, 3–150), `flower_ms` (150, the
+CPU time: a bee's is always 50; a flower's is this call's hidden budget R, 3–150), `flower_ms` (150, the
 most a flower's R can be) and `flower_size_cap` (1,100). A bee also gets `memory`, its `MEMORY` cap in bytes.
 A flower also gets `size`, its own size, so E = (`flower_size_cap` − `size`) × max(0, `ms` − compute ms) ×
-(`max_response_bytes` − response bytes), with `ms` this call's R. In Python, `time.process_time()` measures
-the CPU time the energy counts, and `time.perf_counter()` the wall time the limit counts, both from 0 at the
-start of the call (see "The clock").
+(`max_response_bytes` − response bytes), with `ms` this call's R. `time.process_time()` (Python) and
+`performance.cpuTime()` (TypeScript) measure the CPU time that both the limit and the energy count, from 0
+at the start of the call; `time.perf_counter()` and `performance.now()` are wall time (see "The clock").
 
 ## What programs can use
 

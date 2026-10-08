@@ -1,10 +1,10 @@
 // How long programs take against their time limits: a row of figures (typical, slow end, slowest, missed)
 // and a small histogram of the times, with the limit marked and the misses in their own labelled bin.
 // The flower's figure is its CPU time (what the energy formula charges: E = (cap − size) × (R − ms), times the byte factor); the
-// bee's is its decision time against the 50 ms window. During play you see your own only.
+// bee's is its CPU time to decide against its 50 ms. Void turns (server faults) count for neither. During play you see your own only.
 import { useMemo } from "react";
 import type { Action, GameView, Kind, Team } from "../types";
-import { isTooSlow } from "./Feed";
+import { isTooSlow, isVoid } from "./Feed";
 import { TeamChip } from "./ui";
 
 const BINS = 10;
@@ -19,7 +19,7 @@ export function beeTiming(actions: Action[], team: string | null): TimingData {
   const values: number[] = [];
   let misses = 0;
   for (const a of actions) {
-    if (a.action === "arrive" || (team && a.bee !== team)) continue;
+    if (a.action === "arrive" || (team && a.bee !== team) || isVoid(a)) continue;
     if (isTooSlow(a)) misses++;
     else if (typeof a.beeMs === "number") values.push(a.beeMs);
   }
@@ -31,7 +31,7 @@ export function flowerTiming(actions: Action[], team: string | null): TimingData
   const values: number[] = [];
   let misses = 0;
   for (const a of actions) {
-    if (a.action === "arrive" || (team && a.flower !== team)) continue;
+    if (a.action === "arrive" || (team && a.flower !== team) || isVoid(a)) continue;
     if (a.flowerError) misses++;
     else if (typeof a.ms === "number") values.push(a.ms);
   }

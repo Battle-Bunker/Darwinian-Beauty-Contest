@@ -25,26 +25,29 @@ async function twoCalls(language, code) {
   }
 }
 
-test("python: every clock in `time` reads the time since the call started, from 0 at the epoch; process time is the call's own", async () => {
+test("python: every clock in `time` reads the time since the call started, from 0 at the epoch; process time is the call's own; sleep returns at once", async () => {
   const code = `import time
 from time import perf_counter
 def flower(c):
     start = [time.time(), time.time_ns() / 1e9, time.monotonic(), time.monotonic_ns() / 1e9, time.perf_counter(), time.perf_counter_ns() / 1e9,
              time.clock_gettime(time.CLOCK_REALTIME), time.clock_gettime(time.CLOCK_MONOTONIC), time.clock_gettime_ns(time.CLOCK_BOOTTIME) / 1e9]
     t = perf_counter()
-    while perf_counter() - t < 0.03:
+    while perf_counter() - t < 0.04:
         pass
-    time.sleep(0.01)
-    return [start, [time.time(), time.perf_counter(), time.monotonic()], time.process_time(), time.thread_time(),
+    s = perf_counter()
+    time.sleep(0.5)  # returns at once: there is nothing to wait for
+    slept = perf_counter() - s
+    return [start, [time.time(), time.perf_counter(), time.monotonic()], time.process_time(), time.thread_time(), slept,
             list(time.gmtime()[:6]), list(time.localtime()[:6]), time.ctime(), time.asctime(), time.strftime("%Y-%m-%d %H:%M:%S"),
             time.get_clock_info("time").implementation, time.timezone, list(time.gmtime(${DAY})[:3])], 50
 `;
   const calls = await twoCalls("python", code);
-  for (const [start, after, cpu, thread, gm, local, ctime, asctime, stamp, impl, tz, day] of calls) {
+  for (const [start, after, cpu, thread, slept, gm, local, ctime, asctime, stamp, impl, tz, day] of calls) {
     for (const x of start) assert.ok(x >= 0 && x < 0.03, `read ${x} s at the call's start: ${start}`);
-    for (const x of after) assert.ok(x >= 0.04 && x < 0.12, `40 ms of work and sleep later: ${x} s`);
-    assert.ok(cpu >= 0.025 && cpu < 0.12, `the call's own CPU time: ${cpu}`);
-    assert.ok(thread >= 0.025 && thread < 0.12, `${thread}`);
+    for (const x of after) assert.ok(x >= 0.04 && x < 0.12, `40 ms of work later: ${x} s`);
+    assert.ok(slept < 0.005, `time.sleep(0.5) returned at once: ${slept} s`);
+    assert.ok(cpu >= 0.035 && cpu < 0.12, `the call's own CPU time: ${cpu}`);
+    assert.ok(thread >= 0.035 && thread < 0.12, `${thread}`);
     assert.deepEqual(gm, [1970, 1, 1, 0, 0, 0]);
     assert.deepEqual(local, [1970, 1, 1, 0, 0, 0], "local time is the game's clock, in UTC");
     assert.equal(ctime, "Thu Jan  1 00:00:00 1970");

@@ -11,7 +11,7 @@ A flower now *chooses* how much to pay, out of energy it can only have by being 
 | a team's answering program | **flower** | |
 | a team's asking program | **bee** | |
 | one bee's challenge, one flower's response, one decision | **turn** | at most one per bee per round |
-| each flower call's time budget, uniform in 3–150 ms | **R** | hidden from the bee: this flower instance's reserve this turn |
+| each flower call's time budget, uniform in 3–150 ms of CPU time | **R** | hidden from the bee: this flower instance's reserve this turn |
 | (flower size cap − size) × max(0, R − CPU ms) × (byte cap − response bytes) | **excess energy** E (node·ms·bytes) | what a flower saved this turn by being small, quick and brief |
 | the share of E a flower offers | **percent** | 0–100, clamped |
 | percent/100 × E, to the bee if it feeds | **nectar** | |
@@ -33,8 +33,8 @@ A flower now *chooses* how much to pay, out of energy it can only have by being 
 Each team has one flower species and one bee. Every 200 ms round, each bee that isn't feeding takes one
 turn. Its challenge must already be queued. The engine draws a flower uniformly at random among all N
 species (its own included), calls `flower(challenge)`, and the flower has its hidden budget R (3–150
-ms, drawn per call) to return `[response, percent]`. The runner measures the call's CPU time, which gives E. At 150 ms the response
-reaches the bee, `decide(challenge, response)`, which has 50 ms to return `["feed" | "leave", next]`. On a
+ms of CPU time, drawn per call) to return `[response, percent]`. The runner measures the call's CPU time, which gives E. At 150 ms the response
+reaches the bee, `decide(challenge, response)`, which has 50 ms of CPU time to return `["feed" | "leave", next]`. On a
 feed the flower gives the bee nectar and pollen, the bee sits out `feedCost` rounds, and its optional
 `fed(nectar)` runs in the same program instance that decided; a leave pays nobody. The bee's next challenge
 is queued for its next turn (a challenge `fed` returns replaces it). Every flower call and every bee turn runs a fresh program; the bee's 50-byte
@@ -45,8 +45,8 @@ MEMORY is the only thing that carries over. No program sees any history.
 Every flower call gets its own time budget **R**, drawn uniformly from `budgets.flower.minMs` (3) to
 `budgets.flower.ms` (150), independently each time. `minMs` is 2% of `ms` by default (at least 1 ms; a set value
 is kept), so R ranges 50-fold rather than 3-fold as with the earlier floor of 50 ms: a poor instance has almost
-nothing to give. R is the call's hard limit (the runner stops the flower at
-R, as it stopped it at 150 before) and the ceiling its energy counts down from: E = (cap − size) × max(0, R −
+nothing to give. R is the call's hard limit, in CPU time (the runner stops the flower once it has used R,
+as it stopped it at 150 ms of wall time before) and the ceiling its energy counts down from: E = (cap − size) × max(0, R −
 CPU ms) × (B − bytes) (B the byte cap; see "Bytes cost too"). The flower is told R as `GAME.ms`; the bee never is, and the response still reaches it at the fixed
 150 ms, so timing tells it nothing about R.
 
@@ -66,14 +66,48 @@ flower that makes its answers hard to fake spends energy doing it, and has less 
 answers cheaply has more to offer, or to keep.
 
 E is measured in **CPU time**, inside the runner, around exactly the flower's own work:
-- Python: the forked child's `time.process_time()` from just after the fork until its response is written
-  as JSON (the program's module code included).
-- TypeScript: `process.cpuUsage()` around running the program in its fresh context, calling `flower` and
-  encoding its reply (creating the context, which costs every flower the same, is left out).
+- Python: the forked child's thread CPU clock (`CLOCK_THREAD_CPUTIME_ID`, exact) from just after the fork
+  until its response is written as JSON (the program's module code included).
+- TypeScript: the main thread's CPU clock (exact, through a small native addon, `runners/native/cpuclock.c`,
+  built with the system's compiler on first use) around running the program in its fresh context, calling
+  `flower` and encoding its reply (creating the context, which costs every flower the same, is left out).
 
 Wall time would charge a flower for the machine being busy, and would let a flower game E by sleeping in
-another's slot. CPU time charges for work done. The time *limit* is still wall-clock (R, enforced in the
-runner); since the engine runs at most one program per core, the two stay close.
+another's slot. CPU time charges for work done.
+
+## Limits are CPU time too
+
+Every *limit* is CPU time as well (docs/research/compute-budgets/REPORT.md): a flower is stopped once it has
+used R of CPU and is late iff it used more than R; a bee's `decide` is in time iff it used at most 50 ms of
+CPU (stopped at 2 s), `fed` is stopped at 50 ms. A busy machine stretches rounds in wall time but can't make
+a program late. Measured on the real runner, a flower burning 0.9 R pinned to a core shared with a spinner
+went from 99% (Python) and 100% (TypeScript) late with wall-clock R to 0% with CPU R.
+
+- **Python** (`py_runner.py`): the graceful stop is an `ITIMER_REAL` (an hrtimer) re-armed against the
+  call's remaining thread CPU: when it fires the handler reads the thread clock and either raises `Timeout`
+  or re-arms for what's left (to 20 µs). A long C call (`sum(range(10**9))`) or a program that swallows
+  `Timeout` meets the hard stop, a POSIX timer on the child's own thread CPU clock (`timer_create`, its ctypes
+  resolved before the fork) that sends SIGKILL at R + 5 ms. No `ITIMER_PROF`, `ITIMER_VIRTUAL` or process-clock
+  timers: they would make `process_time()` tick-stale. An endless loop is stopped 0.1–0.3 ms past R.
+- **TypeScript** (`ts_runner.cjs`): each call is one `runInContext` with `breakOnSigint`; a watchdog
+  `Worker` reads the main thread's CPU clock exactly and sends one SIGINT when the call has used its budget
+  (a shared-memory handshake makes sure the SIGINT only lands while a call is running, and a SIGINT
+  listener keeps a stray one from killing the process). An endless loop is stopped 0.4–4 ms past R.
+- **Sleeping is useless**: Python's `time.sleep` and TypeScript's `Atomics.wait` return at once.
+- **Placement**: runners join the `dbc-runners` cpuset (cores 2–3; `RUNNER_CPUS`, or `RUNNER_CPUSET=off`)
+  after setup, so the server and Postgres keep cores 0–1; if it can't be created the server logs once and
+  carries on. At most `CPU_SLOTS` (2) programs run at once, one per runner core. No real-time scheduling.
+- **Wall-clock backstop** (`wallLimits` in server/lib/gameConfig.js) for calls that aren't computing: a
+  flower still going at 400 ms (or 2 × `flower.ms`) is stopped; a bee's `first`/`decide` with no reply at
+  250 ms (or 4 × `bee.ms`) is judged then and stopped at 4 s; `fed` is stopped at 250 ms. A call the
+  backstop meets is attributed with `/proc/<pid>/schedstat`: if it spent at least half its wall time runnable
+  but waiting for a CPU (and less than its budget computing), it is a **server fault** and its turn is
+  **void**: no feed, no energy, nobody's problem, the bee asks the same challenge again, and the turn is
+  recorded as a `leave` whose `flowerError` or `beeError` starts `server fault:`. Otherwise the call is late.
+  With CPU limits and two cores to themselves, a program has to be starved more than 2× for 400 ms before
+  this fires: rare, and a sign that the server is overloaded, so nobody is charged for it.
+- Old games: the CPU limits apply to every game the engine runs from now on, old configs included (none of
+  them needed a wall-clock limit to score).
 
 **Bytes cost too.** With `energy.bytes` (the default), E has a third factor: E = (cap − size) × max(0, R −
 CPU ms) × (B − bytes), in node·ms·bytes, where B is `maxResponseBytes` (1,024 by default) and bytes the
@@ -94,7 +128,7 @@ public only through E on a feed, mixed with the flower's private size).
 
 A bee's next challenge is decided a round ahead and queued; it is never shown before its turn ends. A bee
 with nothing queued as a round starts loses its turn. A late bee loses its turn's say, never its next
-challenge: its call runs on (up to 2 s), the turn is settled without it (never as a feed), and a late
+challenge: its call runs on (up to 2 s of CPU), the turn is settled without it (never as a feed), and a late
 `["leave", c]` still queues `c`. Any other late reply, and any reply with no usable next challenge, gets
 the bee asked `first()` at once, outside the round flow (at most one such request in flight per bee,
 at most one new one a round).
@@ -288,7 +322,7 @@ At most one turn per bee per round: with 6 teams, at most 30 turns (60 actions) 
   round flow then makes the next round if it answers within the bee's 50 ms. `keepHistory` keeps every
   finished turn's record (tests).
 - `server/runners/`: `proc.js` speaks JSON lines to a runner process (its own process group, `TZ=UTC`), one
-  request at a time, in order. Programs get the game's clock and (Python) module views. `py_runner.py` and `ts_runner.cjs` run every call fresh: flowers CPU-timed with
+  request at a time, in order. Programs get the game's clock and (Python) module views. `py_runner.py` and `ts_runner.cjs` run every call fresh, stopped and judged on its own thread's CPU clock (see "Limits are CPU time too"): flowers CPU-timed with
   their response's size checked, bees with their MEMORY passed in and sent back, the next decision's
   response staged ahead of its call, and a feed decision's instance kept for `fed`.
 - `server/live.js`: each running game's garden runs in exactly one server process, whichever holds the

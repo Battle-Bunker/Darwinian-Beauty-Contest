@@ -201,7 +201,7 @@ for (const language of ["python", "typescript"]) {
 }
 
 test("fed() isn't called after a late decision (paced)", async () => {
-  const bee = `import time\ndef first():\n    return 1\ndef decide(c, r):\n    if c == 2:\n        time.sleep(0.08)\n    return "feed", c + 1\ndef fed(n):\n    MEMORY["fed"] = MEMORY.get("fed", "") + str(MEMORY.get("c", "")) + ","\n`;
+  const bee = `import time\ndef first():\n    return 1\ndef decide(c, r):\n    if c == 2:\n        while time.process_time() < 0.08:\n            pass\n    return "feed", c + 1\ndef fed(n):\n    MEMORY["fed"] = MEMORY.get("fed", "") + str(MEMORY.get("c", "")) + ","\n`;
   const counting = bee.replace(`def decide(c, r):\n`, `def decide(c, r):\n    MEMORY["c"] = c\n`);
   const out = await play(normalizeConfig({ feedCost: 0 }), [{ flower, bee: counting }], 6, null, { paced: true });
   const turns = ends(out.actions);

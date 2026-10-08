@@ -1,7 +1,7 @@
 // What every team knows before writing a line: the function names, their arguments, and the game's
 // types. Deliberately no behaviour: no starter code, so there's no shared starting point to converge on.
 import { parseType } from "./types.js";
-import { RESPONSE_DEPTH, energyBytes, limitsOf, roundMs } from "./gameConfig.js";
+import { RESPONSE_DEPTH, energyBytes, limitsOf, roundMs, wallLimits } from "./gameConfig.js";
 import { scoringOf } from "./scoring.js";
 
 function describe(t) {
@@ -63,9 +63,12 @@ function flowerNotes(ts, config) {
   const { flower } = config.budgets;
   return `${c} Your flower species: each call is one flower of it, meeting one bee, and runs fresh: nothing is kept between\n` +
     `${c} calls. ${ts ? "Math.random()" : "random"} is freshly seeded every call; the clock reads 0 (the epoch) as each call starts. ${G("ms")} is this\n` +
-    `${c} call's hidden time budget R, drawn from ${flower.minMs ?? 50} to ${flower.ms} ms (${G("flower_ms")}) for every call: your time limit; a response that\n` +
-    `${c} isn't done within R (or an error, a malformed return, or more than\n` +
-    `${c} ${G("max_response_bytes")} = ${config.maxResponseBytes} bytes of JSON) reaches the bee as ${nul}.\n` +
+    `${c} call's hidden time budget R, drawn from ${flower.minMs ?? 50} to ${flower.ms} ms (${G("flower_ms")}) for every call: your limit, in ms\n` +
+    `${c} of CPU time (budget with ${ts ? "performance.cpuTime()" : "time.process_time()"}, which reads 0 as the call starts). A call is stopped\n` +
+    `${c} once it has used R of CPU. A response that used more than R (or an error, a malformed return, or more than\n` +
+    `${c} ${G("max_response_bytes")} = ${config.maxResponseBytes} bytes of JSON) reaches the bee as ${nul}. ${ts ? "Atomics.wait" : "time.sleep"} returns at once:\n` +
+    `${c} waiting earns nothing. A call still running after ${wallLimits(config).flower} ms of wall time is late, unless it spent\n` +
+    `${c} most of that waiting for a CPU: then the turn is void (a server fault: nobody is charged).\n` +
     `${c} If the bee feeds, it gets nectar = percent/100 × E and pollen = the rest; no feed, nothing is given.\n` +
     `${c} E = (${G("flower_size_cap")} - ${G("size")}) * max(0, ${G("ms")} - CPU ms of this call, writing the response as JSON included)` +
     (energyBytes(config)
@@ -82,11 +85,14 @@ function beeNotes(ts, config) {
   const c = ts ? "//" : "#", G = (k) => (ts ? `GAME.${k}` : `GAME["${k}"]`), nul = ts ? "null" : "None";
   return `${c} Rounds of ${G("round_ms")} = ${roundMs(config)} ms. As each round starts, a bee with a challenge queued (and not feeding)\n` +
     `${c} takes its turn: a flower of a species drawn at random among all ${G("teams")} (your own included) answers within\n` +
-    `${c} ${config.budgets.flower.ms} ms; then decide has ${G("ms")} = ${config.budgets.bee.ms} ms. You are never told whose flower it is, nor its percent.\n` +
-    `${c} A feed sits your bee out ${G("feed_cost")} = ${config.feedCost} rounds. A late reply never feeds; only a late ["leave", c] queues c. After any\n` +
-    `${c} other late reply, or a reply with no usable next challenge, first() is called at once. A call is stopped after 2 s.\n` +
+    `${c} ${config.budgets.flower.ms} ms; then decide has ${G("ms")} = ${config.budgets.bee.ms} ms of CPU time (budget with ${ts ? "performance.cpuTime()" : "time.process_time()"}; ${ts ? "Atomics.wait" : "time.sleep"}\n` +
+    `${c} returns at once). You are never told whose flower it is, nor its percent.\n` +
+    `${c} A feed sits your bee out ${G("feed_cost")} = ${config.feedCost} rounds. A late reply (over ${G("ms")} of CPU, or no reply after ${wallLimits(config).bee} ms of wall time)\n` +
+    `${c} never feeds; only a late ["leave", c] queues c. After any other late reply, or a reply with no usable next challenge,\n` +
+    `${c} first() is called at once. A call is stopped after ${wallLimits(config).beeCpu / 1000} s of CPU (or ${wallLimits(config).beeHard / 1000} s of wall time). A call that spent most of its wall\n` +
+    `${c} time waiting for a CPU is a server fault: the turn is void, nobody is charged, and the same challenge is asked again.\n` +
     `${c} fed(nectar), optional, runs after a feed decided in time, in the same instance as that decide (its globals\n` +
-    `${c} intact), within ${G("ms")}; a challenge it returns replaces the one decide queued (${nul} or nothing keeps decide's).\n` +
+    `${c} intact), within ${G("ms")} of CPU; a challenge it returns replaces the one decide queued (${nul} or nothing keeps decide's).\n` +
     `${c} Otherwise every turn runs fresh. Only MEMORY carries over: a key-value store ({} at\n` +
     `${c} first; string keys; string, number, ${ts ? "boolean or null" : "bool or None"} values) you change in place or reassign. It is saved after\n` +
     `${c} each first, decide or fed that returns, if Σ (key bytes + value JSON bytes) ≤ ${G("memory")} = ${config.budgets.bee.memory}.\n` +

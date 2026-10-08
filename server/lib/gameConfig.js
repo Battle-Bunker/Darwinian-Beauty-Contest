@@ -6,12 +6,13 @@ import { scoringOf } from "./scoring.js";
 //   flower: small (1,100 nodes) and slow to change (220 a minute), with the whole 150 ms flower window.
 //           Its size cap is also the "size cap" of the energy formula: E = (cap − size) × max(0, R − CPU ms)
 //           × (maxResponseBytes − response bytes), in node·ms·bytes (the last factor when energy.bytes).
-//   bee:    room for detector repertoires (11,000 nodes, 2,200 a minute), 50 ms to decide, and a MEMORY of
+//   bee:    room for detector repertoires (11,000 nodes, 2,200 a minute), 50 ms of CPU to decide, and a MEMORY of
 //           at most `memory` bytes (a key-value store: Σ key bytes + value JSON bytes): the only thing
 //           that carries over from one of its turns to the next.
 // Time: a round is one turn for every bee, flower.ms (the flower window: every response is delivered then)
 // + bee.ms (the bees' decision window) = 200 ms of game time. Each flower call's hidden budget R is drawn from
-// [flower.minMs, flower.ms]; minMs defaults to 2% of ms, at least 1 ms (3 ms of 150).
+// [flower.minMs, flower.ms]; minMs defaults to 2% of ms, at least 1 ms (3 ms of 150). Every limit (R, bee.ms)
+// is CPU time, on the call's own thread clock; the wall clock only backstops (wallLimits below).
 // Change budget accrues continuously while the game runs, `perMinute` nodes a minute, and banks up to
 // `cap` (one minute's worth): spend it whenever you like, on any change you can afford, and the new
 // program goes live at once. Before the game starts, writing programs is free.
@@ -114,6 +115,24 @@ export function normalizeConfig(input = {}, base = DEFAULT_CONFIG) {
 
 /** One round of game time: the flower window plus the bees' decision window. */
 export const roundMs = (config) => config.budgets.flower.ms + config.budgets.bee.ms;
+
+/**
+ * Every program limit is CPU time (the runners measure each call on its own thread clock). These are the
+ * wall-clock backstops, in ms, for calls that aren't computing or are starved far beyond reason: a flower call
+ * still going at `flower` is stopped; a bee's first or decide with no reply at `bee` is judged then (late, or a
+ * server fault) and stopped at `beeHard` (or at `beeCpu` of CPU); fed is stopped at `bee`. A call stopped or
+ * judged by a backstop is a server fault, not the program's, if it spent at least `faultShare` of its wall
+ * time runnable but waiting for a CPU (/proc/<pid>/schedstat): its turn is void.
+ */
+export function wallLimits(config) {
+  const beeCpu = Math.max(2000, 2 * config.budgets.bee.ms);
+  return {
+    flower: Math.max(400, 2 * config.budgets.flower.ms),
+    bee: Math.max(250, 4 * config.budgets.bee.ms),
+    beeCpu, beeHard: 2 * beeCpu,
+    faultShare: 0.5,
+  };
+}
 
 /** Size limits applied to challenges. */
 export const limitsOf = (config) => ({ maxLen: config.maxLen, maxNodes: config.maxNodes });

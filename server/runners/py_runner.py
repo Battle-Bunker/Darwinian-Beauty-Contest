@@ -14,24 +14,33 @@
 # its own work but learns nothing of the world's time or the game's progress.
 #
 # Protocol: JSON lines on stdin/stdout, one reply per request, in order. The first line is the setup
-# {code, ms, limitMs, game, maxChars, maxResponseBytes}.
+# {code, ms, limitMs, wallMs, hardWallMs, faultShare, game, maxChars, maxResponseBytes}.
 # Requests:
 #   flower: {"op": "call", "c": challenge, "ms": R} -> {"v": [response, percent], "bytes": n, "cpu": ms} | {"e": error, "cpu": ms}
-#           R is the call's hidden time budget: its hard limit, and GAME["ms"] for the call (default: setup ms)
-#   bee:    {"op": "first", "memory": json}  -> {"a": challenge, "out", "memory": json} | {"e", "out"}
+#           R is the call's hidden time budget, in CPU time: its hard limit, and GAME["ms"] for the call (default: setup ms)
+#   bee:    {"op": "first", "memory": json}  -> {"a": challenge, "out", "memory": json, "cpu": ms} | {"e", "out", "cpu"}
 #           {"op": "stage", "c", "r"}        -> {"ok": true}: the next decide's arguments, read in ahead of its call
 #           {"op": "decide", "staged": true, "memory": json}   (or with "c" and "r" instead of "staged")
-#                                            -> {"a": ["feed" | "leave", challenge], "out", "memory": json} | {"e", "out"}
+#                                            -> {"a": ["feed" | "leave", challenge], "out", "memory": json, "cpu": ms} | {"e", "out", "cpu"}
 #           {"op": "fed", "nectar": x}       -> {"ok": true, "a"?: challenge, "out", "memory": json} | {"e", "out"} | {"skipped": true}
 #           "a" only when fed returned something other than None (the next challenge, for the engine to check);
 #           "aError" instead when that isn't plain data or is too large (MEMORY is still saved)
 #   A bee's reply carries "memoryError" instead of "memory" when MEMORY isn't a plain key-value store.
 #   Any request other than fed ends a kept instance.
-# A flower's `cpu` is the CPU time of its forked process for the call: running the program, flower(), and
-# writing the response as JSON, whose UTF-8 size (`bytes`) must be at most maxResponseBytes. Time limits are
-# wall-clock: a flower is stopped at `ms`, and so is fed(); a bee's `ms` for first and decide is a deadline
-# the engine keeps (a late reply still counts), so the runner only stops those at the hard limit `limitMs`.
-# The engine runs at most one program per CPU core, so wall time and CPU time stay close.
+#   Before a bee's first or decide replies, the runner may write one notice line, {"notice": "late"} (the call
+#   has used its `ms` of CPU, or had no reply at wallMs of wall time) or {"notice": "fault"} (no reply at
+#   wallMs, having spent at least faultShare of it waiting for a CPU): the reply still follows when it comes.
+#   A reply cut off by a backstop has "backstop": true and "fault": true or false.
+# Time limits are CPU time, on the call's own thread clock (CLOCK_THREAD_CPUTIME_ID, exact). `cpu` is that
+# clock for the call: running the program, the function, and (a flower) writing the response as JSON, whose
+# UTF-8 size (`bytes`) must be at most maxResponseBytes. A flower is stopped once it has used R (an ITIMER_REAL
+# re-armed against the thread clock raises Timeout; a thread CPU timer SIGKILLs it at R + 5 ms, for long C
+# calls or a swallowed Timeout), and so is fed() at `ms`; a bee's `ms` for first and decide is a deadline (a
+# late reply still counts for its next challenge), so those are only stopped at `limitMs` of CPU. The child
+# tells the parent where its clock starts ("S<ns>") and when a bee's `ms` is used ("N"), on a pipe. Wall-clock
+# backstops: a flower or fed() still going at wallMs is killed, and a bee's first or decide at hardWallMs;
+# /proc/<pid>/schedstat says whether it was running or waiting for a CPU (a server fault). time.sleep returns
+# at once. No ITIMER_PROF, ITIMER_VIRTUAL or process-clock timers (they would make process_time() tick-stale).
 # No user code runs after the clock stops: the reply and MEMORY are copied into exact built-in types, and
 # the response written as JSON, inside the timed window.
 # NOT a security sandbox: restricted builtins + import whitelist + timeouts + memory cap only.

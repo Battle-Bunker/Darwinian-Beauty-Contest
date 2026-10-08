@@ -642,7 +642,7 @@
           "visibility": "flower"
         },
         "budgetMs": {
-          "doc": "R: the call's hidden time budget (ms, uniform in minMs..ms): its hard limit, and E's ceiling",
+          "doc": "R: the call's hidden time budget (ms of CPU time, uniform in minMs..ms): its hard limit, and E's ceiling",
           "visibility": "flower"
         },
         "flowerVersion": {
@@ -650,11 +650,11 @@
           "visibility": "flower"
         },
         "flowerError": {
-          "doc": "why the response is null (a timeout, an error, a malformed return)",
+          "doc": "why the response is null (a timeout, an error, a malformed return); \"server fault: ...\" on a void turn",
           "visibility": "flower"
         },
         "beeMs": {
-          "doc": "how long the bee took to decide (ms; null if it was late)",
+          "doc": "the bee's CPU time to decide (ms; null if it was late)",
           "visibility": "bee"
         },
         "beeVersion": {
@@ -662,11 +662,11 @@
           "visibility": "bee"
         },
         "beeError": {
-          "doc": "what went wrong with the bee's reply (late, a crash, a bad next challenge)",
+          "doc": "what went wrong with the bee's reply (late, a crash, a bad next challenge); \"server fault: ...\" on a void turn",
           "visibility": "bee"
         },
         "grain": {
-          "doc": "on a feed, the pollen grain: ⌊pollen^(1/3)⌋ characters of the answering flower version's minified code, from a random start, wrapping",
+          "doc": "on a feed, the pollen grain: ⌊scale × pollen^exponent⌋ characters (⌊0.1 × pollen^(1/3)⌋ by default) of the answering flower version's minified code, from a random start, wrapping",
           "visibility": "grain"
         },
         "grainVersion": {

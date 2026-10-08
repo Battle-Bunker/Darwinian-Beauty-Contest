@@ -28,13 +28,13 @@ class Turn(NamedTuple):
     nectar: Optional[float]  # the nectar the flower gave the bee: percent/100 × E on a feed, else null
     pollen: float  # the pollen the flower gave the bee: (1 − percent/100) × E on a feed, else 0
     ms: Optional[float]  # the flower's CPU time for the call (ms)
-    budget_ms: Optional[float]  # R: the call's hidden time budget (ms, uniform in minMs..ms): its hard limit, and E's ceiling
+    budget_ms: Optional[float]  # R: the call's hidden time budget (ms of CPU time, uniform in minMs..ms): its hard limit, and E's ceiling
     flower_version: Optional[int]  # the flower version that answered
-    flower_error: Optional[str]  # why the response is null (a timeout, an error, a malformed return)
-    bee_ms: Optional[float]  # how long the bee took to decide (ms; null if it was late)
+    flower_error: Optional[str]  # why the response is null (a timeout, an error, a malformed return); "server fault: ..." on a void turn
+    bee_ms: Optional[float]  # the bee's CPU time to decide (ms; null if it was late)
     bee_version: Optional[int]  # the bee version that decided
-    bee_error: Optional[str]  # what went wrong with the bee's reply (late, a crash, a bad next challenge)
-    grain: Optional[str]  # on a feed, the pollen grain: ⌊pollen^(1/3)⌋ characters of the answering flower version's minified code, from a random start, wrapping
+    bee_error: Optional[str]  # what went wrong with the bee's reply (late, a crash, a bad next challenge); "server fault: ..." on a void turn
+    grain: Optional[str]  # on a feed, the pollen grain: ⌊scale × pollen^exponent⌋ characters (⌊0.1 × pollen^(1/3)⌋ by default) of the answering flower version's minified code, from a random start, wrapping
     grain_version: Optional[int]  # the flower version the grain came from
     grain_code_length: Optional[int]  # that version's minified code's length in characters
 

@@ -336,8 +336,8 @@ test("nothing persists between calls but MEMORY: globals start afresh every call
 
 test("a bare \"leave\" gets first() asked at once: in time it makes the next round, slower costs a round (paced)", async () => {
   const fast = `def first():\n    return 1\ndef decide(c, r):\n    return "leave"\n`;
-  // first() is slow once the bee has decided once (it notes that in MEMORY).
-  const slow = `import time\ndef first():\n    if MEMORY.get("decided"):\n        time.sleep(0.12)\n    return 2\ndef decide(c, r):\n    MEMORY["decided"] = True\n    return "leave"\n`;
+  // first() is slow once the bee has decided once (it notes that in MEMORY): 120 ms of CPU.
+  const slow = `import time\ndef first():\n    if MEMORY.get("decided"):\n        while time.process_time() < 0.12:\n            pass\n    return 2\ndef decide(c, r):\n    MEMORY["decided"] = True\n    return "leave"\n`;
   const out = await play(normalizeConfig({}), [{ flower: flower("c"), bee: fast }, { flower: flower("c"), bee: slow }], 12, null, { paced: true });
   assert.deepEqual(out.problems, []);
   const r0 = arrivals(out.actions, 0).map((a) => a.round), r1 = arrivals(out.actions, 1).map((a) => a.round);
@@ -546,7 +546,7 @@ const midTurn = (swap, done) => async (garden) => {
 };
 
 test("versions are pinned per turn: a flower swap reaches turns that start after it", async () => {
-  const slowFlower = (v) => `import time\ndef flower(c):\n    time.sleep(0.1)\n    return ${v}, 50\n`;
+  const slowFlower = (v) => `import time\ndef flower(c):\n    while time.process_time() < 0.1:\n        pass\n    return ${v}, 50\n`;
   let at = null, retiredDuring = null;
   const out = await play(normalizeConfig({ budgets: { flower: { minMs: 150 } } }), [{ flower: slowFlower(1), bee: leaver() }], 200, async (garden) => {
     at = await midTurn(async (g) => { await g.setProgram(0, "flower", slowFlower(3), 2); retiredDuring = g.retiring.size; },
@@ -565,7 +565,7 @@ test("versions are pinned per turn: a flower swap reaches turns that start after
 });
 
 test("versions are pinned per turn: a bee swap takes over when the turn is settled; the old bee's feed counts, its queued challenge goes", async () => {
-  const slowFlower = `import time\ndef flower(c):\n    time.sleep(0.1)\n    return c, 50\n`;
+  const slowFlower = `import time\ndef flower(c):\n    while time.process_time() < 0.1:\n        pass\n    return c, 50\n`;
   const v1 = `def first():\n    return 100\ndef decide(c, r):\n    return "feed", 999\n`;
   const v2 = `def first():\n    return 5000\ndef decide(c, r):\n    return "leave", 5001\n`;
   const config = normalizeConfig({ feedCost: 3, budgets: { flower: { minMs: 150 } } });

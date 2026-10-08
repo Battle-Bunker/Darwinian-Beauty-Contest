@@ -76,7 +76,7 @@ test("every feed carries a grain of the answering version's minified code; leave
 });
 
 test("a grain comes from the flower version pinned to the turn, even when a new version goes live mid-turn", async () => {
-  const slow = (v) => `import time\ndef flower(c):\n    time.sleep(0.1)\n    return ${v}, 10\n`;
+  const slow = (v) => `import time\ndef flower(c):\n    while time.process_time() < 0.1:\n        pass\n    return ${v}, 10\n`;
   const v1 = (await size("python", slow(1))).minified, v2 = (await size("python", slow(2))).minified;
   const bee = `def first():\n    return 1\ndef decide(c, r):\n    return "feed", 1\n`;
   let swappedAt = null;

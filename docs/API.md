@@ -7,8 +7,8 @@ and so does lowercase). Pages live at `/room/<roomShortId>/game/<gameShortId>`.
 
 RULES.md has the game itself. In short: each team has one **flower** and one **bee**; every 200 ms round,
 each bee that isn't feeding takes one **turn**: the engine draws a flower at random (own included), the
-flower answers `[response, percent]` within 150 ms, and the bee decides `["feed" | "leave", next]` within
-50 ms; after a feed, the bee's optional `fed(nectar)` runs in the same program instance. Excess energy E = (flower size cap − flower size) × max(0, R − flower CPU ms) × (byte cap − response bytes), in node·ms·bytes, R the call's hidden time budget (3–150 ms by default) and the byte cap `maxResponseBytes` (1,024 by default); a feed pays
+flower answers `[response, percent]` within its R (at most 150 ms of CPU time), and the bee decides `["feed" | "leave", next]` within
+50 ms of CPU time; after a feed, the bee's optional `fed(nectar)` runs in the same program instance. Excess energy E = (flower size cap − flower size) × max(0, R − flower CPU ms) × (byte cap − response bytes), in node·ms·bytes, R the call's hidden time budget (3–150 ms by default) and the byte cap `maxResponseBytes` (1,024 by default); a feed pays
 nectar = percent/100 × E and pollen = the rest to the bee (pollen is what the flower wants carried); a
 turn without a feed pays
 nobody (its energy is lost). fitness = N² × pollination share × forage share, where pollination is Σ over bee
@@ -89,7 +89,7 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 - `budgets.flower.size` is also the size cap in the energy formula. Each flower call gets a hidden time
   budget **R**, drawn uniformly at random from `budgets.flower.minMs` to `budgets.flower.ms` (default 150).
   `minMs` defaults to 2% of `ms`, rounded, at least 1 (3 of 150); left out, it follows `ms`, and a value you set
-  is kept (never above `ms`). R is the call's hard time limit, the flower is told it as `GAME.ms`, and E counts down from
+  is kept (never above `ms`). R is the call's hard limit, in CPU time, the flower is told it as `GAME.ms`, and E counts down from
   R, so E = (size cap − size) × max(0, R − CPU ms) × (`maxResponseBytes` − response bytes), in node·ms·bytes
   (the last factor with `energy.bytes`; without it, node·ms). The response is still delivered at `flower.ms` (150)
   whatever R was, so timing hides R. R is the flower team's secret during play (`budgetMs` below).
@@ -97,10 +97,23 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 - `budgets.<kind>.perMinute`, `cap`: change budget earned per minute of game time, and the most that can be
   banked. A team's budget for a program at game time `t` is `min(cap, bank + perMinute × (t − atMs) / 60000)`,
   with `bank` and `atMs` from `teams[i].banks[kind]`. Writing programs in the lobby is free.
-- `ms`: the maximum time per call (wall clock; the engine runs at most one program per CPU core). A flower
-  that isn't done in its call's R (`minMs`..`ms`) answers null (E = 0). `bee.ms` is a deadline, not a cut-off: a late bee's call runs on
-  (up to 2 s), its turn is settled as not fed, and only a late `["leave", c]` queues `c`. A bee's `fed` is
-  stopped at `bee.ms`.
+- `ms`: the most CPU time per call, in ms. Every limit is CPU time, measured on the call's own thread clock
+  (`time.process_time()` in Python, `performance.cpuTime()` in TypeScript, both 0 as the call starts), so a busy
+  machine doesn't make a program late; it only stretches rounds in wall time. A flower is stopped once it has
+  used its call's R (`minMs`..`ms`) of CPU, and one that used more than R answers null (E = 0). `bee.ms` is a
+  deadline, not a cut-off: a bee over it is late, its call runs on (up to 2 s of CPU), its turn is settled as
+  not fed, and only a late `["leave", c]` queues `c`. A bee's `fed` is stopped at `bee.ms` of CPU. Sleeping
+  earns nothing: Python's `time.sleep` and TypeScript's `Atomics.wait` return at once.
+- **Wall-clock backstop and server faults.** A call that isn't computing (or is starved far beyond reason)
+  meets a wall-clock backstop: a flower still running after max(400, 2 × `flower.ms`) ms is stopped; a bee's
+  `first` or `decide` with no reply after max(250, 4 × `bee.ms`) ms is judged then and stopped after 4 s;
+  `fed` is stopped after that 250 ms. A call met by the backstop is late, unless the runner's
+  `/proc/<pid>/schedstat` shows it spent at least half that wall time runnable but waiting for a CPU: then it is
+  a **server fault** and the turn is **void**: no feed, no energy, the bee's challenge is asked again, and
+  nothing counts against the flower or the bee. A void turn is recorded as a `leave` with the reason in
+  `flowerError` or `beeError` (starting `server fault:`). Programs run on cores of their own (the
+  `dbc-runners` cpuset, cores 2–3 by default, `RUNNER_CPUS`; `RUNNER_CPUSET=off` to skip), and at most
+  `CPU_SLOTS` (default 2) run at once across the server.
 - `budgets.bee.memory` (default 50, 0 to 1,000,000): the most bytes a bee's `MEMORY` may hold. `MEMORY` is a
   key–value store (string keys; string, number, boolean or null values); its size is Σ over entries of
   (UTF-8 bytes of the key + UTF-8 bytes of the value's JSON text): `{"n": 7, "best": "a7"}` is 2 + 8 = 10.
@@ -219,7 +232,7 @@ A turn makes two actions: its **arrival**, written to the stream at once, and it
   "flowerError",                 // why the response is null (too slow for R, an error, a malformed return)
   "flowerVersion",               // also on arrive
   // the bee's team (everyone after finish):
-  "beeMs",                       // how long the bee took to decide
+  "beeMs",                       // the bee's CPU time to decide
   "beeError",                    // e.g. "too slow: no reply within 50 ms", a crash, a bad next challenge,
                                  // a MEMORY over its cap or of the wrong shape (the decision still counts;
                                  // the old memory is kept)
@@ -301,8 +314,8 @@ function fed(nectar: number): Challenge | void  // optional: may return the next
 
 Programs see only their arguments and `GAME` (`team`, `teams`, `feed_cost`, `challenge_type`,
 `response_type`, `max_len`, `max_nodes`, `max_response_bytes`, `round_ms`, `ms` (its own limit),
-`flower_ms` (150), `flower_size_cap`; a flower's `ms` is this call's hidden budget R (3–150 by default) and `size`
-its own; a bee's `ms` is 50 and it also gets `memory`, its memory cap): no
+`flower_ms` (150), `flower_size_cap`; a flower's `ms` is this call's hidden budget R (3–150 ms of CPU by default) and `size`
+its own; a bee's `ms` is 50 (ms of CPU) and it also gets `memory`, its memory cap): no
 history, no round or game time. Every flower call and every bee turn runs a fresh program, and its clock
 starts at 0 (Python's `time`, TypeScript's `Date`, `Intl` and `performance` read the time since the call
 started, as if it were 1970-01-01; RULES.md "The clock"). A bee also has **`MEMORY`**, a
@@ -310,7 +323,7 @@ key–value store (`{}` for a new version) that it changes in place or reassigns
 `decide` or `fed` that returns, the game saves it if it has the right shape and fits `memory` bytes (else
 it keeps the old one and records the error: on the turn's `beeError` for `decide`, and in the team's
 `memory.error`; the decision still counts). `fed(nectar)`, if defined, runs after a feed decided in time,
-in the same program instance as that `decide`, stopped at `bee.ms`. A valid challenge it returns replaces
+in the same program instance as that `decide`, stopped at `bee.ms` of CPU. A valid challenge it returns replaces
 the one `decide` queued; `None`/`null`/`undefined` keeps `decide`'s; anything else keeps it too and is
 reported to the team as a problem, as is a `fed` that crashes or is stopped (which also keeps the `MEMORY`
 saved after `decide`). With `feedCost` 0, a `fed` still running when the bee's next turn starts is too late:

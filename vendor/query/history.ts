@@ -40,19 +40,19 @@ export interface Turn {
   readonly pollen: number;
   /** the flower's CPU time for the call (ms) */
   readonly ms: number | null;
-  /** R: the call's hidden time budget (ms, uniform in minMs..ms): its hard limit, and E's ceiling */
+  /** R: the call's hidden time budget (ms of CPU time, uniform in minMs..ms): its hard limit, and E's ceiling */
   readonly budgetMs: number | null;
   /** the flower version that answered */
   readonly flowerVersion: number | null;
-  /** why the response is null (a timeout, an error, a malformed return) */
+  /** why the response is null (a timeout, an error, a malformed return); "server fault: ..." on a void turn */
   readonly flowerError: string | null;
-  /** how long the bee took to decide (ms; null if it was late) */
+  /** the bee's CPU time to decide (ms; null if it was late) */
   readonly beeMs: number | null;
   /** the bee version that decided */
   readonly beeVersion: number | null;
-  /** what went wrong with the bee's reply (late, a crash, a bad next challenge) */
+  /** what went wrong with the bee's reply (late, a crash, a bad next challenge); "server fault: ..." on a void turn */
   readonly beeError: string | null;
-  /** on a feed, the pollen grain: ⌊pollen^(1/3)⌋ characters of the answering flower version's minified code, from a random start, wrapping */
+  /** on a feed, the pollen grain: ⌊scale × pollen^exponent⌋ characters (⌊0.1 × pollen^(1/3)⌋ by default) of the answering flower version's minified code, from a random start, wrapping */
   readonly grain: string | null;
   /** the flower version the grain came from */
   readonly grainVersion: number | null;

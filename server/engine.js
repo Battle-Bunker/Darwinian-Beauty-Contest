@@ -48,7 +48,7 @@ import { ProgramProcess } from "./runners/proc.js";
 import { createHash, randomInt } from "node:crypto";
 import { checkValue, parseType } from "./lib/types.js";
 import { zeroLedger } from "./lib/scoring.js";
-import { KINDS, drawBudget, excessEnergy, limitsOf, responseLimits, roundMs } from "./lib/gameConfig.js";
+import { KINDS, drawBudget, excessEnergy, limitsOf, responseLimits, roundMs, wallLimits } from "./lib/gameConfig.js";
 import { size as measure } from "./lib/measure.js";
 
 export { KINDS };
@@ -98,31 +98,32 @@ const MAX_CHARS = 262144;
 // ledger, live feeds, queries); its whole text is stored apart and served by seq.
 export const INLINE_BYTES = 4096;
 const MAX_LOG = 2000; // characters of a bee's print output kept per action
-// A bee's 50 ms of CPU is a deadline, not an interruption: the call runs on, and only this hard limit (CPU
-// time too) stops it.
-const BEE_LIMIT_MS = 2000;
+// A bee's 50 ms of CPU is a deadline, not an interruption: the call runs on, and only its hard limit
+// (wallLimits(config).beeCpu, 2 s of CPU time) stops it.
 const flowerSetup = (config, team, teams, code, size) => ({
   code, ms: config.budgets.flower.ms, maxResponseBytes: config.maxResponseBytes,
-  wallMs: Math.max(FLOWER_WALL_MS, 2 * config.budgets.flower.ms), faultShare: FAULT_SHARE,
+  wallMs: wallLimits(config).flower, faultShare: wallLimits(config).faultShare,
   game: { ...gameInfo(config, team, teams), ms: config.budgets.flower.ms, size },
 });
-const beeSetup = (config, team, teams, code) => ({
-  code, ms: config.budgets.bee.ms, limitMs: Math.max(BEE_LIMIT_MS, 2 * config.budgets.bee.ms), maxChars: MAX_CHARS,
-  wallMs: Math.max(BEE_WALL_MS, 4 * config.budgets.bee.ms), hardWallMs: Math.max(BEE_HARD_WALL_MS, 2 * BEE_LIMIT_MS), faultShare: FAULT_SHARE,
-  game: { ...gameInfo(config, team, teams), ms: config.budgets.bee.ms, memory: config.budgets.bee.memory },
-});
+const beeSetup = (config, team, teams, code) => {
+  const w = wallLimits(config);
+  return {
+    code, ms: config.budgets.bee.ms, limitMs: w.beeCpu, maxChars: MAX_CHARS,
+    wallMs: w.bee, hardWallMs: w.beeHard, faultShare: w.faultShare,
+    game: { ...gameInfo(config, team, teams), ms: config.budgets.bee.ms, memory: config.budgets.bee.memory },
+  };
+};
 
 // Limits are CPU time, measured on each call's own thread clock (the runners: docs/research/compute-budgets/
 // REPORT.md), so a busy machine doesn't make a program late; it only stretches rounds in wall time. Runners
 // run on cores of their own (proc.js: the dbc-runners cpuset, 2 cores), and at most CPU_SLOTS programs run at
 // once across every game this process runs, so each has a core to itself and rounds stay close to real time.
 const CPU_SLOTS = Math.max(1, Number(process.env.CPU_SLOTS) || 2);
-// Wall-clock backstops (ms) for calls that aren't computing, or are starved far beyond reason. A flower still
-// going at FLOWER_WALL_MS is stopped. A bee's first or decide with no reply at BEE_WALL_MS is judged then (it
-// is told late once it has used its 50 ms of CPU anyway) and stopped at BEE_HARD_WALL_MS (or at its 2 s of
-// CPU); fed is stopped at BEE_WALL_MS. A call stopped or judged by a backstop is the server's fault, not the
-// program's, if it spent at least FAULT_SHARE of its wall time runnable but waiting for a CPU: its turn is void.
-export const FLOWER_WALL_MS = 400, BEE_WALL_MS = 250, BEE_HARD_WALL_MS = 4000, FAULT_SHARE = 0.5;
+// Wall-clock backstops for calls that aren't computing, or are starved far beyond reason: wallLimits(config)
+// (gameConfig.js). A flower still going at 400 ms is stopped. A bee's first or decide with no reply at 250 ms
+// is judged then (it is told late as soon as it has used its 50 ms of CPU anyway) and stopped at 4 s (or at
+// its 2 s of CPU); fed is stopped at 250 ms. A call stopped or judged by a backstop is the server's fault, not
+// the program's, if it spent at least half its wall time runnable but waiting for a CPU: its turn is void.
 let cpuBusy = 0;
 const cpuWaiters = [];
 async function withCpu(fn) {
@@ -313,7 +314,7 @@ export class Garden {
     this.roundMs = roundMs(config);
     this.windowMs = config.budgets.flower.ms; // the flower window: responses are delivered at its end
     this.beeMs = config.budgets.bee.ms;       // the bees' decision window: CPU time
-    this.beeWallMs = Math.max(BEE_WALL_MS, 4 * config.budgets.bee.ms); // when a decision with no reply is judged (wall)
+    this.beeWallMs = wallLimits(config).bee; // when a decision with no reply is judged (wall)
     this.paced = paced;
     this.game = game;
     this.memoryCap = config.budgets.bee.memory;
@@ -712,12 +713,14 @@ export class Garden {
       return this.#settle(t);
     }
     if (res === "fault") {
-      // The server's fault: void. Its reply, when it comes, still gives its next challenge (feed or leave).
+      // The server's fault: void. When its reply comes, its MEMORY is kept (a decide that returns saves it) and
+      // the bee asks the same challenge again.
       t.beeError = "server fault: the bee waited for a CPU most of its time; the turn is void";
+      t.energy = 0; // nothing given, and nothing lost
       logged(call.done.then(({ res: late }) => {
         if (call.gen !== b.gen || this.closed) return;
         b.busy = false;
-        this.#onVoided(b, late);
+        this.#onVoided(b, late, t.c);
       }));
       return this.#settle(t);
     }
@@ -732,16 +735,12 @@ export class Garden {
     return this.#settle(t);
   }
 
-  /** The reply of a decision whose turn was void (the server's fault): its MEMORY, and its next challenge if any. */
-  #onVoided(b, res) {
+  /** The reply of a decision whose turn was void (the server's fault): its MEMORY is kept, and c is asked again. */
+  #onVoided(b, res, c) {
     this.#keepLog(b, res.out);
     this.#saveMemory(b, res);
-    const a = res.a;
-    if (!res.e && Array.isArray(a) && a.length === 2 && (a[0] === "feed" || a[0] === "leave") && !checkValue(this.cType, a[1], this.limits, "challenge")) {
-      b.queued = { c: a[1] };
-      return;
-    }
-    if (!res.dead) this.#askFirst(b);
+    if (res.dead) return;
+    if (!b.queued) b.queued = { c };
   }
 
   /** A reply in time: the feed or leave counts; a usable next challenge is queued. */

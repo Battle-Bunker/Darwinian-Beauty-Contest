@@ -105,5 +105,7 @@ nsjail, or a WASM interpreter).
 | `PORT` | `3000` |
 | `AUTH_PROVIDER` | `dev` |
 | `COOKIE_SECURE` | unset (set `1` behind https) |
-| `CPU_SLOTS` | CPU cores: at most this many programs run at once in a server process, so time limits stay fair (rounds take longer in wall time if a round needs more) |
+| `CPU_SLOTS` | `2`: at most this many programs run at once in a server process, one per runner core (time limits are CPU time; rounds take longer in wall time if a round needs more) |
+| `RUNNER_CPUS` | `2-3`: the cores of the `dbc-runners` cpuset (cgroup v1, `/sys/fs/cgroup/cpuset`) every runner process joins after setup, so the server and Postgres keep the others. If it can't be created the server logs once and carries on |
+| `RUNNER_CPUSET` | unset. `off`: don't put runners in a cpuset |
 | `DEV_LOGIN_SECRET` | unset. When set, the dev name login also requires `{"secret"}` (for arena servers where AI teams must not sign in as each other) |

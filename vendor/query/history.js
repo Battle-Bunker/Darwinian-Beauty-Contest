@@ -43,19 +43,19 @@ var DbcHistory = (function () {
                           
                                                 
                              
-                                                                                                     
+                                                                                                                 
                                    
                                          
                                         
-                                                                           
+                                                                                                               
                                       
-                                                                  
+                                                               
                                 
                                      
                                      
-                                                                                   
+                                                                                                                       
                                    
-                                                                                                                                              
+                                                                                                                                                                                           
                                 
                                                
                                        

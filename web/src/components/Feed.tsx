@@ -16,6 +16,8 @@ import { Alert } from "./ui";
 
 /** A bee that didn't decide within its time (its turn is settled as a leave, and it can't have fed). */
 export const isTooSlow = (a: Action) => !!a.beeError && /too slow|no reply|late/i.test(a.beeError);
+/** A turn voided for a server fault (a call that spent most of its wall time waiting for a CPU): nobody is charged. */
+export const isVoid = (a: Action) => /^server fault/.test(a.flowerError ?? "") || /^server fault/.test(a.beeError ?? "");
 
 interface Filters { bee: string; flower: string; fed: boolean; mine: boolean; arrivals: boolean; prints: boolean; problems: boolean }
 const NONE: Filters = { bee: "", flower: "", fed: false, mine: false, arrivals: false, prints: false, problems: false };
@@ -139,6 +141,7 @@ export const FeedRow = memo(function FeedRow({ a, teams, myTeamId, tenths = true
   fedRuns?: boolean;
 }) {
   const slow = isTooSlow(a);
+  const voided = isVoid(a);
   const isFed = a.action === "feed";
   const resp = partsOfAction(a);
   const failed = a.action !== "arrive" && (noResponse(resp) || !!a.flowerError);
@@ -163,7 +166,9 @@ export const FeedRow = memo(function FeedRow({ a, teams, myTeamId, tenths = true
           </span>
         )}
         {isFed && <span className="ok-text nowrap"><DropIcon size={15} /> fed{typeof a.nectar === "number" && <>: <b title={fmtEExact(a.nectar)}>{fmtE(a.nectar)}</b> nectar</>}</span>}
-        {a.action === "leave" && <span className="muted">left</span>}
+        {a.action === "leave" && (voided
+          ? <span className="muted" title="A call spent most of its wall time waiting for a CPU: the server's fault, so the turn is void. Nothing was given, nobody is charged, and the bee asks the same challenge again.">void (server fault)</span>
+          : <span className="muted">left</span>)}
         {isFed && typeof a.grain === "string" && <GrainChip grain={a.grain} version={a.grainVersion} length={a.grainCodeLength} />}
         {isFed && fedRuns && <span className="fed-ran" title="The bee defines fed(): it ran after this feed, in the same program instance as the decision, and MEMORY was saved after it; a challenge it returned is played next instead of decide's. What it printed shows with the next turn.">then fed({typeof a.nectar === "number" ? fmtE(a.nectar) : "nectar"})</span>}
         {a.action !== "arrive" && hasE && (

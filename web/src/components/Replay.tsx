@@ -203,7 +203,7 @@ function RoundInspector({ index, round, roundMs, teams, mine, focus, rev, base }
               <tr>
                 <th className="left">Bee → flower</th><th className="left">Challenge → response</th><th className="left">Decision</th>
                 <th title="Share of E offered">%</th><th title={`Excess energy, ${getEnergyUnit()}`}>E</th><th>Nectar</th><th>Pollen</th><th title="Energy lost: the bee didn't feed">Lost</th>
-                {hasR && <th title="The flower call's hidden time budget R">R</th>}<th title="The flower's CPU time">Flower ms</th><th title="How long the bee took to decide">Bee ms</th><th className="left">Versions</th>
+                {hasR && <th title="The flower call's hidden time budget R">R</th>}<th title="The flower's CPU time">Flower ms</th><th title="The bee's CPU time to decide">Bee ms</th><th className="left">Versions</th>
               </tr>
             </thead>
             <tbody>
