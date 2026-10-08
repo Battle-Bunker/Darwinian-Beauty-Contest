@@ -232,6 +232,9 @@ ${personaAndSituation(persona, fixed, { simpleCode })}
   output is its log).
 - Scripts you run in a session (the Bash tool's run_in_background option, output to a file in your workspace) are stopped
   when that session ends; only the scaffold outlives sessions.
+- To wait, sleep: \`time.sleep(s)\` (in a scaffold also \`garden.wait_for_budget(kind, cost)\` and \`follow()\`, which block
+  without using the CPU). Never spin in a loop until a clock says so: this machine also runs the game's programs, whose time
+  limits are wall clock, so a busy loop makes other teams' flowers late.
 - What everyone sees, the moment it happens: every arrival (whose bee at whose species), challenge, response and feed; on a
   feed, its percent, energy, nectar and pollen; the nectar and pollen ledgers and the live scoreboard. Private to the
   flower's team during play: the percent and energy of turns without a feed, and the flower's compute time on every turn.
@@ -259,6 +262,8 @@ ${roleText(role, { common: commonScope === "role" ? common : null, brief: roleBr
   and to post history queries to its query endpoints. Do not log in as anyone, send credentials, try to read other teams'
   private data, or try to change any bee's MEMORY.
 - Do not print or inspect environment variables.
+Also fair play, though only warned about (the runner tells you and logs it): burning CPU outside your own programs, such as a
+busy-wait loop.
 
 # The rules (also in RULES.md)
 ${rules()}

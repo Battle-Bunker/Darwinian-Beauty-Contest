@@ -13,7 +13,7 @@ import { gameBrief, interviewPrompt, interviewSystem, lobbyBrief, mmss, rFloor, 
 import { Broker } from "./broker.js";
 import { Scaffold } from "./scaffold.js";
 import { definesFed } from "./mechanisms.js";
-import { TRANSCRIPTS, audit, collect, commonFiles, extOf, killLeftovers, prepareWorkspace, recordViolations, spillDir, writeMinified } from "./workspace.js";
+import { SPIN_WARNING, TRANSCRIPTS, audit, collect, commonFiles, extOf, killLeftovers, prepareWorkspace, recordViolations, spillDir, writeMinified } from "./workspace.js";
 
 const KINDS = ["flower", "bee"];
 const n0 = (x) => Math.floor(x).toLocaleString("en-US");
@@ -167,9 +167,21 @@ export function statusOf(view, teamId, { afford = null, code = false, memory = f
 
 /**
  * The handler for one team session's requests. ctx: { api, tok, gPath, config, teamId, gate() -> refusal|null,
- * record(row) }. Results carry `text` (what the tool prints) plus the structured fields.
+ * notice() -> text|null (a fair-play warning for the session, added to what its next tool prints), record(row) }.
+ * Results carry `text` (what the tool prints) plus the structured fields.
  */
 export function requestHandler(ctx) {
+  const { notice: noticeOf = () => null, sourceOf = () => "session" } = ctx;
+  const handle = handlerOf(ctx);
+  return async (req) => {
+    const res = await handle(req);
+    const note = sourceOf(req) === "session" ? noticeOf() : null;
+    if (note && res && typeof res === "object") { res.notice = note; res.text = `${res.text ? `${res.text}\n\n` : ""}${note}`; }
+    return res;
+  };
+}
+
+function handlerOf(ctx) {
   const { api = Api, tok, gPath, config, teamId, gate: gateOf = () => null, record: recordRow = async () => {}, dir = null,
     sourceOf = () => "session", scaffoldOp = null } = ctx;
   // The workspace's flower file, for testing a bee before a flower is submitted.
@@ -345,6 +357,7 @@ export class TeamDesk {
       api: this.api, tok: this.tok, gPath: this.gPath, config: this.config, teamId: this.entry.team_id, dir: this.dir,
       sourceOf: (req) => (this.scaffold.owns(req.scaffold) ? "scaffold" : this.session ? "session" : null),
       gate: (op, source) => (source === "session" ? this.session?.gate(op) ?? null : null),
+      notice: () => this.session?.notice?.() ?? null,
       record: (row) => this.record(row),
       scaffoldOp: (req) => this.scaffoldOp(req),
     }) }).start();
@@ -432,7 +445,18 @@ export async function runTeamSession({ desk, arena, gameRow, persona, entry, gPa
     control.kill?.("violation");
     return `fair-play violation (${violated}): this session is over`;
   };
-  const session = { id: sessionId, no: sessionNo, gate, requests: 0, submitted: [] };
+  // Fair-play warnings that don't stop the session (a busy-wait burning a core): told to it once, with its next tool's
+  // output, and logged.
+  const warned = new Set();
+  const notice = () => {
+    const fresh = audit(control.lines || [], dir, arena.id, persona.slug, { port }).filter((f) => f.severity === "warning" && SPIN_WARNING.test(f.detail) && !warned.has(f.detail));
+    if (!fresh.length) return null;
+    for (const f of fresh) warned.add(f.detail);
+    log(`  ${persona.name}: fair-play warning in session ${sessionNo}: ${fresh[0].detail.slice(0, 160)}`);
+    return `Fair play (a warning from the runner): ${fresh[0].detail.split(":")[0]}. A busy-wait or a deliberate CPU burn takes a core from ` +
+      `the game's programs, whose time limits are wall clock. To wait, use time.sleep() (or garden.wait_for_budget in a scaffold).`;
+  };
+  const session = { id: sessionId, no: sessionNo, gate, notice, requests: 0, submitted: [] };
   desk.session = session;
   let s;
   try {

@@ -206,7 +206,9 @@ changed from `adapt`:
 Veterans start exactly as in `adapt`: carried over from fen and kiln, not from `mesa-a`. The fair-play audit no longer
 stops a session for a path into the arena's folder that names nothing there (Mallory lost a session in `mesa-a` for
 `cd <arena>/tools`): that is a warning; another team's folder, the runner's files, a glob over the arena, the arena's
-folder itself and anything outside the arena stay violations. `adapt.js --arena mesa-b` adds the honest flowers' CPU
+folder itself and anything outside the arena stay violations. A busy-wait or a deliberate CPU burn outside a team's own
+programs (Tobi spun 150 s as a sleep in `mesa-a` game 4; Ada 40 s in `kiln-a`) is a fair-play warning: the session is
+told with its next tool's output, the runner logs it, and every session's system prompt says to wait with `time.sleep()`. `adapt.js --arena mesa-b` adds the honest flowers' CPU
 conformance (CPU ms ÷ R, the share within 55–65%), each change of an honest flower timed against the defectors'
 imitations before it, and a side-by-side with `mesa-a` (the agents' sessions, turns, output tokens and spend per game,
 and each role's headline measures). `adapt-hi-dry` is its capacity check (stub honest flowers at 0.6 × R, R from 3 ms).

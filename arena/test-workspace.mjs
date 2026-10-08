@@ -327,6 +327,16 @@ check("audit: the same shapes into another team's folder or outside the arena ar
   sev(bash(`cd ${A}/tess && cat flower.py`)) === "violation" && sev(bash("cat ../tess/flower.py")) === "violation" && sev(bash("cat /home/user/nowhere/x")) === "violation"
   && sev(["Read", { file_path: `${A}/tess/flower.py` }]) === "violation" && sev(["Glob", { pattern: "../*/flower.py" }]) === "violation"
   && stops(bash(`cd ${A}/tess && cat flower.py`)).length > 0);
+// mesa-a game 4: Tobi's session busy-waited for 150 s (a sleep substitute), taking a core from the garden's flowers. A
+// busy-wait or a deliberate CPU burn outside the team's programs is a warning (told to the session, logged), never a stop;
+// sleeping is fine, and so is a busy loop in its own flower (its work, timed against its R).
+const spins = (...tools) => audit(tr(...tools), dir, AID, "luna", { port: 4100 }).filter((f) => /^busy-wait/.test(f.detail));
+check("audit: a busy-wait in a command or a script is a warning, never a stop; sleeping and the team's own flower are fine",
+  spins(bash(`python3 -c "\nimport time\nt=time.time()\nwhile time.time()-t<150: pass\n"`)).length === 1 && stops(bash(`python3 -c "import time; t=time.time(); while time.time()-t<150: pass"`)).length === 0
+  && spins(writePy("import time\nend = time.perf_counter() + 30\nwhile time.perf_counter() < end:\n    pass\n")).length === 1 && spins(bash("while true; do :; done")).length === 1
+  && spins(writePy("for i in range(10**9):\n    pass\n")).length === 1 && spins(bash(`python3 -c "import time; time.sleep(30)"`)).length === 0
+  && spins(["Write", { file_path: path.join(dir, "flower.py"), content: "import time\ndef flower(c):\n    t = time.process_time()\n    while time.process_time() - t < 0.05:\n        pass\n    return 1, 50\n" }]).length === 0
+  && spins(writePy("while time.time() < end:\n    x = step(x)\n")).length === 0);
 { // Under a folder called arena-ws (as /home/user/arena-ws/<arena>/<team> is), where every path naming arena-ws/ is judged.
   const W = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "aw-")), "arena-ws", "AR");
   for (const t of ["luna", "tess", "luna-2", ".runner/g1"]) fs.mkdirSync(path.join(W, t), { recursive: true });

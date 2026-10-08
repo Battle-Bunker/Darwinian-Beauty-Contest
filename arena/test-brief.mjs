@@ -105,6 +105,9 @@ const hiFixed = toolSystem(persona, config, "/w", { apiBase, teams: 14, fixed: t
 check("adapt-hi: no steer toward simple code (with fixed teams the interview is only described); other arenas keep it",
   !/smart kid|obscure techniques|aged 10-14|understand it/.test(hiFixed) && /Nothing in this\s+tournament depends on those scores/.test(hiFixed)
   && /Clever ideas a smart kid can follow beat obscure techniques/.test(toolSystem(persona, config, "/w", { apiBase, teams: 14, fixed: true })), hiFixed.slice(0, 1500));
+check("system: wait by sleeping, never spin (a busy loop makes other teams' flowers late); a warned-about fair-play matter",
+  /To wait, sleep: `time\.sleep\(s\)`/.test(sysVet) && /garden\.wait_for_budget/.test(sysVet) && /Never spin in a loop/.test(sysVet) && /other teams' flowers late/.test(sysVet)
+  && /only warned about.*\n?.*busy-wait loop/.test(sysVet));
 check("adapt-hi lobby: its wall time, and what the team can study (the revealed earlier games, room queries)", /about 10 minutes of wall time/.test(hiLobby)
   && /previous-games\//.test(hiLobby) && /tools\/query\.py --room/.test(hiLobby), hiLobby);
 const startLobby = lobbyBrief({ config, teamName: "Wildmeadow Commons", generation: 1, maxTurns: 100, carried: true, started: ["bee"], brevity: false, minutes: 10 });
