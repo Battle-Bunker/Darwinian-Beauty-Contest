@@ -83,7 +83,7 @@ test("the team ledger over the API: the viewer's own view during play, every fie
   const t = turnOf(leave, idx, opts);
   const priv = { ms: null, budgetMs: null, flowerVersion: null, flowerError: null, beeMs: null, beeVersion: null, beeError: null, grain: null, grainVersion: null, grainCodeLength: null };
   const pub = { game: "g", seq: 9, round: 3, atMs: 400, turn: 2, bee: 0, flower: 1, challenge: 5, response: 7, responseBytes: 1, responseHash: null,
-    fed: false, percent: null, energy: null, nectar: null, pollen: 0, ...priv };
+    fed: false, percent: null, energy: null, nectar: null, price: null, net: null, pollen: 0, ...priv };
   assert.deepEqual(mask("turns", t, 2), pub);
   assert.deepEqual(mask("turns", t, null), pub, "a spectator gets the public fields");
   assert.deepEqual(mask("turns", t, 1), { ...pub, percent: 60, energy: 800, ms: 12.5, budgetMs: 97.25, flowerVersion: 4 });
@@ -91,7 +91,9 @@ test("the team ledger over the API: the viewer's own view during play, every fie
   assert.deepEqual(mask("turns", t, 2, { over: true }), { ...pub, percent: 60, energy: 800, ms: 12.5, budgetMs: 97.25, flowerVersion: 4, beeMs: 3.25, beeVersion: 2 },
     "after the game: everything");
   const fed = turnOf(row({}), idx, opts);
-  assert.deepEqual(mask("turns", fed, 2), { ...pub, fed: true, percent: 25, energy: 1000, nectar: 250, pollen: 750 });
+  assert.deepEqual(mask("turns", fed, 2), { ...pub, fed: true, percent: 25, energy: 1000, nectar: 250, price: 0, net: 250, pollen: 750 }, "(a game without a feed price: 0)");
+  const priced = turnOf(row({ price: 400 }), idx, opts);
+  assert.deepEqual([priced.nectar, priced.price, priced.net], [250, 400, -150], "a feed price: the net can be negative");
   // A response over 4 KB: no value, its size and hash (public).
   const big = turnOf(row({ r: null, r_bytes: 9000, r_hash: "ab12", r_preview: "[1,2" }), idx, opts);
   assert.deepEqual([big.response, big.responseBytes, big.responseHash], [null, 9000, "ab12"]);

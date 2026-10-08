@@ -3,11 +3,13 @@
 // (a persona from an earlier arena: same prompt and team name, plus its last notebook). Models: opus, sonnet, haiku
 // (never a Fable model).
 // Config keys left out take the server's defaults (server/lib/gameConfig.js): 2-minute games, a feeding bee's rounds out
-// (now 20; 10 before), change budgets of one minute's worth, a 50-byte bee MEMORY, the R floor (now 2% of ms; 50 ms
+// (now 0; 20, then 10, before), change budgets of one minute's worth, a 50-byte bee MEMORY, the R floor (now 2% of ms; 50 ms
 // before), the score exponents (now 0.85; √ before), the response cap and the energy formula (now 1,024 bytes with the
-// byte factor; 64 KiB without it before). Every preset up to adapt sets maxResponseBytes, grains, pollenGrain and the
-// flower's budget range (MAX_RESPONSE_BYTES, GRAINS, POLLEN_GRAIN, FLOWER_MIN_MS, FLOWER_MAX_MS: 64 KiB and R from 50 to
-// 150 ms); adapt-hi takes all of the engine's new defaults (HI_CONFIG) and checks them (HI_EXPECT).
+// byte factor; 64 KiB without it before), and since metagame v2 prevalence on both sides with the F × B score, a feed
+// price of 0.05 × Emax and a 150 ms flower window (none of them before): a preset that leaves those keys out plays v2's
+// rules on a v2 engine. Every preset up to adapt sets maxResponseBytes, grains, pollenGrain and the flower's budget range
+// (MAX_RESPONSE_BYTES, GRAINS, POLLEN_GRAIN, FLOWER_MIN_MS, FLOWER_MAX_MS: 64 KiB and R from 50 to 150 ms); adapt-hi took
+// the engine's defaults of its day (HI_CONFIG) and checks them (HI_EXPECT); coop-eq sets v2's rules and checks them all.
 //
 //   minutesByGame  game N lasts minutesByGame[N-1] minutes (the last entry repeats); else config.minutes
 //   session        warmupSeconds: the first in-game sessions start this long before the game does;
@@ -91,7 +93,9 @@ const ADAPT_HI_LINEUP = [
 // score exponents; energy with the byte factor and a 1,024-byte response cap; pollen grains of ⌊0.1 × pollen^(1/3)⌋
 // characters, about their old length now that E is in node·ms·bytes), so none of them is set here.
 const HI_CONFIG = { language: "python", challengeType: "int", responseType: "graph[any]", grains: GRAINS, budgets: { flower: { ms: FLOWER_MAX_MS } } };
-// ...and checked on the first game, before any session (an old server would play the old rules).
+// ...and checked on the first game, before any session (an old server would play the old rules). On a metagame v2 engine
+// the check fails (feedCost 0, not 20; minMs 3 holds) and "prevalence.on" would be v2's two-sided prevalence with a feed
+// price: adapt-hi as it ran needs its rules set here first.
 const HI_EXPECT = { "budgets.flower.minMs": 3, feedCost: 20, "scoring.alpha": 0.85, "scoring.beta": 0.85, maxResponseBytes: 1024, "energy.bytes": true,
   "pollenGrain.scale": 0.1, "prevalence.on": true };
 
@@ -106,16 +110,21 @@ const COOP_LINEUP = [
   ["rex", "opus", { role: "defector", brief: "pinned" }],
   ["from:fen-a/priya", "opus", HI_KID], ["from:fen-d/mallory", "opus", VETERAN],
 ];
-// coop-eq's rules: the flower window 50 ms (R from 1 to 50), change budgets of 1 node a second for flowers (banking 300)
-// and 10 for bees (3,000); the rest is the engine's (prevalence on both sides with a 90 s half-life, ⌈N/4⌉ bees a round,
-// a feed price of about 5% of the most E and no rounds out, the time-average of F × B as the score), required by
-// COOP_EXPECT. Its keys for the new rules are PROVISIONAL until the engine reports them (lib/prevalence.js coopRules).
-const COOP_CONFIG = { language: "python", challengeType: "int", responseType: "graph[any]", grains: GRAINS,
-  budgets: { flower: { ms: 50, minMs: 1, perMinute: 60, cap: 300 }, bee: { perMinute: 600, cap: 3000 } } };
-const COOP_EXPECT = { ...HI_EXPECT, "budgets.flower.minMs": 1, "budgets.flower.ms": 50, "budgets.flower.perMinute": 60, "budgets.flower.cap": 300,
-  "budgets.bee.perMinute": 600, "budgets.bee.cap": 3000, "prevalence.halfLifeS": 90, feedCost: 0,
-  // PROVISIONAL (the engine's coop rules): bee prevalence on, a feed price, the time-averaged F × B score
-  "prevalence.bees.on": true, "feedPrice.share": 0.05, "scoring.mode": "prevalence" };
+// coop-eq's rules, the engine's metagame v2 (server/lib/gameConfig.js; lib/prevalence.js reads them for the briefs and the
+// analysis), all set here and checked on the game by COOP_EXPECT: prevalence on both sides (each round ⌈0.25 × N⌉ bees
+// drawn by bee success, each visiting a species drawn by flower success; a 90 s half-life, c from 1 to 0.1, capped at 4,
+// every ledger cell's prior 0.12 × Emax), the score the time-average of F × B; a feed price of 0.05 × Emax (feedPrice
+// null: 2,816,000 node·ms·bytes) out of the bee's nectar and no rounds out; responses delivered at 150 ms (rounds stay
+// 200 ms) while R runs from 1 to 50 ms; change budgets of 1 node a second for flowers (banking 300) and 10 for bees
+// (3,000); E with the byte factor, a 1,024-byte response cap, exponents 0.85.
+const COOP_RULES = { feedCost: 0, flowerWindowMs: 150, feedPrice: null, maxResponseBytes: 1024, energy: { bytes: true },
+  scoring: { alpha: 0.85, beta: 0.85 }, prevalence: { on: true, halfLifeS: 90, cStart: 1, cEnd: 0.1, cap: 4, slots: 0.25, prior: null },
+  budgets: { flower: { size: 1100, perMinute: 60, cap: 300, ms: 50, minMs: 1 }, bee: { size: 11000, perMinute: 600, cap: 3000, ms: 50, memory: 50 } } };
+const COOP_CONFIG = { language: "python", challengeType: "int", responseType: "graph[any]", grains: GRAINS, ...COOP_RULES };
+/** { "a.b": value } for every leaf of an object (the keys expectConfig checks). */
+const leaves = (o, at = "") => Object.entries(o).flatMap(([k, v]) => (v && typeof v === "object" ? leaves(v, `${at}${k}.`) : [[`${at}${k}`, v]]));
+// ...every one of them checked on the game (an engine without v2 would drop or default some), with the grain scale.
+const COOP_EXPECT = { ...Object.fromEntries(leaves(COOP_RULES)), "pollenGrain.scale": 0.1 };
 
 export const DEFAULT_SESSION = { warmupSeconds: 8, gapSeconds: 5, maxIdleGapSeconds: 20, endMarginSeconds: 10, maxMinutes: 6 };
 

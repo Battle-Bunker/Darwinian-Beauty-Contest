@@ -10,6 +10,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Garden, canonicalJson, memoryShapeError, memorySize, tryBee } from "../server/engine.js";
 import { play } from "./fixtures/garden.js";
+import { classic } from "./fixtures/classic.js";
 import { normalizeConfig } from "../server/lib/gameConfig.js";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -312,7 +313,7 @@ test("a stateless bee call fits easily in 50 ms: Python forks, TypeScript gets a
     const bee = language === "python"
       ? `import hashlib\ndef first():\n    return 1\ndef decide(c, r):\n    h = hashlib.sha256(str(r).encode()).hexdigest()\n    MEMORY["h"] = h[:8]\n    MEMORY["n"] = MEMORY.get("n", 0) + 1\n    return "leave", c + 1\n`
       : `function first() { return 1; }\nfunction decide(c: number, r: any): ["leave", number] { let h = 0; for (const ch of String(r)) h = (h * 31 + ch.charCodeAt(0)) | 0; MEMORY.h = h; MEMORY.n = (MEMORY.n ?? 0) + 1; return ["leave", c + 1]; }`;
-    const config = normalizeConfig({ language });
+    const config = classic({ language }); // (every bee every round)
     const garden = new Garden({ config, teams: 8, endMs: Infinity, maxRounds: 40, paced: false, game: "g" });
     for (let ti = 0; ti < 8; ti++) {
       await garden.setProgram(ti, "flower", language === "python" ? flower : tsFlower, 1);

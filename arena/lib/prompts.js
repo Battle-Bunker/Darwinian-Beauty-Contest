@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { ARENA_DIR } from "./db.js";
 import { byteCap, bytesInEnergy, bytesTerm } from "./energy.js";
-import { coopRules, prevalenceOf, prevalenceText } from "./prevalence.js";
+import { coopRules, prevalenceOf, prevalenceText, priceText } from "./prevalence.js";
 
 // Read fresh for every prompt: RULES.md is the players' document and may be edited while arenas run.
 export const rules = () => fs.readFileSync(path.join(ARENA_DIR, "..", "RULES.md"), "utf8");
@@ -18,7 +18,7 @@ const n0 = (x) => Math.floor(x).toLocaleString("en-US");
 export const durationText = (minutes) => minutes < 1 ? `${Math.round(minutes * 60)} seconds` : minutes === 1 ? "1 minute" : `${+minutes.toFixed(2)} minutes`;
 
 /** The floor of a flower call's hidden budget R: the game's own (budgets.flower.minMs), else the engine's default, 2% of
- * the most R can be (3 ms of 150). */
+ * the most R can be, at least 1 ms (1 ms of 50, 3 of 150). */
 export const rFloor = (config) => { const fl = config?.budgets?.flower || {}; return fl.minMs ?? Math.max(1, Math.round(0.02 * (fl.ms ?? 150))); };
 /** The score exponents (config.scoring): forage sums nectar^alpha over species, pollination pollen^beta over bee teams.
  * A game stored without them is from before they existed and was scored with square roots (0.5), as the server has it. */
@@ -29,21 +29,23 @@ export const sizeText = () => `Size is measured in nodes of your program's synta
 export const changeText = () => `A change costs the node edits that turn the version playing now into the new one (inserting or deleting a ` +
   `node costs its size, a changed literal the bytes that change; renames, comments and spacing are free).`;
 
-/** How a turn works, in short; RULES.md has the official wording. Every time limit is public. */
-export function timingText(config) {
-  const b = config.budgets, fl = b.flower, bee = b.bee, minR = rFloor(config), co = coopRules(config);
-  // (a feed's cost: rounds out, or (coop-eq) a price in nectar; PROVISIONAL keys, lib/prevalence.js coopRules)
+/** How a turn works, in short; RULES.md has the official wording. Every time limit is public. n: the number of teams (for
+ * the bees drawn each round in a game with prevalence). The round, the flower window, the feed price and prevalence come
+ * from the game's config (lib/prevalence.js coopRules; a config from before them plays the old way). */
+export function timingText(config, n = null) {
+  const b = config.budgets, fl = b.flower, bee = b.bee, minR = rFloor(config), co = coopRules(config, n);
   const feedText = config.feedCost > 0 ? `A feed takes the bee\n  out for ${config.feedCost} rounds.` : `A feed doesn't take the bee out of play.`;
-  const priceText = !co.price ? "" : `\n  A feed costs the bee a price in nectar (${co.price.share != null ? `${+(co.price.share * 100).toFixed(1)}% of the most excess energy a flower can make` : n0(co.price.amount)}): a
-  feed that brings in less nectar than its price is a loss.`;
-  return `- Rounds of 200 ms of game time: a ${durationText(config.minutes)} game is about ${Math.round((config.minutes * 60000) / 200)} rounds. ${co.bees
-    ? `Each round ${co.perRound} bees\n  are drawn by bee prevalence (below), and each takes one turn.` : "Every bee that isn't feeding gets\n  one turn per round, all bees in lockstep."}
+  const price = co.price > 0 ? `\n  A feed costs the bee a price of ${priceText(config)} (GAME["feed_price"]), out of its nectar: its net nectar
+  is nectar − price, which can be negative.` : "";
+  const windowKey = config.flowerWindowMs != null ? ` (GAME["flower_window_ms"])` : "";
+  return `- Rounds of ${co.roundMs} ms of game time: a ${durationText(config.minutes)} game is about ${Math.round((config.minutes * 60000) / co.roundMs)} rounds. ${co.on
+    ? `Each round ${co.perRound ? `${co.perRound} of the ${n} bees` : `⌈${co.slots} × N⌉ of the N bees`}\n  are drawn by bee success (below), and each takes one turn.` : "Every bee that isn't feeding gets\n  one turn per round, all bees in lockstep."}
 - Each team's flower program is its flower species. A turn: the bee's queued challenge goes to one flower of a species
-  drawn ${prevalenceOf(config) ? "by prevalence (below)" : "at random"} from all species (yours included); that flower call gets a hidden time budget R, drawn uniformly from
+  drawn ${co.on ? "by prevalence (below)" : "at random"} from all species (yours included); that flower call gets a hidden time budget R, drawn uniformly from
   ${minR} to ${fl.ms} ms afresh for every call: its hard limit to return [response, percent], in CPU time from the start of
   the call (the flower is told its R as GAME["ms"]; GAME["flower_ms"] is ${fl.ms}).
-  The response reaches the bee at ${fl.ms} ms whatever R and the flower's speed, and the bee is never told R; the bee has
-  ${bee.ms} ms of CPU time to return ["feed" or "leave", next challenge]. Neither is told whose the other is. ${feedText}${priceText}
+  The response reaches the bee at ${co.windowMs} ms${windowKey} whatever R and the flower's speed, and the bee is never told R; the bee has
+  ${bee.ms} ms of CPU time to return ["feed" or "leave", next challenge]. Neither is told whose the other is. ${feedText}${price}
 - Time limits are CPU time: a program measures its own with time.process_time(). A wall-clock backstop also stops a call
   that runs far longer in real time (RULES.md has its thresholds), and a call the server itself starved of CPU is voided
   and counts against no one. time.sleep() does nothing in programs.
@@ -51,7 +53,7 @@ export function timingText(config) {
   E = (${n0(fl.size)} − flower size) × max(0, R − the flower's CPU ms)${bytesTerm(config)}${bytesInEnergy(config) ? ", in node·ms·bytes" : ""}.${bytesInEnergy(config)
     ? `\n  A response's bytes are its JSON text's, at most ${n0(byteCap(config))}: a bigger one is refused (E = 0).` : ""} If the bee
   feeds, the flower gives it percent/100 × E as nectar and the rest as pollen. If it doesn't feed, that energy is lost.
-${prevalenceText(config) ? `${prevalenceText(config)}\n` : ""}- Programs run fresh for every call: flower(challenge), first(), decide(challenge, response), and the bee's optional
+${prevalenceText(config, n) ? `${prevalenceText(config, n)}\n` : ""}- Programs run fresh for every call: flower(challenge), first(), decide(challenge, response), and the bee's optional
   fed(nectar), which runs after a feed decided in time, in the same instance as that decide. Programs see only their
   arguments and GAME (the settings and their team's index): no history, no round or game time. A program's clock reads 0
   when each call starts (as if it were 1970-01-01, then at real speed): it can time its own work, nothing more. The bee
@@ -79,7 +81,7 @@ export function settingsText(config, teams) {
   const b = config.budgets;
   return `- ${teams} teams: ${teams} flower species and ${teams} bees. The game lasts ${durationText(config.minutes)} of game time.
 - Challenges are ${config.challengeType}, responses are ${config.responseType} (interface.txt). Language: ${config.language}.
-${timingText(config)}
+${timingText(config, teams)}
 - Budgets (nodes; time per call in ms; a flower's is its call's hidden R):
 
 | program | size | change budget earned per minute | most it can bank | time per call |
@@ -90,10 +92,14 @@ ${KINDS.map((k) => `| ${k} | ${n0(b[k].size)} | ${n0(b[k].perMinute)} | ${n0(b[k
   ${n0(b.bee.memory ?? 50)} bytes. A response may be at most ${n0(config.maxResponseBytes ?? 65536)} bytes of JSON.${exponentsText(config)}`;
 }
 /** The score exponents, when the game sets them (games before they were configurable used square roots, and their
- * briefs don't mention them). */
+ * briefs don't mention them); with prevalence, the score is F × B's time-average (prevalenceText) and the exponents are
+ * in F and B. */
 function exponentsText(config) {
   if (config?.scoring?.alpha == null) return "";
   const { alpha, beta } = scoreExponents(config);
+  if (prevalenceOf(config)) return `\n  Scores: your fitness is the time-average of F × B (above). The scoreboard also shows, over the whole game, each team's
+  pollination (pollen^${beta} summed over the bee teams its species fed) and forage (nectar^${alpha} summed over the species its bee
+  fed at); they aren't the score.`;
   return `\n  Scores: forage sums nectar^${alpha} over the species your bee fed at, pollination sums pollen^${beta} over the bee teams your
   species fed (RULES.md).`;
 }
@@ -363,7 +369,8 @@ export function gameBrief({ config, teamName, teamId = null, generation, session
     const ranked = [...scores].sort((a, b) => (b.fitness ?? -1) - (a.fitness ?? -1));
     const f = (v) => (v == null ? "-" : Number(v).toFixed(2));
     lines.push(`Your scores so far: fitness ${f(mine.fitness)}${mine.fitness != null ? ` (#${ranked.indexOf(mine) + 1} of ${scores.length}; par is 1.00)` : ""}; ` +
-      `shares: pollination ${f(mine.pollinationShare)}, forage ${f(mine.forageShare)}.`);
+      (prevalenceOf(config) ? `now: flower success F ${f(mine.flowerSuccess)}, bee success B ${f(mine.beeSuccess)} (fitness is F × B's time-average).`
+        : `shares: pollination ${f(mine.pollinationShare)}, forage ${f(mine.forageShare)}.`));
   }
   if (head && head.turns) {
     lines.push(`So far: ${n0(head.turns)} turns. Your bee: ${head.bee.turns} turns, ${head.bee.feeds} feeds at ${head.bee.flowers} team${head.bee.flowers === 1 ? "" : "s"}' species` +

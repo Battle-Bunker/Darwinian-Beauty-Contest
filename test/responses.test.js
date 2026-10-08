@@ -7,6 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import { play } from "./fixtures/garden.js";
+import { classic } from "./fixtures/classic.js";
 import { excessEnergy, normalizeConfig } from "../server/lib/gameConfig.js";
 import { INLINE_BYTES, largeResponse } from "../server/engine.js";
 import { size } from "../server/lib/measure.js";
@@ -79,7 +80,7 @@ for (const language of ["python", "typescript"]) {
   });
 
   test(`${language}: a 1 MB response reaches the bee before its 50 ms start: reading it in costs the bee nothing`, async () => {
-    const config = normalizeConfig({ language, responseType: "list[int]", maxResponseBytes: 1 << 20, feedCost: 0, budgets: { flower: { minMs: 150 } } }); // R held at 150
+    const config = classic({ language, responseType: "list[int]", maxResponseBytes: 1 << 20, feedCost: 0, budgets: { flower: { minMs: 150 } } }); // R held at 150
     const n = 150000; // about 0.94 MB of JSON (so a 1 MB cap, not the 64 KiB default)
     const list = language === "python" ? `list(range(${n}))` : `Array.from({ length: ${n} }, (_, i) => i)`;
     // (5 paced rounds: three runners start at once, on the runners' two cores, so the bee may miss the first two.)
@@ -117,7 +118,7 @@ for (const language of ["python", "typescript"]) {
     : `function first() { return 1; }\nfunction decide(c: number, r: any): ["feed", number] { console.log(r === null ? -1 : r.length); return ["feed", 1]; }`;
 
   test(`${language}: the byte factor: E = (cap − size) × (R − CPU ms) × (1024 − bytes); at the cap an answer with E = 0 a bee can feed on; one byte over, refused`, async () => {
-    const config = normalizeConfig({ language, responseType: "str", feedCost: 0, budgets: { flower: { minMs: 150 } } }); // R held at 150
+    const config = classic({ language, responseType: "str", feedCost: 0, budgets: { flower: { minMs: 150 } } }); // R held at 150 (a classic game)
     assert.deepEqual([config.maxResponseBytes, config.energy], [1024, { bytes: true }], "the defaults");
     const run = async (n) => {
       const code = P.flower(big(n));
@@ -148,7 +149,7 @@ for (const language of ["python", "typescript"]) {
   });
 
   test(`${language}: a game stored without energy.bytes keeps E without the byte factor (and its 64 KiB cap)`, async () => {
-    const { energy: _, ...old } = normalizeConfig({ language, responseType: "str", feedCost: 0, maxResponseBytes: 65536, budgets: { flower: { minMs: 150 } } });
+    const { energy: _, ...old } = classic({ language, responseType: "str", feedCost: 0, maxResponseBytes: 65536, budgets: { flower: { minMs: 150 } } });
     const code = P.flower(big(30000));
     const out = await play(old, [{ flower: code, bee: feeder }], 2);
     const s = (await size(language, code)).size;

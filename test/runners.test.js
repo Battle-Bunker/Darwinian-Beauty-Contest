@@ -6,6 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { play } from "./fixtures/garden.js";
+import { classic } from "./fixtures/classic.js";
 import { excessEnergy, normalizeConfig } from "../server/lib/gameConfig.js";
 import { size } from "../server/lib/measure.js";
 
@@ -14,7 +15,7 @@ const pyBee = `def first():\n    return 1\ndef decide(c, r):\n    return "feed",
 const tsBee = `function first() { return 1; }\nfunction decide(c: number, r: any): ["feed", number] { return ["feed", 1]; }`;
 
 async function turnsOf(language, flower, rounds = 2, responseType = "any") {
-  const config = normalizeConfig({ language, responseType, feedCost: 0, maxResponseBytes: 65536, budgets: { flower: { minMs: 150 } } }); // R held at 150; big replies fit
+  const config = classic({ language, responseType, feedCost: 0, maxResponseBytes: 65536, budgets: { flower: { minMs: 150 } } }); // R held at 150 (a classic game); big replies fit
   const out = await play(config, [{ flower, bee: language === "python" ? pyBee : tsBee }], rounds);
   return { turns: ends(out.actions), config, size: (await size(language, flower)).size };
 }

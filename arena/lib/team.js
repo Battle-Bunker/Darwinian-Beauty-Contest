@@ -110,11 +110,12 @@ export const availableNow = (budget, bank, clockMs) => Math.min(budget.cap, bank
 
 const num = (x, d = 2) => (x == null ? "-" : Number(x).toFixed(d));
 const big = (x) => (x == null ? "-" : Math.abs(x) >= 1e6 ? `${(x / 1e6).toFixed(2)}M` : Math.abs(x) >= 1e3 ? `${(x / 1e3).toFixed(1)}k` : Number(x).toFixed(0));
-/** The live scoreboard, one line per team: fitness, pollination and forage with their shares, and some information
- * (pollen, feeds). Sorted by fitness. */
+/** The live scoreboard, one line per team: fitness (with prevalence, F × B's time-average, and F and B now), pollination
+ * and forage with their shares, and some information (pollen, feeds). Sorted by fitness. */
 export function scoreboard(scores, name, teamId = null) {
   const rows = [...scores].sort((a, b) => (b.fitness ?? -1) - (a.fitness ?? -1) || (b.pollination ?? 0) - (a.pollination ?? 0));
   return rows.map((x, i) => `  ${i + 1}. ${name[x.teamId] ?? x.teamId}${x.teamId === teamId ? " (you)" : ""}: fitness ${num(x.fitness)}; ` +
+    (x.flowerSuccess != null || x.beeSuccess != null ? `F ${num(x.flowerSuccess)}, B ${num(x.beeSuccess)} now; ` : "") +
     `pollination ${num(x.pollination, 1)} (share ${num(x.pollinationShare)}, from ${x.pollinators ?? "-"} bee teams), ` +
     `forage ${num(x.forage, 1)} (share ${num(x.forageShare)}, from ${x.nectarSources ?? "-"} flower species); pollen ${big(x.pollen)}, ` +
     `feeds received ${x.feedsReceived ?? "-"}, given ${x.feedsGiven ?? "-"}`).join("\n");
@@ -171,15 +172,15 @@ export function statusOf(view, teamId, { afford = null, code = false, memory = f
       (mem.error ? `; its last save failed: ${String(mem.error).slice(0, 200)}` : "") +
       (memory ? `:\n  ${JSON.stringify(mem.value ?? null).slice(0, 4000)}` : ". tools/status.py --memory shows it."));
   }
-  // Species prevalence (a game that draws species by prevalence): public, about once a second.
+  // Prevalence on both sides (a game that has it): public, about once a second.
   const prev = prevalenceOf(config) ? currentOf(view) : null;
   if (prev?.length) {
-    const nameOfSpecies = (t) => name[t] ?? (Number.isInteger(Number(t)) ? view.teams[Number(t)]?.name : null) ?? String(t);
-    out.prevalence = prev.map((x) => ({ side: x.side, species: nameOfSpecies(x.team), teamId: name[x.team] ? x.team : view.teams[Number(x.team)]?.id ?? null, p: x.p, P: x.P }));
-    const list = (side) => [...out.prevalence].filter((x) => x.side === side).sort((a, b) => b.p - a.p)
-      .map((x) => `  ${x.species}${x.teamId === teamId ? " (you)" : ""}: p ${x.p.toFixed(3)}, ${side === "bee" ? "B" : "P"} ${x.P == null ? "-" : x.P.toFixed(2)}`).join("\n");
-    lines.push(`Species prevalence now (p_s: the chance a turn's flower is of the species; P_s: its recent success, par 1):\n${list("flower")}`);
-    if (out.prevalence.some((x) => x.side === "bee")) lines.push(`Bee prevalence now (the chance a round draws the team's bee; B: its recent success, par 1):\n${list("bee")}`);
+    const teamOf = (t) => (name[t] ? { id: t, name: name[t] } : view.teams.find((x) => x.index === Number(t)) ?? view.teams[Number(t)] ?? { id: null, name: String(t) });
+    out.prevalence = prev.map((x) => { const t = teamOf(x.team); return { species: t.name, teamId: t.id, F: x.F, B: x.B, pF: x.pF, pB: x.pB, fitness: x.fitness }; });
+    const f = (v, d = 2) => (v == null ? "-" : Number(v).toFixed(d));
+    lines.push(`Prevalence now (F: the species' flower success, pF: the chance a visit is to it; B: the bee's success, pB: its share of the bee weights; par 1; fitness: F × B's time-average so far):\n` +
+      [...out.prevalence].sort((a, b) => (b.fitness ?? 0) - (a.fitness ?? 0))
+        .map((x) => `  ${x.species}${x.teamId === teamId ? " (you)" : ""}: F ${f(x.F)} (pF ${f(x.pF, 3)}), B ${f(x.B)} (pB ${f(x.pB, 3)}), fitness ${f(x.fitness)}`).join("\n"));
   }
   out.text = lines.join("\n");
   return out;

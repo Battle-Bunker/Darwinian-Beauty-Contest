@@ -1,7 +1,8 @@
 // R, each flower call's hidden time budget (RULES.md "Energy"): drawn uniformly from [minMs, ms] for every
-// call (minMs 2% of ms by default: 3 to 150 ms), the call's hard limit (and GAME.ms for it), the ceiling of its
-// energy E = (cap − size) × max(0, R − CPU ms); the response still reaches the bee at the fixed 150 ms; the
-// flower's team sees R during play, everyone after.
+// call (minMs 2% of ms by default: 1 to 50 ms in a new game, 3 to 150 in a game from before), the call's hard
+// limit (and GAME.ms for it), the ceiling of its energy E = (cap − size) × max(0, R − CPU ms); the response
+// still reaches the bee at the end of the fixed flower window (150 ms); the flower's team sees R during play,
+// everyone after. Most of these play a classic game (test/fixtures/classic.js), whose R runs to 150 ms.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DEFAULT_CONFIG, defaultMinMs, drawBudget, excessEnergy, normalizeConfig } from "../server/lib/gameConfig.js";
@@ -9,12 +10,16 @@ import { tryFlower } from "../server/engine.js";
 import { actionView } from "../server/games.js";
 import { mask } from "../server/query/mask.js";
 import { play } from "./fixtures/garden.js";
+import { classic } from "./fixtures/classic.js";
 import { size } from "../server/lib/measure.js";
 
 const ends = (actions) => actions.filter((a) => a.action === "feed" || a.action === "leave");
 
-test("R is drawn uniformly from [minMs, ms] (3 to 150 by default), independently per call", () => {
-  const c = normalizeConfig({});
+test("R is drawn uniformly from [minMs, ms] (1 to 50 by default; 3 to 150 in a classic game), independently per call", () => {
+  const d = normalizeConfig({});
+  assert.deepEqual([d.budgets.flower.minMs, d.budgets.flower.ms, d.flowerWindowMs], [1, 50, 150], "a new game: R up to 50 ms, the window still 150");
+  assert.ok(Array.from({ length: 5000 }, () => drawBudget(d)).every((r) => r >= 1 && r <= 50));
+  const c = classic();
   assert.deepEqual([c.budgets.flower.minMs, c.budgets.flower.ms], [3, 150]);
   const draws = Array.from({ length: 20000 }, () => drawBudget(c));
   assert.ok(draws.every((r) => r >= 3 && r <= 150));
@@ -24,9 +29,9 @@ test("R is drawn uniformly from [minMs, ms] (3 to 150 by default), independently
   const mean = draws.reduce((s, r) => s + r, 0) / draws.length;
   assert.ok(Math.abs(mean - 76.5) < 1.5, `mean ${mean}`);
   // Configurable; minMs never above ms.
-  const narrow = normalizeConfig({ budgets: { flower: { ms: 120, minMs: 100 } } });
+  const narrow = classic({ budgets: { flower: { ms: 120, minMs: 100 } } });
   assert.ok(Array.from({ length: 1000 }, () => drawBudget(narrow)).every((r) => r >= 100 && r <= 120));
-  assert.equal(normalizeConfig({ budgets: { flower: { ms: 80, minMs: 200 } } }).budgets.flower.minMs, 80);
+  assert.equal(classic({ budgets: { flower: { ms: 80, minMs: 200 } } }).budgets.flower.minMs, 80);
   // E counts down from R: the same CPU costs the same energy whatever R is (here with no response bytes).
   assert.equal(excessEnergy(c, 100, 30, 90), 1000 * 60 * 1024);
   assert.equal(excessEnergy(c, 100, 30, 140) - excessEnergy(c, 100, 0, 140), -1000 * 30 * 1024);
@@ -34,9 +39,10 @@ test("R is drawn uniformly from [minMs, ms] (3 to 150 by default), independently
 });
 
 test("R's floor: 2% of ms by default (at least 1 ms), following ms; a minMs that is set is kept, never above ms", () => {
-  assert.equal(DEFAULT_CONFIG.budgets.flower.minMs, 3);
+  assert.equal(DEFAULT_CONFIG.budgets.flower.minMs, 1, "2% of 50, rounded, at least 1");
   assert.deepEqual([150, 300, 100, 75, 49, 10, 1].map(defaultMinMs), [3, 6, 2, 2, 1, 1, 1]);
-  const floor = (cfg, base) => normalizeConfig(cfg, base).budgets.flower.minMs;
+  const floor = (cfg, base = classic()) => normalizeConfig(cfg, base).budgets.flower.minMs;
+  assert.equal(floor({}, DEFAULT_CONFIG), 1);
   assert.equal(floor({}), 3);
   assert.equal(floor({ budgets: { flower: { ms: 300 } } }), 6);
   assert.equal(floor({ budgets: { flower: { ms: 20 } } }), 1, "at least 1 ms");
@@ -44,17 +50,17 @@ test("R's floor: 2% of ms by default (at least 1 ms), following ms; a minMs that
   assert.equal(floor({ budgets: { flower: { minMs: 10 } } }), 10);
   assert.equal(floor({ budgets: { flower: { ms: 120, minMs: 500 } } }), 120, "never above ms");
   // Changing a lobby game's ms: a floor at its default follows; one that was set stays.
-  const auto = normalizeConfig({});
+  const auto = classic();
   assert.equal(floor({ budgets: { flower: { ms: 250 } } }, auto), 5);
   assert.equal(floor({ minutes: 5 }, auto), 3);
-  const set = normalizeConfig({ budgets: { flower: { minMs: 40 } } });
+  const set = classic({ budgets: { flower: { minMs: 40 } } });
   assert.equal(floor({ budgets: { flower: { ms: 250 } } }, set), 40);
   assert.equal(floor({ budgets: { flower: { ms: 30 } } }, set), 30, "a set floor is still never above ms");
   // A stored config from before (minMs 50 with ms 150) keeps its 50.
   const before = { ...auto, budgets: { ...auto.budgets, flower: { ...auto.budgets.flower, minMs: 50 } } };
   assert.equal(floor({ minutes: 5 }, before), 50);
   // Draws respect it.
-  const c = normalizeConfig({ budgets: { flower: { ms: 300 } } });
+  const c = classic({ budgets: { flower: { ms: 300 } } });
   const draws = Array.from({ length: 5000 }, () => drawBudget(c));
   assert.ok(draws.every((r) => r >= 6 && r <= 300));
   assert.ok(Math.min(...draws) < 10 && Math.max(...draws) > 290);
@@ -69,7 +75,7 @@ for (const language of ["python", "typescript"]) {
     const bee = language === "python"
       ? `def first():\n    return 1\ndef decide(c, r):\n    return "leave", 1\n`
       : `function first() { return 1; }\nfunction decide(c: number, r: any): ["leave", number] { return ["leave", 1]; }`;
-    const config = normalizeConfig({ language, responseType: "float" });
+    const config = classic({ language, responseType: "float" });
     const out = await play(config, [{ flower, bee }], 40, null, { paced: true });
     const turns = ends(out.actions);
     assert.ok(turns.length >= 30, `${turns.length} turns`);
@@ -109,7 +115,7 @@ test("who sees R: the flower's team during play, everyone after the game", () =>
 });
 
 test("try a flower with budgetMs: a number, \"random\" (the default), or one per challenge; each result says its R", async () => {
-  const config = normalizeConfig({ responseType: "float" });
+  const config = classic({ responseType: "float" });
   const code = `def flower(c):\n    return GAME["ms"], 10\n`;
   const fixed = await tryFlower({ config, code, challenges: [1, 2, 3], budgetMs: 80 });
   assert.deepEqual(fixed.results.map((x) => [x.budgetMs, x.r]), [[80, 80], [80, 80], [80, 80]]);

@@ -17,6 +17,9 @@ export function bytesFactor(config, bytes) {
 }
 /** The byte factor of an empty response: the most it can be (the byte cap; 1 in a game without it). */
 export const bytesMax = (config) => (bytesInEnergy(config) ? byteCap(config) : 1);
+/** The most E a turn can make (Emax): size cap × the most R (budgets.flower.ms) × the byte cap (with the byte factor), in
+ * E's unit, as the engine has it (server/lib/gameConfig.js emaxOf): 1,100 × 50 × 1,024 = 56,320,000 node·ms·bytes. */
+export const emaxOf = (config) => (config?.budgets?.flower?.size ?? 1100) * (config?.budgets?.flower?.ms ?? 150) * bytesMax(config);
 /** The share of the byte factor a response of `bytes` bytes uses up: bytes ÷ cap (all of it over the cap; 0 without it). */
 export const bytesShare = (config, bytes) => 1 - bytesFactor(config, bytes) / bytesMax(config);
 

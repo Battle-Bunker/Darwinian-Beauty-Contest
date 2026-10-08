@@ -29,6 +29,7 @@ import { agentCgroups, setupAgentCgroups } from "./lib/cgroups.js";
 import { breed, decideRetirements, retire, seedBreeders } from "./lib/population.js";
 import { DEFAULT_SESSION, EXPERIMENTS, PRESETS } from "./lib/presets.js";
 import { gameBrief, mmss } from "./lib/prompts.js";
+import { coopRules } from "./lib/prevalence.js";
 import { judgeGame, seedJudges } from "./lib/social.js";
 import { TeamDesk, finalPrograms, interview, lobby, runTeamSession } from "./lib/team.js";
 
@@ -141,6 +142,13 @@ async function setupGame(arena, generation, log) {
       const got = key.split(".").reduce((o, k) => o?.[k], view.game.config);
       if (got !== want) throw new Error(`the server's game config has ${key} = ${JSON.stringify(got)}, not ${JSON.stringify(want)}: restart it with the engine's new defaults (arena/server.sh)`);
     }
+    // The briefs state the feed price and the flower window as lib/prevalence.js resolves them from the config: they must
+    // be the game's own (the view's resolved game.feedPrice and game.windowMs, on an engine that has them).
+    const co = coopRules(view.game.config);
+    if (view.game.feedPrice != null && Math.abs(co.price - view.game.feedPrice) > 1e-9 * Math.max(1, co.price))
+      throw new Error(`the game's feed price is ${view.game.feedPrice}, the briefs would say ${co.price}: lib/prevalence.js feedPriceOf no longer matches the engine`);
+    if (view.game.windowMs != null && co.windowMs !== view.game.windowMs)
+      throw new Error(`the game's flower window is ${view.game.windowMs} ms, the briefs would say ${co.windowMs}: lib/prevalence.js windowOf no longer matches the engine`);
     await q("INSERT INTO arena.games (arena_id, generation, game_short_id, game_url, game_uuid, config) VALUES ($1,$2,$3,$4,$5,$6)",
       [arena.id, generation, g.shortId, g.url, view.game.id, view.game.config]);
     gameRow = await one("SELECT * FROM arena.games WHERE arena_id = $1 AND generation = $2", [arena.id, generation]);

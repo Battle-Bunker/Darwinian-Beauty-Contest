@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { grainLength, grainOf } from "../server/engine.js";
 import { play } from "./fixtures/garden.js";
 import { normalizeConfig } from "../server/lib/gameConfig.js";
+import { classic } from "./fixtures/classic.js";
 import { size } from "../server/lib/measure.js";
 import { actionView } from "../server/games.js";
 import { mask } from "../server/query/mask.js";
@@ -81,7 +82,7 @@ test("a grain comes from the flower version pinned to the turn, even when a new 
   const bee = `def first():\n    return 1\ndef decide(c, r):\n    return "feed", 1\n`;
   let swappedAt = null;
   // (Grains three times as long, so each is the whole of these short flowers.)
-  const out = await play(normalizeConfig({ feedCost: 0, pollenGrain: { scale: 3 }, budgets: { flower: { minMs: 150 } } }), [{ flower: slow(1), bee }], 200, async (garden) => {
+  const out = await play(classic({ feedCost: 0, pollenGrain: { scale: 3 }, budgets: { flower: { minMs: 150 } } }), [{ flower: slow(1), bee }], 200, async (garden) => {
     const open = () => garden.out.some((a) => a.action === "arrive" && !garden.out.some((e) => e.action !== "arrive" && e.turn === a.turn));
     while (!(open() && garden.round >= 3)) await wait(1);
     swappedAt = garden.seq;

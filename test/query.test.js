@@ -46,7 +46,9 @@ const beeCode = (ti) => `def first():\n    return ${ti}\ndef decide(c, r):\n    
 
 before(async () => {
   await migrate();
-  const config = normalizeConfig({ feedCost: 2, responseType: "any", maxResponseBytes: 65536 }); // team 2's big responses fit
+  // Team 2's big responses fit. Prevalence and a feed price, as a new game has, but every ready bee visits each
+  // round (slots 1), and a feed sits the bee out 2 rounds, so there are turns enough to query.
+  const config = normalizeConfig({ feedCost: 2, responseType: "any", maxResponseBytes: 65536, prevalence: { slots: 1 } });
   const out = await play(config, Array.from({ length: N }, (_, ti) => ({ flower: flowerCode(ti), bee: beeCode(ti) })), 80);
   const uid = () => crypto.randomUUID();
   db.users = Array.from({ length: N + 1 }, uid); // one per team, and a spectator
@@ -61,10 +63,10 @@ before(async () => {
     for (const [i, id] of db.users.entries()) await c.query("INSERT INTO users (id, name, auth_provider, auth_subject) VALUES ($1::uuid, $2, 'test', $1::text)", [id, `u${i}`]);
     await c.query("INSERT INTO rooms (id, code, prefix_len, owner_id) VALUES ($1, $2, 26, $3)", [db.room, uuidToCode(db.room), db.users[0]]);
     for (const g of [db.game, db.other]) {
-      await c.query(`INSERT INTO games (id, room_id, code, prefix_len, config, status, participants, feeds, nectar, pollen, clock_ms, round, last_seq)
-        VALUES ($1, $2, $3, 26, $4, 'running', $5, $6, $7, $8, $9, $10, $11)`,
+      await c.query(`INSERT INTO games (id, room_id, code, prefix_len, config, status, participants, feeds, nectar, pollen, clock_ms, round, last_seq, fitness, prevalence)
+        VALUES ($1, $2, $3, 26, $4, 'running', $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
       [g, db.room, uuidToCode(g), config, g === db.game ? db.teams : null, JSON.stringify(out.feeds), JSON.stringify(out.nectar), JSON.stringify(out.pollen),
-        out.clockMs, out.round, out.lastSeq]);
+        out.clockMs, out.round, out.lastSeq, JSON.stringify(out.fitness), JSON.stringify(out.sample)]);
     }
     for (const [i, t] of db.teams.entries()) {
       await c.query("INSERT INTO teams (id, game_id, name, join_code, color, created_by) VALUES ($1, $2, $3, $4, '#000', $5)", [t, db.game, `T${i}`, `j${i}`, db.users[i]]);
@@ -166,8 +168,9 @@ const OTHER_QUERIES = {
   prevalence: [
     { from: "prevalence" },
     { from: "prevalence", scope: "mine", orderBy: [{ field: "round", dir: "desc" }], limit: 5 },
-    { from: "prevalence", where: [W("round", "ge", 40)], groupBy: ["team"], aggregates: [{ fn: "avg", field: "p", as: "p" }, { fn: "max", field: "success", as: "top" }] },
-    { from: "prevalence", groupBy: ["round"], aggregates: [{ fn: "sum", field: "p", as: "total" }, { fn: "min", field: "c", as: "c" }] },
+    { from: "prevalence", where: [W("round", "ge", 40)], groupBy: ["team"], aggregates: [{ fn: "avg", field: "flowerP", as: "p" }, { fn: "max", field: "beeSuccess", as: "top" }] },
+    { from: "prevalence", groupBy: ["round"], aggregates: [{ fn: "sum", field: "beeP", as: "total" }, { fn: "min", field: "c", as: "c" }] },
+    { from: "prevalence", orderBy: [{ field: "fitness", dir: "desc" }], select: ["round", "team", "fitness"], limit: 7 },
   ],
   scores: [
     { from: "scores" },
@@ -291,7 +294,8 @@ test("room queries: across the room's finished games only, fully revealed, scope
 test("scores use each game's exponents: its config's (0.85 by default), or √ for a game stored without them, in SQL and the views", async () => {
   const { score, scoringOf } = await import("../server/lib/scoring.js");
   const { viewScores, viewGame } = await import("../server/games.js");
-  const pick = (rows) => rows.map((r) => [r.team ?? r.teamId, r.pollination, r.forage, r.pollinationShare, r.forageShare, r.fitness]);
+  // (Fitness itself is the game's rule: checked below.)
+  const pick = (rows) => rows.map((r) => [r.team ?? r.teamId, r.pollination, r.forage, r.pollinationShare, r.forageShare]);
   const expect = (exps) => pick(score(db.teams, db.out.feeds, db.out.nectar, db.out.pollen, exps).map((s, team) => ({ ...s, team })));
   const roomRow = (await pool.query("SELECT * FROM rooms WHERE id = $1", [db.room])).rows[0];
   const check = async (exps, what) => {
@@ -317,17 +321,52 @@ test("scores use each game's exponents: its config's (0.85 by default), or √ f
   }
 });
 
-test("species prevalence: one row per species per sample, the garden's own; public to everyone; p sums to 1", async () => {
+test("fitness: with prevalence, the time-average of F × B (with each team's latest F, B and draw chances); without, N² × pollination share × forage share", async () => {
+  const { score } = await import("../server/lib/scoring.js");
+  const { viewScores } = await import("../server/games.js");
+  const { fitness, sample } = db.out;
+  assert.equal(fitness.rounds, db.out.round, "one F × B a round");
+  try {
+    await setStatus("finished");
+    const want = fitness.sum.map((x) => x / fitness.rounds);
+    const latest = (k) => sample[k];
+    for (const rows of [await sql({ from: "scores" }, db.users[N]), (await viewScores({ id: db.game })).scores]) {
+      same(rows.map((r) => r.fitness), want, "the time-average");
+      same(rows.map((r) => [r.flowerSuccess, r.beeSuccess, r.flowerP, r.beeP]), want.map((_, i) => [latest("F")[i], latest("B")[i], latest("pF")[i], latest("pB")[i]]));
+    }
+    assert.ok(Math.abs(want.reduce((a, b) => a + b, 0) / N - 1) < 0.6, "about par on average");
+    // The same ledgers in a game without prevalence: the old rule, and no F or B.
+    await pool.query("UPDATE games SET config = config - 'prevalence' WHERE id = $1", [db.game]);
+    const old = score(db.teams, db.out.feeds, db.out.nectar, db.out.pollen, db.config.scoring).map((s) => s.fitness);
+    for (const rows of [await sql({ from: "scores" }, db.users[N]), (await viewScores({ id: db.game })).scores]) {
+      same(rows.map((r) => r.fitness), old);
+      assert.ok(rows.every((r) => r.flowerSuccess === null && r.beeP === null));
+    }
+  } finally {
+    await pool.query("UPDATE games SET config = $2 WHERE id = $1", [db.game, db.config]);
+  }
+});
+
+test("prevalence: one row per team per sample, the garden's own; public to everyone; each side's draw chances sum to 1", async () => {
   await setStatus("running");
   const samples = db.out.samples;
   assert.ok(samples.length >= 15, `${samples.length} samples in 80 rounds (one every 5)`);
   for (const v of viewers()) {
     const rows = await sql({ from: "prevalence", limit: MAX_LIMIT }, v.user);
     assert.equal(rows.length, samples.length * N, v.name);
-    same(rows, samples.flatMap((x) => x.p.map((p, team) => ({ game: db.short, round: x.round, atMs: x.atMs, team, p, success: x.P[team], c: x.c }))), `${v.name}: the samples`);
+    same(rows, samples.flatMap((x) => x.F.map((F, team) => ({
+      game: db.short, round: x.round, atMs: x.atMs, team, flowerSuccess: F, beeSuccess: x.B[team], flowerP: x.pF[team], beeP: x.pB[team],
+      fitness: x.fitness[team], c: x.c, slots: x.slots,
+    }))), `${v.name}: the samples`);
   }
-  const totals = await sql({ from: "prevalence", groupBy: ["round"], aggregates: [{ fn: "sum", field: "p", as: "t" }] }, db.users[N]);
-  assert.ok(totals.every((r) => Math.abs(r.t - 1) < 1e-5), JSON.stringify(totals));
+  const totals = await sql({ from: "prevalence", groupBy: ["round"], aggregates: [{ fn: "sum", field: "flowerP", as: "f" }, { fn: "sum", field: "beeP", as: "b" }] }, db.users[N]);
+  assert.ok(totals.every((r) => Math.abs(r.f - 1) < 1e-5 && Math.abs(r.b - 1) < 1e-5), JSON.stringify(totals));
+  // Feeds show the price and the net.
+  const feeds = await sql({ from: "turns", where: [W("fed", "eq", true)], select: ["nectar", "price", "net"], limit: MAX_LIMIT }, db.users[N]);
+  const { feedPriceOf } = await import("../server/lib/gameConfig.js");
+  assert.equal(feedPriceOf(db.config), 0.05 * 1100 * 50 * 65536, "0.05 × Emax (this game's byte cap is 64 KiB)");
+  assert.ok(feeds.length > 10 && feeds.every((t) => t.price === feedPriceOf(db.config) && Math.abs(t.net - (t.nectar - t.price)) < 1e-6), JSON.stringify(feeds[0]));
+  assert.ok((await sql({ from: "turns", where: [W("fed", "eq", false)], select: ["price", "net"], limit: 5 }, db.users[N])).every((t) => t.price === null && t.net === null));
 });
 
 test("big responses: the record shows their size and hash; the whole text is stored apart, and served by seq", async () => {
