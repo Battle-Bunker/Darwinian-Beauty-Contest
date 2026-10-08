@@ -55,7 +55,7 @@ import { checkValue, parseType } from "./lib/types.js";
 import { zeroLedger } from "./lib/scoring.js";
 import { KINDS, drawBudget, excessEnergy, feedPriceOf, limitsOf, responseLimits, roundMs, sampleEveryOf, wallLimits, windowMsOf } from "./lib/gameConfig.js";
 import { size as measure } from "./lib/measure.js";
-import { Prevalence, drawWeighted, sampleWithout } from "./lib/prevalence.js";
+import { Prevalence, drawWeighted, r6, sampleWithout } from "./lib/prevalence.js";
 
 export { KINDS };
 
@@ -365,6 +365,7 @@ export class Garden {
     this.weights = null;
     this.samples = [];                // prevalence samples not yet drained: { round, atMs, c, slots, F, B, pF, pB, fitness }
     this.sample = null;               // the latest
+    this.unsampled = null;            // the latest round's sample, when the schedule didn't publish it
     this.sampleEvery = sampleEveryOf(config); // rounds: about once a second of game time
     this.out = [];                    // actions not yet drained
     this.problems = [];               // { team, kind, version, error }: the first error of each program version
@@ -466,6 +467,7 @@ export class Garden {
       }
       await this.#round();
     }
+    this.#finalSample();
   }
 
   async #round() {
@@ -563,16 +565,27 @@ export class Garden {
     m.decay();
     this.weights = m.weights(start);
     m.tally(this.weights);
+    // The round's sample (balances as it begins): published every sampleEvery rounds, and for the last round
+    // played when the garden stops (#finalSample), so the final score is N² × p^F × p^B of a published sample.
+    const w = this.weights, balances = m.balances();
+    const sample = {
+      round: r, atMs: Math.round(start), c: r6(w.c), slots: w.slots,
+      F: w.F.map(r6), B: w.B.map(r6), pF: [...w.pF], pB: [...w.pB], fitness: m.fitness().map(r6), // p^F, p^B unrounded: the final score's
+      balance: balances ? balances.map(r6) : null,
+    };
     if ((r - 1) % this.sampleEvery === 0) {
-      const r6 = (x) => Math.round(x * 1e6) / 1e6, w = this.weights;
-      const balances = m.balances();
-      this.sample = {
-        round: r, atMs: Math.round(start), c: r6(w.c), slots: w.slots,
-        F: w.F.map(r6), B: w.B.map(r6), pF: w.pF.map(r6), pB: w.pB.map(r6), fitness: m.fitness().map(r6),
-        balance: balances ? balances.map(r6) : null,
-      };
-      this.samples.push(this.sample);
-    }
+      this.sample = sample;
+      this.samples.push(sample);
+      this.unsampled = null;
+    } else this.unsampled = sample;
+  }
+
+  /** The garden stopped: publish the last round's sample, if the schedule didn't (it carries the final score's p^F and p^B). */
+  #finalSample() {
+    if (!this.unsampled) return;
+    this.sample = this.unsampled;
+    this.samples.push(this.unsampled);
+    this.unsampled = null;
   }
 
   /** New code for a bee between turns takes over now: the old bee's queued challenge goes with it. */

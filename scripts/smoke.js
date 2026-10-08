@@ -47,10 +47,12 @@ assert.deepEqual(fresh.prevalence, { on: true, halfLifeS: 90, cDecay: "sech", cS
 // 5 to 10 minutes, the end drawn at the start and hidden.
 const freshGame = (await api(owner, "GET", g)).game;
 assert.deepEqual([fresh.minutes, fresh.endFactor, freshGame.minMs, freshGame.maxMs, freshGame.endMs, freshGame.drawnEndMs], [5, 2, 300000, 600000, null, null]);
+assert.deepEqual([fresh.visibility, fresh.prevalenceEveryS], ["private", 30], "private play by default");
 // Half a minute to a minute of game time. Flowers earn change budget fast so the test needn't wait; feeding costs 2
 // rounds rather than 20, so bees take turns often. Responses can be any JSON, and big (a 64 KiB cap). c halves
 // at 60 s rather than at 0.2 × the shortest length (6 s here), so every species keeps being visited.
-await api(owner, "PATCH", `${g}/config`, { config: { minutes: 0.5, feedCost: 2, responseType: "any", maxResponseBytes: 65536, budgets: { flower: { perMinute: 600, cap: 100 } }, prevalence: { cHalfS: 60 } } });
+// This game is public, so everything below is public as it happens; game 2 plays privately.
+await api(owner, "PATCH", `${g}/config`, { config: { minutes: 0.5, feedCost: 2, responseType: "any", maxResponseBytes: 65536, budgets: { flower: { perMinute: 600, cap: 100 } }, prevalence: { cHalfS: 60 }, visibility: "public" } });
 assert.deepEqual([(await api(owner, "GET", g)).game.config.prevalence.cHalfS, (await api(null, "GET", `${g}/scores`)).prevalence.cHalfS], [60, 60]);
 
 const players = [];
@@ -468,15 +470,43 @@ assert.equal(done.game.endMs, drawnEnd, "the drawn end, revealed once it's over"
 const totalFitness = done.scores.reduce((x, s) => x + s.fitness, 0);
 console.log("game 1:", done.scores.map((s) => `${done.teams.find((t) => t.id === s.teamId).name} ${s.fitness.toFixed(2)}`).join(", "), `(sum ${totalFitness.toFixed(2)})`);
 
-// A second game runs out its clock by itself, at its hidden end: 6 to 12 s.
-const g2r = await api(owner, "POST", `/rooms/${room.shortId}/games`, { config: { minutes: 0.1 } });
+// A second game runs out its clock by itself, at its hidden end: 6 to 12 s. It plays privately (the default), with
+// a prevalence snapshot every 2 s.
+const g2r = await api(owner, "POST", `/rooms/${room.shortId}/games`, { config: { minutes: 0.1, prevalenceEveryS: 2 } });
 const g2 = `/rooms/${room.shortId}/games/${g2r.shortId}`;
 for (const [i, p] of players.slice(0, 2).entries()) {
   await api(p.token, "POST", `${g2}/teams`, { name: p.name });
   for (const kind of ["flower", "bee"]) await api(p.token, "POST", `${g2}/programs`, { kind, code: variants[i][kind] });
 }
 await api(owner, "POST", `${g2}/start`);
+// During private play: a player sees only its own programs' sides, nobody else's team; a spectator nothing but the
+// snapshots; the owner (no team here) everything.
+const ids2 = (await api(owner, "GET", g2)).participants;
+const me2 = (await api(players[0].token, "GET", g2)).myTeam.id;
+const other2 = ids2.find((id) => id !== me2);
+await until("private turns", async () => (await api(players[0].token, "GET", `${g2}/actions?limit=5000`)).actions.length >= 4, 10000);
+const mine2 = await api(players[0].token, "GET", `${g2}/actions?limit=5000`);
+assert.ok(mine2.actions.every((a) => (a.side === "flower" && a.flower === me2 && !("bee" in a) && a.action === "answer") || (a.side === "bee" && a.bee === me2 && !("flower" in a))), "only your own sides");
+assert.ok(!JSON.stringify(mine2).includes(other2), "the other team's id is nowhere in a player's actions");
+assert.deepEqual((await api(null, "GET", `${g2}/actions?limit=5000`)).actions, [], "a spectator sees no turns");
+const board2 = await api(null, "GET", `${g2}/scores`);
+assert.ok(board2.restricted && board2.ledgers === null && board2.prevalence.sample.snapshot && board2.prevalence.sample.atMs % 2000 === 0);
+assert.ok(board2.scores.every((s) => s.feedsGiven === null && (s.fitness === null || Math.round(s.fitness * 100) / 100 === s.fitness)));
+assert.ok((await api(null, "GET", `${g2}/prevalence`)).samples.every((x) => x.snapshot && x.atMs % 2000 === 0), "snapshots only");
+const q2 = (token, body) => api(token, "POST", `${g2}/query`, body);
+assert.deepEqual((await q2(players[0].token, { from: "pairs" })).rows, [], "no pairs");
+assert.ok((await q2(players[0].token, { from: "turns", limit: 5000 })).rows.every((t) => (t.bee === null) !== (t.flower === null)), "query rows are one side each");
+const ownerView2 = await api(owner, "GET", g2);
+assert.ok(!ownerView2.game.restricted && ownerView2.ledgers, "the owner, with no team here, sees it all");
+assert.ok((await api(owner, "GET", `${g2}/actions?limit=5000`)).actions.some((a) => a.action === "arrive"));
 const end2 = await until("game 2 to end", async () => { const v = await api(players[0].token, "GET", g2); return v.game.status === "finished" && v; }, 30000);
+// Over: everything revealed, the final round's sample with it; the final score is N² × p^F × p^B of it.
+const all2 = await api(null, "GET", `${g2}/actions?limit=5000`);
+assert.ok(all2.actions.some((a) => a.action === "arrive" && a.bee && a.flower), "revealed at the end");
+const final2 = (await api(null, "GET", `${g2}/prevalence`)).samples.at(-1);
+assert.equal(final2.round, end2.game.round, "a sample of the final round");
+const n2 = final2.species.length;
+assert.deepEqual(end2.scores.map((s) => s.fitness), final2.species.map((x) => n2 * n2 * x.flowerP * x.beeP), "the final score, exactly, from the published sample");
 assert.ok(end2.game.endMs >= 6000 && end2.game.endMs <= 12000 && end2.game.clockMs === end2.game.endMs, `ended at ${end2.game.clockMs} ms, drawn ${end2.game.endMs}`);
 assert.equal(end2.game.round, end2.game.clockMs / 200, "200 ms rounds");
 console.log(`game 2 ran ${end2.game.lastSeq} actions in ${end2.game.round} rounds, ${end2.game.clockMs} ms of game time`);

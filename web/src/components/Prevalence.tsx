@@ -72,6 +72,7 @@ export function PrevalencePanel({ view, base }: { view: GameView; base: string }
       <p className="small muted">
         <b>Prevalence</b> <InfoTip>{how}</InfoTip>{" "}
         {!sample ? "starts with the first round." : <>as of {fmtClock(sample.atMs)}: {sample.slots} of {n} bees visit each round; c = {fmt2(sample.c)}. Par is {pct(1 / Math.max(1, n))} for a draw chance, 1 for F, B and fitness.</>}
+        {sample?.snapshot && <> Private play: a snapshot every {view.game.config.prevalenceEveryS ?? 30} s of game time, rounded to 2 decimals; every sample is revealed when the game ends.</>}
       </p>
       {now.length > 0 && (
         <div className="table-scroll">

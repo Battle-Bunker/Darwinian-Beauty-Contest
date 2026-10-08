@@ -27,6 +27,7 @@ import { ChangeTimeline, historyTeams, VersionBrowser } from "../components/Hist
 import { ValueTypes } from "../components/Value";
 import { QueryConsole } from "../components/QueryConsole";
 import { PollenPanel, type GrainRec } from "../components/Pollen";
+import { PrivateTurns } from "../components/PrivateTurns";
 
 const SCORES_MS = 1500; // how often to poll the live numbers while the game runs
 
@@ -112,17 +113,21 @@ function GameBody({ view, base, store }: { view: GameView; base: string; store: 
   const myTeamId = view.myTeam?.id ?? null;
   const playing = !!myTeamId && !!view.participants?.includes(myTeamId);
   const showEditors = !!view.myTeam && (lobby || live);
+  // Private play: this viewer sees only its own programs' sides and the prevalence snapshots until the end.
+  const restricted = live && !!g.restricted;
 
   // My team's ledger: followed from the start of play for team members (the garden shows what their flower
   // has lost); for spectators and after the game, once its panel is opened.
   const [ledgerOpen, setLedgerOpen] = useState(false);
-  const ledger = useLedger(base, (live && playing) || ledgerOpen, g.status, myTeamId ?? "");
+  const ledger = useLedger(base, !restricted && ((live && playing) || ledgerOpen), g.status, myTeamId ?? "");
   const history = useHistory(base, view.participants, windowMsOf(cfg), over);
   const myIndex = myTeamId ? (view.participants ?? []).indexOf(myTeamId) : -1;
   const wasted = useWasted(ledger, myIndex);
 
   const sections: { id: string; label: string; node: React.ReactNode }[] = [];
-  const garden = { id: "garden", label: "Garden", node: <Section id="garden" title="The garden" className="garden-card"><LiveGarden view={view} store={store} wasted={wasted} /></Section> };
+  const garden = restricted
+    ? { id: "garden", label: "Your turns", node: <Section id="garden" title="Your programs' turns (private play)"><PrivateTurns view={view} store={store} /></Section> }
+    : { id: "garden", label: "Garden", node: <Section id="garden" title="The garden" className="garden-card"><LiveGarden view={view} store={store} wasted={wasted} /></Section> };
   const teams = { id: "teams", label: "Teams", node: <Section id="teams" title={`Teams (${view.teams.length})`}><TeamsPanel view={view} base={base} /></Section> };
   const programs = showEditors ? {
     id: "programs", label: "Your programs",
@@ -133,11 +138,11 @@ function GameBody({ view, base, store }: { view: GameView; base: string; store: 
     ),
   } : null;
   const scores = !lobby && view.scores ? { id: "scores", label: "Scores", node: <Section id="scores" title={over ? "Final scores" : "Scores, live"}><Scores view={view} base={base} /></Section> } : null;
-  const feed = !lobby && (!over || history) ? {
+  const feed = !lobby && !restricted && (!over || history) ? {
     id: "feed", label: over ? "Every turn" : "Live turns",
     node: <Section id="feed" title={over ? "Every turn" : "Live turns"}><Feed view={view} source={over && history ? history : store} base={base} /></Section>,
   } : null;
-  const ledgerSec = !lobby ? {
+  const ledgerSec = !lobby && !restricted ? {
     id: "ledger", label: myTeamId && playing ? "Your ledger" : "Ledger",
     node: (
       <Section id="ledger" title={myTeamId && playing ? "Your team's ledger" : "The ledger"}>
@@ -150,7 +155,7 @@ function GameBody({ view, base, store }: { view: GameView; base: string; store: 
       </Section>
     ),
   } : null;
-  const pollen = live && playing && (cfg.grains ?? "feeder") !== "off" && ledger ? {
+  const pollen = live && !restricted && playing && (cfg.grains ?? "feeder") !== "off" && ledger ? {
     id: "pollen", label: "Pollen collected",
     node: <Section id="pollen" title="Pollen collected"><LivePollen view={view} ledger={ledger} myIndex={myIndex} /></Section>,
   } : null;

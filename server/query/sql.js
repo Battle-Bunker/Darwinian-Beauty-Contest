@@ -7,7 +7,7 @@ import { createRequire } from "node:module";
 import { tx } from "../db/pool.js";
 import { SCHEMA } from "./schema.js";
 import { scoreboard } from "../lib/prevalence.js";
-import { snapshotsOf } from "../lib/gameConfig.js";
+import { snapshotSql } from "../lib/gameConfig.js";
 import { BEE_SIDE, FLOWER_SIDE } from "./mask.js";
 
 const require = createRequire(import.meta.url);
@@ -103,13 +103,6 @@ function visibleSql(vis, roles) {
   }
 }
 
-/** SQL: whether a prevalence sample at `col` (game ms) is a snapshot of a game with `config` (games.js snapshotSql). */
-function snapshotCond(col, config) {
-  const { everyMs, sampleMs } = snapshotsOf(config);
-  const P = Math.max(1, Math.round(everyMs)), S = Math.max(1, Math.round(sampleMs));
-  return `(${col} = 0 OR floor(${col}::float8 / ${P}) > floor((${col} - ${S})::float8 / ${P}))`;
-}
-
 // Private play (`restricted`: one game, games.js restrictedFor): turns are the viewer's team's own programs' sides
 // (one row per side: its flower's, its bee's; a spectator none, mask.js FLOWER_SIDE / BEE_SIDE), pairs are empty,
 // prevalence is its snapshots rounded to 2 decimals without balances, and scores the latest snapshot's (scoreRows).
@@ -161,7 +154,7 @@ export function compile(ast, { gameId = null, roomId = null, userId = null, scor
       ` AND ((sd.side = 'flower' AND pf.idx = gs.viewer) OR (sd.side = 'bee' AND pb.idx = gs.viewer))`;
   }
   if (priv && ast.from === "pairs") from += " WHERE false";
-  if (priv && ast.from === "prevalence") from += ` AND ${snapshotCond("x.at_ms", config)}`;
+  if (priv && ast.from === "prevalence") from += ` AND ${snapshotSql("x.at_ms", config)}`;
   if (e.rows === "team") from += `${/\bWHERE\b/.test(from) ? " AND" : " WHERE"} (gs.over OR ${source.roles.owner} = gs.viewer)`;
   const src = `src AS (SELECT ${cols.join(", ")}, gs.viewer AS "_viewer" FROM ${from})`;
 

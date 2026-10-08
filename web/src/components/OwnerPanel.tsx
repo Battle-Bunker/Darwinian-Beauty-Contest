@@ -128,6 +128,13 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
         </label>
         <label className="field"><span>Shortest length (minutes)</span>{num(draft.minutes, (v) => set("minutes", v), 0.1, 1440, "The shortest the game lasts, in minutes", "any")}</label>
         <label className="field"><span>Longest (× shortest)</span>{num(draft.endFactor ?? 1, (v) => set("endFactor", v), 1, 100, "The longest the game lasts, as a multiple of the shortest: it ends at a hidden time drawn uniformly between them (1: at the shortest)", "any")}</label>
+        <label className="field"><span>During play, teams see</span>
+          <select value={draft.visibility ?? "public"} onChange={(e) => set("visibility", e.target.value as "private" | "public")} aria-label="What teams and spectators see during play">
+            <option value="private">only their own programs' view (private)</option>
+            <option value="public">every turn as it happens (public)</option>
+          </select>
+        </label>
+        <label className="field"><span>Prevalence snapshots (s)</span>{num(draft.prevalenceEveryS ?? 30, (v) => set("prevalenceEveryS", v), 1, 3600, "Private play: how often, in seconds of game time, everyone's prevalence is published (rounded to 2 decimals)", "any")}</label>
         <label className="field"><span>Fitness (with prevalence)</span>
           <select value={sc.mode} onChange={(e) => set("scoring", { ...sc, mode: e.target.value as "final" | "timeAverage" })} aria-label="How fitness is reckoned in a game with prevalence">
             <option value="final">N² × p^F × p^B at the final round</option>
@@ -171,6 +178,9 @@ export function SettingsForm({ view, base }: { view: GameView; base: string }) {
         {" "}Bees run fresh for every turn and keep only their MEMORY, a key–value store of at most <b>{(draft.budgets.bee.memory ?? 50).toLocaleString()}</b> bytes (each entry: its key's bytes plus its value's JSON bytes).
         {" "}On every feed, {(draft.grains ?? "feeder") === "off" ? "no pollen grain is given (grains are off)" : <>the bee's team gets a pollen grain: ⌊{grain.scale} × pollen^{+grain.exponent.toFixed(3)}⌋ characters of the flower's minified code from a random start ({Number.isFinite(grainLen(27000)) ? `27,000 pollen gives ${grainLen(27000)}, 100,000 gives ${grainLen(100000)}` : "?"}), seen {(draft.grains ?? "feeder") === "public" ? "by everyone as it happens" : "by that team only until the game ends"}</>}.
         {" "}{prev ? (sc.mode === "final" ? "Fitness is N² × p^F × p^B at the final round: the product of the team's flower and bee draw chances. Without prevalence, scores:" : "Fitness is the time-average of flower success × bee success. Without prevalence, scores:") : "Scores:"} a team's forage is the sum over flower teams of {Number.isFinite(sc.alpha) ? powText("the nectar its bee got there", sc.alpha) : "(the nectar its bee got there)^?"}, its pollination the sum over bee teams of {Number.isFinite(sc.beta) ? powText("the pollen its species gave that team's bee", sc.beta) : "(the pollen its species gave that team's bee)^?"} (exponents in (0, 1]: below 1, spreading beats the same amount from one team); fitness = N² × pollination share × forage share.
+        {" "}{draft.visibility === "private"
+          ? <>During play each team sees only its own programs' sides of their turns (its flower's visits without the bee, its bee's turns without the species), its own pollen grains, and everyone's prevalence every {draft.prevalenceEveryS ?? 30} s of game time, rounded to 2 decimals; spectators see only that prevalence. Everything is revealed when the game ends (you, with no team in the game, see it all along).</>
+          : <>During play every turn is public as it happens.</>}
         {" "}String and list lengths and tree and graph sizes limit challenges; a response may be up to <b>{fmtBytes(byteCap)}</b> of JSON (over that it counts as no answer{bytesOn ? "; at exactly that it is an answer with E = 0" : ""}), and one over 4 KB is shown on the page as its first 4 KB.
       </p>
       <div className="settings-checks">
@@ -238,6 +248,9 @@ export function SettingsSummary({ cfg }: { cfg: GameConfig }) {
           pollen grains: {{ feeder: "the feeding team's", public: "public", off: "off" }[cfg.grains ?? "feeder"]}
         </span>
         <span className="chip">{cfg.revealOnFinish ? "code and prints revealed at the end" : "code stays secret"}</span>
+        <span className="chip" title={cfg.visibility === "private" ? `During play each team sees only its own programs' sides of its turns (not who was on the other side), its own grains, and everyone's prevalence every ${cfg.prevalenceEveryS ?? 30} s, rounded. Everything is revealed at the end.` : "During play every turn is public as it happens"}>
+          {cfg.visibility === "private" ? "private play" : "public play"}
+        </span>
         {prevalenceOn(cfg)
           ? <span className="chip" title={`Each round ceil(${cfg.prevalence!.slots} × N) bees visit, drawn by c + B (bee success); each visits a species drawn by c + F (flower success). Recent: ${cfg.prevalence!.halfLifeS ? `half-life ${cfg.prevalence!.halfLifeS} s` : "whole game"}${cfg.prevalence!.cap != null ? `, capped at ${cfg.prevalence!.cap}` : ""}; ${cCurveText(cfg.prevalence!, cfg.minutes)}`}>prevalence: {Math.round(cfg.prevalence!.slots * 100)}% of bees a round</span>
           : <span className="chip" title="Every bee visits every round, at a flower drawn uniformly among all species">every bee every round, uniform draws</span>}

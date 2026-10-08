@@ -27,6 +27,12 @@ export interface GameConfig {
   maxResponseBytes?: number; // the most UTF-8 bytes of a response's JSON text (default 1,024; 64 KiB before), the byte cap of E
   revealOnFinish: boolean;  // all code and every bee's prints become public when the game ends
   grains?: "feeder" | "public" | "off";            // who sees a feed's pollen grain during play
+  /**
+   * During play: "private" (new games), each team sees only its own programs' sides of their turns and everyone's
+   * prevalence in snapshots every prevalenceEveryS seconds, rounded; "public" (games from before), everything public.
+   */
+  visibility?: "private" | "public";
+  prevalenceEveryS?: number;
   pollenGrain?: { exponent: number; scale: number }; // a grain is ⌊scale × pollen^exponent⌋ characters
   /** forage = Σ nectar^alpha, pollination = Σ pollen^beta, each in (0, 1] (0.85 by default; a game without them: √). */
   scoring?: Scoring;
@@ -50,7 +56,7 @@ export interface PrevalenceConfig {
 /** One team in a sample: its flower and bee success (par 1), their draw chances, and its fitness so far. */
 export interface PrevalenceSpecies { team: string; index: number; flowerSuccess: number; beeSuccess: number; flowerP: number; beeP: number; fitness: number; balance?: number | null }
 /** A sample, about once a second of game time: the round whose draws it gave, and that round's start. */
-export interface PrevalenceSample { round: number; atMs: number; c: number; slots: number; species: PrevalenceSpecies[] }
+export interface PrevalenceSample { round: number; atMs: number; c: number; slots: number; species: PrevalenceSpecies[]; snapshot?: boolean }
 /** The game's prevalence (settings with the prior, endowment and a sech c's cHalfS resolved) and its latest sample (null before the first). */
 export type PrevalenceView = Omit<PrevalenceConfig, "prior" | "endowment" | "cHalfS"> & { prior: number; endowment: number; cHalfS?: number; feedPrice: number; sample: PrevalenceSample | null };
 /** Whether a game has prevalence (and so its fitness is by its scoring mode: N² × p^F × p^B now, or the time-average of F × B). */
@@ -159,20 +165,26 @@ export interface BeeMemory {
 
 export interface MyTeam { id: string; name: string; joinCode: string; index?: number | null }
 
-export type ActionKind = "arrive" | "feed" | "leave";
+export type ActionKind = "arrive" | "feed" | "leave" | "answer";
 
 /**
  * One action. A turn makes two: its arrival (public at once) and its end (feed or leave), which carries
  * the whole turn. bee and flower are team ids. A field the viewer may not see is absent.
+ *
+ * Private play (game.restricted): only your own programs' sides of your turns, never an arrival. `side`
+ * "flower": your flower's (flower = you, action "answer"; no bee, turn, decision, nectar or energy); "bee":
+ * your bee's (bee = you, action feed or leave; no flower, its version, percent or energy; the grain bare). Your
+ * bee at your own flower gives both, with the same seq.
  */
 export interface Action {
   seq: number;
   atMs: number;             // arrive: (round - 1) × round_ms; feed/leave: that + the flower window
   round: number;
-  turn: number;             // the bee's turn number: (bee, turn) identifies a turn
-  bee: string;
-  flower: string;
+  turn: number;             // the bee's turn number: (bee, turn) identifies a turn (absent on a private flower side)
+  bee: string;              // absent on a private flower side
+  flower: string;           // absent on a private bee side
   action: ActionKind;
+  side?: "flower" | "bee";  // private play only
   // feed and leave, public:
   c?: unknown;
   r?: unknown;              // null if the flower failed, or if the response is over 4 KB (then rHash and rPreview)
@@ -204,7 +216,10 @@ export interface Action {
   grainCodeLength?: number | null;
 }
 
-export interface ActionsPage { actions: Action[]; lastSeq: number; clockMs: number; round: number; status: GameStatus }
+export interface ActionsPage { actions: Action[]; lastSeq: number; clockMs: number; round: number; status: GameStatus; prevalence?: PrevalenceSample }
+
+/** Whether a record is a private flower or bee side (private play) rather than a public action. */
+export const isPrivateSide = (a: Action) => a.side === "flower" || a.side === "bee";
 
 /**
  * One turn record of the team ledger (the `turns` entity of docs/QUERY.md), as the viewer's team may see it,
@@ -225,6 +240,7 @@ export interface LedgerEntry {
 export interface LedgerPage {
   participants: string[] | null;
   team: number | null;      // my team's index (null for a spectator)
+  restricted?: boolean;     // private play: only my team's own sides (a turn of my flower: bee null; of my bee: flower null)
   entries: LedgerEntry[];
   lastSeq: number; round: number; status: GameStatus;
 }
@@ -241,7 +257,7 @@ export interface TeamScore {
   fitness: number | null;          // with prevalence, by its mode: N² × p^F × p^B now ("final"), or the time-average of F × B; else N² × pollination share × forage share
   flowerSuccess?: number | null; beeSuccess?: number | null; flowerP?: number | null; beeP?: number | null; // with prevalence: the latest sample's
   pollen: number | null;           // all this flower kept
-  feedsReceived: number; feedsGiven: number; pollinators: number;
+  feedsReceived: number | null; feedsGiven: number | null; pollinators: number | null;   // null in private play
   nectarCollected: number | null; nectarGiven: number | null; nectarSources: number | null;
 }
 
@@ -255,6 +271,7 @@ export interface Ledgers { feeds: number[][]; nectar: (number | null)[][]; polle
 /** GET .../scores: the live numbers, cheap enough to poll. Scores, ledgers and lastSeq are from one moment. */
 export interface ScoresView extends Timing {
   status: GameStatus; clockMs: number; round: number; lastSeq: number; fitnessBasis?: FitnessBasis;
+  restricted?: boolean;     // private play: the latest snapshot's numbers, no ledgers
   participants: string[] | null; scores: TeamScore[] | null; ledgers: Ledgers | null;
   prevalence?: PrevalenceView | null;
 }
@@ -263,6 +280,8 @@ export interface GameView {
   room: { id?: string; shortId: string; url: string; isOwner: boolean };
   game: Timing & {
     id?: string; shortId: string; url: string; status: GameStatus; config: GameConfig; fitnessBasis?: FitnessBasis;
+    /** This viewer sees the game privately: a private game until it's over, unless you own the room and have no team in it. */
+    restricted?: boolean;
     clockMs: number; round: number; lastSeq: number; version: number; lastError: string | null;
     createdAt?: string; startedAt: string | null; finishedAt: string | null; revealed: boolean; isOwner: boolean;
     windowMs?: number;   // the flower window the game plays with

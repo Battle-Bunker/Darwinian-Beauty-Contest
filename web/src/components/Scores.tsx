@@ -27,6 +27,43 @@ const termsOf = ({ alpha, beta }: Scoring, basis: FitnessBasis) => ({
   exponents: `Each entry is raised to a power before adding up: ${+beta.toFixed(3)} for pollination, ${+alpha.toFixed(3)} for forage. ${powText("400", beta)} = ${fmtPow(400, beta)} but 4 × ${powText("100", beta)} = ${fmtPow(100, beta, 4)}: below 1, giving to (or getting from) many teams beats the same amount from one.`,
 });
 
+/**
+ * Private play: the scoreboard is the latest prevalence snapshot's (every prevalenceEveryS seconds of game time,
+ * rounded to 2 decimals): fitness, F, B and the draw chances. The rest is revealed when the game is over.
+ */
+function PrivateScores({ view, base, sorted, teams, myTeamId, maxFit }: {
+  view: GameView; base?: string; sorted: TeamScore[]; teams: Record<string, Team>; myTeamId: string | null; maxFit: number;
+}) {
+  const every = view.game.config.prevalenceEveryS ?? 30;
+  const at = view.prevalence?.sample;
+  const show = (x: number | null | undefined) => (num(x) ? x.toFixed(2) : "–");
+  return (
+    <div className="scores">
+      <p className="small muted scores-note">
+        Private play: the scoreboard moves only with the prevalence snapshots, every {every} s of game time, rounded to 2 decimals
+        {at ? ` (this one at ${fmtClock(at.atMs)})` : ""}. The final scores, and everything behind them, are revealed when the game ends.
+      </p>
+      {base && view.prevalence && <PrevalencePanel view={view} base={base} />}
+      <div className="table-scroll">
+        <table className="data-table score-table">
+          <caption className="sr-only">Scores at the latest snapshot, best fitness first</caption>
+          <thead><tr><th>#</th><th className="left">Team</th><th className="left">Fitness</th><th title="flower success">F</th><th title="bee success">B</th><th title="the chance a visit is to its species">p^F</th><th title="its bee's share of the bee draw">p^B</th></tr></thead>
+          <tbody>
+            {sorted.map((s, i) => (
+              <tr key={s.teamId} className={s.teamId === myTeamId ? "mine" : ""}>
+                <td>{i + 1}</td>
+                <th scope="row" className="left"><TeamChip team={teams[s.teamId]} you={s.teamId === myTeamId} short /></th>
+                <td className="left">{num(s.fitness) ? <FitnessBar value={s.fitness} max={maxFit} /> : <span className="muted">–</span>}</td>
+                <td>{show(s.flowerSuccess)}</td><td>{show(s.beeSuccess)}</td><td>{show(s.flowerP)}</td><td>{show(s.beeP)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 /** A score term (a sum of powers of node·ms): two decimals while small, whole numbers once it's big. */
 const fmtRoot = (x: number) => (x < 100 ? fmt2(x) : Math.round(x).toLocaleString());
 const num = (x: number | null | undefined): x is number => typeof x === "number" && Number.isFinite(x);
@@ -47,6 +84,7 @@ export function Scores({ view, base }: { view: GameView; base?: string }) {
   const over = g.status === "finished";
   if (!scores.length) return <p className="muted">Scores appear once the game starts.</p>;
   const n2 = n * n;
+  if (g.restricted && !over) return <PrivateScores view={view} base={base} sorted={sorted} teams={teams} myTeamId={myTeamId} maxFit={maxFit} />;
 
   return (
     <div className="scores">
@@ -85,9 +123,9 @@ export function Scores({ view, base }: { view: GameView; base?: string }) {
                 <td><ShareCell value={num(s.pollination) ? fmtRoot(s.pollination) : "–"} share={s.pollinationShare} n={n} /></td>
                 <td><ShareCell value={num(s.forage) ? fmtRoot(s.forage) : "–"} share={s.forageShare} n={n} /></td>
                 <td title={num(s.pollen) ? fmtEExact(s.pollen) : ""}>{num(s.pollen) ? fmtE(s.pollen) : "–"}</td>
-                <td>{s.feedsReceived.toLocaleString()}</td>
-                <td>{s.pollinators} / {n}</td>
-                <td>{s.feedsGiven.toLocaleString()}</td>
+                <td>{num(s.feedsReceived) ? s.feedsReceived.toLocaleString() : "–"}</td>
+                <td>{num(s.pollinators) ? `${s.pollinators} / ${n}` : "–"}</td>
+                <td>{num(s.feedsGiven) ? s.feedsGiven.toLocaleString() : "–"}</td>
                 <td>{num(s.nectarSources) ? `${s.nectarSources} / ${n}` : "–"}</td>
                 <td title={num(s.nectarCollected) ? fmtEExact(s.nectarCollected) : "private"}>{num(s.nectarCollected) ? fmtE(s.nectarCollected) : "–"}</td>
                 <td title={num(s.nectarGiven) ? fmtEExact(s.nectarGiven) : "private"}>{num(s.nectarGiven) ? fmtE(s.nectarGiven) : "–"}</td>

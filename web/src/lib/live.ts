@@ -32,6 +32,8 @@ export class LiveStore implements ActionSource {
   actions: Action[] = [];
   /** The newest seq held. */
   lastSeq = 0;
+  /** The newest record held, as seq × 2 (+1 for a private bee side, which may share its seq with a flower side). */
+  private lastKey = 0;
   /** Bumps whenever actions or the clock change. */
   rev = 0;
   /** Set once the older end of the ring is the very first action of the game. */
@@ -55,8 +57,10 @@ export class LiveStore implements ActionSource {
   ingest(list: Action[], live = true) {
     let added = 0;
     for (const a of list) {
-      if (a.seq <= this.lastSeq) continue;
+      const key = a.seq * 2 + (a.side === "bee" ? 1 : 0);
+      if (key <= this.lastKey) continue;
       this.actions.push(a);
+      this.lastKey = key;
       this.lastSeq = a.seq;
       if (a.round > this.round) this.round = a.round;
       added++;

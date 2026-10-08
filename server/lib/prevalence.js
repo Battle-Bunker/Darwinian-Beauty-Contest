@@ -27,9 +27,14 @@
 //                  the instantaneous product of its species' and its bee's draw probabilities, c and cap included
 //   "timeAverage"  (v2, v3) the time-average, over the rounds played, of F_s × B_s
 // Both are kept every round (fitness sums: { sum, rounds, last }), so a game can be read either way.
-// The garden samples them (and the bees' balances) about once a second of game time (public); programs never see them.
+// The garden samples them (and the bees' balances) about once a second of game time, and the last round played
+// when it stops, so a final score is N² × p^F × p^B of the final published sample exactly (public; in private play
+// only snapshots until the game is over); programs never see them.
 import { SECH_K, feedPriceOf, prevalenceOf, roundMs, sech } from "./gameConfig.js";
 import { score, scoringOf } from "./scoring.js";
+
+/** To 6 decimals: how samples publish F, B, c, fitness and balances (p^F and p^B go unrounded: the final score is made of them). */
+export const r6 = (x) => Math.round(x * 1e6) / 1e6;
 
 /** N² × p^F × p^B for each team: the "final" fitness of a round's draw probabilities (1 at par). */
 export const instantFitness = (pF, pB) => pF.map((p, i) => pF.length * pF.length * p * pB[i]);
@@ -152,7 +157,10 @@ export class Prevalence {
     return this.pools ? [...this.balance] : null;
   }
 
-  /** A round's weights ({ F, B, pF, pB }, from weights()) go into each team's fitness: F × B, and N² × p^F × p^B. */
+  /**
+   * A round's weights ({ F, B, pF, pB }, from weights()) go into each team's fitness: F × B, and N² × p^F × p^B
+   * (with p^F and p^B exactly as the round's sample publishes them: unrounded).
+   */
   tally({ F, B, pF, pB }) {
     for (let i = 0; i < this.n; i++) this.sum[i] += F[i] * B[i];
     this.rounds++;

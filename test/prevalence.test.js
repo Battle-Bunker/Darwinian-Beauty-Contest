@@ -362,6 +362,11 @@ test("in a game: the fitness is N² × p^F × p^B of the final round's draws, an
   }
   m.sum.forEach((x, i) => close(out.fitness.sum[i], x, 1e-9, `time-average sum, team ${i}`));
   instantFitness(w.pF, w.pB).forEach((x, i) => close(out.fitness.last[i], x, 1e-9, `final instant, team ${i}`));
+  // The final round (70; the schedule samples 66 and would next sample 71) is published as a sample when the garden
+  // stops, and the score is exactly N² × p^F × p^B of it.
+  const fin = out.samples.at(-1);
+  assert.deepEqual([fin.round, out.sample.round, out.samples.at(-2).round], [70, 70, 66]);
+  assert.deepEqual(out.fitness.last, instantFitness(fin.pF, fin.pB), "bit for bit");
   const z = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
   scoreboard(config, ["a", "b", "c"], z, z, z, out.fitness, out.sample).forEach((r, i) => close(r.fitness, out.fitness.last[i], 1e-12, `score ${i}`));
   assert.ok(out.fitness.last.some((x) => Math.abs(x - 1) > 0.05), `fitness moved off par: ${out.fitness.last}`);

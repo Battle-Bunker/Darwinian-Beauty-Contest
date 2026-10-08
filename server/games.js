@@ -3,7 +3,7 @@
 import crypto from "node:crypto";
 import { query, tx } from "./db/pool.js";
 import { allocatePrefixLen, normalizeCode, shortId, uuidToCode } from "./lib/shortid.js";
-import { DEFAULT_CONFIG, KINDS, available, drawEndMs, endFactorOf, energyBytes, feedPriceOf, lengthOf, normalizeConfig, prevalenceConfig, prevalenceOf, snapshotsOf, visibilityOf, windowMsOf } from "./lib/gameConfig.js";
+import { DEFAULT_CONFIG, KINDS, available, drawEndMs, endFactorOf, energyBytes, feedPriceOf, lengthOf, normalizeConfig, prevalenceConfig, prevalenceOf, snapshotSql, snapshotsOf, visibilityOf, windowMsOf } from "./lib/gameConfig.js";
 import { fitnessBasisOf, scoreboard } from "./lib/prevalence.js";
 import { changes, size } from "./lib/measure.js";
 import { scoringOf, zeroLedger } from "./lib/scoring.js";
@@ -377,13 +377,6 @@ export const restrictedFor = (g, ownerId, userId, mine) =>
   visibilityOf(g.config) === "private" && g.status !== "finished" && !(!!userId && userId === ownerId && !mine);
 
 const r2 = (x) => (typeof x === "number" && Number.isFinite(x) ? Math.round(x * 100) / 100 : x ?? null);
-
-/** SQL: whether the prevalence sample at `col` (game ms) is one of the snapshots of a game with this config. */
-export function snapshotSql(col, config) {
-  const { everyMs, sampleMs } = snapshotsOf(config);
-  const P = Math.max(1, Math.round(everyMs)), S = Math.max(1, Math.round(sampleMs)); // integers, written inline
-  return `(${col} = 0 OR floor(${col}::float8 / ${P}) > floor((${col} - ${S})::float8 / ${P}))`;
-}
 
 /** A private game's latest prevalence snapshot (a stored sample row), or null before the first. */
 export async function latestSnapshot(g, client = { query }) {

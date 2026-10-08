@@ -517,6 +517,205 @@ test("big responses: the record shows their size and hash; the whole text is sto
   assert.ok(rows.every((r) => r.response === null && r.responseBytes > 4096));
 });
 
+// ---------- private play ----------
+
+/** The same garden output as a second, private game in the room (its own teams, the same users), still running. */
+async function privateGame(extra = {}) {
+  const id = crypto.randomUUID(), teams = Array.from({ length: N }, () => crypto.randomUUID());
+  const config = { ...db.config, visibility: "private", prevalenceEveryS: 5, ...extra };
+  const out = db.out;
+  await tx(async (c) => {
+    await c.query(`INSERT INTO games (id, room_id, code, prefix_len, config, status, participants, feeds, nectar, pollen, clock_ms, round, last_seq, fitness, prevalence)
+      VALUES ($1, $2, $3, 26, $4, 'running', $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+    [id, db.room, uuidToCode(id), config, teams, JSON.stringify(out.feeds), JSON.stringify(out.nectar), JSON.stringify(out.pollen),
+      out.clockMs, out.round, out.lastSeq, JSON.stringify(out.fitness), JSON.stringify(out.sample)]);
+    for (const [i, t] of teams.entries()) {
+      await c.query("INSERT INTO teams (id, game_id, name, join_code, color, created_by) VALUES ($1, $2, $3, $4, '#000', $5)", [t, id, `P${i}`, `p${i}${id.slice(0, 8)}`, db.users[i]]);
+      await c.query("INSERT INTO team_members (team_id, game_id, user_id) VALUES ($1, $2, $3)", [t, id, db.users[i]]);
+      for (const kind of ["flower", "bee"]) {
+        await c.query(`INSERT INTO programs (game_id, team_id, kind, version, code, size, cost, at_ms, submitted_by) VALUES ($1, $2, $3, 1, $4, 50, 0, 0, $5)`,
+          [id, t, kind, `# ${kind} of P${i}`, db.users[i]]);
+      }
+      await c.query("INSERT INTO banks (game_id, team_id, kind, bank, at_ms) VALUES ($1, $2, 'flower', 0, 0), ($1, $2, 'bee', 0, 0)", [id, t]);
+    }
+    for (const m of out.memories) {
+      await c.query("INSERT INTO bee_memories (game_id, team_id, bee_version, memory, bytes, error, at_round) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        [id, teams[m.team], m.version, m.memory, m.bytes, m.error, out.round]);
+    }
+    await insertActions(c, id, out.actions, teams);
+    await insertSamples(c, id, out.samples);
+  });
+  return { id, teams, config, short: uuidToCode(id) };
+}
+
+const is2dp = (x) => x === null || (typeof x === "number" && Math.abs(Math.round(x * 100) / 100 - x) < 1e-12);
+
+test("private play: a member, a spectator and an anonymous reader see only their own programs' sides of their turns, bare grains and 2-decimal prevalence snapshots, on every surface; the room's owner with no team sees it all", async () => {
+  const G = await import("../server/games.js");
+  const { gameFeed } = await import("../server/realtime.js");
+  const { programInterface } = await import("../server/lib/interface.js");
+  const { gameInfo } = await import("../server/engine.js");
+  const P = await privateGame();
+  const game = { id: P.id };
+  const roomRow = async () => (await pool.query("SELECT * FROM rooms WHERE id = $1", [db.room])).rows[0];
+  const ME = 1, meUser = { id: db.users[ME] }, myId = P.teams[ME];
+  const others = P.teams.filter((t) => t !== myId);
+  // Snapshots: the samples at the first round at or after each 5 s of game time; the latest is at 15 s.
+  const snaps = db.out.samples.filter((x) => x.atMs % 5000 === 0);
+  assert.deepEqual(snaps.map((x) => x.atMs), [0, 5000, 10000, 15000]);
+  const last = snaps.at(-1), r2 = (x) => Math.round(x * 100) / 100;
+  // What each turn looks like to team ME, from the garden's own records.
+  const mineTurns = db.records.filter((t) => t.bee === ME || t.flower === ME);
+  const sides = mineTurns.reduce((k, t) => k + (t.bee === ME) + (t.flower === ME), 0);
+  assert.ok(mineTurns.some((t) => t.bee === ME && t.fed && t.grain), "the fixture gives team 1's bee a grain");
+  const leaks = (x, ids = others) => { const j = JSON.stringify(x); return ids.filter((id) => j.includes(id)); };
+  try {
+    for (const [who, user] of [["member", meUser], ["spectator", { id: db.users[N] }], ["anonymous", null]]) {
+      const member = who === "member";
+      const room = await roomRow();
+      // The game view and the live numbers: the latest snapshot's F, B, p^F, p^B and fitness, rounded; nothing else.
+      const view = await G.viewGame(room, game, user);
+      const scores = await G.viewScores(game, user);
+      for (const v of [view, scores]) {
+        assert.equal(v.ledgers, null, `${who}: no ledgers`);
+        assert.equal(v.restricted ?? v.game.restricted, true);
+        assert.deepEqual(v.scores.map((s) => [s.fitness, s.flowerSuccess, s.beeSuccess, s.flowerP, s.beeP]),
+          last.F.map((_, i) => [r2(last.fitness[i]), r2(last.F[i]), r2(last.B[i]), r2(last.pF[i]), r2(last.pB[i])]), `${who}: the scoreboard is the latest snapshot's`);
+        assert.ok(v.scores.every((s) => [s.pollination, s.forage, s.pollinationShare, s.pollen, s.feedsReceived, s.feedsGiven, s.pollinators, s.nectarCollected, s.nectarGiven, s.nectarSources].every((x) => x === null)));
+        const smp = v.prevalence.sample;
+        assert.deepEqual([smp.round, smp.atMs, smp.c, smp.snapshot], [last.round, 15000, r2(last.c), true]);
+        assert.ok(smp.species.every((x) => x.balance === null && [x.flowerSuccess, x.beeSuccess, x.flowerP, x.beeP, x.fitness].every(is2dp)));
+      }
+      assert.ok(view.teams.every((t) => (t.id === myId && member) || (t.programs === null && t.banks === null && t.memory === null)), `${who}: only your own team's versions, budgets and MEMORY`);
+      // Actions (the REST pages and the SSE/WebSocket feed, which reads them): only your own programs' sides.
+      const page = await G.viewActions(game, user, { after: 0, limit: 5000 });
+      const back = await G.viewActions(game, user, { before: db.out.lastSeq + 1, limit: 5000 });
+      assert.deepEqual(back.actions, page.actions, "before= pages the same records");
+      assert.deepEqual([page.prevalence.round, page.prevalence.snapshot], [last.round, true]);
+      if (!member) assert.deepEqual(page.actions, [], `${who}: no turns at all`);
+      else {
+        assert.equal(page.actions.length, sides, "one record per side your team played");
+        assert.deepEqual(leaks(page.actions), [], "no other team's id anywhere");
+        for (const a of page.actions) {
+          assert.ok(a.action !== "arrive", "no arrivals");
+          if (a.side === "flower") {
+            assert.deepEqual([a.flower, a.action, "bee" in a, "turn" in a, "energy" in a, "pollen" in a, "nectar" in a, "beeMs" in a, "grain" in a], [myId, "answer", false, false, false, false, false, false, false]);
+            assert.ok("percent" in a && "budgetMs" in a && "ms" in a && "flowerError" in a);
+          } else {
+            assert.equal(a.side, "bee");
+            assert.deepEqual([a.bee, "flower" in a, "flowerVersion" in a, "percent" in a, "energy" in a, "pollen" in a, "ms" in a, "budgetMs" in a, "flowerError" in a, "grainVersion" in a, "grainCodeLength" in a],
+              [myId, false, false, false, false, false, false, false, false, false, false]);
+            assert.ok(["feed", "leave"].includes(a.action));
+            if (a.action === "feed") assert.ok("nectar" in a && "price" in a && "net" in a && "balance" in a);
+          }
+        }
+        assert.ok(page.actions.some((a) => a.side === "bee" && typeof a.grain === "string"), "your bee's grains, bare");
+      }
+      const feed = [];
+      const stop = gameFeed({ gameId: P.id, teamId: member ? myId : null, version: 1, after: 0, fetchActions: (after) => G.viewActions(game, user, { after, limit: 1000 }), send: (m) => feed.push(m), isOpen: () => true });
+      for (let i = 0; i < 50 && !feed.some((m) => m.lastSeq !== undefined && !m.actions); i++) await new Promise((r) => setTimeout(r, 20));
+      stop();
+      const streamed = feed.flatMap((m) => m.actions ?? []);
+      assert.deepEqual(streamed, page.actions, `${who}: the live feed carries the same records`);
+      assert.ok(feed.filter((m) => m.prevalence).every((m) => m.prevalence.snapshot === true), "and only snapshots");
+      // The team ledger and the history queries.
+      const ledger = await G.viewLedger(game, user, { limit: 5000 });
+      const turns = (await G.queryGame(game, user, { from: "turns", limit: MAX_LIMIT })).rows;
+      if (!member) { assert.deepEqual([ledger.entries, turns], [[], []], who); }
+      else {
+        for (const rows of [ledger.entries, turns]) {
+          assert.equal(rows.length, sides);
+          for (const r of rows) {
+            if (r.flower === ME) assert.deepEqual([r.bee, r.turn, r.fed, r.nectar, r.pollen, r.energy, r.beeMs, r.grain], [null, null, null, null, null, null, null, null]);
+            else assert.deepEqual([r.bee, r.flower, r.percent, r.energy, r.pollen, r.ms, r.budgetMs, r.flowerVersion, r.grainVersion, r.grainCodeLength], [ME, null, null, null, null, null, null, null, null, null]);
+          }
+        }
+        same(turns.map((r) => [r.seq, r.bee, r.flower]).sort(), ledger.entries.map((r) => [r.seq, r.bee, r.flower]).sort(), "SQL and the ledger agree");
+        const byFlower = (await G.queryGame(game, user, { from: "turns", groupBy: ["flower"], aggregates: [{ fn: "count", as: "n" }] })).rows;
+        assert.ok(byFlower.every((r) => r.flower === ME || r.flower === null), "aggregates see nothing else either");
+      }
+      assert.deepEqual((await G.queryGame(game, user, { from: "pairs" })).rows, [], `${who}: no pairs`);
+      const prev = (await G.queryGame(game, user, { from: "prevalence", limit: MAX_LIMIT })).rows;
+      assert.deepEqual([...new Set(prev.map((r) => r.atMs))], [0, 5000, 10000, 15000], `${who}: prevalence only at the snapshots`);
+      assert.ok(prev.every((r) => r.balance === null && [r.flowerSuccess, r.beeSuccess, r.flowerP, r.beeP, r.fitness, r.c].every(is2dp)), "rounded to 2 decimals");
+      const restSamples = (await G.viewPrevalence(game, {}, user)).samples;
+      assert.deepEqual(restSamples.map((x) => x.atMs), [0, 5000, 10000, 15000]);
+      assert.ok(restSamples.every((x) => x.snapshot && is2dp(x.c) && x.species.every((s) => s.balance === null && is2dp(s.fitness) && is2dp(s.flowerP))));
+      const qScores = (await G.queryGame(game, user, { from: "scores" })).rows;
+      same(qScores.map((r) => [r.fitness, r.flowerP, r.pollination]), last.F.map((_, i) => [r2(last.fitness[i]), r2(last.pF[i]), null]));
+      const versions = (await G.queryGame(game, user, { from: "versions" })).rows;
+      assert.ok(versions.every((r) => member && r.team === ME), `${who}: only your own versions`);
+      const teamRows = (await G.queryGame(game, user, { from: "teams" })).rows;
+      assert.ok(teamRows.every((r) => (member && r.index === ME) || r.memory === null));
+      // A response is yours only if the turn was.
+      const otherTurn = db.records.find((t) => t.bee !== ME && t.flower !== ME && t.response !== null);
+      const ownTurn = db.records.find((t) => (t.bee === ME || t.flower === ME) && t.response !== null);
+      assert.equal(await G.viewResponse(game, otherTurn.seq, user), null, `${who}: another team's response is hidden`);
+      assert.equal(await G.viewResponse(game, ownTurn.seq, user) !== null, member);
+      // The room's list.
+      assert.deepEqual(leaks(await G.viewRoom(room, user), P.teams), []);
+    }
+    // The interface text and GAME carry nothing about other species (as in any game).
+    assert.deepEqual(leaks(programInterface(P.config), P.teams), []);
+    assert.deepEqual(Object.keys(gameInfo(P.config, 1, N)).sort(), ["challenge_type", "feed_cost", "feed_price", "flower_ms", "flower_size_cap", "flower_window_ms",
+      "max_len", "max_nodes", "max_response_bytes", "response_type", "round_ms", "team", "teams"]);
+    // The room's owner, with no team in the game, sees it as a public game: every arrival, sample, ledger and row.
+    await pool.query("UPDATE rooms SET owner_id = $2 WHERE id = $1", [db.room, db.users[N]]);
+    const owner = { id: db.users[N] };
+    const ov = await G.viewGame(await roomRow(), game, owner);
+    assert.equal(ov.game.restricted, false);
+    assert.ok(ov.ledgers && ov.scores.every((s) => typeof s.pollination === "number") && ov.prevalence.sample.round === db.out.sample.round);
+    const oa = await G.viewActions(game, owner, { after: 0, limit: 5000 });
+    assert.equal(oa.actions.length, db.out.actions.length);
+    assert.ok(oa.actions.some((a) => a.action === "arrive" && P.teams.includes(a.bee) && P.teams.includes(a.flower)));
+    assert.equal((await G.queryGame(game, owner, { from: "turns", limit: MAX_LIMIT })).rows.length, db.records.length);
+    assert.equal((await G.viewPrevalence(game, {}, owner)).samples.length, db.out.samples.length);
+    assert.equal((await G.viewScores(game, owner)).restricted, false);
+    await pool.query("UPDATE rooms SET owner_id = $2 WHERE id = $1", [db.room, db.users[0]]);
+    // The owner on a team is a player like any other.
+    assert.equal((await G.viewGame(await roomRow(), game, { id: db.users[0] })).game.restricted, true);
+    // Over: everything is revealed, as in any game, the final round's sample with it: the final score is exactly
+    // N² × p^F × p^B of that published sample (during play it was in nothing a player could read: above).
+    await pool.query("UPDATE games SET status = 'finished' WHERE id = $1", [P.id]);
+    const fin = (await G.viewPrevalence(game, {}, null)).samples.at(-1);
+    assert.deepEqual([fin.round, fin.atMs, db.out.samples.at(-2).round], [db.out.round, (db.out.round - 1) * 200, 76], "the last round played (80), off the once-a-second schedule");
+    const { instantFitness } = await import("../server/lib/prevalence.js");
+    const final = instantFitness(fin.species.map((x) => x.flowerP), fin.species.map((x) => x.beeP));
+    for (const rows of [(await G.viewScores(game, null)).scores, (await G.queryGame(game, null, { from: "scores" })).rows]) {
+      assert.deepEqual(rows.map((r) => r.fitness), final, "bit for bit");
+    }
+    const after = await G.viewActions(game, null, { after: 0, limit: 5000 });
+    assert.equal(after.actions.length, db.out.actions.length);
+    assert.ok((await G.viewGame(await roomRow(), game, null)).ledgers);
+    assert.equal((await G.queryGame(game, null, { from: "turns", limit: MAX_LIMIT })).rows.length, db.records.length);
+  } finally {
+    await pool.query("UPDATE rooms SET owner_id = $2 WHERE id = $1", [db.room, db.users[0]]);
+    await pool.query("DELETE FROM games WHERE id = $1", [P.id]);
+  }
+});
+
+test("public games are unchanged: a config stored without visibility is public, its turns, samples and ledgers public as they happen", async () => {
+  const G = await import("../server/games.js");
+  const { normalizeConfig: norm } = await import("../server/lib/gameConfig.js");
+  assert.deepEqual([norm({}).visibility, norm({}).prevalenceEveryS], ["private", 30], "new games are private");
+  const { visibility: _, ...stored } = db.config;
+  assert.equal(norm({ minutes: 3 }, stored).visibility, "public", "a config stored without it stays public");
+  try {
+    await pool.query("UPDATE games SET config = $2 WHERE id = $1", [db.game, stored]);
+    await setStatus("running");
+    const page = await G.viewActions({ id: db.game }, null, { after: 0, limit: 5000 });
+    assert.equal(page.actions.length, db.out.actions.length, "a spectator sees every action");
+    assert.ok(page.actions.some((a) => a.action === "arrive") && page.actions.every((a) => !("side" in a)));
+    assert.equal(page.prevalence.round, db.out.sample.round, "the latest sample, not a snapshot");
+    const scores = await G.viewScores({ id: db.game }, null);
+    assert.ok(scores.ledgers && !scores.restricted && scores.scores.every((s) => typeof s.feedsGiven === "number"));
+    assert.equal((await G.viewPrevalence({ id: db.game }, {}, null)).samples.length, db.out.samples.length);
+    assert.equal((await G.queryGame({ id: db.game }, null, { from: "turns", limit: MAX_LIMIT })).rows.length, db.records.length);
+  } finally {
+    await pool.query("UPDATE games SET config = $2 WHERE id = $1", [db.game, db.config]);
+  }
+});
+
 test("bad queries are refused with a reason; limits are capped", async () => {
   const bad = [
     [{ from: "nope" }, /unknown entity/],

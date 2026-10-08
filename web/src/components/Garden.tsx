@@ -255,7 +255,7 @@ function liveFeeds(view: GameView, actions: Action[], order: string[]): { fedHer
   const fedHere = order.map(() => 0), fedBy = order.map(() => 0);
   for (const s of view.scores ?? []) {
     const i = pos.get(s.teamId);
-    if (i !== undefined) { fedHere[i] = s.feedsReceived; fedBy[i] = s.feedsGiven; }
+    if (i !== undefined) { fedHere[i] = s.feedsReceived ?? 0; fedBy[i] = s.feedsGiven ?? 0; }
   }
   const since = view.game.lastSeq;
   for (let k = actions.length - 1; k >= 0 && actions[k].seq > since; k--) {

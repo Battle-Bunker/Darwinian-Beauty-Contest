@@ -174,10 +174,21 @@ export function snapshotsOf(config) {
   return { everyMs, sampleMs: sampleEveryOf(config) * roundMs(config) };
 }
 
-/** Whether the prevalence sample taken at game time atMs is one of the game's snapshots. */
+/**
+ * Whether the prevalence sample taken at game time atMs is one of the game's snapshots: a scheduled sample (at a
+ * multiple of sampleMs; not the extra one of the last round played) that is the first at or after a multiple of
+ * everyMs.
+ */
 export function isSnapshot(atMs, config) {
   const { everyMs, sampleMs } = snapshotsOf(config);
-  return atMs === 0 || Math.floor(atMs / everyMs) > Math.floor((atMs - sampleMs) / everyMs);
+  return atMs % sampleMs === 0 && (atMs === 0 || Math.floor(atMs / everyMs) > Math.floor((atMs - sampleMs) / everyMs));
+}
+
+/** isSnapshot in SQL, of the column `col` (game ms; integers written inline). */
+export function snapshotSql(col, config) {
+  const { everyMs, sampleMs } = snapshotsOf(config);
+  const P = Math.max(1, Math.round(everyMs)), S = Math.max(1, Math.round(sampleMs));
+  return `(${col} % ${S} = 0 AND (${col} = 0 OR floor(${col}::float8 / ${P}) > floor((${col} - ${S})::float8 / ${P})))`;
 }
 
 /** A config's endFactor: the most its game can last, as a multiple of `minutes` (1 for a config stored without one). */
