@@ -10,8 +10,11 @@
 //   D_{s,b}  pollen from s to bee team b, decayed each round by 2^(−0.2 / halfLifeS) before adding the round's pollen
 //            (halfLife null = cumulative: the scoreboard's own ledger);
 //   Q_s      Σ_b D_{s,b}^β                 (basis "poll");  or the team's fitness from decayed ledgers (basis "fit");
+//            or Σ_b (decayed count of feeds by b at s)^β (basis "feeds": an alternative, how often bees choose s);
 //   P_s      N × Q_s / Σ_k Q_k, or 1 for all when Σ Q = 0;
 //   c(t)     falls linearly from c0 = 1 at the start to `floor` at the end.
+// Options to damp start-up noise: warmupS (P fades in over the first warmupS seconds), capP (P_s capped), prior
+// (every ledger cell starts at `prior` node·ms·bytes of pollen, decaying with the half-life).
 // Decay is implemented as growth: a feed in round r is added with weight g^r, g = 2^(0.2 / halfLifeS). Every cell is
 // then D × g^r for the same r, so Q is scaled by one common factor and the shares are exactly the engine's.
 //
@@ -30,7 +33,8 @@
 //            reader as style, but a coop style is split into 5 options by the R it reads
 //            Values are the bee's marginal forage, (n_bs + x)^α − n_bs^α, so a bee prefers new sources.
 //   operators (flowers) once a minute, pick the percent among p ± {0, 5, 10, 15} that maximises predicted
-//            pollination over the next minute, given current prevalence and every bee's re-optimised acceptance,
+//            pollination over the next minute, given current prevalence and every bee's re-optimised acceptance
+//            (which also sets how often each bee visits: 300 / (1 + feedCost × its accepted share of draws)),
 //            then add N(0, noiseSd) noise; with probability `explore` a random candidate instead. A species whose
 //            style a defector shows changes to a fresh style with probability `evade`.
 
@@ -86,6 +90,8 @@ export function simulate({
   prevalence = null,          // null: uniform draws. { basis: "poll"|"fit", halfLifeS: null|number, floor, c0 = 1, warmupS = 0, capP = Infinity }
   alpha = 0.85, beta = 0.85,
   adapt = true, evade = 0.5, explore = 0.15, noiseSd = 3, steps = [-15, -10, -5, 0, 5, 10, 15],
+  adaptKinds = ["vet", "coop"], pctRange = { vet: [0, 100], coop: [20, 80] },   // cooperators' mandate: 20-80%
+  defEvery = 1,               // defectors retarget every defEvery-th minute (1: every minute)
   sampleEvery = 5,
 } = {}) {
   const rand = rng(seed * 7919 + 13);
@@ -137,7 +143,7 @@ export function simulate({
     const ramp = P.warmupS ? Math.min(1, t / P.warmupS) : 1;
     let tot = 0;
     const share = new Float64Array(N);
-    if (P.basis === "poll") {
+    if (P.basis === "poll" || P.basis === "feeds") {
       for (let s = 0; s < N; s++) tot += colPow[s];
       for (let s = 0; s < N; s++) share[s] = tot > 0 ? colPow[s] / tot : 1 / N;
     } else {
@@ -214,13 +220,10 @@ export function simulate({
 
   // flower operators
   const events = [];   // { t, s, kind, relPrev, from, to }
-  function visitsPerMin(b, r) {
-    const secs = Math.min(60, Math.max(1, Math.floor(r * ROUND_S)));
-    return (sumWin(visitSec, b) * 60) / secs;
-  }
   function updateFlower(s, r) {
     const f = sp[s];
     if (f.kind === "def") {
+      if (Math.round((r - offset[s]) / 300) % defEvery !== 0) return;
       let best = -1, bestN = -1;
       for (let t = 0; t < N; t++) {
         if (sp[t].kind === "def") continue;
@@ -231,24 +234,30 @@ export function simulate({
       return;
     }
     if (evade > 0 && sp.some((d, k) => k !== s && d.kind === "def" && styleOf[k] === styleOf[s]) && rand() < evade) styleOf[s] = newStyle(s);
-    if (!adapt) return;
-    const cands = [...new Set(steps.map((d) => Math.max(0, Math.min(100, f.pct + d))))];
-    const vpm = bees.map((_, b) => visitsPerMin(b, r));
+    if (!adapt || !adaptKinds.includes(f.kind)) return;
+    const [lo, hi] = pctRange[f.kind];
+    const cands = [...new Set(steps.map((d) => Math.max(lo, Math.min(hi, f.pct + d))))];
+    // Each bee's visits per minute are predicted from its re-optimised acceptance A: 300 / (1 + feedCost × A),
+    // so a flower that makes bees pickier also brings them back to inspect more often.
     const scoreOf = (q) => {
       let Pq = 0;
       for (let b = 0; b < N; b++) {
-        let gain = 0;
+        let gain = 0, A = 1;
         if (bees[b] === "blind") gain = (1 - q / 100) * meanE[s];
         else {
           const opts = buildOptions(b, (k) => (k === s ? q : lastPct[k]));
           const kappa = solveCut(opts);
+          A = 0;
           for (const o of opts) {
-            if (!o.list.includes(s) || !(o.v > 0 && o.v >= kappa)) continue;
+            if (!(o.v > 0 && o.v >= kappa)) continue;
+            A += o.pi;
+            if (!o.list.includes(s)) continue;
             if (o.bin < 0) gain += (1 - q / 100) * meanE[s];
             else gain += HONEST_READ[o.bin] * (1 - q / 100) * Ebin[s][o.bin];
           }
         }
-        const d = vpm[b] * prev[s] * gain;
+        const vpm = 300 / (1 + feedCost * A);
+        const d = vpm * prev[s] * gain;
         Pq += Math.pow(pol[b][s] + d, beta);
       }
       return Pq;
@@ -256,7 +265,7 @@ export function simulate({
     let pick;
     if (rand() < explore) pick = cands[Math.floor(rand() * cands.length)];
     else { let best = -Infinity; for (const q of cands) { const v = scoreOf(q); if (v > best) { best = v; pick = q; } } }
-    const to = Math.max(0, Math.min(100, Math.round(pick + noiseSd * gauss(rand))));
+    const to = Math.max(lo, Math.min(hi, Math.round(pick + noiseSd * gauss(rand))));
     events.push({ t: r * ROUND_S, s, kind: f.kind, relPrev: prev[s] * N, from: f.pct, to });
     f.pct = to;
   }
@@ -268,6 +277,9 @@ export function simulate({
   const pctSeries = new Float32Array(Math.ceil(rounds / 300) * N);
   const sitOut = new Int32Array(N);
 
+  // prior: every cell of the prevalence ledger starts at `prior` pollen (decaying like real pollen), so the first
+  // few feeds can't swing the shares
+  if (P && P.prior) { for (let b = 0; b < N; b++) for (let s = 0; s < N; s++) polD[b][s] = necD[b][s] = P.prior; recomputePow(); }
   for (let b = 0; b < N; b++) updateBee(b);   // bees start knowing the opening percents (earlier games)
   computePrev(0);
   for (let r = 0; r < rounds; r++) {
@@ -279,7 +291,6 @@ export function simulate({
     let acc = 0;
     for (let s = 0; s < N; s++) { acc += prev[s]; cum[s] = acc; }
     if (g !== 1) gr *= g;
-    let fed = false;
     for (let b = 0; b < N; b++) {
       if (sitOut[b] > 0) { sitOut[b]--; continue; }
       const u = rand() * acc;
@@ -307,14 +318,13 @@ export function simulate({
       if (P) {
         const w = P.halfLifeS ? gr : 1;
         const op = polD[b][s], on = necD[b][s];
-        polD[b][s] += y * w; necD[b][s] += x * w;
+        polD[b][s] += (P.basis === "feeds" ? 1 : y) * w; necD[b][s] += x * w;
         colPow[s] += Math.pow(polD[b][s], beta) - (op > 0 ? Math.pow(op, beta) : 0);
         if (P.basis === "fit") rowPow[b] += Math.pow(necD[b][s], alpha) - (on > 0 ? Math.pow(on, alpha) : 0);
-        fed = true;
       }
     }
     if (P && r % 300 === 299) recomputePow();
-    if (P && (fed || true)) computePrev(r + 1);
+    if (P) computePrev(r + 1);
     if (r % sampleEvery === 0) prevSeries.set(prev, (r / sampleEvery) * N);
     if (r % 300 === 299) pctSeries.set(sp.map((f) => f.pct), ((r + 1) / 300 - 1) * N);
   }

@@ -1,0 +1,14 @@
+# group sticky, 20 seeds per variant, 3000 rounds (10 min), N = 14
+Prevalence figures are relative to uniform (1 = 1/N of draws). neff = 1/HHI of prevalence (14 = uniform).
+starved: species whose earned term P_s stayed < 0.1 for 30 s (after the first 30 s); at end: P_s < 0.1 in the last round; dead: p_s < 0.01/N for 30 s; recovered: starved, later P_s >= 0.5 for 10 s. Counts per game (of 14).
+
+| variant | neff mean / end | peak top share | top≥0.5 (frac, med s) | early peak (≤30 s) | lock-in ρ | starved / at end / dead / recovered | prev vet / coop / def (game) | prev end vet / coop / def | fit vet / coop / def | def boom-bust per def | forage share style/blind, reader/blind | Δpct high / mid / low prev, slope | pct end vet / coop | mix distinct / eff |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| sticky uniform | 14.0 / 14.0 | 0.07 | 0.00, – | 1.0 | – | 0.0 / 0.0 / 0.0 / 0.0 | 1.00 / 1.00 / 1.00 | 1.00 / 1.00 / 1.00 | 1.35 / 0.40 / 1.36 | 0.00 | 1.17, 1.27 | – / 1.4 / –, – | 22 / 62 | 12.5 / 10.3 |
+| sticky poll cum f0.1 | 9.4 / 8.6 | 0.31 | 0.00, – | 4.4 | 0.74 | 3.1 / 1.2 / 0.0 / 0.6 | 1.38 / 0.49 / 0.94 | 1.43 / 0.33 / 1.15 | 1.51 / 0.23 / 1.25 | 0.00 | 1.09, 1.10 | – / 0.3 / 1.2, – | 22 / 60 | 12.4 / 7.7 |
+| sticky poll ema30 f0.1 | 9.4 / 7.4 | 0.32 | 0.00, – | 4.4 | 0.63 | 5.0 / 3.0 / 0.0 / 1.1 | 1.31 / 0.48 / 1.23 | 1.33 / 0.26 / 1.71 | 1.49 / 0.21 / 1.49 | 0.07 | 1.13, 1.16 | – / 1.6 / 1.1, – | 22 / 60 | 12.5 / 7.8 |
+| sticky poll ema60 f0.1 | 9.6 / 8.2 | 0.31 | 0.00, – | 4.4 | 0.67 | 3.6 / 2.0 / 0.0 / 0.8 | 1.32 / 0.49 / 1.14 | 1.31 / 0.30 / 1.65 | 1.48 / 0.22 / 1.40 | 0.00 | 1.12, 1.14 | – / 1.5 / 1.1, – | 22 / 59 | 12.5 / 7.8 |
+| sticky poll ema120 f0.1 | 9.7 / 8.7 | 0.31 | 0.00, – | 4.4 | 0.69 | 3.1 / 1.6 / 0.0 / 0.6 | 1.34 / 0.49 / 1.08 | 1.36 / 0.31 / 1.44 | 1.49 / 0.22 / 1.39 | 0.03 | 1.12, 1.15 | – / -2.0 / 1.1, – | 22 / 59 | 12.5 / 7.8 |
+| sticky fit ema60 f0.1 | 9.5 / 8.0 | 0.41 | 0.20, 0 | 5.8 | 0.63 | 3.5 / 2.3 / 0.0 / 0.8 | 1.32 / 0.48 / 1.18 | 1.28 / 0.29 / 1.79 | 1.48 / 0.22 / 1.47 | 0.03 | 1.11, 1.16 | – / 3.7 / 1.0, – | 22 / 60 | 12.5 / 7.9 |
+
+standard errors (fit coop, prev def, neff mean): sticky uniform: 0.022, 0.000, 0.00; sticky poll cum f0.1: 0.019, 0.035, 0.16; sticky poll ema30 f0.1: 0.016, 0.045, 0.15; sticky poll ema60 f0.1: 0.018, 0.032, 0.16; sticky poll ema120 f0.1: 0.019, 0.030, 0.14; sticky fit ema60 f0.1: 0.019, 0.057, 0.13
