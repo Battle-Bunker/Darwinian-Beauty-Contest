@@ -1,10 +1,11 @@
 // Prevalence on both sides, beside the scoreboard: each round ceil(slots × N) bees are drawn by c + B (bee
-// success), each visiting a species drawn by c + F (flower success); fitness is the time-average of F × B.
+// success), each visiting a species drawn by c + F (flower success); fitness is N² × p^F × p^B now (scoring mode
+// "final"), or the time-average of F × B (v2, v3: "timeAverage").
 // Every team's F, B, draw chances and fitness now, and one of them over the game so far (GET .../prevalence,
 // then each new sample as the live numbers bring it). Public; programs never see it.
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
-import type { GameView, PrevalenceSample, PrevalenceSpecies, Team } from "../types";
+import { cCurveText, endOrMax, fitnessBasisOf, type GameView, type PrevalenceSample, type PrevalenceSpecies, type Team } from "../types";
 import { fmt2, fmtClock, fmtE, pct } from "../lib/format";
 import { useElementWidth } from "../hooks";
 import { InfoTip, TeamChip } from "./ui";
@@ -29,7 +30,7 @@ function useSamples(base: string, latest: number | null, on: boolean): Prevalenc
 
 type SeriesKey = "fitness" | "flowerP" | "beeP" | "flowerSuccess" | "beeSuccess";
 const SERIES: { key: SeriesKey; label: string; percent: boolean }[] = [
-  { key: "fitness", label: "fitness so far (the time-average of F × B)", percent: false },
+  { key: "fitness", label: "fitness (N² × p^F × p^B at each sample; v2/v3 games: the time-average of F × B so far)", percent: false },
   { key: "flowerP", label: "p^F, the chance a visit is to each species", percent: true },
   { key: "beeP", label: "p^B, each bee's share of the bee draw", percent: true },
   { key: "flowerSuccess", label: "F, flower success", percent: false },
@@ -48,14 +49,18 @@ export function PrevalencePanel({ view, base }: { view: GameView; base: string }
   const now = sample ? [...sample.species].sort((a, b) => b.fitness - a.fitness) : [];
   const maxP = Math.max(2 / Math.max(1, n), ...now.flatMap((s) => [s.flowerP, s.beeP]));
   const pools = pv.pools !== false;
+  const final = (view.game.fitnessBasis ?? fitnessBasisOf(view.game.config)) === "final";
   const beeHow = pools
     ? `B is the bee's recent success: N × its share of its single nectar balance (it starts at ${fmtE(pv.endowment)}, each feed adds nectar − the feed price of ${fmtE(pv.feedPrice)}, and it relaxes back toward the start; a bee below the price can't feed)`
     : `B is the bee's recent success: N × its share of the net nectar it got (nectar − the feed price of ${fmtE(pv.feedPrice)} a feed, losses counting against it)`;
   const how = `Each round ceil(${pv.slots} × N) bees visit, drawn without replacement with weights c + B; each visits a species drawn with weights c + F. ` +
     `F is the species' recent flower success: N × its share of the pollen it gave, counted per bee team (so spread pollen counts for more); ${beeHow}. ` +
     `Recent: ${pv.halfLifeS ? `halving every ${pv.halfLifeS} s of game time` : "the whole game"}` +
-    `${pv.cap != null ? `; each capped at ${pv.cap}` : ""}; par is 1. c gives everyone a share whatever their success, falling from ${pv.cStart} to ${pv.cEnd} over the game. ` +
-    "Fitness is the time-average of F × B. Programs never see any of it.";
+    `${pv.cap != null ? `; each capped at ${pv.cap}` : ""}; par is 1. c gives everyone a share whatever their success: ${cCurveText(pv, view.game.config.minutes)}. ` +
+    (final
+      ? "Fitness is N² × p^F × p^B, the product of the team's two draw chances, as it stands; the final round's is the final score. "
+      : "Fitness is the time-average of F × B. ") +
+    "Programs never see any of it.";
   const bar = (v: number, color: string | undefined) => (
     <span className="prev-track" aria-hidden>
       <span className="prev-fill" style={{ width: `${Math.min(100, (v / maxP) * 100)}%`, background: color }} />
@@ -74,7 +79,7 @@ export function PrevalencePanel({ view, base }: { view: GameView; base: string }
             <thead>
               <tr>
                 <th className="left">Team</th>
-                <th title="The time-average of F × B so far: the team's score">Fitness</th>
+                <th title={final ? "N² × p^F × p^B now: the team's score (the final round's is final)" : "The time-average of F × B so far: the team's score"}>Fitness</th>
                 <th title="F: its species' recent flower success, par 1">F</th>
                 <th className="left" title="p^F: the chance a visit is to its species">flower drawn</th>
                 <th title="B: its bee's recent success, par 1">B</th>
@@ -105,7 +110,7 @@ export function PrevalencePanel({ view, base }: { view: GameView; base: string }
               {SERIES.map((x) => <option key={x.key} value={x.key}>{x.label}</option>)}
             </select>
           </label>
-          <PrevalenceChart samples={samples} teams={teams} order={view.participants ?? []} n={n} endMs={view.game.endMs} myTeamId={myTeamId} series={SERIES.find((x) => x.key === series)!} />
+          <PrevalenceChart samples={samples} teams={teams} order={view.participants ?? []} n={n} endMs={endOrMax(view.game)} myTeamId={myTeamId} series={SERIES.find((x) => x.key === series)!} />
         </>
       )}
     </div>

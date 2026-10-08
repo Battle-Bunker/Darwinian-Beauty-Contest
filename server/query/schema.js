@@ -177,7 +177,7 @@ export const SCHEMA = {
         f("beeP", "float", "public", "p^B_b: its bee's share of the bee weights, (c + B_b) / Σ (c + B_k): the chance it fills a given slot first"),
         f("fitness", "float", "public", "its fitness at the sample, by the game's scoring.mode: \"final\", N² × p^F_s × p^B_s of that round; \"timeAverage\" (v2, v3), the time-average of F × B over the rounds played", true),
         f("balance", "float", "public", "its bee's nectar balance at the sample (pools games), else null", true),
-        f("c", "float", "public", "c(t): the weight every species and bee has whatever its success, cEnd + (cStart - cEnd) × 2^(-t / cHalfLifeS) (v2, v3: linear from cStart to cEnd over the game)"),
+        f("c", "float", "public", "c(t): the weight every species and bee has whatever its success: cStart × sech(k × t / cHalfS), k = arccosh 2, t in seconds of game time (cDecay \"sech\"); v2, v3 (\"linear\"): from cStart to cEnd over the game"),
         f("slots", "int", "public", "bees visiting each round: ceil(slots × N)", true),
       ],
     },

@@ -17,8 +17,9 @@ a hidden CPU budget R, drawn from 1–50 ms every call (its answer still arrives
 **excess energy** is (size cap − its size) × (R − the CPU time it used) × (byte cap − its response's bytes),
 in node·ms·bytes, so code nodes, compute milliseconds and output bytes are each free only when unused. A feed splits
 it into nectar for the bee and pollen the flower keeps, and the bee pays a feed price out of its nectar;
-a turn without a feed pays nobody. Fitness is the time-average of flower success × bee success (RULES.md
-"Prevalence"). Every turn is public as it
+a turn without a feed pays nobody. Fitness is N² × the team's flower draw chance × its bee draw chance in the
+game's final round (RULES.md "Scoring"), and the game ends at a random time, 5 to 10 minutes in by default,
+that no team is told. Every turn is public as it
 happens (who visited whom, the challenge, the response, whether the bee fed, and a feed's percent, energy,
 nectar and pollen), and so is the scoreboard; code, timings and the details of unfed turns stay with
 their teams until the end. Programs see no history; teams, operators and agents query every finished turn
@@ -63,7 +64,7 @@ To work on the web app with hot reload, run the server and then `API=http://loca
 | `server/realtime.js`, `server/sockets.js` | the live game feed for each viewer, over SSE and WebSocket (the same messages), fed by Postgres `LISTEN/NOTIFY` |
 | `server/runners/` | program runners: every call runs fresh. Python forks per call; TypeScript runs each call in a fresh `vm` context. A feed decision's instance is kept for `fed`. Flowers are CPU-timed, their response's size checked; replies and MEMORY are encoded on the program's clock, so no user code runs after it stops |
 | `server/lib/scoring.js` | Σ nectar^α and Σ pollen^β (the game's `scoring` exponents, 0.85 by default; √ for games stored without them) → forage / pollination → shares → fitness (N² × the two shares) |
-| `server/lib/prevalence.js` | prevalence on both sides: decayed ledgers of pollen given and net nectar got (nectar − feed price) → flower and bee success F, B (N × share, capped) → each round's bees drawn without replacement by c(t) + B, their flowers by c(t) + F; fitness = the time-average of F × B (the scoreboard, for games with it); ledgers rebuilt from the feeds when a garden is adopted |
+| `server/lib/prevalence.js` | prevalence on both sides: decayed ledgers of pollen given and net nectar got (nectar − feed price) → flower and bee success F, B (N × share, capped) → each round's bees drawn without replacement by c(t) + B, their flowers by c(t) + F; c(t) = cStart × sech(k t / cHalfS); fitness = N² × p^F × p^B at the final round (v2/v3 games: the time-average of F × B); ledgers rebuilt from the feeds when a garden is adopted |
 | `server/lib/shortid.js` | Crockford base32 codes and shortest-unique-prefix allocation |
 | `server/auth/` | pluggable login. `dev` = name only. Production adds e.g. Replit Auth in `replit.js` with the same shape |
 | `server/db/migrations/` | SQL schema, applied on boot |

@@ -107,14 +107,14 @@ test("exponents: forage = Σ nectar^alpha over the row, pollination = Σ pollen^
   close(powsum([1, 2, 3], 1), 6);
 });
 
-test("new games are scored with 0.85 and 0.85; a game stored without exponents is scored with √, exactly as before", () => {
-  assert.deepEqual(DEFAULT_CONFIG.scoring, { alpha: 0.85, beta: 0.85 });
+test("new games are scored with 0.85 and 0.85 (and, with prevalence, mode \"final\"); a game stored without exponents is scored with √, exactly as before", () => {
+  assert.deepEqual(DEFAULT_CONFIG.scoring, { alpha: 0.85, beta: 0.85, mode: "final" });
   const fresh = normalizeConfig({});
-  assert.deepEqual(fresh.scoring, { alpha: 0.85, beta: 0.85 });
-  assert.deepEqual(scoringOf(fresh), { alpha: 0.85, beta: 0.85 });
-  // A config stored before the exponents existed has no `scoring`: √.
+  assert.deepEqual(fresh.scoring, { alpha: 0.85, beta: 0.85, mode: "final" });
+  assert.deepEqual(scoringOf(fresh), { alpha: 0.85, beta: 0.85, mode: "final" });
+  // A config stored before the exponents existed has no `scoring`: √ (and time-average).
   const { scoring: _, ...old } = fresh;
-  assert.deepEqual(scoringOf(old), { alpha: 0.5, beta: 0.5 });
+  assert.deepEqual(scoringOf(old), { alpha: 0.5, beta: 0.5, mode: "timeAverage" });
   assert.deepEqual(scoringOf(old), LEGACY_SCORING);
   assert.deepEqual(scoringOf(null), LEGACY_SCORING);
   // Its scores are bit for bit the ones the old Σ√ gave (the same Math.sqrt), so results don't move.
@@ -130,18 +130,22 @@ test("new games are scored with 0.85 and 0.85; a game stored without exponents i
   assert.ok(now.every((t, i) => t.forage > legacy[i].forage && t.pollination > legacy[i].pollination));
 });
 
-test("the exponents are config: each in (0, 1], kept from the base when left out (a √ base stays √)", () => {
-  assert.deepEqual(normalizeConfig({ scoring: { alpha: 0.6 } }).scoring, { alpha: 0.6, beta: 0.85 });
-  assert.deepEqual(normalizeConfig({ scoring: { alpha: 1, beta: "0.3" } }).scoring, { alpha: 1, beta: 0.3 });
-  assert.deepEqual(normalizeConfig({ scoring: { alpha: null, beta: "" } }).scoring, { alpha: 0.85, beta: 0.85 });
+test("the exponents and mode are config: each exponent in (0, 1], the mode \"final\" or \"timeAverage\", kept from the base when left out (a √ base stays √, a base without a mode time-average)", () => {
+  assert.deepEqual(normalizeConfig({ scoring: { alpha: 0.6 } }).scoring, { alpha: 0.6, beta: 0.85, mode: "final" });
+  assert.deepEqual(normalizeConfig({ scoring: { alpha: 1, beta: "0.3" } }).scoring, { alpha: 1, beta: 0.3, mode: "final" });
+  assert.deepEqual(normalizeConfig({ scoring: { alpha: null, beta: "", mode: "" } }).scoring, { alpha: 0.85, beta: 0.85, mode: "final" });
+  assert.deepEqual(normalizeConfig({ scoring: { mode: "timeAverage" } }).scoring, { alpha: 0.85, beta: 0.85, mode: "timeAverage" });
+  for (const bad of ["window", "Final", 1, true, {}]) assert.throws(() => normalizeConfig({ scoring: { mode: bad } }), /scoring\.mode must be "final" or "timeAverage"/, String(bad));
   for (const bad of [0, -0.5, 1.01, 2, "x", NaN, Infinity, true, [0.5], {}]) {
     assert.throws(() => normalizeConfig({ scoring: { alpha: bad } }), /scoring\.alpha must be a number in \(0, 1\]/, String(bad));
     assert.throws(() => normalizeConfig({ scoring: { beta: bad } }), /scoring\.beta must be a number in \(0, 1\]/, String(bad));
   }
   // Updating a lobby game's settings keeps its exponents unless they are given.
-  const base = normalizeConfig({ scoring: { alpha: 0.7, beta: 0.9 } });
-  assert.deepEqual(normalizeConfig({ minutes: 3 }, base).scoring, { alpha: 0.7, beta: 0.9 });
-  assert.deepEqual(normalizeConfig({ scoring: { beta: 0.4 } }, base).scoring, { alpha: 0.7, beta: 0.4 });
+  const base = normalizeConfig({ scoring: { alpha: 0.7, beta: 0.9, mode: "timeAverage" } });
+  assert.deepEqual(normalizeConfig({ minutes: 3 }, base).scoring, { alpha: 0.7, beta: 0.9, mode: "timeAverage" });
+  assert.deepEqual(normalizeConfig({ scoring: { beta: 0.4 } }, base).scoring, { alpha: 0.7, beta: 0.4, mode: "timeAverage" });
   const { scoring: _, ...old } = base;
-  assert.deepEqual(normalizeConfig({ minutes: 3 }, old).scoring, { alpha: 0.5, beta: 0.5 }, "a config stored without them stays √");
+  assert.deepEqual(normalizeConfig({ minutes: 3 }, old).scoring, { alpha: 0.5, beta: 0.5, mode: "timeAverage" }, "a config stored without them stays √, and time-average");
+  const v3 = { ...base, scoring: { alpha: 0.85, beta: 0.85 } };
+  assert.equal(normalizeConfig({ minutes: 3 }, v3).scoring.mode, "timeAverage", "a v3 config (exponents, no mode) stays time-average");
 });

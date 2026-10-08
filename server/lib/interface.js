@@ -93,17 +93,18 @@ function scoreNote(c, config, kind) {
     ? `B_b = N × your bee's share of its single nectar balance (floored at 0). The balance starts at ${Math.round(p.endowment)}, each feed adds\n` +
       `${c} nectar − feed price, and it relaxes toward that start ${half}; a bee below the price can't feed.`
     : `B_b = N × your bee's share of max(0, Σ over species of signed (recent net nectar, nectar − feed price, it got there)^${alpha}), ${half}.`;
-  const cText = p.cHalfLifeS
-    ? `c = ${p.cEnd} + ${round6(p.cStart - p.cEnd)} × 2^(−t / ${p.cHalfLifeS} s of game time)`
-    : `c from ${p.cStart} to ${p.cEnd} over the first ${config.minutes} minutes`;
+  const cText = p.cDecay === "sech"
+    ? `c = ${p.cStart} × sech(1.317 × t / ${round6(p.cHalfS)} s), t the game time: half at ${round6(p.cHalfS)} s, then toward 0`
+    : `c runs from ${p.cStart} to ${p.cEnd} over the first ${config.minutes} minutes`;
   const fitness = mode === "final"
     ? `${c} Your team's fitness = N² × p^F × p^B at the game's final round: your species' draw chance p^F = (c + F_s) / Σ (c + F)\n` +
       `${c} times your bee's p^B = (c + B_b) / Σ (c + B), par 1. The game ends at a hidden time between ${config.minutes} and ${round6(config.minutes * endFactorOf(config))}\n` +
       `${c} minutes, so any round may be the last. Public, but not in GAME.`
     : `${c} Your team's fitness = the time-average over the game of F × B (your species' times your bee's). Public, but not in GAME.`;
   return `${c} Prevalence: each round ceil(${p.slots} × N) bees visit, drawn without replacement with weights c + B_b, and each visits\n` +
-    `${c} a species drawn with weights c + F_s (${cText}). F_s = N × your species' share of Σ over bee\n` +
-    `${c} teams of (recent pollen it gave them)^${beta}, ${half}: spread pollen counts for more.\n` +
+    `${c} a species drawn with weights c + F_s, where ${cText}.\n` +
+    `${c} F_s = N × your species' share of Σ over bee teams of (recent pollen it gave them)^${beta}, ${half}:\n` +
+    `${c} spread pollen counts for more.\n` +
     `${c} ${bee}${p.cap != null ? ` Each of F, B capped at ${p.cap}.` : ""} Par 1.\n` + fitness;
 }
 

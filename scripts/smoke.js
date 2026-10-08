@@ -42,8 +42,11 @@ const fresh = (await api(owner, "GET", g)).game.config;
 assert.deepEqual([fresh.feedCost, fresh.budgets.flower.minMs, fresh.budgets.flower.ms, fresh.flowerWindowMs, fresh.maxResponseBytes], [0, 1, 50, 150, 1024]);
 assert.deepEqual([fresh.budgets.flower.perMinute, fresh.budgets.flower.cap, fresh.budgets.bee.perMinute, fresh.budgets.bee.cap], [60, 300, 600, 3000]);
 assert.deepEqual([fresh.feedPrice, (await api(owner, "GET", g)).game.feedPrice], [null, 2816000], "the feed price: 0.05 × Emax");
-assert.deepEqual([fresh.scoring, fresh.energy], [{ alpha: 0.85, beta: 0.85 }, { bytes: true }]);
-assert.deepEqual(fresh.prevalence, { on: true, halfLifeS: 90, cStart: 1, cEnd: 0.1, cap: 4, slots: 0.25, prior: null, pools: true, endowment: null }, "prevalence, on by default, with the bee nectar pool");
+assert.deepEqual([fresh.scoring, fresh.energy], [{ alpha: 0.85, beta: 0.85, mode: "final" }, { bytes: true }]);
+assert.deepEqual(fresh.prevalence, { on: true, halfLifeS: 90, cDecay: "sech", cStart: 1, cHalfS: null, cap: 4, slots: 0.25, prior: null, pools: true, endowment: null }, "prevalence, on by default, with the bee nectar pool and a sech c");
+// 5 to 10 minutes, the end drawn at the start and hidden.
+const freshGame = (await api(owner, "GET", g)).game;
+assert.deepEqual([fresh.minutes, fresh.endFactor, freshGame.minMs, freshGame.maxMs, freshGame.endMs, freshGame.drawnEndMs], [5, 2, 300000, 600000, null, null]);
 // Half a minute of game time. Flowers earn change budget fast so the test needn't wait; feeding costs 2
 // rounds rather than 20, so bees take turns often. Responses can be any JSON, and big (a 64 KiB cap).
 await api(owner, "PATCH", `${g}/config`, { config: { minutes: 0.5, feedCost: 2, responseType: "any", maxResponseBytes: 65536, budgets: { flower: { perMinute: 600, cap: 100 } } } });
@@ -320,7 +323,18 @@ assert.ok(board.ledgers.nectar.flat().every((x) => typeof x === "number") && boa
 const sum = (m) => m.flat().reduce((x, y) => x + y, 0);
 assert.ok(sum(board.ledgers.feeds) > 0 && sum(board.ledgers.nectar) > 0);
 // Prevalence is public: its latest sample on the scoreboard and the view, every sample at /prevalence; the
-// scoreboard's fitness is the time-average of F × B, with each team's latest F, B and draw chances.
+// scoreboard's fitness is N² × p^F × p^B as it stands, with each team's latest F, B and draw chances.
+assert.equal(board.fitnessBasis, "final");
+// The game's end (drawn from 30 to 60 s) is hidden from every team and spectator during play; the owner, who
+// has no team here, sees it.
+assert.deepEqual([board.minMs, board.maxMs, board.endMs, "drawnEndMs" in board], [30000, 60000, null, false]);
+for (const tok of [null, ...players.map((p) => p.token)]) {
+  const v = await api(tok, "GET", g);
+  assert.deepEqual([v.game.endMs, v.game.drawnEndMs ?? null, v.game.minMs, v.game.maxMs], [null, null, 30000, 60000], "the range only");
+}
+const drawnEnd = (await api(owner, "GET", g)).game.drawnEndMs;
+assert.ok(drawnEnd >= 30000 && drawnEnd <= 60000 && drawnEnd % 200 === 0, `the owner's view: ${drawnEnd}`);
+assert.ok(!JSON.stringify(await api(players[0].token, "GET", g)).includes(`"drawnEndMs"`));
 assert.deepEqual([board.prevalence.slots, board.prevalence.prior, board.prevalence.feedPrice], [0.25, 0.12 * 1100 * 50 * 65536, seenPrice]);
 const smp = board.prevalence.sample;
 assert.ok(smp.round >= 1 && smp.slots === 1 && smp.species.length === 3, JSON.stringify(smp));
@@ -448,10 +462,11 @@ assert.ok(roomQuery.rows[0].n > 0 && roomQuery.rows[0].timed > 0, "fully reveale
 const finalLedger = await api(null, "GET", `${g}/ledger?limit=5000`);
 assert.ok(finalLedger.entries.length && finalLedger.entries.every((e) => e.ms !== null || e.response === null));
 assert.ok(done.scores.length === 3 && done.scores.every((s) => Number.isFinite(s.fitness)));
+assert.equal(done.game.endMs, drawnEnd, "the drawn end, revealed once it's over");
 const totalFitness = done.scores.reduce((x, s) => x + s.fitness, 0);
 console.log("game 1:", done.scores.map((s) => `${done.teams.find((t) => t.id === s.teamId).name} ${s.fitness.toFixed(2)}`).join(", "), `(sum ${totalFitness.toFixed(2)})`);
 
-// A second game runs out its clock by itself.
+// A second game runs out its clock by itself, at its hidden end: 6 to 12 s.
 const g2r = await api(owner, "POST", `/rooms/${room.shortId}/games`, { config: { minutes: 0.1 } });
 const g2 = `/rooms/${room.shortId}/games/${g2r.shortId}`;
 for (const [i, p] of players.slice(0, 2).entries()) {
@@ -459,8 +474,8 @@ for (const [i, p] of players.slice(0, 2).entries()) {
   for (const kind of ["flower", "bee"]) await api(p.token, "POST", `${g2}/programs`, { kind, code: variants[i][kind] });
 }
 await api(owner, "POST", `${g2}/start`);
-const end2 = await until("game 2 to end", async () => { const v = await api(owner, "GET", g2); return v.game.status === "finished" && v; }, 20000);
-assert.equal(end2.game.clockMs, 6000, `ended at ${end2.game.clockMs} ms`);
-assert.equal(end2.game.round, 30, "6 s of 200 ms rounds");
+const end2 = await until("game 2 to end", async () => { const v = await api(players[0].token, "GET", g2); return v.game.status === "finished" && v; }, 30000);
+assert.ok(end2.game.endMs >= 6000 && end2.game.endMs <= 12000 && end2.game.clockMs === end2.game.endMs, `ended at ${end2.game.clockMs} ms, drawn ${end2.game.endMs}`);
+assert.equal(end2.game.round, end2.game.clockMs / 200, "200 ms rounds");
 console.log(`game 2 ran ${end2.game.lastSeq} actions in ${end2.game.round} rounds, ${end2.game.clockMs} ms of game time`);
 console.log("smoke ok");

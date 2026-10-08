@@ -79,13 +79,14 @@ export const DEFAULT_CONFIG = Object.freeze({
   // endowment (null: 10 × the feed price), each feed adds nectar − price, and it relaxes toward the endowment
   // with the half-life (metabolism above it, recovery below); a bee below the price can't feed. Ledgers decay
   // with `halfLifeS` seconds of game time (null: cumulative); the pollen prior is `prior` (null: 0.12 × Emax).
-  // c(t) = cEnd + (cStart − cEnd) × 2^(−t / cHalfLifeS), t in seconds of game time (cHalfLifeS null: linear from
-  // cStart to cEnd over `minutes`, then cEnd; a v2/v3 config stored without cHalfLifeS is that). Fitness follows
-  // scoring.mode. With pools false, B is
-  // the v2 per-(species, bee) formula (N × share of max(0, Σ_s signed (decayed net nectar)^alpha)). A config
-  // stored without prevalence (or an earlier form, without `slots`) is from before: every bee takes a turn
-  // each round, species are drawn uniformly, and it is scored with pollination × forage.
-  prevalence: Object.freeze({ on: true, halfLifeS: 90, cStart: 1, cEnd: 0.1, cHalfLifeS: 60, cap: 4, slots: 0.25, prior: null, pools: true, endowment: null }),
+  // c, by cDecay: "sech", c(t) = cStart × sech(k t / cHalfS), k = arccosh 2 (so c(cHalfS) = cStart / 2; flat at
+  // the start, an exponential tail, 0 at infinity), t in seconds of game time, cHalfS null: 0.2 × minutes × 60
+  // (60 s at 5 minutes); "linear" (v2, v3: a config stored without cDecay), from cStart at the start to cEnd at
+  // `minutes`, then cEnd. A sech config has no cEnd, a linear one no cHalfS. Fitness follows scoring.mode. With
+  // pools false, B is the v2 per-(species, bee) formula (N × share of max(0, Σ_s signed (decayed net
+  // nectar)^alpha)). A config stored without prevalence (or an earlier form, without `slots`) is from before:
+  // every bee takes a turn each round, species are drawn uniformly, and it is scored with pollination × forage.
+  prevalence: Object.freeze({ on: true, halfLifeS: 90, cDecay: "sech", cStart: 1, cHalfS: null, cap: 4, slots: 0.25, prior: null, pools: true, endowment: null }),
   budgets: BUDGETS,
 });
 
@@ -100,18 +101,34 @@ export const emaxOf = (config) =>
 export const feedPriceOf = (config) =>
   config?.feedPrice === null ? FEED_PRICE_SHARE * emaxOf(config) : Number.isFinite(config?.feedPrice) ? config.feedPrice : 0;
 
+/** c's curves: "sech" (new games) and "linear" (v2, v3). */
+export const C_DECAYS = ["sech", "linear"];
+/** c's end in a linear config that has none. */
+const LINEAR_C_END = 0.1;
+
+/** The keys of c's curve: a sech config has cHalfS and no cEnd, a linear one cEnd and no cHalfS. */
+function cCurve(p) {
+  const { cEnd, cHalfS, ...rest } = p;
+  return p.cDecay === "sech" ? { ...rest, cHalfS: cHalfS ?? null } : { ...rest, cEnd: cEnd ?? LINEAR_C_END };
+}
+
 /** A config's prevalence settings as stored, with every key (a config without them, or an earlier form: off). */
 export function prevalenceConfig(config) {
   const p = config?.prevalence;
   const current = p && typeof p === "object" && "slots" in p;
   // A stored v2 config (has `slots`, no `pools`) keeps the v2 per-cell bee formula, and a v2 or v3 one (no
-  // `cHalfLifeS`) its linear c, for reproducibility.
-  return {
+  // `cDecay`) its linear c, for reproducibility.
+  return cCurve({
     ...DEFAULT_CONFIG.prevalence, on: false, ...(current ? p : {}),
     pools: current ? p.pools === true : DEFAULT_CONFIG.prevalence.pools,
-    cHalfLifeS: current ? (p.cHalfLifeS ?? null) : DEFAULT_CONFIG.prevalence.cHalfLifeS,
-  };
+    cDecay: current ? (C_DECAYS.includes(p.cDecay) ? p.cDecay : "linear") : DEFAULT_CONFIG.prevalence.cDecay,
+  });
 }
+
+/** k = arccosh 2 = ln(2 + √3): sech(k) = 1/2, so a sech c halves at cHalfS. */
+export const SECH_K = Math.log(2 + Math.sqrt(3));
+/** sech x = 2e^(−|x|) / (1 + e^(−2|x|)): no overflow; exactly 0 far out. */
+export const sech = (x) => { const e = Math.exp(-Math.abs(x)); return (2 * e) / (1 + e * e); };
 
 /**
  * A config's prevalence settings, resolved (the prior's and endowment's defaults filled in), or null when it
@@ -122,8 +139,15 @@ export function prevalenceOf(config) {
   if (p.on !== true) return null;
   const prior = p.prior ?? PREVALENCE_PRIOR_SHARE * emaxOf(config);
   const endowment = p.endowment ?? PREVALENCE_ENDOWMENT_FEEDS * feedPriceOf(config);
-  return { on: true, halfLifeS: p.halfLifeS, cStart: p.cStart, cEnd: p.cEnd, cHalfLifeS: p.cHalfLifeS, cap: p.cap, slots: p.slots, prior, pools: p.pools === true, endowment };
+  // c's curve: sech with cHalfS resolved (null: 0.2 × the minimum length), or linear with cEnd.
+  const curve = p.cDecay === "sech"
+    ? { cDecay: "sech", cStart: p.cStart, cHalfS: p.cHalfS ?? C_HALF_SHARE * config.minutes * 60 }
+    : { cDecay: "linear", cStart: p.cStart, cEnd: p.cEnd };
+  return { on: true, halfLifeS: p.halfLifeS, ...curve, cap: p.cap, slots: p.slots, prior, pools: p.pools === true, endowment };
 }
+
+/** A sech c's default cHalfS, as a share of the game's minimum length (in seconds). */
+export const C_HALF_SHARE = 0.2;
 
 /** A config's endFactor: the most its game can last, as a multiple of `minutes` (1 for a config stored without one). */
 export const endFactorOf = (config) => (Number.isFinite(config?.endFactor) && config.endFactor >= 1 ? config.endFactor : 1);
@@ -172,12 +196,18 @@ const numOrNull = (v, lo, hi, dflt) => (v === null ? null : num(v, lo, hi, dflt)
 
 function normalizePrevalence(input, b) {
   const p = input && typeof input === "object" ? input : {};
+  if (p.cDecay !== undefined && p.cDecay !== null && p.cDecay !== "" && !C_DECAYS.includes(p.cDecay)) {
+    throw new Error(`prevalence.cDecay must be ${C_DECAYS.map((d) => `"${d}"`).join(" or ")}`);
+  }
+  const cDecay = C_DECAYS.includes(p.cDecay) ? p.cDecay : b.cDecay;
   return {
     on: bool(p.on, b.on),
     halfLifeS: numOrNull(p.halfLifeS, 1, 86400, b.halfLifeS),   // null: cumulative (no decay)
+    cDecay,                                                     // c's curve: "sech" or "linear" (v2, v3)
     cStart: num(p.cStart, 0, 100, b.cStart),
-    cEnd: num(p.cEnd, 0, 100, b.cEnd),
-    cHalfLifeS: numOrNull(p.cHalfLifeS, 0.1, 86400, b.cHalfLifeS),  // null: linear over `minutes` (v2, v3)
+    ...(cDecay === "sech"
+      ? { cHalfS: numOrNull(p.cHalfS, 0.1, 864000, b.cHalfS ?? null) }   // null: 0.2 × minutes × 60
+      : { cEnd: num(p.cEnd, 0, 100, b.cEnd ?? LINEAR_C_END) }),
     cap: numOrNull(p.cap, 1, 1e6, b.cap),                       // null: no cap
     slots: num(p.slots, 0.01, 1, b.slots),                      // ceil(slots × N) bees visit each round
     prior: numOrNull(p.prior, 0, 1e15, b.prior),                // null: 0.12 × Emax

@@ -14,9 +14,11 @@ the same program instance. Excess energy E = (flower size cap − flower size) �
 (byte cap − response bytes), in node·ms·bytes, R the call's hidden time budget (1–50 ms by default) and the
 byte cap `maxResponseBytes` (1,024 by default); a feed pays nectar = percent/100 × E and pollen = the rest
 to the bee, and the bee pays the feed price out of its nectar (net = nectar − price); a turn without a feed
-pays nobody (its energy is lost). fitness = the time-average of F × B (see `prevalence` below). Games from
-before (no `prevalence` in their config) play every bee every round with uniform draws and free feeds, and
-score N² × pollination share × forage share.
+pays nobody (its energy is lost). fitness = N² × p^F × p^B at the final round (see `prevalence` and "Scores"
+below); v2 and v3 games keep their time-average of F × B. A game lasts between `minutes` and `endFactor` ×
+`minutes` of game time (5 to 10 by default): its end is drawn when it starts and hidden from the teams until
+it is over (see "The game's length"). Games from before (no `prevalence` in their config) play every bee
+every round with uniform draws and free feeds, and score N² × pollination share × forage share.
 
 ## Auth
 
@@ -35,7 +37,7 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 |---|---|---|---|
 | POST | `/rooms` | any user | `{ id, shortId, url, isOwner }`. One click; the creator owns the room |
 | GET | `/my/rooms` | any user | `{ rooms: [{shortId, url, isOwner, ownerName, gameCount, createdAt, lastActivity}] }` |
-| GET | `/rooms/:room` | anyone | `{ shortId, url, ownerName, isOwner, games: [{shortId, url, status, clockMs, endMs, teamCount}] }` |
+| GET | `/rooms/:room` | anyone | `{ shortId, url, ownerName, isOwner, games: [{shortId, url, status, clockMs, minMs, maxMs, endMs, teamCount}] }` (`endMs` null while hidden: see "The game's length") |
 | GET | `/rooms/:room/events` | anyone | Server-Sent Events `{game, version}` whenever a game in the room changes |
 | POST | `/rooms/:room/games` | owner | body `{ config? }` → `{ id, shortId, url }` |
 | GET | `/defaults` | anyone | `{ config }` with the default game settings |
@@ -50,12 +52,12 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 | GET | `base/actions` | anyone | `?after=<seq>&limit=<n ≤ 5000>`, or `?before=<seq>&limit=<n>`; `&mine=1` (team members) for only turns of your bee or at your flower | `{ actions: [action], lastSeq, clockMs, round, status, prevalence? }` (`prevalence`: the latest prevalence sample, in games that have it): the actions after `after`, oldest first; or the last `limit` before `before`, oldest first (`before = lastSeq + 1` gives the latest) |
 | GET | `base/ledger` | anyone | `?after=<seq>&limit=<n ≤ 5000>` | `{ participants, team, entries: [entry], lastSeq, round, status }`: the **team ledger** (below): every finished turn as your team may see it. `team` is your team's index in `participants` (null for a spectator, who gets the public fields only) |
 | GET | `base/responses/:seq` | anyone | | the whole response of the turn whose `feed`/`leave` action is `seq`, as its JSON text (`application/json`; responses are public). For responses over 4 KB, which actions, ledger entries, live feeds and query rows show only as a preview, size and hash; **404** if that turn has no response |
-| GET | `base/scores` | anyone | | `{ status, clockMs, endMs, round, lastSeq, participants, scores, ledgers, prevalence }`: the live scoreboard, ledgers and prevalence (public; `prevalence` as in the game view); cheap enough to poll every second |
+| GET | `base/scores` | anyone | | `{ status, clockMs, minMs, maxMs, endMs, round, lastSeq, fitnessBasis, participants, scores, ledgers, prevalence }`: the live scoreboard, ledgers and prevalence (public; `prevalence` as in the game view; `endMs` null while hidden, for everyone); cheap enough to poll every second. `status` turning `"finished"` is how a client learns the game is over (or the `status` on `base/events` messages) |
 | GET | `base/prevalence` | anyone | `?after=<round>&limit=<n ≤ 5000>` | `{ prevalence, samples: [sample] }`: the game's prevalence settings (null: a game without) and its samples after round `after`, oldest first (public; see "Prevalence samples") |
 | GET | `base/events` | anyone | `?after=<seq>` | Server-Sent Events: `{version}` when the view should be refetched; `{programs: true}` when your own team's programs changed (refetch too); `{actions, lastSeq, clockMs, round, status}` as the garden writes them (from `after`, in order, page after page until caught up); `{lastSeq, clockMs, round, status}` when there is nothing new; either carries `prevalence` (a prevalence sample) whenever there is a new one, about once a second of game time |
 | GET (WebSocket) | `base/ws` | anyone | `?after=<seq>` | The same feed as `base/events` over a WebSocket: exactly the same messages, one JSON text frame each, filtered for the viewer the same way (a session cookie or `Authorization: Bearer` token for a team member's private fields). Server to client only; reconnect with `?after=` the last `seq` you got. `ws://`, or `wss://` behind https |
 | PATCH | `base/config` | owner, in the lobby | `{ config: {...partial} }` | `{ config, clearedPrograms }` (changing the language or types, or shrinking a size budget, clears the programs written so far) |
-| POST | `base/start` | owner, in the lobby | | `{ status: "running", participants }`. Teams with both programs play; at least 2 |
+| POST | `base/start` | owner, in the lobby | | `{ status: "running", participants }`. Teams with both programs play; at least 2. The game's end is drawn now (not in the reply) |
 | POST | `base/status` | owner | `{ action: "pause" \| "resume" \| "finish" }` | `{ status }`. The clock and change budgets stand still while paused |
 | POST | `base/teams` | user, in the lobby | `{ name }` | `{ id, name, joinCode }` |
 | POST | `base/teams/join` | user | `{ joinCode }` | `{ id, name }` |
@@ -68,12 +70,12 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 ```json
 {
   "language": "python",
-  "minutes": 2, "feedCost": 0, "flowerWindowMs": 150, "feedPrice": null,
+  "minutes": 5, "endFactor": 2, "feedCost": 0, "flowerWindowMs": 150, "feedPrice": null,
   "challengeType": "int", "responseType": "int", "maxLen": 64, "maxNodes": 512, "maxResponseBytes": 1024,
   "revealOnFinish": true,
   "grains": "feeder", "pollenGrain": { "exponent": 0.3333333333333333, "scale": 0.1 },
-  "scoring": { "alpha": 0.85, "beta": 0.85 }, "energy": { "bytes": true },
-  "prevalence": { "on": true, "halfLifeS": 90, "cStart": 1, "cEnd": 0.1, "cap": 4, "slots": 0.25, "prior": null, "pools": true, "endowment": null },
+  "scoring": { "alpha": 0.85, "beta": 0.85, "mode": "final" }, "energy": { "bytes": true },
+  "prevalence": { "on": true, "halfLifeS": 90, "cDecay": "sech", "cStart": 1, "cHalfS": null, "cap": 4, "slots": 0.25, "prior": null, "pools": true, "endowment": null },
   "budgets": {
     "flower": { "size": 1100,  "perMinute": 60,  "cap": 300,  "ms": 50, "minMs": 1 },
     "bee":    { "size": 11000, "perMinute": 600, "cap": 3000, "ms": 50, "memory": 50 }
@@ -81,7 +83,11 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 }
 ```
 
-- `minutes`: game time the garden runs for (it stops while paused). Fractions are fine (`0.5` = 30 s).
+- `minutes`: the shortest the game lasts, in game time (it stops while paused). Fractions are fine (`0.5` =
+  30 s; at least 0.1). `endFactor` (1 to 100, default 2): the longest, as a multiple of `minutes`. When the
+  game starts, its end is drawn uniformly from [`minutes`, `endFactor` × `minutes`], rounded up to a whole
+  round, and hidden until it is over (see "The game's length"). A config stored without `endFactor` (games
+  from before) has 1: it ends at `minutes`, as it did.
 - **Rounds** last `round_ms = flowerWindowMs + bee.ms` (200 ms) of game time; game time is rounds ×
   `round_ms`. Live games pace rounds to real time. At a round's start the bees that can visit (a challenge
   queued, no call in flight, not sitting out) are the candidates; with `prevalence`, ceil(`slots` × N) of
@@ -155,10 +161,13 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
   the byte factor keep; `exponent` 0.01 to 1, `scale` 0 to 1,000). It is that many characters of the minified
   code of the flower version that answered, from a uniformly random start, wrapping past the end (the whole
   code if it is no longer than that). No pollen, no grain.
-- `scoring`: `{ alpha, beta }`, each in (0, 1] (anything else is an error), 0.85 and 0.85 by default: forage
-  = Σ over flower teams of nectar^`alpha`, pollination = Σ over bee teams of pollen^`beta` (see "Scores"). A
-  game stored without `scoring` was created before it existed and is scored with √ (0.5 and 0.5), as it was
-  then; the game view's `config.scoring` is always the pair the game is scored with.
+- `scoring`: `{ alpha, beta, mode }`. `alpha` and `beta`, each in (0, 1] (anything else is an error), 0.85 and
+  0.85 by default: forage = Σ over flower teams of nectar^`alpha`, pollination = Σ over bee teams of
+  pollen^`beta` (see "Scores"). A game stored without `scoring` was created before it existed and is scored
+  with √ (0.5 and 0.5), as it was then. `mode` (games with prevalence): `"final"` (the default), fitness = N² ×
+  p^F × p^B at the final round; `"timeAverage"`, the time-average of F × B over the rounds played (anything
+  else is an error). A config stored without a mode (v2 and v3 games) is `"timeAverage"`, and stays so when
+  edited. The game view's `config.scoring` is always the rule the game is scored with.
 - `prevalence`: **prevalence on both sides** (server/lib/prevalence.js). With `on`:
   - **Flower side.** D^F_{s,b}: the pollen species s gave bee team b. Each cell starts at `prior` (null: 0.12
     × Emax, 6,758,400 at the defaults; 0 to 10^15) and, as each round begins, is multiplied by 2^(−round_ms /
@@ -174,16 +183,27 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
     With `pools` false (v2): B_b = N × Q^B_b / Σ_k Q^B_k, Q^B_b = max(0, Σ_s sign(D^B_{b,s}) |D^B_{b,s}|^α),
     D^B the per-(bee, species) decayed net nectar (α = `scoring.alpha`).
   - Each of F and B is 1 for everyone when its total is 0, and at most `cap` (4 by default, at least 1; null:
-    no cap). Par 1. c(t) runs linearly from `cStart` (1) at game time 0 to `cEnd` (0.1) at `minutes`.
+    no cap). Par 1.
+  - **c(t)**, by `cDecay`: `"sech"` (new games): c = `cStart` × sech(k × t / `cHalfS`), k = arccosh 2 ≈
+    1.31696 and t in seconds of game time, so c(`cHalfS`) = `cStart` / 2, with zero slope at 0, an
+    exponential tail and no floor (computed as 2e^(−x) / (1 + e^(−2x)): exactly 0 far out). `cStart` 1 (0 to
+    100); `cHalfS` null (the default): 0.2 × `minutes` × 60 (60 s at 5 minutes), or a number of seconds (0.1
+    to 864,000). It doesn't depend on the drawn end. `"linear"` (v2, v3: a config stored without `cDecay`):
+    from `cStart` at game time 0 to `cEnd` (0.1) at `minutes`, then `cEnd`. A sech config has no `cEnd` and a
+    linear one no `cHalfS`. Anything else is an error.
   - Each round, K = ceil(`slots` × N) (`slots` 0.25 by default, 0.01 to 1) distinct bees are drawn, one
     after another without replacement, with weights c + B_b (among the bees that can visit); each draws a
     species with weights c + F_s, with replacement, its own included. Published: p^F_s = (c + F_s) / Σ (c +
-    F) and p^B_b = (c + B_b) / Σ (c + B) (the chance of filling a given slot first).
-  - A team's **fitness** is the time-average over the rounds played of F_s × B_s (its species' and its
-    bee's; 1 before the first round).
+    F) and p^B_b = (c + B_b) / Σ (c + B) (the chance of filling a given slot first). A team weighing 0
+    (c = 0 and F or B 0) is never drawn while another eligible one weighs more; when every eligible one weighs
+    0, the draw is uniform among them.
+  - A team's **fitness**, by `scoring.mode`: `"final"`, N² × p^F_s × p^B_s of the latest round (the final
+    round's, once the game is over); `"timeAverage"` (v2, v3), the time-average over the rounds played of F_s
+    × B_s. Par 1, and 1 before the first round.
   A game stored without `prevalence`, or with the earlier one-sided form (no `slots`), is from before: every
   bee visits every round, species are drawn uniformly, and it is scored with pollination × forage (`on`
-  false). A stored v2 config (has `slots`, no `pools`) keeps `pools` false, so its bee formula is unchanged.
+  false). A stored v2 config (has `slots`, no `pools`) keeps `pools` false, so its bee formula is unchanged, and
+  a stored v2 or v3 config (no `cDecay`) its linear c.
   The game view's `config.prevalence` always has every key. Programs never see prevalence (it is not in `GAME`).
 
 Types: `int`, `float`, `bool`, `str`, `any`, `list[T]`, `tree[T]`, `graph`, `digraph`, `graph[T]`,
@@ -205,7 +225,9 @@ Types: `int`, `float`, `bool`, `str`, `any`, `list[T]`, `tree[T]`, `graph`, `dig
 | program versions, sizes, costs, change budgets, problems | own team | everyone |
 | the bee's `MEMORY` (`teams[i].memory`; query `teams.memory`, `teams.memoryBytes`, `teams.memoryError`) | own team, read only | everyone |
 | the scoreboard (every team's totals, shares and fitness) and `ledgers` (feeds, nectar, pollen) | everyone, live | everyone |
-| prevalence (every team's F, B, p^F, p^B, fitness so far and bee nectar balance, about once a second) and every feed's price, net and balance-after | everyone, live | everyone |
+| prevalence (every team's F, B, p^F, p^B, fitness and bee nectar balance, about once a second) and every feed's price, net and balance-after | everyone, live | everyone |
+| the game's length range (`minMs`, `maxMs`) and the time played (`clockMs`, `round`) | everyone | everyone |
+| the game's drawn end (`endMs`; a game with `endFactor` > 1) | nobody (`null`), except `game.drawnEndMs` in the game view of the room's owner when the owner has no team in the game | everyone (`endMs`) |
 
 A field you may not see is **absent** from actions, and **null** in ledger entries and query rows.
 Every way of reading actions (pages, `before=`, `mine=1`, the SSE and WebSocket streams) and the team
@@ -219,7 +241,12 @@ don't bump the public `game.version`, so other teams can't tell when a team chan
   "room": { "shortId", "url", "isOwner" },
   "game": { "shortId", "url", "status": "lobby|running|paused|finished", "config",
             "clockMs",        // game time played so far: round × round_ms
-            "endMs",          // config.minutes in ms
+            "minMs", "maxMs", // the range the game's end is drawn from: minutes and endFactor × minutes, in ms
+            "endMs",          // the game's end: null while hidden (endFactor > 1, until it is finished); a fixed end
+                              // (endFactor 1, games from before) all along
+            "drawnEndMs",     // only in the view of the room's owner with no team in the game: the drawn end (null
+                              // before the start); absent for everyone else
+            "fitnessBasis",   // how the scoreboard's fitness is reckoned: "final", "timeAverage" or "shares" (no prevalence)
             "round",          // rounds played so far (counting the one in progress)
             "lastSeq",        // the latest action's seq
             "windowMs",       // the flower window the game plays with (config.flowerWindowMs, or flower.ms in old games)
@@ -239,7 +266,7 @@ don't bump the public `game.version`, so other teams can't tell when a team chan
   "interface": { "flower", "bee", "types": { "challenge", "response", "challengeMeans", "responseMeans", "rules": [..] } },
   "scores": [teamScore] | null,
   "ledgers": { "feeds": [[int]], "nectar": [[number]], "pollen": [[number]] } | null,
-  "prevalence": { "on": true, "halfLifeS", "cStart", "cEnd", "cap", "slots", "pools",
+  "prevalence": { "on": true, "halfLifeS", "cDecay", "cStart", "cHalfS" /* resolved, sech */ | "cEnd" /* linear */, "cap", "slots", "pools",
                   "prior",                  // resolved: 0.12 × Emax when the config's is null
                   "endowment",              // resolved: 10 × feedPrice when the config's is null (the bee balance's baseline)
                   "feedPrice",              // resolved
@@ -274,7 +301,8 @@ the game view and `base/scores`, `prevalence` on `base/actions` pages and stream
                 "beeSuccess",      // B_b, par 1 (capped)
                 "flowerP",         // p^F_s: the chance a visit is to this species
                 "beeP",            // p^B_b: this bee's share of the bee weights
-                "fitness",         // its fitness so far: the time-average of F × B
+                "fitness",         // its fitness then, by scoring.mode: N² × p^F × p^B of that round ("final"),
+                                   // or the time-average of F × B so far ("timeAverage")
                 "balance" }] }     // its bee's nectar balance (pools games), else null
 ```
 
@@ -413,6 +441,20 @@ that turn plays `decide`'s challenge. `MEMORY` is the only thing that
 carries over from one turn to the next. No endpoint writes it. `interface` in the game view has the
 signatures for the game's language and types.
 
+
+## The game's length
+
+`config.minutes` is the shortest a game lasts and `config.endFactor` × `minutes` the longest (`minMs`, `maxMs`
+in the views, public). `POST base/start` draws the end, uniform in that range and rounded up to a whole round,
+into `games.end_ms`; the garden stops when the clock reaches it. **Until the game is finished nothing a team
+or a spectator can read carries it**: the game view, `base/scores`, the room's game list, actions, the
+ledger, the streams, the history queries and `interface` show `endMs: null` with the range; programs get no
+clock at all. The room owner's game view carries it as `drawnEndMs`, unless the owner is on a team in the game.
+When the game finishes (its end reached, or the owner's `finish`), `status` becomes `"finished"` everywhere
+(`base/scores`, the game view, `base/events` and `base/ws` messages, the room's events) and `endMs` is the
+drawn end for everyone; `clockMs` is when it actually stopped (earlier if the owner finished it early). A game
+with a fixed end (`endFactor` 1, or stored before random ends) shows `endMs` all along.
+
 ## Scores
 
 `teamScore`:
@@ -428,8 +470,15 @@ signatures for the game's language and types.
 The scoreboard is live and public: every team's numbers, for everyone (spectators included), during play
 and after.
 
-- With `prevalence` (new games): `fitness` = the time-average over the rounds played of F_s × B_s (stored on
-  the game as `{ sum, rounds }`, written with the ledgers; 1 before the first round). The rest is information.
+- With `prevalence`, by `config.scoring.mode` (`fitnessBasis` in the game view and `base/scores` says which):
+  - `"final"` (new games): `fitness` = N² × p^F × p^B of the latest round played: live, the value as it stands;
+    once the game is over, the final round's, the final score. Each p is that round's draw probability, c
+    included and the cap applied, so par is 1.
+  - `"timeAverage"` (v2 and v3 games, stored without a mode): `fitness` = the time-average over the rounds
+    played of F_s × B_s.
+  Both are kept on the game as `{ sum, rounds, last }` (Σ F × B, rounds, and each team's latest N² × p^F ×
+  p^B; v3 games stored `{ sum, rounds }`), written with the ledgers; 1 before the first round. The rest is
+  information.
 - Without it (games from before): `fitness` = N² × pollinationShare × forageShare, as below.
 
 - `pollination` = Σ over bee teams b of pollen[b][me]^β: the pollen your flower kept from each bee team's feeds.

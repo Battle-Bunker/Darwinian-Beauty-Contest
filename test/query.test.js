@@ -291,7 +291,7 @@ test("room queries: across the room's finished games only, fully revealed, scope
     db.records.filter((t) => t.ms !== null).length, "fully revealed");
 });
 
-test("scores use each game's exponents: its config's (0.85 by default), or √ for a game stored without them, in SQL and the views", async () => {
+test("scores use each game's exponents: its config's (0.85 by default), or √ for a game stored without them, in SQL and the views (which say the mode too)", async () => {
   const { score, scoringOf } = await import("../server/lib/scoring.js");
   const { viewScores, viewGame } = await import("../server/games.js");
   // (Fitness itself is the game's rule: checked below.)
@@ -306,35 +306,59 @@ test("scores use each game's exponents: its config's (0.85 by default), or √ f
   };
   try {
     await setStatus("finished");
-    assert.deepEqual(scoringOf(db.config), { alpha: 0.85, beta: 0.85 });
-    await check({ alpha: 0.85, beta: 0.85 }, "a new game");
-    // The same game as stored before the exponents existed: √, exactly the old numbers.
+    assert.deepEqual(scoringOf(db.config), { alpha: 0.85, beta: 0.85, mode: "final" });
+    await check({ alpha: 0.85, beta: 0.85, mode: "final" }, "a new game");
+    // The same game as stored before the exponents existed: √, exactly the old numbers (and time-average).
     await pool.query("UPDATE games SET config = config - 'scoring' WHERE id = $1", [db.game]);
-    await check({ alpha: 0.5, beta: 0.5 }, "a game from before");
+    await check({ alpha: 0.5, beta: 0.5, mode: "timeAverage" }, "a game from before");
     const root = (v) => v.reduce((s, x) => s + Math.sqrt(Math.max(0, x)), 0);
     const rows = await sql({ from: "scores" }, db.users[N]);
     same(rows.map((r) => [r.pollination, r.forage]), rows.map((r) => [root(db.out.pollen.map((row) => row[r.team])), root(db.out.nectar[r.team])]), "Σ√, as before");
     await pool.query("UPDATE games SET config = jsonb_set(config, '{scoring}', $2::jsonb) WHERE id = $1", [db.game, JSON.stringify({ alpha: 0.6, beta: 1 })]);
-    await check({ alpha: 0.6, beta: 1 }, "a game with its own exponents");
+    await check({ alpha: 0.6, beta: 1, mode: "timeAverage" }, "a game with its own exponents and no mode (v2, v3)");
   } finally {
     await pool.query("UPDATE games SET config = $2 WHERE id = $1", [db.game, db.config]);
   }
 });
 
-test("fitness: with prevalence, the time-average of F × B (with each team's latest F, B and draw chances); without, N² × pollination share × forage share", async () => {
+test("fitness: with prevalence, by the game's mode: N² × p^F × p^B of the latest round (\"final\", live and final alike), or the time-average of F × B (\"timeAverage\", and games stored without a mode); without, N² × pollination share × forage share", async () => {
   const { score } = await import("../server/lib/scoring.js");
-  const { viewScores } = await import("../server/games.js");
+  const { instantFitness } = await import("../server/lib/prevalence.js");
+  const { viewScores, viewGame } = await import("../server/games.js");
   const { fitness, sample } = db.out;
-  assert.equal(fitness.rounds, db.out.round, "one F × B a round");
+  assert.equal(fitness.rounds, db.out.round, "one tally a round");
+  const roomRow = (await pool.query("SELECT * FROM rooms WHERE id = $1", [db.room])).rows[0];
+  const latest = (k) => sample[k];
+  const both = async () => [await sql({ from: "scores" }, db.users[N]), (await viewScores({ id: db.game })).scores, (await viewGame(roomRow, { id: db.game }, null)).scores];
   try {
-    await setStatus("finished");
+    // "final": live, the instant value of the latest round; once over, of the final round. The same numbers.
+    const instant = fitness.last;
+    assert.equal(instant.length, N);
+    for (const status of ["running", "finished"]) {
+      await setStatus(status);
+      for (const rows of await both()) {
+        same(rows.map((r) => r.fitness), instant, `${status}: N² × p^F × p^B`);
+        same(rows.map((r) => [r.flowerSuccess, r.beeSuccess, r.flowerP, r.beeP]), instant.map((_, i) => [latest("F")[i], latest("B")[i], latest("pF")[i], latest("pB")[i]]));
+      }
+      assert.equal((await viewScores({ id: db.game })).fitnessBasis, "final");
+      assert.equal((await viewGame(roomRow, { id: db.game }, null)).game.fitnessBasis, "final");
+    }
+    // The latest sample was taken at a round whose instant value it carries.
+    instantFitness(sample.pF, sample.pB).forEach((x, i) => assert.ok(Math.abs(sample.fitness[i] - x) < 1e-4, `the sample's fitness is its round's N² × p^F × p^B (to its 6 decimals): ${sample.fitness[i]} vs ${x}`));
+    // "timeAverage" (explicitly, or a v3 config stored without a mode): the stored sums' time-average.
     const want = fitness.sum.map((x) => x / fitness.rounds);
-    const latest = (k) => sample[k];
-    for (const rows of [await sql({ from: "scores" }, db.users[N]), (await viewScores({ id: db.game })).scores]) {
-      same(rows.map((r) => r.fitness), want, "the time-average");
-      same(rows.map((r) => [r.flowerSuccess, r.beeSuccess, r.flowerP, r.beeP]), want.map((_, i) => [latest("F")[i], latest("B")[i], latest("pF")[i], latest("pB")[i]]));
+    for (const scoring of [{ ...db.config.scoring, mode: "timeAverage" }, { alpha: db.config.scoring.alpha, beta: db.config.scoring.beta }]) {
+      await pool.query("UPDATE games SET config = jsonb_set(config, '{scoring}', $2::jsonb) WHERE id = $1", [db.game, JSON.stringify(scoring)]);
+      for (const rows of await both()) same(rows.map((r) => r.fitness), want, `the time-average (${JSON.stringify(scoring)})`);
+      assert.equal((await viewScores({ id: db.game })).fitnessBasis, "timeAverage");
     }
     assert.ok(Math.abs(want.reduce((a, b) => a + b, 0) / N - 1) < 0.6, "about par on average");
+    // A v3 game's stored sums had no `last`: still the time-average, unchanged.
+    await pool.query("UPDATE games SET fitness = fitness - 'last' WHERE id = $1", [db.game]);
+    for (const rows of await both()) same(rows.map((r) => r.fitness), want, "v3 sums");
+    await pool.query("UPDATE games SET fitness = $2 WHERE id = $1", [db.game, JSON.stringify(fitness)]);
+    await pool.query("UPDATE games SET config = $2 WHERE id = $1", [db.game, db.config]);
+    await setStatus("finished");
     // The same ledgers in a game without prevalence: the old rule, and no F or B.
     await pool.query("UPDATE games SET config = config - 'prevalence' WHERE id = $1", [db.game]);
     const old = score(db.teams, db.out.feeds, db.out.nectar, db.out.pollen, db.config.scoring).map((s) => s.fitness);
@@ -342,8 +366,104 @@ test("fitness: with prevalence, the time-average of F × B (with each team's lat
       same(rows.map((r) => r.fitness), old);
       assert.ok(rows.every((r) => r.flowerSuccess === null && r.beeP === null));
     }
+    assert.equal((await viewScores({ id: db.game })).fitnessBasis, "shares");
   } finally {
-    await pool.query("UPDATE games SET config = $2 WHERE id = $1", [db.game, db.config]);
+    await pool.query("UPDATE games SET config = $2, fitness = $3 WHERE id = $1", [db.game, db.config, JSON.stringify(fitness)]);
+  }
+});
+
+test("the game's end is hidden: no view, score, stream page, ledger, query or interface text a team (or a spectator, or an owner with a team) can read has it until the game is over; then everyone's does", async () => {
+  const G = await import("../server/games.js");
+  const { programInterface } = await import("../server/lib/interface.js");
+  const END = 437_400; // the drawn end: a whole round, between 5 and 10 minutes
+  assert.deepEqual([db.config.minutes, db.config.endFactor], [5, 2]);
+  const roomRow = async () => (await pool.query("SELECT * FROM rooms WHERE id = $1", [db.room])).rows[0];
+  const everything = async (user) => {
+    const room = await roomRow(), game = { id: db.game };
+    const parts = [
+      await G.viewGame(room, game, user ? { id: user } : null), await G.viewScores(game), await G.viewRoom(room, user ? { id: user } : null),
+      await G.viewActions(game, user ? { id: user } : null, { after: 0, limit: 5000 }), await G.viewLedger(game, user ? { id: user } : null, { limit: 5000 }),
+      await G.viewPrevalence(game), programInterface(db.config),
+    ];
+    for (const from of ["scores", "prevalence", "teams", "versions", "pairs", "turns"]) parts.push(await sql({ from, limit: MAX_LIMIT }, user));
+    return parts;
+  };
+  const leaks = (x) => JSON.stringify(x).includes(String(END));
+  try {
+    await pool.query("UPDATE games SET end_ms = $2 WHERE id = $1", [db.game, END]);
+    for (const status of ["running", "paused"]) {
+      await setStatus(status);
+      for (const v of viewers()) {
+        const all = await everything(v.user);
+        assert.ok(!leaks(all), `${status}, ${v.name}${v.team === 0 ? " (the room's owner, on a team)" : ""}: the end shows somewhere`);
+        const g = all[0].game;
+        assert.deepEqual([g.minMs, g.maxMs, g.endMs, g.drawnEndMs ?? null], [300000, 600000, null, null], `${status}, ${v.name}: the range only`);
+        assert.deepEqual([all[1].minMs, all[1].maxMs, all[1].endMs, "drawnEndMs" in all[1]], [300000, 600000, null, false]);
+        assert.ok(all[2].games.filter((x) => x.id === db.game).every((x) => x.endMs === null && x.maxMs === 600000));
+      }
+      // The room's owner, with no team in the game, may see it (the owner's view only).
+      await pool.query("UPDATE rooms SET owner_id = $2 WHERE id = $1", [db.room, db.users[N]]);
+      const owner = await G.viewGame(await roomRow(), { id: db.game }, { id: db.users[N] });
+      assert.deepEqual([owner.game.endMs, owner.game.drawnEndMs], [null, END]);
+      assert.ok(!leaks(await G.viewScores({ id: db.game })), "not in the public scores, whoever asks");
+      await pool.query("UPDATE rooms SET owner_id = $2 WHERE id = $1", [db.room, db.users[0]]);
+    }
+    // Over: revealed in the game record, to everyone.
+    await setStatus("finished");
+    for (const v of viewers()) {
+      const room = await roomRow();
+      assert.equal((await G.viewGame(room, { id: db.game }, { id: v.user })).game.endMs, END, v.name);
+      assert.equal((await G.viewScores({ id: db.game })).endMs, END);
+      assert.equal((await G.viewRoom(room, { id: v.user })).games.find((x) => x.id === db.game).endMs, END);
+    }
+    // A game with a fixed end (endFactor 1, or stored before random ends) shows it all along.
+    await setStatus("running");
+    for (const cfg of [{ ...db.config, endFactor: 1 }, (({ endFactor: _, ...c }) => c)(db.config)]) {
+      await pool.query("UPDATE games SET config = $2, end_ms = NULL WHERE id = $1", [db.game, cfg]);
+      const g = (await G.viewGame(await roomRow(), { id: db.game }, { id: db.users[1] })).game;
+      assert.deepEqual([g.minMs, g.maxMs, g.endMs, g.config.endFactor], [300000, 300000, 300000, 1]);
+    }
+  } finally {
+    await pool.query("UPDATE rooms SET owner_id = $2 WHERE id = $1", [db.room, db.users[0]]);
+    await pool.query("UPDATE games SET config = $2, end_ms = NULL WHERE id = $1", [db.game, db.config]);
+    await setStatus("running");
+  }
+});
+
+test("starting a game draws its end from [minutes, endFactor × minutes], a whole round, into games.end_ms; the start's reply doesn't carry it", async () => {
+  const G = await import("../server/games.js");
+  const room = (await pool.query("SELECT * FROM rooms WHERE id = $1", [db.room])).rows[0];
+  const owner = { id: db.users[0] }, ends = [], made = [];
+  const lobby = async (config) => {
+    const id = crypto.randomUUID();
+    made.push(id);
+    await pool.query("INSERT INTO games (id, room_id, code, prefix_len, config) VALUES ($1, $2, $3, 26, $4)", [id, db.room, uuidToCode(id), config]);
+    for (const i of [1, 2]) {
+      const t = crypto.randomUUID();
+      await pool.query("INSERT INTO teams (id, game_id, name, join_code, color, created_by) VALUES ($1, $2, $3, $4, '#000', $5)", [t, id, `S${i}`, `s${i}${id.slice(0, 6)}`, db.users[i]]);
+      for (const kind of ["flower", "bee"]) {
+        await pool.query("INSERT INTO programs (game_id, team_id, kind, version, code, size, cost, at_ms, submitted_by) VALUES ($1, $2, $3, 1, '#', 1, 0, 0, $4)", [id, t, kind, db.users[i]]);
+      }
+    }
+    return id;
+  };
+  const config = normalizeConfig({ minutes: 0.5, endFactor: 3 }); // 30 s to 90 s
+  try {
+  for (let i = 0; i < 6; i++) {
+    const id = await lobby(config);
+    const reply = await G.startGame(room, { id }, owner);
+    const end = Number((await pool.query("SELECT end_ms FROM games WHERE id = $1", [id])).rows[0].end_ms);
+    assert.ok(!JSON.stringify(reply).includes(String(end)) && !("endMs" in reply), JSON.stringify(reply));
+    assert.ok(end >= 30000 && end <= 90000 && end % 200 === 0, `${end}`);
+    ends.push(end);
+    await pool.query("UPDATE games SET status = 'finished' WHERE id = $1", [id]); // nobody runs it here
+  }
+  assert.ok(new Set(ends).size > 1, `drawn, not fixed: ${ends}`);
+  const fixed = await lobby(normalizeConfig({ minutes: 0.5, endFactor: 1 }));
+  await G.startGame(room, { id: fixed }, owner);
+  assert.equal(Number((await pool.query("SELECT end_ms FROM games WHERE id = $1", [fixed])).rows[0].end_ms), 30000);
+  } finally {
+    await pool.query("DELETE FROM games WHERE id = ANY($1)", [made]);
   }
 });
 

@@ -2,7 +2,7 @@
 // behind it, the breakdown team by team, and the whole-game ledgers (who fed where, the nectar each bee got
 // at each flower, and the pollen each flower gave each bee). A value the server holds back shows "–".
 import { useMemo } from "react";
-import { prevalenceOn, scoringOf, type GameView, type Scoring, type Team, type TeamScore } from "../types";
+import { fitnessBasisOf, scoringOf, type FitnessBasis, type GameView, type Scoring, type Team, type TeamScore } from "../types";
 import { fmt2, fmt3, fmtClock, fmtE, fmtEExact, pct, poss, powText } from "../lib/format";
 import { InfoTip, TeamChip } from "./ui";
 import { TrophyIcon } from "./Icons";
@@ -11,11 +11,13 @@ import { PrevalencePanel } from "./Prevalence";
 /** times × x^p, rounded to a whole number. */
 const fmtPow = (x: number, p: number, times = 1) => Math.round(times * Math.pow(x, p)).toLocaleString();
 
-/** The scoring words, with the game's exponents (alpha for forage, beta for pollination). */
-const termsOf = ({ alpha, beta }: Scoring, prevalence: boolean) => ({
-  fitness: prevalence
-    ? "The time-average, over the game so far, of F × B: your species' flower success times your bee's success (each par 1, capped; see Prevalence above). Par is 1.0 however many teams play: above 1, you're out-evolving the average team."
-    : "N² × pollination share × forage share. Par is 1.0 however many teams play: above 1, you're out-evolving the average team.",
+/** The scoring words, with the game's exponents (alpha for forage, beta for pollination) and its fitness basis. */
+const termsOf = ({ alpha, beta }: Scoring, basis: FitnessBasis) => ({
+  fitness: {
+    final: "N² × p^F × p^B now: your species' chance of being drawn for a visit times your bee's chance of being drawn to visit (c included; see Prevalence above), from the latest round. The final round's is the final score, and the game ends at a hidden time, so any round may be the last. Par is 1.0 however many teams play: above 1, you're out-evolving the average team.",
+    timeAverage: "The time-average, over the game so far, of F × B: your species' flower success times your bee's success (each par 1, capped; see Prevalence above). Par is 1.0 however many teams play: above 1, you're out-evolving the average team.",
+    shares: "N² × pollination share × forage share. Par is 1.0 however many teams play: above 1, you're out-evolving the average team.",
+  }[basis],
   pollination: `Σ over bee teams of ${powText("the pollen your flower gave that team's bee", beta)}. Bees carry pollen to other flowers: how widely, and how much, your flower is pollinated.`,
   forage: `Σ over flower teams of ${powText("the nectar your bee got there", alpha)}. How widely your bee eats.`,
   pollen: "Everything your flower gave as pollen: (1 − percent/100) × E on every feed at it. A visit without a feed gives nothing.",
@@ -33,8 +35,9 @@ const shareText = (x: number | null) => (num(x) ? pct(x) : "–");
 export function Scores({ view, base }: { view: GameView; base?: string }) {
   const g = view.game;
   const sc = scoringOf(g.config);
-  const prev = prevalenceOn(g.config);
-  const TERMS = termsOf(sc, prev);
+  const basis = g.fitnessBasis ?? fitnessBasisOf(g.config);
+  const prev = basis !== "shares";
+  const TERMS = termsOf(sc, basis);
   const teams = useMemo(() => Object.fromEntries(view.teams.map((t) => [t.id, t])), [view.teams]);
   const myTeamId = view.me?.teamId ?? null;
   const n = view.participants?.length ?? 0;
@@ -48,7 +51,9 @@ export function Scores({ view, base }: { view: GameView; base?: string }) {
   return (
     <div className="scores">
       <p className="small muted scores-note">
-        {over ? "Final scores, over the whole game." : `Live, over the game so far (as of ${fmtClock(g.clockMs)} of game time, updated every second or so).`}
+        {basis === "final"
+          ? (over ? "Final scores: N² × p^F × p^B at the final round." : `Live: N² × p^F × p^B as it stands now (as of ${fmtClock(g.clockMs)} of game time, updated every second or so); the final round's is the final score.`)
+          : over ? "Final scores, over the whole game." : `Live, over the game so far (as of ${fmtClock(g.clockMs)} of game time, updated every second or so).`}
         {" "}Sorted by fitness. Shares are of the sum over all {n} teams; par is {pct(1 / Math.max(1, n))}.
       </p>
       {base && view.prevalence && <PrevalencePanel view={view} base={base} />}

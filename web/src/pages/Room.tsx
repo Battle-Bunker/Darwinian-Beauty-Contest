@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errorText } from "../api";
 import { Link, navigate } from "../router";
 import { useDocumentTitle, useEventStream } from "../hooks";
-import type { RoomGame, RoomView } from "../types";
+import { endOrMax, type RoomGame, type RoomView } from "../types";
+import { rangeText } from "../components/Clock";
 import { Alert, CopyButton, Progress, StatusBadge } from "../components/ui";
 import { PlusIcon } from "../components/Icons";
 import { fmtClock, timeAgo } from "../lib/format";
@@ -93,13 +94,14 @@ export function RoomPage({ room }: { room: string }) {
 }
 
 function GameRow({ g, since }: { g: RoomGame; since: number }) {
-  const clock = g.status === "running" ? Math.min(g.endMs, g.clockMs + (performance.now() - since)) : g.clockMs;
+  const end = endOrMax(g), hidden = g.endMs === null;
+  const clock = g.status === "running" ? Math.min(end, g.clockMs + (performance.now() - since)) : g.clockMs;
   return (
     <Link to={g.url} className="list-row game-row">
       <span className="list-main"><b>Game {g.shortId}</b><StatusBadge status={g.status} /></span>
       <span className="game-row-clock">
-        <span className="mono">{g.status === "lobby" ? `${fmtClock(g.endMs)} game` : `${fmtClock(clock)} / ${fmtClock(g.endMs)}`}</span>
-        {g.status !== "lobby" && <Progress value={clock / g.endMs} className={`row-bar bar-${g.status}`} label="Game time played" />}
+        <span className="mono">{g.status === "lobby" ? `${rangeText(g.minMs, g.maxMs)} game` : `${fmtClock(clock)} / ${hidden ? rangeText(g.minMs, g.maxMs) : fmtClock(end)}`}</span>
+        {g.status !== "lobby" && <Progress value={clock / end} className={`row-bar bar-${g.status}`} label={hidden ? "Game time played, out of the longest the game can last" : "Game time played"} />}
       </span>
       <span className="muted">{g.teamCount} {g.teamCount === 1 ? "team" : "teams"} · created {timeAgo(g.createdAt)}</span>
     </Link>

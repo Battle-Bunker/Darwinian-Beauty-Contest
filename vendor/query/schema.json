@@ -981,7 +981,7 @@
           "visibility": "public"
         },
         "c": {
-          "doc": "c(t): the weight every species and bee has whatever its success, cEnd + (cStart - cEnd) × 2^(-t / cHalfLifeS) (v2, v3: linear from cStart to cEnd over the game)",
+          "doc": "c(t): the weight every species and bee has whatever its success: cStart × sech(k × t / cHalfS), k = arccosh 2, t in seconds of game time (cDecay \"sech\"); v2, v3 (\"linear\"): from cStart to cEnd over the game",
           "visibility": "public"
         },
         "slots": {

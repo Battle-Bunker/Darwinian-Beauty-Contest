@@ -5,7 +5,7 @@
 // (including what it lost on visits where the bee didn't feed, which only my team sees until the end)
 // and my team over time.
 import { useMemo, useState } from "react";
-import { byteCapOf, energyBytes, roundMsOf, scoringOf, type GameView, type LedgerEntry, type Team } from "../types";
+import { byteCapOf, endOrMax, energyBytes, roundMsOf, scoringOf, type GameView, type LedgerEntry, type Team } from "../types";
 import { gameBase } from "../api";
 import type { LedgerStore } from "../lib/history";
 import { useLiveTick } from "../lib/live";
@@ -54,7 +54,7 @@ export function LedgerPanel({ view, ledger }: { view: GameView; ledger: LedgerSt
     return { out, total };
   }, [ledger, rev, bee, flower, fedOnly, mineOnly, me, limit]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const endMs = Math.max(roundMs, g.status === "finished" ? g.clockMs : g.endMs);
+  const endMs = Math.max(roundMs, g.status === "finished" ? g.clockMs : endOrMax(g));
   const { alpha, beta } = scoringOf(cfg);
   const byteCap = energyBytes(cfg) ? byteCapOf(cfg) : undefined;
   const model = useMemo(() => ({ cap: cfg.budgets.flower.size, window: cfg.budgets.flower.ms, byteCap, alpha, beta, sizeOf: sizeLookup(teams) }), [cfg.budgets.flower.size, cfg.budgets.flower.ms, byteCap, alpha, beta, teams]);

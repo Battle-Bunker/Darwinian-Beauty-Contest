@@ -145,7 +145,7 @@ class Prevalence(NamedTuple):
     bee_p: float  # p^B_b: its bee's share of the bee weights, (c + B_b) / Σ (c + B_k): the chance it fills a given slot first
     fitness: Optional[float]  # its fitness at the sample, by the game's scoring.mode: "final", N² × p^F_s × p^B_s of that round; "timeAverage" (v2, v3), the time-average of F × B over the rounds played
     balance: Optional[float]  # its bee's nectar balance at the sample (pools games), else null
-    c: float  # c(t): the weight every species and bee has whatever its success, cEnd + (cStart - cEnd) × 2^(-t / cHalfLifeS) (v2, v3: linear from cStart to cEnd over the game)
+    c: float  # c(t): the weight every species and bee has whatever its success: cStart × sech(k × t / cHalfS), k = arccosh 2, t in seconds of game time (cDecay "sech"); v2, v3 ("linear"): from cStart to cEnd over the game
     slots: Optional[int]  # bees visiting each round: ceil(slots × N)
 
     @classmethod

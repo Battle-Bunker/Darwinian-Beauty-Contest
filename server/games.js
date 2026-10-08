@@ -396,7 +396,7 @@ export const sampleView = (x, participants) => {
 };
 
 /**
- * A game's prevalence (public): its settings and latest sample, { on, halfLifeS, cStart, cEnd, cHalfLifeS, cap,
+ * A game's prevalence (public): its settings and latest sample, { on, halfLifeS, cDecay, cStart, cHalfS (sech) or cEnd (linear), cap,
  * slots, prior, pools, endowment, feedPrice, sample } (sample null before the first); null when the game has none.
  */
 function prevalenceView(g) {

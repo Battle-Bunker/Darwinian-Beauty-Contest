@@ -21,7 +21,9 @@ A flower now *chooses* how much to pay, out of energy it can only have by being 
 | N × a species' share of Σ_b (decayed pollen it gave bee b)^β, capped | **flower success** F | par 1; weights the species draw with c(t); per-bee cells, so spread pollen counts for more |
 | N × a bee's share of its decayed nectar balance (pools), capped | **bee success** B | par 1; weights the bee draw with c(t) |
 | a bee's single running nectar balance (pools) | **balance** | starts at the endowment, +net nectar a feed, relaxes to the endowment; below the price a bee can't feed |
-| the time-average of F × B | **fitness** (new games) | par 1 |
+| N² × p^F × p^B at the final round, p the draw probabilities (c included) | **fitness** (new games, `scoring.mode` "final") | par 1; v2/v3 games: the time-average of F × B ("timeAverage") |
+| cStart × sech(k t / cHalfS), k = arccosh 2 | **c(t)** | the weight everyone has whatever its success: flat at first, half at cHalfS (0.2 × the shortest length), toward 0; v2/v3: linear 1 → 0.1 |
+| drawn uniformly from [minutes, endFactor × minutes] at the start | **the game's end** | hidden from the teams until it's over |
 | `feeds[b][f]`, `nectar[b][f]`, `pollen[b][f]` | **feed / nectar / pollen ledgers** | row = bee team, column = flower team |
 | every finished turn, as one team may see it | **history** | for teams and agents, over HTTP and the generated query clients; programs get none |
 | a bee's only state from one turn to the next | **MEMORY** | a key-value store the engine keeps, 50 bytes by default |
@@ -311,18 +313,33 @@ feed") and recovers over time. This is linear, so a crash can rebuild it exactly
 bee success (N × share of max(0, Σ_s signed (decayed net nectar)^α), per flower) stays under `pools` false,
 so an in-flight v2 game stays reproducible.
 
-Both F and B are capped at 4, par 1. c(t) falls from 1 to 0.1 over the game, so early on everyone is seen and
-late on success matters.
+Both F and B are capped at 4, par 1. c(t) = cStart × sech(k t / cHalfS), k = arccosh 2 (`cDecay` "sech"): flat
+at the start, half at cHalfS (0.2 × the shortest length, 60 s at the defaults), then an exponential tail to 0
+with no floor. So early on everyone is seen and late on success is nearly all that matters; a team weighing 0
+is never drawn while anyone eligible weighs more (all 0: uniform). The curve is set in seconds of game time,
+not as a share of the game, because the game's length is hidden. v2 and v3 games keep their linear c (1 →
+0.1 over `minutes`, `cDecay` "linear").
+
+**The end is hidden.** A game lasts at least `minutes` (5 by default) and at most `endFactor` × `minutes` (2
+×). The start draws the end uniformly from that range, rounded up to a whole round, into `games.end_ms`
+(server/db/migrations/010_hidden_end.sql); the garden stops there. Nothing a team or a spectator can read has
+it until the game is over: the views and `GET .../scores` give `minMs`, `maxMs` and `endMs: null`; programs
+have no clock beyond their own call's; c doesn't depend on it. The room owner's view has `drawnEndMs` (unless
+the owner plays). With the end unknowable, there's no last-round play to plan for and no point at which the
+score stops mattering: hence a final-instant score.
 
 **The feed price** (0.05 × Emax, 2,816,000 at the defaults) is taken out of every feed's nectar: net = nectar −
 price. It replaces the 20-round sit-out as the cost of feeding, and makes feeding at a stingy or a 0% flower
 a loss that shows in B. fed(nectar) still gets the gross nectar.
 
-**Fitness** is the time-average over the rounds played of F_s × B_s: both par 1 and capped, so the product is
-par 1. It is built from prevalence, which is why the flower's success is measured in pollen: generosity
-(nectar) costs the flower F, and the bee's success is measured net of the price. The old score (N² ×
-pollination share × forage share) stays for games without prevalence, so games from before keep their
-numbers.
+**Fitness** (`scoring.mode` "final", new games) is N² × p^F_s × p^B_s at the final round: the team's species'
+draw probability times its bee's, as the sample publishes them (c included, the cap applied), par 1 since each
+p is 1/N for an average team. The scoreboard shows it live as it stands; whatever it is when the hidden end
+comes is the final score. v2 and v3 games ("timeAverage", configs stored without a mode) keep the
+time-average over the rounds played of F_s × B_s. Either way it is built from prevalence, which is why the
+flower's success is measured in pollen: generosity (nectar) costs the flower F, and the bee's success is
+measured net of the price. The old score (N² × pollination share × forage share) stays for games without
+prevalence, so games from before keep their numbers.
 
 **Slow change.** R's cap is 50 ms (in a 150 ms window, so rounds are still 200 ms and timing still hides R),
 and change budgets are 60 nodes a minute for a flower (bank 300) and 600 for a bee (bank 3,000): learning or
@@ -332,10 +349,10 @@ rules (no `prevalence`, `feedPrice` or `flowerWindowMs`) plays as it did.
 The engine keeps the decayed ledgers (per-bee pollen cells, and each bee's nectar balance) in the garden. As
 each round begins they decay — pollen by d = 2^(−round_s / halfLifeS) toward 0, the balance toward its
 endowment by the same d (the endowment is the relaxation's fixed point) — and it adds the round's F × B to
-each team's fitness sum. The ledgers are not stored: a garden adopted after a crash rebuilds them exactly
+each team's fitness sum and keeps its N² × p^F × p^B as the latest instant. The ledgers are not stored: a garden adopted after a crash rebuilds them exactly
 from the game's feed actions (pollen = prior × d^R + Σ pollen × d^(R − round); balance = endowment + Σ net ×
 d^(R − round); the price and the balance stored on each feed). The fitness sums are on the game
-(`games.fitness`, `{ sum, rounds }`, written with the ledgers). Every ⌈1000 / round_ms⌉ rounds, as a round
+(`games.fitness`, `{ sum, rounds, last }`, written with the ledgers; v3 games stored `{ sum, rounds }`). Every ⌈1000 / round_ms⌉ rounds, as a round
 begins, the garden samples every team's F, B, p^F, p^B, fitness and nectar balance with c and the slots: the
 latest goes on the game row (`games.prevalence`), every sample into the `prevalence` table
 (server/db/migrations/007_prevalence.sql, 008_metagame.sql, 009_pools.sql), written with the actions. The

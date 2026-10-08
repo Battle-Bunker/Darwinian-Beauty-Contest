@@ -47,7 +47,7 @@ test("defaults: a 1,100-node flower with R from 1 to 50 ms, 60 nodes a minute (b
   assert.deepEqual([roundMs(DEFAULT_CONFIG), windowMsOf(DEFAULT_CONFIG)], [200, 150], "the round and the window stay; only R's cap shrank");
   assert.equal(DEFAULT_CONFIG.feedCost, 0, "a feed has a price instead");
   assert.equal(normalizeConfig({}).feedCost, 0);
-  assert.equal(DEFAULT_CONFIG.minutes, 2);
+  assert.deepEqual([DEFAULT_CONFIG.minutes, DEFAULT_CONFIG.endFactor], [5, 2], "at least 5 minutes, at most 10: the end is drawn and hidden");
   // all configurable, per game
   const c = normalizeConfig({ feedCost: 3, flowerWindowMs: 100, budgets: { flower: { size: 900, perMinute: 100, cap: 50, ms: 120 }, bee: { size: 5000, perMinute: 7, cap: 9, ms: 30, memory: 64 } } });
   assert.deepEqual(c.budgets.flower, { size: 900, perMinute: 100, cap: 50, ms: 120, minMs: 2 }, "R's floor: 2% of ms");

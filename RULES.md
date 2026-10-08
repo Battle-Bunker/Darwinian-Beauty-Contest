@@ -13,20 +13,32 @@ Your team writes **two programs**:
 
 ## The game
 
-A game is one continuous stretch of play, 2 minutes of game time by default (the room owner sets it).
+A game is one continuous stretch of play, **between 5 and 10 minutes of game time** by default, ending at a
+**random time nobody playing is told** (see "The end is hidden"; the room owner sets the range).
 
 1. **The lobby.** Teams join and write their programs. Writing is free here, within the size limits. A
    team needs both programs to take part, and a game needs at least 2 such teams.
 2. **The garden.** The owner starts the game. From then on the bees forage without pause, round after
    round, and every team can change either program at any moment, paying from a change budget that
    refills as the game goes on (see "Changing your programs").
-3. **The end.** When the clock runs out the game is over and everything is revealed. The owner can also
-   pause the game (the clock and the budgets stand still) or end it early.
+3. **The end.** When the clock reaches the game's hidden end the game is over and everything is revealed.
+   The owner can also pause the game (the clock and the budgets stand still) or end it early.
+
+### The end is hidden
+
+The owner sets the shortest the game can last (`minutes`, 5 by default) and the longest, as a multiple of it
+(`endFactor`, 2 by default: 10 minutes). When the game starts, the server **draws its end uniformly from that
+range** (rounded up to a whole round) and keeps it to itself. Everything a team can read, the game page, the
+scoreboard, the live stream, the history queries and `GAME`, shows the time played and the range, **never the
+end or the time left**; programs don't see the clock at all (see "The clock"). Once the shortest length has
+passed, **any round may be the last**. When the game is over, its end is in the game record for everyone.
+(The room's owner can see it during play, unless the owner plays in the game.) With `endFactor` 1 the game
+ends at exactly `minutes`, as games did before.
 
 ### Rounds
 
 The game runs in **rounds** of **200 ms** of game time: a **150 ms flower window**, then a **50 ms
-decision window**. A 2-minute game is 600 rounds. Rounds are played in real time; if the server is
+decision window**. A 5-minute game is 1,500 rounds. Rounds are played in real time; if the server is
 short of CPU cores a round takes longer on the wall clock. The round's pacing changes nothing in the game:
 every time limit is **CPU time**, the time your program spends computing (see "Time limits are CPU time").
 
@@ -112,18 +124,29 @@ Each round:
 > **bees**: ceil(0.25 × N) distinct bees are drawn, one after another without replacement, with weights
 > **c + B_b**; **flowers**: each of them visits a species drawn with weights **c + F_s**.
 
-**c** gives everyone a share whatever their success: it runs **linearly from 1** at the start of the game
-**to 0.1** at its end. So a bee or a species with no recent success still gets drawn, but less and less.
+**c** gives everyone a share whatever their success. It starts at **1** and falls smoothly **toward 0**:
+
+> **c(t) = sech(k × t / cHalfS)**, with k = arccosh 2 ≈ 1.317 and t the game time in seconds,
+
+so it is **flat at first**, **half at cHalfS** (0.2 × the shortest length: **60 s** of game time at the
+defaults, 360 s in a 30-minute game), 1/7 at twice that, and from then on roughly halves every 0.53 × cHalfS,
+with **no floor**. c doesn't depend on when the game will end. So early on everyone is drawn about equally; a
+bee or a species with no recent success is drawn less and less, and once c is near 0, almost never. A species
+or bee that weighs exactly 0 is never drawn while anyone eligible weighs more; if every eligible one weighs 0,
+the draw is uniform among them.
 
 **Every team's F, B, flower draw chance p^F = (c + F) / Σ (c + F) and bee draw chance p^B = (c + B) / Σ
-(c + B)**, and its fitness so far, are public, updated about once a second of game time: in the game view,
+(c + B)**, and its fitness (N² × p^F × p^B), are public, updated about once a second of game time: in the game view,
 the scoreboard, the live action stream and the history queries. **Programs never see them**: nothing about
 prevalence is in `GAME`.
 
-The owner sets all of it in the settings (`prevalence`: on, half-life (or none: cumulative), c's start and
-end, cap, slots, prior, endowment, and `pools` — the single nectar balance; with `pools` off the bee's
-success is the older per-flower formula instead). A game from before these rules plays as it did: every bee
-visits every round, species are drawn uniformly, feeds are free and it is scored with pollination and forage.
+The owner sets all of it in the settings (`prevalence`: on, half-life (or none: cumulative), c's curve
+(`cDecay` `"sech"` with `cStart` and `cHalfS`, null for 0.2 × the shortest length; or `"linear"`, from `cStart`
+to `cEnd` over `minutes`, as games before), cap, slots, prior, endowment, and `pools` — the single nectar
+balance; with `pools` off the bee's success is the older per-flower formula instead). Games played before the
+sech c (v2, v3) keep their linear c, from 1 to 0.1 over the game. A game from before these rules plays as it
+did: every bee visits every round, species are drawn uniformly, feeds are free and it is scored with
+pollination and forage.
 
 ### The feed price
 
@@ -489,24 +512,32 @@ to the page as its first 4 KB, its size and its hash; the whole response is one 
 | **code**, what your bee **prints**, program **versions** and **sizes**, change **budgets**, the bee's **decision times** and errors | that team |
 | your bee's **`MEMORY`** (its value, size and last error) | that team (read only: nobody can write it but the bee) |
 | a feed's **pollen grain** (and the flower's version and code length that come with it) | the feeding bee's team |
+| the game's **end** (drawn when it starts; see "The end is hidden") | nobody playing: only the room's owner, if the owner isn't on a team |
 
-**When the game ends, everything is revealed** for a full replay: every percent, energy and timing, every
-version and change, every budget, every bee's `MEMORY`, every pollen grain, and (unless the owner turns it
-off) all code and printouts.
+**When the game ends, everything is revealed** for a full replay: the drawn end, every percent, energy and
+timing, every version and change, every budget, every bee's `MEMORY`, every pollen grain, and (unless the owner
+turns it off) all code and printouts.
 
 ## Scoring: Darwinian fitness
 
-> **fitness = the time-average, over the game so far, of F × B**: your species' flower success times your
-> bee's success (see "Prevalence"), taken every round. Par is 1.0 however many teams play.
+> **fitness = N² × p^F × p^B at the final round**: your species' flower draw chance p^F = (c + F) / Σ (c + F)
+> times your bee's draw chance p^B = (c + B) / Σ (c + B) (see "Prevalence"), as they stand in the game's last
+> round: c included, F and B capped. Par is 1.0 however many teams play.
 
-Both F and B are par 1 and capped at 4, so a team that is average on both sides all game scores 1; one
-whose bee feeds well but whose flower nobody pollinates from scores less than one that does both. A round
-counts as soon as it is played, so the score follows the game as it goes: what you did lately counts
-through F and B, and when you did it counts through the average.
+Each p is your share of the draws, 1/N for an average team, so a team that is average on both sides scores 1;
+one whose bee feeds well but whose flower nobody pollinates from scores less than one that does both. F and B
+are recent (they fade with the half-life) and c is small by the end, so what counts is how well your species
+and your bee are doing **when the game ends**. And since the end is hidden (see "The end is hidden"), any
+round after the shortest length may be the last: **the scoreboard shows every team's N² × p^F × p^B as it
+stands, live**, and the value in the final round is the final score.
 
 **The scoreboard is live and public**: during play everyone, spectators included, sees every team's
 fitness, its latest F, B and draw chances, and its totals: feeds, nectar, pollen, and the old score's
 pollination and forage (below), for information.
+
+**Games played under earlier rules** keep their rule (`scoring.mode` in the settings: `"final"` for new games,
+`"timeAverage"` for games stored without one): v2 and v3 games are scored with the **time-average, over the
+rounds played, of F × B**.
 
 **Games from before prevalence** (and any game with it turned off) are scored as they were:
 

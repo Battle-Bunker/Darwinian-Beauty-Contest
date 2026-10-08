@@ -5,9 +5,12 @@
 // also shows such games still play by their rules.
 import { normalizeConfig } from "../../server/lib/gameConfig.js";
 
-const { flowerWindowMs: _w, feedPrice: _p, prevalence: _v, ...rest } = normalizeConfig({});
+// (Nor had it endFactor, a fixed end at `minutes`, nor a scoring mode.)
+const { flowerWindowMs: _w, feedPrice: _p, prevalence: _v, endFactor: _e, scoring, ...rest } = normalizeConfig({});
 export const CLASSIC = Object.freeze({
   ...rest,
+  minutes: 2,
+  scoring: { alpha: scoring.alpha, beta: scoring.beta },
   feedCost: 20,
   budgets: {
     flower: { size: 1100, perMinute: 220, cap: 220, ms: 150, minMs: 3 },

@@ -154,7 +154,7 @@ export interface Prevalence {
   readonly fitness: number | null;
   /** its bee's nectar balance at the sample (pools games), else null */
   readonly balance: number | null;
-  /** c(t): the weight every species and bee has whatever its success, cEnd + (cStart - cEnd) × 2^(-t / cHalfLifeS) (v2, v3: linear from cStart to cEnd over the game) */
+  /** c(t): the weight every species and bee has whatever its success: cStart × sech(k × t / cHalfS), k = arccosh 2, t in seconds of game time (cDecay "sech"); v2, v3 ("linear"): from cStart to cEnd over the game */
   readonly c: number;
   /** bees visiting each round: ceil(slots × N) */
   readonly slots: number | null;

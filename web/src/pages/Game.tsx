@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errorText, gameBase } from "../api";
 import { Link } from "../router";
 import { useDocumentTitle } from "../hooks";
-import { energyUnitOf, windowMsOf, type GameView, type Kind, type ScoresView } from "../types";
+import { endOrMax, energyUnitOf, windowMsOf, type GameView, type Kind, type ScoresView } from "../types";
 import { setEnergyUnit } from "../lib/format";
 import { LiveStore, useGameStream, useLiveTick } from "../lib/live";
 import { useHistory, useLedger, type HistoryStore, type LedgerStore } from "../lib/history";
@@ -39,7 +39,7 @@ export function GamePage({ room, game }: { room: string; game: string }) {
   const [error, setError] = useState<string | null>(null);
 
   const accept = useCallback((v: GameView) => {
-    store.syncClock(v.game.clockMs, v.game.status, v.game.endMs, v.game.round);
+    store.syncClock(v.game.clockMs, v.game.status, endOrMax(v.game), v.game.round);
     setEnergyUnit(energyUnitOf(v.game.config)); // before anything of this game is shown
     setView(v);
   }, [store]);
@@ -78,7 +78,7 @@ export function GamePage({ room, game }: { room: string; game: string }) {
       busy = true;
       try {
         const s = await api<ScoresView>("GET", `${base}/scores`);
-        store.syncClock(s.clockMs, s.status, s.endMs, s.round);
+        store.syncClock(s.clockMs, s.status, endOrMax(s), s.round);
         setLive(s);
         if (s.status !== status) load();
       } catch { /* the next poll will do */ } finally { busy = false; }

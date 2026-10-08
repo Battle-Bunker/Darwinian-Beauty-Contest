@@ -14,18 +14,21 @@
 //        (balance − b0) d: metabolism above b0, recovery below). A bee whose balance is below the price can't
 //        feed (its feed becomes a leave). Without `pools` (v2): N × Q^B_b / Σ_k Q^B_k, Q^B_b = max(0, Σ_s
 //        sign(D) |D^B_{b,s}|^α), D^B the decayed per-(bee, species) net nectar (α the game's scoring.alpha).
-// Each of F and B is 1 for every team when its total is 0, and capped at `cap`: par 1. c(t) = cEnd + (cStart −
-// cEnd) × 2^(−t / cHalfLifeS), t in seconds of game time: it doesn't depend on the game's length, which is
-// hidden (cHalfLifeS null, as in v2 and v3 configs: linear from cStart at the start to cEnd at `minutes`, then
-// cEnd). The draw probabilities published are p^F_s = (c + F_s) / Σ_k (c + F_k) and p^B_b = (c + B_b) /
-// Σ_k (c + B_k) (the chance of filling a given slot first).
+// Each of F and B is 1 for every team when its total is 0, and capped at `cap`: par 1. c(t), by cDecay:
+//   "sech"    c = cStart × sech(k t / cHalfS), k = arccosh 2, t in seconds of game time: flat at the start, half
+//             at cHalfS (0.2 × the minimum length by default), an exponential tail toward 0, no floor. It doesn't
+//             depend on the game's real length, which is hidden.
+//   "linear"  (v2, v3) from cStart at the start to cEnd at `minutes`, then cEnd.
+// The draw probabilities published are p^F_s = (c + F_s) / Σ_k (c + F_k) and p^B_b = (c + B_b) / Σ_k (c + B_k)
+// (the chance of filling a given slot first). As c → 0 a team with F (or B) 0 weighs 0: it is never drawn while
+// anyone eligible weighs more; when every eligible candidate weighs 0, the draw is uniform among them.
 // A team's fitness, by the game's scoring.mode, par 1:
 //   "final"        N² × p^F_s × p^B_s of the latest round played (of the final round, once the game is over):
 //                  the instantaneous product of its species' and its bee's draw probabilities, c and cap included
 //   "timeAverage"  (v2, v3) the time-average, over the rounds played, of F_s × B_s
 // Both are kept every round (fitness sums: { sum, rounds, last }), so a game can be read either way.
 // The garden samples them (and the bees' balances) about once a second of game time (public); programs never see them.
-import { feedPriceOf, prevalenceOf, roundMs } from "./gameConfig.js";
+import { SECH_K, feedPriceOf, prevalenceOf, roundMs, sech } from "./gameConfig.js";
 import { score, scoringOf } from "./scoring.js";
 
 /** N² × p^F × p^B for each team: the "final" fitness of a round's draw probabilities (1 at par). */
@@ -53,7 +56,7 @@ export class Prevalence {
     this.alpha = scoringOf(config).alpha;
     this.beta = scoringOf(config).beta;
     this.mode = scoringOf(config).mode;
-    this.durationMs = config.minutes * 60000;   // c's span when it is linear (cHalfLifeS null): the game's minimum length
+    this.durationMs = config.minutes * 60000;   // a linear c's span: `minutes`
     this.d = s.halfLifeS ? Math.pow(2, -roundMs(config) / 1000 / s.halfLifeS) : 1;
     this.slots = Math.min(n, Math.max(1, Math.ceil(s.slots * n - 1e-9)));
     this.pools = s.pools;
@@ -119,10 +122,10 @@ export class Prevalence {
     else this.net[b][s] += net || 0;
   }
 
-  /** c at game time tMs: decaying exponentially from cStart toward cEnd (cHalfLifeS null: linearly, over `minutes`). */
+  /** c at game time tMs: cStart × sech(k t / cHalfS) (sech), or from cStart to cEnd over `minutes` (linear). */
   c(tMs) {
-    const { cStart, cEnd, cHalfLifeS } = this.settings;
-    if (cHalfLifeS) return cEnd + (cStart - cEnd) * Math.pow(2, -Math.max(0, tMs) / 1000 / cHalfLifeS);
+    const { cDecay, cStart, cEnd, cHalfS } = this.settings;
+    if (cDecay === "sech") return cStart * sech((SECH_K * Math.max(0, tMs)) / 1000 / cHalfS);
     const x = this.durationMs > 0 ? Math.min(1, Math.max(0, tMs / this.durationMs)) : 0;
     return cStart + (cEnd - cStart) * x;
   }
@@ -167,17 +170,23 @@ export class Prevalence {
   }
 }
 
-/** Draw an index with probability proportional to weights[i] among `allowed` indices (uniform if they weigh 0). */
+/**
+ * Draw an index with probability proportional to weights[i] among `allowed` indices: one weighing 0 is never
+ * drawn while another weighs more; when they all weigh 0 (or the weights aren't numbers), uniformly.
+ */
 export function drawWeighted(weights, allowed, rand = Math.random) {
   if (!allowed.length) return null;
-  const total = allowed.reduce((s, i) => s + Math.max(0, weights[i]), 0);
-  if (!(total > 0)) return allowed[Math.floor(rand() * allowed.length)];
-  let u = rand() * total;
+  const w = (i) => (weights[i] > 0 ? weights[i] : 0);
+  const total = allowed.reduce((s, i) => s + w(i), 0);
+  if (!(total > 0) || !Number.isFinite(total)) return allowed[Math.min(allowed.length - 1, Math.floor(rand() * allowed.length))];
+  let u = rand() * total, last = null;
   for (const i of allowed) {
-    u -= Math.max(0, weights[i]);
+    if (!(w(i) > 0)) continue;
+    last = i;
+    u -= w(i);
     if (u < 0) return i;
   }
-  return allowed[allowed.length - 1];
+  return last; // rounding left u at 0: the last one that weighs anything
 }
 
 /** k distinct indices among `allowed`, drawn one after another without replacement, by weight. */

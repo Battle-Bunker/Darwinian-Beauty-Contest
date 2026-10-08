@@ -12,7 +12,9 @@ export interface Budget { size: number; perMinute: number; cap: number; ms: numb
 
 export interface GameConfig {
   language: "python" | "typescript";
-  minutes: number;          // game time; the clock stops while paused
+  minutes: number;          // the shortest the game lasts, in game time (the clock stops while paused)
+  /** The longest it lasts, as a multiple of minutes: it ends at a hidden time drawn from [minutes, endFactor × minutes] (1: at minutes). */
+  endFactor?: number;
   feedCost: number;         // rounds a bee sits out after it feeds (0 by default; 20 in games from before)
   /** When every response is delivered (null: flower.ms, as in games from before). */
   flowerWindowMs?: number | null;
@@ -37,17 +39,30 @@ export interface GameConfig {
 
 /**
  * As stored: each round ceil(slots × N) bees are drawn by c + B (bee success), each visiting a species drawn by
- * c + F (flower success); halfLifeS null = cumulative, prior null = 0.12 × Emax, cap null = none.
+ * c + F (flower success); halfLifeS null = cumulative, prior null = 0.12 × Emax, cap null = none. c, by cDecay:
+ * "sech", cStart × sech(k t / cHalfS) (k = arccosh 2: half at cHalfS seconds of game time; null: 0.2 × minutes × 60);
+ * "linear" (v2, v3), from cStart to cEnd over `minutes`.
  */
-export interface PrevalenceConfig { on: boolean; halfLifeS: number | null; cStart: number; cEnd: number; cap: number | null; slots: number; prior: number | null; pools?: boolean; endowment?: number | null }
+export interface PrevalenceConfig {
+  on: boolean; halfLifeS: number | null; cDecay?: "sech" | "linear"; cStart: number; cEnd?: number; cHalfS?: number | null;
+  cap: number | null; slots: number; prior: number | null; pools?: boolean; endowment?: number | null;
+}
 /** One team in a sample: its flower and bee success (par 1), their draw chances, and its fitness so far. */
 export interface PrevalenceSpecies { team: string; index: number; flowerSuccess: number; beeSuccess: number; flowerP: number; beeP: number; fitness: number; balance?: number | null }
 /** A sample, about once a second of game time: the round whose draws it gave, and that round's start. */
 export interface PrevalenceSample { round: number; atMs: number; c: number; slots: number; species: PrevalenceSpecies[] }
-/** The game's prevalence (settings with the prior and the feed price resolved) and its latest sample (null before the first). */
-export type PrevalenceView = Omit<PrevalenceConfig, "prior" | "endowment"> & { prior: number; endowment: number; feedPrice: number; sample: PrevalenceSample | null };
-/** Whether a game has prevalence (and so its fitness is the time-average of F × B). */
+/** The game's prevalence (settings with the prior, endowment and a sech c's cHalfS resolved) and its latest sample (null before the first). */
+export type PrevalenceView = Omit<PrevalenceConfig, "prior" | "endowment" | "cHalfS"> & { prior: number; endowment: number; cHalfS?: number; feedPrice: number; sample: PrevalenceSample | null };
+/** Whether a game has prevalence (and so its fitness is by its scoring mode: N² × p^F × p^B now, or the time-average of F × B). */
 export const prevalenceOn = (cfg: { prevalence?: PrevalenceConfig } | null | undefined) => cfg?.prevalence?.on === true && "slots" in (cfg.prevalence ?? {});
+/** c's curve as words, e.g. "c = 1 × sech(1.317 t / 60 s): half at 60 s, falling toward 0" (cHalfS: resolved, else from minutes). */
+export function cCurveText(p: Pick<PrevalenceConfig, "cDecay" | "cStart" | "cEnd" | "cHalfS">, minutes: number): string {
+  if (p.cDecay === "sech") {
+    const half = +(p.cHalfS ?? 0.2 * minutes * 60).toFixed(3);
+    return `c = ${p.cStart} × sech(1.317 t / ${half} s): ${p.cStart} at the start, half at ${half} s of game time, falling toward 0`;
+  }
+  return `c from ${p.cStart} to ${p.cEnd ?? 0.1} over the first ${minutes} minutes`;
+}
 /** The flower window: when every response is delivered (flower.ms in games from before). */
 export const windowMsOf = (cfg: GameConfig) => Math.max(cfg.flowerWindowMs ?? cfg.budgets.flower.ms, cfg.budgets.flower.ms);
 /** One round of game time: the flower window plus the bees' decision window. */
@@ -60,11 +75,24 @@ export const energyUnitOf = (cfg: { energy?: { bytes: boolean } } | null | undef
 /** The response byte cap (64 KiB for a config without one). */
 export const byteCapOf = (cfg: { maxResponseBytes?: number } | null | undefined) => cfg?.maxResponseBytes ?? 65536;
 
-export interface Scoring { alpha: number; beta: number }
+/** mode (games with prevalence): "final", N² × p^F × p^B at the final round; "timeAverage" (v2, v3), the time-average of F × B. */
+export interface Scoring { alpha: number; beta: number; mode?: "final" | "timeAverage" }
 
-/** The exponents a game is scored with. A config without them is from before they existed: √ (0.5). */
-export const scoringOf = (cfg: { scoring?: Scoring } | null | undefined): Scoring =>
-  ({ alpha: cfg?.scoring?.alpha ?? 0.5, beta: cfg?.scoring?.beta ?? 0.5 });
+/** The rule a game is scored with. A config without exponents is from before they existed: √ (0.5); without a mode, time-average. */
+export const scoringOf = (cfg: { scoring?: Scoring } | null | undefined): Required<Scoring> =>
+  ({ alpha: cfg?.scoring?.alpha ?? 0.5, beta: cfg?.scoring?.beta ?? 0.5, mode: cfg?.scoring?.mode === "final" ? "final" : "timeAverage" });
+
+/** How a game's scoreboard fitness is reckoned: "final" (N² × p^F × p^B now), "timeAverage" (of F × B), or "shares" (no prevalence). */
+export type FitnessBasis = "final" | "timeAverage" | "shares";
+export const fitnessBasisOf = (cfg: GameConfig): FitnessBasis => (prevalenceOn(cfg) ? scoringOf(cfg).mode : "shares");
+
+/**
+ * A game's length as a viewer may see it, in ms of game time: the range its end is drawn from, and the end
+ * itself (null while hidden: a game with a random end, until it's over). drawnEndMs: the owner's view only.
+ */
+export interface Timing { minMs: number; maxMs: number; endMs: number | null; drawnEndMs?: number | null }
+/** The end to measure the clock against: the end once it may be seen, else the latest it can be. */
+export const endOrMax = (t: Timing) => t.endMs ?? t.maxMs;
 
 /** The 2% floor the server gives R when minMs is left out (at least 1 ms), as a function of the flower's ms. */
 export const defaultMinMs = (ms: number) => Math.max(1, Math.round(ms * 0.02));
@@ -75,9 +103,9 @@ export interface MeResponse { user: User | null; auth: AuthInfo }
 
 export type GameStatus = "lobby" | "running" | "paused" | "finished";
 
-export interface RoomGame {
+export interface RoomGame extends Timing {
   id?: string; shortId: string; url: string;
-  status: GameStatus; clockMs: number; endMs: number; teamCount: number; createdAt?: string;
+  status: GameStatus; clockMs: number; teamCount: number; createdAt?: string;
 }
 export interface RoomView {
   id?: string; shortId: string; url: string; isOwner: boolean; ownerName?: string; createdAt?: string;
@@ -210,7 +238,7 @@ export interface TeamScore {
   pollination: number | null;      // Σ over bee teams of (pollen this flower kept from their feeds)^beta
   forage: number | null;           // Σ over flower teams of (nectar this bee got there)^alpha
   pollinationShare: number | null; forageShare: number | null;
-  fitness: number | null;          // with prevalence, the time-average of F × B; else N² × pollination share × forage share
+  fitness: number | null;          // with prevalence, by its mode: N² × p^F × p^B now ("final"), or the time-average of F × B; else N² × pollination share × forage share
   flowerSuccess?: number | null; beeSuccess?: number | null; flowerP?: number | null; beeP?: number | null; // with prevalence: the latest sample's
   pollen: number | null;           // all this flower kept
   feedsReceived: number; feedsGiven: number; pollinators: number;
@@ -225,17 +253,17 @@ export interface TeamScore {
 export interface Ledgers { feeds: number[][]; nectar: (number | null)[][]; pollen: (number | null)[][] }
 
 /** GET .../scores: the live numbers, cheap enough to poll. Scores, ledgers and lastSeq are from one moment. */
-export interface ScoresView {
-  status: GameStatus; clockMs: number; endMs: number; round: number; lastSeq: number;
+export interface ScoresView extends Timing {
+  status: GameStatus; clockMs: number; round: number; lastSeq: number; fitnessBasis?: FitnessBasis;
   participants: string[] | null; scores: TeamScore[] | null; ledgers: Ledgers | null;
   prevalence?: PrevalenceView | null;
 }
 
 export interface GameView {
   room: { id?: string; shortId: string; url: string; isOwner: boolean };
-  game: {
-    id?: string; shortId: string; url: string; status: GameStatus; config: GameConfig;
-    clockMs: number; endMs: number; round: number; lastSeq: number; version: number; lastError: string | null;
+  game: Timing & {
+    id?: string; shortId: string; url: string; status: GameStatus; config: GameConfig; fitnessBasis?: FitnessBasis;
+    clockMs: number; round: number; lastSeq: number; version: number; lastError: string | null;
     createdAt?: string; startedAt: string | null; finishedAt: string | null; revealed: boolean; isOwner: boolean;
     windowMs?: number;   // the flower window the game plays with
     feedPrice?: number;  // the feed price the game plays with (0: free)
