@@ -1,8 +1,10 @@
 // What every team knows before writing a line: the function names, their arguments, and the game's
 // types. Deliberately no behaviour: no starter code, so there's no shared starting point to converge on.
 import { parseType } from "./types.js";
-import { RESPONSE_DEPTH, energyBytes, feedPriceOf, limitsOf, prevalenceOf, roundMs, wallLimits, windowMsOf } from "./gameConfig.js";
+import { RESPONSE_DEPTH, endFactorOf, energyBytes, feedPriceOf, limitsOf, prevalenceOf, roundMs, wallLimits, windowMsOf } from "./gameConfig.js";
 import { scoringOf } from "./scoring.js";
+
+const round6 = (x) => Math.round(x * 1e6) / 1e6;
 
 function describe(t) {
   switch (t.kind) {
@@ -80,7 +82,7 @@ function flowerNotes(ts, config) {
 
 // How the game scores a team, and (with prevalence) how its success makes it common: a few lines for each program.
 function scoreNote(c, config, kind) {
-  const p = prevalenceOf(config), { alpha, beta } = scoringOf(config);
+  const p = prevalenceOf(config), { alpha, beta, mode } = scoringOf(config);
   if (!p) {
     return kind === "flower"
       ? `${c} Your team scores pollination = Σ over bee teams of (the pollen your species gave that team's bee)^${beta};\n${c} fitness = N² × pollination share × forage share.`
@@ -91,11 +93,18 @@ function scoreNote(c, config, kind) {
     ? `B_b = N × your bee's share of its single nectar balance (floored at 0). The balance starts at ${Math.round(p.endowment)}, each feed adds\n` +
       `${c} nectar − feed price, and it relaxes toward that start ${half}; a bee below the price can't feed.`
     : `B_b = N × your bee's share of max(0, Σ over species of signed (recent net nectar, nectar − feed price, it got there)^${alpha}), ${half}.`;
+  const cText = p.cHalfLifeS
+    ? `c = ${p.cEnd} + ${round6(p.cStart - p.cEnd)} × 2^(−t / ${p.cHalfLifeS} s of game time)`
+    : `c from ${p.cStart} to ${p.cEnd} over the first ${config.minutes} minutes`;
+  const fitness = mode === "final"
+    ? `${c} Your team's fitness = N² × p^F × p^B at the game's final round: your species' draw chance p^F = (c + F_s) / Σ (c + F)\n` +
+      `${c} times your bee's p^B = (c + B_b) / Σ (c + B), par 1. The game ends at a hidden time between ${config.minutes} and ${round6(config.minutes * endFactorOf(config))}\n` +
+      `${c} minutes, so any round may be the last. Public, but not in GAME.`
+    : `${c} Your team's fitness = the time-average over the game of F × B (your species' times your bee's). Public, but not in GAME.`;
   return `${c} Prevalence: each round ceil(${p.slots} × N) bees visit, drawn without replacement with weights c + B_b, and each visits\n` +
-    `${c} a species drawn with weights c + F_s (c from ${p.cStart} to ${p.cEnd} over the game). F_s = N × your species' share of Σ over bee\n` +
+    `${c} a species drawn with weights c + F_s (${cText}). F_s = N × your species' share of Σ over bee\n` +
     `${c} teams of (recent pollen it gave them)^${beta}, ${half}: spread pollen counts for more.\n` +
-    `${c} ${bee}${p.cap != null ? ` Each of F, B capped at ${p.cap}.` : ""} Par 1.\n` +
-    `${c} Your team's fitness = the time-average over the game of F × B (your species' times your bee's). Public, but not in GAME.`;
+    `${c} ${bee}${p.cap != null ? ` Each of F, B capped at ${p.cap}.` : ""} Par 1.\n` + fitness;
 }
 
 // How a bee runs.

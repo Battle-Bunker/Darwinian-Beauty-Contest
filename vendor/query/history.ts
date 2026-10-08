@@ -150,11 +150,11 @@ export interface Prevalence {
   readonly flowerP: number;
   /** p^B_b: its bee's share of the bee weights, (c + B_b) / Σ (c + B_k): the chance it fills a given slot first */
   readonly beeP: number;
-  /** its fitness so far: the time-average of F × B over the rounds played */
+  /** its fitness at the sample, by the game's scoring.mode: "final", N² × p^F_s × p^B_s of that round; "timeAverage" (v2, v3), the time-average of F × B over the rounds played */
   readonly fitness: number | null;
   /** its bee's nectar balance at the sample (pools games), else null */
   readonly balance: number | null;
-  /** c(t): the weight every species and bee has whatever its success (cStart to cEnd over the game) */
+  /** c(t): the weight every species and bee has whatever its success, cEnd + (cStart - cEnd) × 2^(-t / cHalfLifeS) (v2, v3: linear from cStart to cEnd over the game) */
   readonly c: number;
   /** bees visiting each round: ceil(slots × N) */
   readonly slots: number | null;
@@ -174,7 +174,7 @@ export interface Score {
   readonly pollinationShare: number;
   /** forage ÷ everyone's (1/N if that is 0) */
   readonly forageShare: number;
-  /** with prevalence, the time-average of F × B over the rounds played; else N² × pollination share × forage share (par 1) */
+  /** with prevalence, by the game's scoring.mode: "final", N² × p^F_s × p^B_s at the latest round played (the final round once the game is over); "timeAverage" (v2, v3), the time-average of F × B over the rounds played. Else N² × pollination share × forage share. Par 1 */
   readonly fitness: number;
   /** with prevalence, F_s at the latest sample, else null */
   readonly flowerSuccess: number | null;

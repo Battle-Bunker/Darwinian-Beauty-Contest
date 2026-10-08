@@ -153,11 +153,11 @@ var DbcHistory = (function () {
                            
                                                                                                                    
                         
-                                                                             
+                                                                                                                                                                                   
                                   
                                                                         
                                   
-                                                                                                       
+                                                                                                                                                                         
                      
                                                   
                                 
@@ -177,7 +177,7 @@ var DbcHistory = (function () {
                                     
                                                
                                
-                                                                                                                              
+                                                                                                                                                                                                                                                                                 
                            
                                                              
                                         

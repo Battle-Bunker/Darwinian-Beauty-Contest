@@ -973,7 +973,7 @@
           "visibility": "public"
         },
         "fitness": {
-          "doc": "its fitness so far: the time-average of F × B over the rounds played",
+          "doc": "its fitness at the sample, by the game's scoring.mode: \"final\", N² × p^F_s × p^B_s of that round; \"timeAverage\" (v2, v3), the time-average of F × B over the rounds played",
           "visibility": "public"
         },
         "balance": {
@@ -981,7 +981,7 @@
           "visibility": "public"
         },
         "c": {
-          "doc": "c(t): the weight every species and bee has whatever its success (cStart to cEnd over the game)",
+          "doc": "c(t): the weight every species and bee has whatever its success, cEnd + (cStart - cEnd) × 2^(-t / cHalfLifeS) (v2, v3: linear from cStart to cEnd over the game)",
           "visibility": "public"
         },
         "slots": {
@@ -1019,7 +1019,7 @@
           "visibility": "public"
         },
         "fitness": {
-          "doc": "with prevalence, the time-average of F × B over the rounds played; else N² × pollination share × forage share (par 1)",
+          "doc": "with prevalence, by the game's scoring.mode: \"final\", N² × p^F_s × p^B_s at the latest round played (the final round once the game is over); \"timeAverage\" (v2, v3), the time-average of F × B over the rounds played. Else N² × pollination share × forage share. Par 1",
           "visibility": "public"
         },
         "flowerSuccess": {

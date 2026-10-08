@@ -143,9 +143,9 @@ class Prevalence(NamedTuple):
     bee_success: float  # B_b: N × its bee's share of recent net nectar, capped; par 1 (pools: of its nectar balance; else of max(0, Σ over species of signed decayed (nectar - price)^alpha))
     flower_p: float  # p^F_s: the chance a visit is to its species, (c + F_s) / Σ (c + F_k)
     bee_p: float  # p^B_b: its bee's share of the bee weights, (c + B_b) / Σ (c + B_k): the chance it fills a given slot first
-    fitness: Optional[float]  # its fitness so far: the time-average of F × B over the rounds played
+    fitness: Optional[float]  # its fitness at the sample, by the game's scoring.mode: "final", N² × p^F_s × p^B_s of that round; "timeAverage" (v2, v3), the time-average of F × B over the rounds played
     balance: Optional[float]  # its bee's nectar balance at the sample (pools games), else null
-    c: float  # c(t): the weight every species and bee has whatever its success (cStart to cEnd over the game)
+    c: float  # c(t): the weight every species and bee has whatever its success, cEnd + (cStart - cEnd) × 2^(-t / cHalfLifeS) (v2, v3: linear from cStart to cEnd over the game)
     slots: Optional[int]  # bees visiting each round: ceil(slots × N)
 
     @classmethod
@@ -170,7 +170,7 @@ class Score(NamedTuple):
     forage: float  # Σ over flower teams of (nectar this bee got there)^alpha (the game's scoring.alpha; √ in games without one)
     pollination_share: float  # pollination ÷ everyone's (1/N if that is 0)
     forage_share: float  # forage ÷ everyone's (1/N if that is 0)
-    fitness: float  # with prevalence, the time-average of F × B over the rounds played; else N² × pollination share × forage share (par 1)
+    fitness: float  # with prevalence, by the game's scoring.mode: "final", N² × p^F_s × p^B_s at the latest round played (the final round once the game is over); "timeAverage" (v2, v3), the time-average of F × B over the rounds played. Else N² × pollination share × forage share. Par 1
     flower_success: Optional[float]  # with prevalence, F_s at the latest sample, else null
     bee_success: Optional[float]  # with prevalence, B_b at the latest sample, else null
     flower_p: Optional[float]  # with prevalence, p^F_s at the latest sample, else null
