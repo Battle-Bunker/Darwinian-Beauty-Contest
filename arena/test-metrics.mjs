@@ -249,6 +249,14 @@ check("handshakes: two teams favouring each other both ways are mutual", h.hands
   check("coopRules: on, 3 bees a round, the price and its share of Emax, the window, 200 ms rounds, the F × B score", co.on && co.perRound === 3 && co.price === 2816000
     && Math.abs(co.priceShare - 0.05) < 1e-12 && co.windowMs === 150 && co.roundMs === 200 && co.timeAverage && co.unit === "node·ms·bytes"
     && !coopRules({ budgets }).on && coopRules({ budgets }).price === 0, co);
+  // v4 (b9c9c9a): c sech-shaped from cStart, halving at cHalfS (null: 0.2 × minutes × 60), toward 0; a config without
+  // cDecay is linear (v2, v3); the scoring mode "final", or "timeAverage" for a config without one.
+  const v4 = { ...cfg, minutes: 30, scoring: { alpha: 0.85, beta: 0.85, mode: "final" }, prevalence: { on: true, halfLifeS: 90, cDecay: "sech", cStart: 1, cHalfS: null, cap: 4, slots: 0.25, prior: null, pools: true, endowment: null } };
+  const pv4 = prevalenceOf(v4), co4 = coopRules(v4, 10);
+  check("prevalence v4: sech c (1 at the start, 1/2 at cHalfS = 6 minutes, about 0.003 at 30 minutes, no floor); final scoring; linear without cDecay",
+    pv4.cDecay === "sech" && pv4.cHalfS === 360 && pv4.cEnd === null && cAt(v4, 0) === 1 && Math.abs(cAt(v4, 360000) - 0.5) < 1e-12 && cAt(v4, 1800000) < 0.005 && cAt(v4, 3600000) < 1e-5
+    && co4.final && co4.mode === "final" && !co4.timeAverage && prevalenceOf(cfg).cDecay === "linear" && coopRules(cfg).mode === "timeAverage"
+    && prevalenceOf({ ...v4, prevalence: { ...v4.prevalence, cHalfS: 120 } }).cHalfS === 120, { pv4, co4 });
   // The engine's shapes: query rows { round, atMs, team (index), flowerSuccess, beeSuccess, flowerP, beeP, fitness, c, slots };
   // samples { round, atMs, c, slots, species: [{ team (id), index, flowerSuccess, beeSuccess, flowerP, beeP, fitness }] }.
   const row = { game: "g", round: 5, atMs: 800, team: 2, flowerSuccess: 1.2, beeSuccess: 0.7, flowerP: 0.1, beeP: 0.08, fitness: 0.95, c: 0.98, slots: 3 };
