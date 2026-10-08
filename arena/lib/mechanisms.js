@@ -152,7 +152,8 @@ fed(nectar), which runs after a feed it decided in time, in the same instance as
 turn to the next is MEMORY, a flat key-value store of 50 bytes (key bytes + value JSON bytes) that only the bee writes and
 that empties when its code changes. A program's clock reads 0 when each call starts: it can time its own work, nothing
 more. Each flower call has a hidden time budget R (uniform from the game's floor, 50 or 3 ms, to 150 ms, fresh every call; its hard limit, which it reads as
-GAME["ms"]) and E = (1100 - size) x max(0, R - CPU ms): work a flower shows can signal how rich this call is. On every feed the bee's team gets
+GAME["ms"]) and E = (1100 - size) x max(0, R - CPU ms): work a flower shows can signal how rich this call is. In newer
+games E is also multiplied by (byte cap - response bytes) / byte cap (a cap of 1024 bytes), so a big response costs energy. On every feed the bee's team gets
 a pollen grain: a random piece of the answering flower's minified code (programs never get grains).`;
 
 const take = (s, n) => (s.length > n ? s.slice(0, n) + "\n# ... (cut)" : s);

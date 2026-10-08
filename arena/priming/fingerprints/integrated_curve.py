@@ -1,6 +1,6 @@
 """Measure the integrated fingerprint (integrated.py, integrated_bee.py) on this machine.
 
-    python3 -B arena/priming/fingerprints/integrated_curve.py [--calls 30] [--size 434]
+    python3 -B arena/priming/fingerprints/integrated_curve.py [--calls 30] [--size 453]
 
 1. Level against CPU: for R in 3, 10, 20, 42, 76, 150 ms and several W, the mean and spread of each property's
    z and of U = sum(z), one fresh challenge per call. Shows whether the curve is concave.
@@ -11,6 +11,8 @@
 4. The bee's evaluation time.
 5. Selective feeding: R uniform on 3..150; the bee feeds only when U reaches a threshold; nectar per feed and per
    round for an honest flower of --size nodes at 50%, against blind feeding at a 40-node veteran at 15% or 25%.
+   Energy has the response-bytes factor (1024 - bytes) / 1024: the flower's real bytes, and 50 or 170 bytes for
+   the veteran.
 The game's per-call clock is imitated. Run it on an idle machine.
 """
 import sys
@@ -19,7 +21,7 @@ import importlib.util, itertools, json, math, os, random, statistics, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 arg = lambda k, d: sys.argv[sys.argv.index(k) + 1] if k in sys.argv else d
-CALLS, SIZE = int(arg("--calls", 30)), int(arg("--size", 434))
+CALLS, SIZE = int(arg("--calls", 30)), int(arg("--size", 453))
 
 
 def load(name):
@@ -42,10 +44,14 @@ fl, bee = load("integrated"), load("integrated_bee")
 K = bee.K
 
 
+BYTES = []
+
+
 def call(c, R, W):
     fl.GAME, fl.W, fl.time = {"ms": R}, W, Clock()
     resp, _ = fl.flower(c)
     cpu = fl.time.process_time() * 1000
+    BYTES.append(len(json.dumps(resp, ensure_ascii=False, separators=(",", ":")).encode()))
     t = time.perf_counter()
     z = bee.levels(c, resp)
     return z, (time.perf_counter() - t) * 1000, cpu
@@ -110,10 +116,10 @@ turns = []
 for j in range(CALLS * 10):
     R = rnd.uniform(3, 150)
     z, _, cpu = call(5000011 * j + 3, R, Ws[0])
-    turns.append((sum(z), R, 0.5 * (1100 - SIZE) * max(0.0, R - cpu)))
-vet = lambda pct: statistics.mean(pct * 1060 * max(0.0, R - 0.6) for _, R, _ in turns)
-print(json.dumps({"veteran_15_per_feed": round(vet(0.15)), "veteran_25_per_feed": round(vet(0.25)),
-                  "veteran_15_per_round": round(vet(0.15) / 21), "veteran_25_per_round": round(vet(0.25) / 21)}))
+    turns.append((sum(z), R, 0.5 * (1100 - SIZE) * max(0.0, R - cpu) * (1024 - BYTES[-1]) / 1024))
+vet = lambda pct, b: statistics.mean(pct * 1060 * max(0.0, R - 0.6) * (1024 - b) / 1024 for _, R, _ in turns)
+print(json.dumps({"flower_bytes": max(BYTES), **{f"veteran_{int(p * 100)}%_{b}B_per_feed": round(vet(p, b)) for p in (0.15, 0.25) for b in (50, 170)},
+                  **{f"veteran_{int(p * 100)}%_{b}B_per_round": round(vet(p, b) / 21) for p in (0.15, 0.25) for b in (50, 170)}}))
 for th in sorted({round(curve[i][1], 1) for i in range(len(curve))} | {0.0}):
     sel = [t for t in turns if t[0] >= th]
     if not sel:

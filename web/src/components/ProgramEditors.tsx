@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, errorText } from "../api";
 import { storage } from "../hooks";
-import { KINDS, type Bank, type Budget, type CheckResult, type GameStatus, type GameView, type Kind, type ProgramInterface, type ProgramVersion, type Team, type TryBeeResult, type TryFlowerResult } from "../types";
+import { KINDS, byteCapOf, energyBytes, type Bank, type Budget, type CheckResult, type GameStatus, type GameView, type Kind, type ProgramInterface, type ProgramVersion, type Team, type TryBeeResult, type TryFlowerResult } from "../types";
 import { CodeEditor, type EditorStats } from "./CodeEditor";
 import { Alert, Meter, Spinner } from "./ui";
 import { BeeGlyph, CheckIcon, DropIcon, FlowerHead } from "./Icons";
@@ -23,8 +23,8 @@ import { partsOfAction, ResponseView } from "./ResponseView";
 export const takesEffect = (kind: Kind) =>
   kind === "bee" ? "once your bee's current turn is over (it's asked first() straight away)" : "for turns that start from now (a turn under way finishes with the old one)";
 
-const BLURB: Record<Kind, (lo: number, hi: number) => string> = {
-  flower: (lo, hi) => `Your flower is a species: every visit is a bee meeting one of its flowers. flower(challenge) returns [response, percent]. It allocates its energy between compute, nectar and pollen: its size and its CPU time use up part of each visit's budget, leaving E = (size cap − size) × max(0, R − CPU ms), where R is this turn's time limit: hidden from the bee, varying from ${lo} to ${hi} ms, and told to your flower as GAME's ms; a bee that feeds gets percent% of E as nectar and the rest as pollen, which it carries to other flowers. An unfed visit's E is lost. It runs fresh for every turn and remembers nothing: it sees only its challenge and GAME.`,
+const BLURB: Record<Kind, (lo: number, hi: number, byteCap: number | null) => string> = {
+  flower: (lo, hi, byteCap) => `Your flower is a species: every visit is a bee meeting one of its flowers. flower(challenge) returns [response, percent]. It allocates its energy between compute, nectar and pollen: its size and its CPU time use up part of each visit's budget, leaving E = (size cap − size) × max(0, R − CPU ms)${byteCap ? ` × (${byteCap} − the response's bytes) / ${byteCap}` : ""}, where R is this turn's time limit: hidden from the bee, varying from ${lo} to ${hi} ms, and told to your flower as GAME's ms${byteCap ? `, and ${byteCap} bytes of JSON is the most a response may be (one that long is still an answer, with E = 0)` : ""}; a bee that feeds gets percent% of E as nectar and the rest as pollen, which it carries to other flowers. An unfed visit's E is lost. It runs fresh for every turn and remembers nothing: it sees only its challenge and GAME.`,
   bee: () => "Your bee takes one turn a round at one flower of a random species, never told whose: first() gives a challenge when it has none queued, and decide(challenge, response) returns [\"feed\" or \"leave\", next challenge]. Feeding gets it nectar (and pollen to carry) and sits it out for the feed cost in rounds; if you define fed(nectar), it runs right after a feed decided in time, in the same program instance as that decide, is told the nectar, and may return the next challenge in place of decide's. Each turn runs fresh: only MEMORY, a tiny key–value store only the bee can write, carries over, and a new version starts it empty. What it prints shows up for your team below and in the feed.",
 };
 
@@ -180,7 +180,7 @@ export function ProgramEditors({ view, base, store }: { view: GameView; base: st
       <div className="editor-panel" role="tabpanel">
         <div className="editor-layout">
           <div className="editor-main">
-            <p className="muted small">{BLURB[kind](cfg.budgets.flower.minMs ?? 50, cfg.budgets.flower.ms)}</p>
+            <p className="muted small">{BLURB[kind](cfg.budgets.flower.minMs ?? 50, cfg.budgets.flower.ms, energyBytes(cfg) ? byteCapOf(cfg) : null)}</p>
             {playing && live && (
               <p className="small playing-line">
                 <b>Live: v{playing.version}</b> · {playing.size.toLocaleString()} nodes · {playing.atMs > 0 ? `since ${fmtClock(playing.atMs)}` : "since the start"} · by {playing.submittedBy}
@@ -190,7 +190,7 @@ export function ProgramEditors({ view, base, store }: { view: GameView; base: st
             {playing?.problem && <Alert kind="error"><b>v{playing.version} hit a problem while playing:</b> <span className="mono">{playing.problem}</span></Alert>}
             <div className="meters">
               <Meter label="Size (nodes)" value={empty ? 0 : s?.size ?? null} max={budget.size} />
-              {kind === "flower" && <EnergyMeter size={empty ? null : s?.size ?? null} cap={budget.size} ms={budget.ms} minMs={budget.minMs ?? 50} />}
+              {kind === "flower" && <EnergyMeter size={empty ? null : s?.size ?? null} cap={budget.size} ms={budget.ms} minMs={budget.minMs ?? 50} byteCap={energyBytes(cfg) ? byteCapOf(cfg) : null} />}
               {live && participant && mine?.banks?.[kind]
                 ? <BudgetMeter store={store} budget={budget} bank={mine.banks[kind]!} cost={unchanged ? 0 : cost} status={g.status} kind={kind} />
                 : <div className="meter-note muted">{g.status === "lobby" ? <>Writing programs before the game starts is <b>free</b>. Once it starts, every change costs change budget, which fills by {budget.perMinute.toLocaleString()} nodes a minute (up to {budget.cap.toLocaleString()}).</> : null}</div>}
@@ -498,7 +498,7 @@ function TryPanel({ kind, code, base, challengeType, flowerCode, view }: {
           <>
             {energies.length > 0 && (
               <p className="small">
-                {typeof flower.size === "number" && <>At {flower.size.toLocaleString()} nodes, E = ({cfg.budgets.flower.size.toLocaleString()} − {flower.size.toLocaleString()}) × (R − CPU ms), R being each call's hidden time limit. </>}
+                {typeof flower.size === "number" && <>At {flower.size.toLocaleString()} nodes, E = ({cfg.budgets.flower.size.toLocaleString()} − {flower.size.toLocaleString()}) × (R − CPU ms){energyBytes(cfg) ? ` × (${byteCapOf(cfg).toLocaleString()} − response bytes) / ${byteCapOf(cfg).toLocaleString()}` : ""}, R being each call's hidden time limit. </>}
                 Excess energy per visit: typically <b>{fmtE(median(energies))}</b>, at most <b>{fmtE(Math.max(...energies))}</b> node·ms. A bee that feeds gets the percent you offer as nectar and the rest as pollen; a bee that leaves: nobody gets it.
               </p>
             )}
@@ -567,15 +567,15 @@ function median(xs: number[]) {
   return s[Math.floor((s.length - 1) / 2)];
 }
 
-/** The flower's energy at this size: the most it can make a visit, (cap − size) × the whole window. */
-function EnergyMeter({ size, cap, ms, minMs }: { size: number | null; cap: number; ms: number; minMs: number }) {
+/** The flower's energy at this size: the most it can make a visit, (cap − size) × the whole window (with no response bytes). */
+function EnergyMeter({ size, cap, ms, minMs, byteCap }: { size: number | null; cap: number; ms: number; minMs: number; byteCap: number | null }) {
   const room = size === null ? null : Math.max(0, cap - size);
   const best = room === null ? null : room * ms;
   return (
-    <div className="meter energy-meter" title="E = (size cap − size) × max(0, R − CPU ms), R the call's hidden time limit (at most the window): a smaller, faster flower makes more">
+    <div className="meter energy-meter" title={`E = (size cap − size) × max(0, R − CPU ms)${byteCap ? ` × (${byteCap} − response bytes) / ${byteCap}` : ""}, R the call's hidden time limit (at most the window): a smaller, faster${byteCap ? ", briefer" : ""} flower makes more`}>
       <div className="meter-label"><span>Max E a visit</span><b>{best === null ? "–" : fmtE(best)}</b><span className="muted">node·ms</span></div>
       <div className="meter-track"><div className="meter-fill" style={{ width: `${room === null ? 0 : (room / Math.max(1, cap)) * 100}%` }} /></div>
-      <div className="small muted">({cap.toLocaleString()} − {size ?? "size"}) × (R − CPU ms), with R at most {ms} ms (hidden from the bee, from {minMs} to {ms} ms each turn): every node and every millisecond you save is more to give as nectar and pollen.</div>
+      <div className="small muted">({cap.toLocaleString()} − {size ?? "size"}) × (R − CPU ms){byteCap ? <> × ({byteCap.toLocaleString()} − response bytes) / {byteCap.toLocaleString()}</> : null}, with R at most {ms} ms (hidden from the bee, from {minMs} to {ms} ms each turn): every node{byteCap ? ", every millisecond and every byte" : " and every millisecond"} you save is more to give as nectar and pollen.</div>
     </div>
   );
 }

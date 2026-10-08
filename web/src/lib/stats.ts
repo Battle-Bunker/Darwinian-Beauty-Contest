@@ -15,6 +15,8 @@ export interface TurnRec {
   flowerVersion: number | null;
   /** The call's hidden time budget R (ms), where the viewer may see it. */
   budgetMs: number | null;
+  /** The response's size in bytes of JSON (null if it failed). */
+  rBytes: number | null;
 }
 
 const num = (x: unknown): number | null => (typeof x === "number" && Number.isFinite(x) ? x : null);
@@ -25,7 +27,7 @@ export function recFromTurn(t: Turn): TurnRec | null {
   return {
     t: t.t0, bee: t.bee, flower: t.flower, fed: e.action === "feed", failed: (e.r === null && !e.rHash) || !!e.flowerError,
     percent: num(e.percent), energy: num(e.energy), ms: num(e.ms), pollen: num(e.pollen), nectar: num(e.nectar),
-    flowerVersion: num(e.flowerVersion), budgetMs: num(e.budgetMs),
+    flowerVersion: num(e.flowerVersion), budgetMs: num(e.budgetMs), rBytes: num(e.rBytes),
   };
 }
 
@@ -33,17 +35,19 @@ export function recFromEntry(e: LedgerEntry, roundMs: number): TurnRec {
   return {
     t: e.atMs ?? (e.round - 1) * roundMs, bee: e.bee, flower: e.flower, fed: !!e.fed, failed: (e.response === null && !e.responseHash) || !!e.flowerError,
     percent: num(e.percent), energy: num(e.energy), ms: num(e.ms), pollen: num(e.pollen), nectar: num(e.nectar),
-    flowerVersion: num(e.flowerVersion), budgetMs: num(e.budgetMs),
+    flowerVersion: num(e.flowerVersion), budgetMs: num(e.budgetMs), rBytes: num(e.responseBytes),
   };
 }
 
 /**
- * The energy model's constants: E = (cap − size) × max(0, R − CPU ms), where R is the call's hidden time
- * budget (at most `window`, the flower window); without R, the window itself.
+ * The energy model's constants: E = (cap − size) × max(0, R − CPU ms) [× (byteCap − bytes) / byteCap], where R
+ * is the call's hidden time budget (at most `window`, the flower window; without R, the window itself), and
+ * the byte factor is there when the game has it (config.energy.bytes).
  */
 export interface EnergyModel {
   cap: number;          // the flower size budget, also the energy cap
   window: number;       // the flower window, ms
+  byteCap?: number;     // the response byte cap, when E has the byte factor
   /** The game's scoring exponents (scoringOf(config)): forage = Σ nectar^alpha, pollination = Σ pollen^beta. Left out, √. */
   alpha?: number; beta?: number;
   /** A flower version's size (participant index, version), where the viewer may know it. */
@@ -57,7 +61,7 @@ export interface TeamBins {
   energySum: Float64Array; energyN: Float64Array;
   msSum: Float64Array; msN: Float64Array;
   /** The energy budget of each visit whose energy the viewer can see, and where it went. */
-  budget: Float64Array; reserve: Float64Array; size: Float64Array; compute: Float64Array;
+  budget: Float64Array; reserve: Float64Array; size: Float64Array; compute: Float64Array; bytes: Float64Array;
   pollen: Float64Array; paid: Float64Array; lost: Float64Array; lostN: Float64Array;
   beeFeeds: Float64Array; nectar: Float64Array;
   /** Score components at the end of each bin (whole game up to then). */
@@ -77,7 +81,7 @@ export function binTurns(recs: Iterable<TurnRec>, n: number, endMs: number, binM
   const mk = () => new Float64Array(bins);
   const teams: TeamBins[] = Array.from({ length: n }, () => ({
     visits: mk(), feedsAt: mk(), percentSum: mk(), percentN: mk(), energySum: mk(), energyN: mk(), msSum: mk(), msN: mk(),
-    budget: mk(), reserve: mk(), size: mk(), compute: mk(), pollen: mk(), paid: mk(), lost: mk(), lostN: mk(), beeFeeds: mk(), nectar: mk(),
+    budget: mk(), reserve: mk(), size: mk(), compute: mk(), bytes: mk(), pollen: mk(), paid: mk(), lost: mk(), lostN: mk(), beeFeeds: mk(), nectar: mk(),
     pollination: mk(), forage: mk(), pollinationShare: mk(), forageShare: mk(), fitness: mk(),
   }));
   const { cap, window: W } = model;
@@ -101,15 +105,19 @@ export function binTurns(recs: Iterable<TurnRec>, n: number, endMs: number, binM
         // The call's budget: R where known (the rest of the window, up to the most it could have been, is the
         // reserve it was never given), else the whole window.
         const R = Math.min(W, r.budgetMs ?? W);
-        if (size === undefined && !r.failed && r.ms !== null && r.ms < R && r.energy > 0) size = Math.round(cap - r.energy / (R - r.ms));
+        // The byte factor: what the response's bytes left of (cap − size) × (R − CPU ms).
+        const bf = model.byteCap && !r.failed && r.rBytes !== null ? Math.max(0, model.byteCap - r.rBytes) / model.byteCap : 1;
+        if (size === undefined && !r.failed && r.ms !== null && r.ms < R && r.energy > 0 && bf > 0) size = Math.round(cap - r.energy / ((R - r.ms) * bf));
         if (size === undefined) size = lastSize[r.flower];
         if (size !== undefined) lastSize[r.flower] = size;
         const BR = cap * R;
         const sizeCost = Math.min(BR, (size ?? 0) * R);
+        const bytesCost = bf < 1 && r.ms !== null ? Math.min(BR - sizeCost, Math.max(0, cap - (size ?? 0)) * Math.max(0, R - r.ms) * (1 - bf)) : 0;
         f.budget[k] += B;
         f.reserve[k] += B - BR;
         f.size[k] += sizeCost;
-        f.compute[k] += Math.max(0, BR - sizeCost - r.energy);
+        f.bytes[k] += bytesCost;
+        f.compute[k] += Math.max(0, BR - sizeCost - bytesCost - r.energy);
         if (r.fed) {
           f.pollen[k] += r.pollen ?? Math.max(0, r.energy - (r.nectar ?? 0));
           f.paid[k] += r.nectar ?? 0;
@@ -202,13 +210,13 @@ export function seriesOf(m: Metric, t: TeamBins, bins: number, upto = bins): (nu
  * Whole-game totals per flower: its visits' energy budget and where it went. `known`: every visit's
  * energy was visible (its own team during play, everyone after the game), so the lost part is complete.
  */
-export interface EnergyTotals { budget: number; reserve: number; size: number; compute: number; pollen: number; nectar: number; lost: number; visits: number; feeds: number; known: boolean }
+export interface EnergyTotals { budget: number; reserve: number; size: number; compute: number; bytes: number; pollen: number; nectar: number; lost: number; visits: number; feeds: number; known: boolean }
 
 export function totalsOf(t: TeamBins): EnergyTotals {
   const sum = (a: Float64Array) => a.reduce((s, x) => s + x, 0);
   const visits = sum(t.visits), feeds = sum(t.feedsAt);
   return {
-    budget: sum(t.budget), reserve: sum(t.reserve), size: sum(t.size), compute: sum(t.compute), pollen: sum(t.pollen), nectar: sum(t.paid), lost: sum(t.lost),
+    budget: sum(t.budget), reserve: sum(t.reserve), size: sum(t.size), compute: sum(t.compute), bytes: sum(t.bytes), pollen: sum(t.pollen), nectar: sum(t.paid), lost: sum(t.lost),
     visits, feeds, known: visits > 0 && sum(t.energyN) >= visits,
   };
 }

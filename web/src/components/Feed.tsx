@@ -167,7 +167,7 @@ export const FeedRow = memo(function FeedRow({ a, teams, myTeamId, tenths = true
         {isFed && typeof a.grain === "string" && <GrainChip grain={a.grain} version={a.grainVersion} length={a.grainCodeLength} />}
         {isFed && fedRuns && <span className="fed-ran" title="The bee defines fed(): it ran after this feed, in the same program instance as the decision, and MEMORY was saved after it; a challenge it returned is played next instead of decide's. What it printed shows with the next turn.">then fed({typeof a.nectar === "number" ? fmtE(a.nectar) : "nectar"})</span>}
         {a.action !== "arrive" && hasE && (
-          <span className="feed-energy" title={`E = ${fmtEExact(a.energy)}: what was left after size and compute. ${a.percent ?? "?"}% offered as nectar; on a feed the rest is given as pollen.`}>
+          <span className="feed-energy" title={`E = ${fmtEExact(a.energy)}: what was left after size and compute (and, where the game charges for them, the response's bytes). ${a.percent ?? "?"}% offered as nectar; on a feed the rest is given as pollen.`}>
             {a.percent ?? "?"}% of {fmtE(a.energy)}
             {isFed ? typeof a.pollen === "number" && <> · pollen <b>{fmtE(a.pollen)}</b></> : (a.energy ?? 0) > 0 && <> · <span className="lost-text">{fmtE(a.energy)} lost</span></>}
           </span>

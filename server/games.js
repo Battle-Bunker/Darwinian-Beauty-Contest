@@ -3,7 +3,7 @@
 import crypto from "node:crypto";
 import { query, tx } from "./db/pool.js";
 import { allocatePrefixLen, normalizeCode, shortId, uuidToCode } from "./lib/shortid.js";
-import { DEFAULT_CONFIG, KINDS, available, normalizeConfig } from "./lib/gameConfig.js";
+import { DEFAULT_CONFIG, KINDS, available, energyBytes, normalizeConfig } from "./lib/gameConfig.js";
 import { changes, size } from "./lib/measure.js";
 import { score, scoringOf, zeroLedger } from "./lib/scoring.js";
 import { programInterface } from "./lib/interface.js";
@@ -398,8 +398,10 @@ export async function viewGame(room, game, user) {
   return {
     room: { id: room.id, shortId: shortId(room), url: `/room/${shortId(room)}`, isOwner },
     game: {
-      // The config as stored, with the scoring exponents it is scored with (√, 0.5, if it has none).
-      id: g.id, shortId: shortId(g), url: `/room/${shortId(room)}/game/${shortId(g)}`, status: g.status, config: { ...cfg, scoring: scoringOf(cfg) },
+      // The config as stored, with the scoring exponents it is scored with (√, 0.5, if it has none) and its
+      // energy formula (no byte factor if it has none).
+      id: g.id, shortId: shortId(g), url: `/room/${shortId(room)}/game/${shortId(g)}`, status: g.status,
+      config: { ...cfg, scoring: scoringOf(cfg), energy: { bytes: energyBytes(cfg) } },
       clockMs: g.clock_ms, endMs: Math.round(cfg.minutes * 60000), round: g.round, lastSeq: g.last_seq, version: g.version, lastError: g.last_error,
       createdAt: g.created_at, startedAt: g.started_at, finishedAt: g.finished_at, revealed, isOwner,
     },

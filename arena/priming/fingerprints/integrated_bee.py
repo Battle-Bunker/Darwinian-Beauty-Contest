@@ -25,13 +25,21 @@ VD = sum(t * t * PD[t] for t in range(n)) - ED * ED
 QB = n / (2 * (n - 1))   # chance a pair is split across the middle
 
 
+def arrangement(response):
+    # The positions p[v]: from the one-string format (character v is chr(35 + p[v])), or from a list of labels.
+    labels = response["labels"]
+    if type(labels[0]) is str:
+        return [ord(ch) - 35 for ch in labels[0][:n]]
+    return labels[:n]
+
+
 def levels(c, response):
     # z-scores per property, or None if the response isn't an arrangement of the n nodes.
     try:
-        p = response["labels"][:n]
+        p = arrangement(response)
         if sorted(p) != list(range(n)):
             return None
-    except (TypeError, KeyError):
+    except (TypeError, KeyError, IndexError):
         return None
     r = random.Random(c)
     z = []

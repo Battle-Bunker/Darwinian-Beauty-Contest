@@ -75,6 +75,7 @@
   /* a visit's energy budget: size, compute, pollen, nectar, lost (validated in this order, light surface) */
   --e-size: #c4508a;
   --e-compute: #2a78d6;
+  --e-bytes: #5f7f8c;
   --e-pollen: #1f8a5b;
   --e-nectar: #d08a00;
   --e-lost: #6c63b8;
@@ -144,6 +145,7 @@
     --kind-bee: #f5b83a;
     --e-size: #c45a92;
     --e-compute: #3a80d0;
+    --e-bytes: #8aa6b2;
     --e-pollen: #2f9a66;
     --e-nectar: #b98010;
     --e-lost: #8a80d4;
@@ -212,6 +214,7 @@
   --kind-bee: #f5b83a;
   --e-size: #c45a92;
   --e-compute: #3a80d0;
+  --e-bytes: #8aa6b2;
   --e-pollen: #2f9a66;
   --e-nectar: #b98010;
   --e-lost: #8a80d4;
@@ -895,6 +898,7 @@ input[type="range"] { accent-color: var(--honey); }
 .rect-key { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
 .e-size { background: var(--e-size); }
 .e-compute { background: var(--e-compute); }
+.e-bytes { background: var(--e-bytes); }
 .e-pollen { background: var(--e-pollen); }
 .e-nectar { background: var(--e-nectar); }
 .e-lost { background: var(--e-lost); }

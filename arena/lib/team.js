@@ -13,6 +13,7 @@ import { gameBrief, interviewPrompt, interviewSystem, lobbyBrief, mmss, rFloor, 
 import { Broker } from "./broker.js";
 import { Scaffold } from "./scaffold.js";
 import { definesFed } from "./mechanisms.js";
+import { bytesFactor, bytesInEnergy, bytesTerm } from "./energy.js";
 import { SPIN_WARNING, TRANSCRIPTS, audit, collect, commonFiles, extOf, killLeftovers, prepareWorkspace, recordViolations, spillDir, writeMinified } from "./workspace.js";
 
 const KINDS = ["flower", "bee"];
@@ -148,8 +149,9 @@ export function statusOf(view, teamId, { afford = null, code = false, memory = f
     }
     lines.push(`Your programs ${g.status === "lobby" ? "submitted" : "playing"}: ${parts.join(", ")}.`);
     const fl = out.versions.flower, cap = config.budgets?.flower?.size, fms = config.budgets?.flower?.ms;
-    if (fl && cap && fms) lines.push(`Your flower's size ${n0(fl.size)} of ${n0(cap)}: its excess energy per turn is (${n0(cap)} − ${n0(fl.size)}) × (R − CPU ms), R the call's hidden budget ` +
-      `(${rFloor(config)} to ${fms} ms): at most ${n0((cap - fl.size) * fms)} node·ms, less ${n0(cap - fl.size)} for every ms of compute or of R below ${fms}.`);
+    if (fl && cap && fms) lines.push(`Your flower's size ${n0(fl.size)} of ${n0(cap)}: its excess energy per turn is (${n0(cap)} − ${n0(fl.size)}) × (R − CPU ms)${bytesTerm(config)}, R the call's hidden budget ` +
+      `(${rFloor(config)} to ${fms} ms): at most ${n0((cap - fl.size) * fms)} node·ms, less ${n0(cap - fl.size)} for every ms of compute or of R below ${fms}` +
+      `${bytesInEnergy(config) ? ", and less in proportion to the response's size" : ""}.`);
   }
   // The bee's MEMORY: read only (only the deployed bee writes it; it starts as {} with every new bee version).
   const mem = mine?.memory;
@@ -231,8 +233,9 @@ function handlerOf(ctx) {
         const out = { ok: !errors.length, kind, size: c.size, budget: c.budget?.size, distance: c.distance, cost: c.cost, available: c.available, minified: c.minified, errors };
         const cap = config.budgets?.flower?.size, fms = config.budgets?.flower?.ms;
         out.text = [`${kind}: ${n0(c.size)} of ${n0(c.budget?.size ?? 0)} nodes.` + (c.available != null ? ` Submitting now would cost ${n0(c.cost)} of the ${n0(c.available)} you have.` : " (lobby: submitting is free)") +
-          (kind === "flower" && cap && fms && c.size != null ? ` Excess energy per turn (${n0(cap)} − ${n0(c.size)}) × (R − CPU ms), R the call's hidden budget (${rFloor(config)} to ${fms} ms): ` +
-            `at most ${n0(Math.max(0, cap - c.size) * fms)} node·ms, less ${n0(Math.max(0, cap - c.size))} per ms of compute or of R below ${fms}.` : ""),
+          (kind === "flower" && cap && fms && c.size != null ? ` Excess energy per turn (${n0(cap)} − ${n0(c.size)}) × (R − CPU ms)${bytesTerm(config)}, R the call's hidden budget (${rFloor(config)} to ${fms} ms): ` +
+            `at most ${n0(Math.max(0, cap - c.size) * fms)} node·ms, less ${n0(Math.max(0, cap - c.size))} per ms of compute or of R below ${fms}` +
+            `${bytesInEnergy(config) ? ", and less in proportion to the response's size" : ""}.` : ""),
           errors.length ? `Problems:\n- ${errors.join("\n- ")}` : "No problems found.", refusalHint(errors)].filter(Boolean).join("\n");
         if (refusalHint(errors)) out.refused = true;
         await record({ op, kind, code: req.code, ok: out.ok, result: { size: c.size, cost: c.cost, available: c.available, errors } });
@@ -258,7 +261,7 @@ function handlerOf(ctx) {
               r.budgetMs = R;
               // (cap − size): from the size, else from the energy the server computed at its own limit.
               const k = t.size != null ? Math.max(0, (fb.size ?? 1100) - t.size) : r.energy != null && r.ms != null && hi > r.ms ? r.energy / (hi - r.ms) : null;
-              if (k != null && r.ms != null && !r.error) r.energy = k * Math.max(0, R - r.ms);
+              if (k != null && r.ms != null && !r.error) r.energy = k * Math.max(0, R - r.ms) * bytesFactor(config, r.rBytes);
             });
           }
           out = { ok: !t.error && res.every((r) => !r.error), error: t.error, results: res, size: t.size ?? null,

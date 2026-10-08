@@ -4,9 +4,10 @@
 // (never a Fable model).
 // Config keys left out take the server's defaults (server/lib/gameConfig.js): 2-minute games, a feeding bee's rounds out
 // (now 20; 10 before), change budgets of one minute's worth, a 50-byte bee MEMORY, the R floor (now 2% of ms; 50 ms
-// before), the score exponents (now 0.85; √ before). maxResponseBytes, grains and pollenGrain are always set
-// (MAX_RESPONSE_BYTES, GRAINS, POLLEN_GRAIN), and so is the flower's budget range (FLOWER_MIN_MS and FLOWER_MAX_MS) in
-// every preset up to adapt (their R range stays 50 to 150); adapt-hi takes all the engine's new defaults (HI_CONFIG).
+// before), the score exponents (now 0.85; √ before), the response cap and the energy formula (now 1,024 bytes with the
+// byte factor; 64 KiB without it before). Every preset up to adapt sets maxResponseBytes, grains, pollenGrain and the
+// flower's budget range (MAX_RESPONSE_BYTES, GRAINS, POLLEN_GRAIN, FLOWER_MIN_MS, FLOWER_MAX_MS: 64 KiB and R from 50 to
+// 150 ms); adapt-hi takes all of the engine's new defaults (HI_CONFIG) and checks them (HI_EXPECT).
 //
 //   minutesByGame  game N lasts minutesByGame[N-1] minutes (the last entry repeats); else config.minutes
 //   session        warmupSeconds: the first in-game sessions start this long before the game does;
@@ -77,9 +78,11 @@ const ADAPT_HI_LINEUP = [
   ["rex", "opus", { role: "defector" }], ["vik", "opus", { role: "defector" }],
 ];
 // adapt-hi's game config: the engine's defaults for what changed (the R floor, 2% of 150 ms; a feed costs 20 rounds; the
-// score exponents), so none of them is set here.
-const HI_CONFIG = { language: "python", challengeType: "int", responseType: "graph[any]", maxResponseBytes: MAX_RESPONSE_BYTES, grains: GRAINS, pollenGrain: POLLEN_GRAIN,
+// score exponents; energy with the byte factor and a 1,024-byte response cap), so none of them is set here.
+const HI_CONFIG = { language: "python", challengeType: "int", responseType: "graph[any]", grains: GRAINS, pollenGrain: POLLEN_GRAIN,
   budgets: { flower: { ms: FLOWER_MAX_MS } } };
+// ...and checked on the first game, before any session (an old server would play the old rules).
+const HI_EXPECT = { "budgets.flower.minMs": 3, feedCost: 20, "scoring.alpha": 0.85, "scoring.beta": 0.85, maxResponseBytes: 1024, "energy.bytes": true };
 
 export const DEFAULT_SESSION = { warmupSeconds: 8, gapSeconds: 5, maxIdleGapSeconds: 20, endMarginSeconds: 10, maxMinutes: 6 };
 
@@ -155,17 +158,18 @@ export const PRESETS = {
     limits: { lobby: { opus: { turns: 100, usd: 6 } }, game: { opus: { turns: 60, usd: 3 } } },
     prompts: { brevity: false, simpleCode: false },
     concurrency: 16,
-    // The engine's new defaults, which this preset leaves to the server: checked on the first game before any session.
-    expectConfig: { "budgets.flower.minMs": 3, feedCost: 20, "scoring.alpha": 0.85, "scoring.beta": 0.85 },
+    expectConfig: HI_EXPECT,
     scaffold: { cpuShare: 0.05 },
     reserveUsd: 10,
     noEvolution: true,
   },
   // Its capacity check with the stub `claude` (stub honest flowers burn 0.6 × R): 1-minute games, a 1-minute lobby. The
-  // R floor and the feed cost are set to the engine's new defaults here, so the check holds before the engine has them.
+  // R floor, the feed cost and the response cap are set to the engine's new defaults here; the rest must come from the
+  // server (expectConfig), so a dry run on an old server stops at once.
   "dry-adapt-hi": {
     description: "dry run of adapt-hi: the same 14 teams with the stub claude, 1-minute games, fixed membership",
-    config: { ...HI_CONFIG, feedCost: 20, budgets: { flower: { ms: FLOWER_MAX_MS, minMs: 3 } } },
+    config: { ...HI_CONFIG, feedCost: 20, maxResponseBytes: 1024, budgets: { flower: { ms: FLOWER_MAX_MS, minMs: 3 } } },
+    expectConfig: HI_EXPECT,
     minutesByGame: [1],
     lineup: ADAPT_HI_LINEUP,
     session: { warmupSeconds: 3, gapSeconds: 2, idleBackoff: false, maxIdleGapSeconds: 2, endMarginSeconds: 3, maxMinutes: 2, lobbyMinutes: 1, effort: "high", nice: 15 },

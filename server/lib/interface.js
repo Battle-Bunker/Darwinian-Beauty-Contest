@@ -1,7 +1,7 @@
 // What every team knows before writing a line: the function names, their arguments, and the game's
 // types. Deliberately no behaviour: no starter code, so there's no shared starting point to converge on.
 import { parseType } from "./types.js";
-import { RESPONSE_DEPTH, limitsOf, roundMs } from "./gameConfig.js";
+import { RESPONSE_DEPTH, energyBytes, limitsOf, roundMs } from "./gameConfig.js";
 import { scoringOf } from "./scoring.js";
 
 function describe(t) {
@@ -67,7 +67,10 @@ function flowerNotes(ts, config) {
     `${c} isn't done within R (or an error, a malformed return, or more than\n` +
     `${c} ${G("max_response_bytes")} = ${config.maxResponseBytes} bytes of JSON) reaches the bee as ${nul}.\n` +
     `${c} If the bee feeds, it gets nectar = percent/100 × E and pollen = the rest; no feed, nothing is given.\n` +
-    `${c} E = (${G("flower_size_cap")} - ${G("size")}) * max(0, ${G("ms")} - CPU ms of this call, writing the response as JSON included).\n` +
+    `${c} E = (${G("flower_size_cap")} - ${G("size")}) * max(0, ${G("ms")} - CPU ms of this call, writing the response as JSON included)` +
+    (energyBytes(config)
+      ? `\n${c}     * (${G("max_response_bytes")} - the response's bytes of JSON) / ${G("max_response_bytes")}: a response at the cap leaves E = 0.\n`
+      : `.\n`) +
     `${c} The bee is never told R: the response reaches it at ${G("flower_ms")} ms whatever R was.\n` +
     `${c} Programs see only their arguments and GAME: no history.\n` +
     `${c} Your team scores pollination = Σ over bee teams of (the pollen your species gave that team's bee)^${scoringOf(config).beta};\n` +

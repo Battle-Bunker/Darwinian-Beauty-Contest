@@ -2,7 +2,7 @@
 // over), the garden replays it at any speed and can be scrubbed to any round, the round inspector shows
 // every field of every turn in the round on screen, and the charts show each team over the game.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { scoringOf, type GameView, type Team } from "../types";
+import { byteCapOf, energyBytes, scoringOf, type GameView, type Team } from "../types";
 import { gameBase } from "../api";
 import type { HistoryStore } from "../lib/history";
 import { useLiveTick, type Ticking } from "../lib/live";
@@ -250,7 +250,8 @@ function ReplayCharts({ view, history, teams, mine, focus, setFocus, cursor, onS
   const endMs = Math.max(roundMs, view.game.clockMs);
   const [metric, setMetric] = useState<MetricKey>("fitness");
   const { alpha, beta } = scoringOf(cfg);
-  const model = useMemo(() => ({ cap: cfg.budgets.flower.size, window: cfg.budgets.flower.ms, alpha, beta, sizeOf: sizeLookup(teams) }), [cfg.budgets.flower.size, cfg.budgets.flower.ms, alpha, beta, teams]);
+  const byteCap = energyBytes(cfg) ? byteCapOf(cfg) : undefined;
+  const model = useMemo(() => ({ cap: cfg.budgets.flower.size, window: cfg.budgets.flower.ms, byteCap, alpha, beta, sizeOf: sizeLookup(teams) }), [cfg.budgets.flower.size, cfg.budgets.flower.ms, byteCap, alpha, beta, teams]);
   const data = useMemo(() => {
     const recs: TurnRec[] = [];
     for (const list of history.turns.bees) for (const t of list) { const r = recFromTurn(t); if (r) recs.push(r); }
@@ -283,7 +284,7 @@ function ReplayCharts({ view, history, teams, mine, focus, setFocus, cursor, onS
       )}
       <section>
         <h3>Where each flower's energy went</h3>
-        <p className="small muted">A flower allocates every visit's energy budget ({cfg.budgets.flower.size.toLocaleString()} × R node·ms, R the call's hidden time budget, at most {cfg.budgets.flower.ms} ms) between compute, nectar and pollen. Each bar counts every visit at the most, {cfg.budgets.flower.ms} ms: what R fell short of that is "not given". Its size shrinks the budget and its CPU time uses part of it; what's left, E, goes to a bee that feeds, as nectar (the percent offered) and pollen (the rest), or is lost when the bee doesn't feed.</p>
+        <p className="small muted">A flower allocates every visit's energy budget ({cfg.budgets.flower.size.toLocaleString()} × R node·ms, R the call's hidden time budget, at most {cfg.budgets.flower.ms} ms) between compute, nectar and pollen. Each bar counts every visit at the most, {cfg.budgets.flower.ms} ms: what R fell short of that is "not given". Its size shrinks the budget and its CPU time uses part of it{energyBytes(cfg) ? <>, and so do its response's bytes (each of the {byteCapOf(cfg).toLocaleString()} it may write takes 1/{byteCapOf(cfg).toLocaleString()} of what's left)</> : null}; what's left, E, goes to a bee that feeds, as nectar (the percent offered) and pollen (the rest), or is lost when the bee doesn't feed.</p>
         <EnergySplit rows={rows.map((i) => ({ team: teams[i], t: totalsOf(data.teams[i]), you: i === mine }))} />
       </section>
     </div>

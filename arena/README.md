@@ -201,7 +201,7 @@ changed from `adapt`:
 | kid personas | as bred | Kenji, Priya, Theo and Bao without their coding limits ("only things you actually understand", "nothing you can't explain"; `personas.js` CODING_LIMITS); names, personality, voice and notes kept |
 | honest flowers | some costly signalling at their discretion, percent 50 | a role, not competing to win: CPU at exactly 0.6 × R on costly signalling, percent 50; only their signalling strategy (which signals, their position in the shared fingerprint space) changes, and only to escape imitators |
 | honest bees | theirs to design | played to win, starting as the reference fingerprint bee of `arena/priming/honest-signals/` (`settings.starts`) |
-| game rules | R from 50 to 150 ms, a feed costs 10 rounds, √ scores | the engine's new defaults, not overridden: R from 3 to 150 ms, a feed costs 20 rounds, scores with exponents 0.85 (`config.scoring`) |
+| game rules | R from 50 to 150 ms, a feed costs 10 rounds, √ scores, E = (1,100 − size) × (R − CPU ms) with responses up to 64 KiB | the engine's new defaults, not overridden and checked on the first game (`expectConfig`): R from 3 to 150 ms, a feed costs 20 rounds, scores with exponents 0.85 (`config.scoring`), E = (1,100 − size) × (R − CPU ms) × (1,024 − response bytes) / 1,024 with responses up to 1,024 bytes (`config.energy.bytes`, `maxResponseBytes`; arena code computes E with `lib/energy.js`) |
 
 Veterans start exactly as in `adapt`: carried over from fen and kiln, not from `mesa-a`. The fair-play audit no longer
 stops a session for a path into the arena's folder that names nothing there (Mallory lost a session in `mesa-a` for
@@ -211,7 +211,7 @@ programs (Tobi spun 150 s as a sleep in `mesa-a` game 4; Ada 40 s in `kiln-a`) i
 told with its next tool's output, the runner logs it, and every session's system prompt says to wait with `time.sleep()`. `adapt.js --arena mesa-b` adds the honest flowers' CPU
 conformance (CPU ms ÷ R, the share within 55–65%), each change of an honest flower timed against the defectors'
 imitations before it, and a side-by-side with `mesa-a` (the agents' sessions, turns, output tokens and spend per game,
-and each role's headline measures). `adapt-hi-dry` is its capacity check (stub honest flowers at 0.6 × R, R from 3 ms).
+and each role's headline measures), and each role's response bytes and the share of energy they cost. `adapt-hi-dry` is its capacity check (stub honest flowers at 0.6 × R, R from 3 ms).
 
 ```
 CPU_SLOTS=2 arena/server.sh                                                      # after the engine's new defaults have landed

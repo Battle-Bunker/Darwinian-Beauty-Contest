@@ -18,14 +18,21 @@ export interface GameConfig {
   responseType: string;
   maxLen: number;
   maxNodes: number;         // trees and graphs (challenges only)
-  maxResponseBytes?: number; // the most UTF-8 bytes of a response's JSON text (default 64 KiB)
+  maxResponseBytes?: number; // the most UTF-8 bytes of a response's JSON text (default 1,024; 64 KiB before), the byte cap of E
   revealOnFinish: boolean;  // all code and every bee's prints become public when the game ends
   grains?: "feeder" | "public" | "off";            // who sees a feed's pollen grain during play
   pollenGrain?: { exponent: number; scale: number }; // a grain is ⌊scale × pollen^exponent⌋ characters
   /** forage = Σ nectar^alpha, pollination = Σ pollen^beta, each in (0, 1] (0.85 by default; a game without them: √). */
   scoring?: Scoring;
+  /** bytes: E = (cap − size) × max(0, R − CPU ms) × (maxResponseBytes − response bytes) / maxResponseBytes. Without it, no byte factor. */
+  energy?: { bytes: boolean };
   budgets: Record<Kind, Budget>;
 }
+
+/** Whether a game's E has the byte factor (a config without `energy`: no, as games before it). */
+export const energyBytes = (cfg: { energy?: { bytes: boolean } } | null | undefined) => cfg?.energy?.bytes === true;
+/** The response byte cap (64 KiB for a config without one). */
+export const byteCapOf = (cfg: { maxResponseBytes?: number } | null | undefined) => cfg?.maxResponseBytes ?? 65536;
 
 export interface Scoring { alpha: number; beta: number }
 

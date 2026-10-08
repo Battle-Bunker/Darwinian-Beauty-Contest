@@ -8,7 +8,7 @@ and so does lowercase). Pages live at `/room/<roomShortId>/game/<gameShortId>`.
 RULES.md has the game itself. In short: each team has one **flower** and one **bee**; every 200 ms round,
 each bee that isn't feeding takes one **turn**: the engine draws a flower at random (own included), the
 flower answers `[response, percent]` within 150 ms, and the bee decides `["feed" | "leave", next]` within
-50 ms; after a feed, the bee's optional `fed(nectar)` runs in the same program instance. Excess energy E = (flower size cap − flower size) × max(0, R − flower CPU ms), R the call's hidden time budget (3–150 ms by default); a feed pays
+50 ms; after a feed, the bee's optional `fed(nectar)` runs in the same program instance. Excess energy E = (flower size cap − flower size) × max(0, R − flower CPU ms) × (byte cap − response bytes) / byte cap, R the call's hidden time budget (3–150 ms by default) and the byte cap `maxResponseBytes` (1,024 by default); a feed pays
 nectar = percent/100 × E and pollen = the rest to the bee (pollen is what the flower wants carried); a
 turn without a feed pays
 nobody (its energy is lost). fitness = N² × pollination share × forage share, where pollination is Σ over bee
@@ -65,10 +65,10 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
 {
   "language": "python",
   "minutes": 2, "feedCost": 20,
-  "challengeType": "int", "responseType": "int", "maxLen": 64, "maxNodes": 512, "maxResponseBytes": 65536,
+  "challengeType": "int", "responseType": "int", "maxLen": 64, "maxNodes": 512, "maxResponseBytes": 1024,
   "revealOnFinish": true,
   "grains": "feeder", "pollenGrain": { "exponent": 0.3333333333333333, "scale": 1 },
-  "scoring": { "alpha": 0.85, "beta": 0.85 },
+  "scoring": { "alpha": 0.85, "beta": 0.85 }, "energy": { "bytes": true },
   "budgets": {
     "flower": { "size": 1100,  "perMinute": 220,  "cap": 220,  "ms": 150, "minMs": 3 },
     "bee":    { "size": 11000, "perMinute": 2200, "cap": 2200, "ms": 50, "memory": 50 }
@@ -90,7 +90,8 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
   budget **R**, drawn uniformly at random from `budgets.flower.minMs` to `budgets.flower.ms` (default 150).
   `minMs` defaults to 2% of `ms`, rounded, at least 1 (3 of 150); left out, it follows `ms`, and a value you set
   is kept (never above `ms`). R is the call's hard time limit, the flower is told it as `GAME.ms`, and E counts down from
-  R, so E = (size cap − size) × max(0, R − CPU ms). The response is still delivered at `flower.ms` (150)
+  R, so E = (size cap − size) × max(0, R − CPU ms) × (`maxResponseBytes` − response bytes) / `maxResponseBytes`
+  (the last factor with `energy.bytes`). The response is still delivered at `flower.ms` (150)
   whatever R was, so timing hides R. R is the flower team's secret during play (`budgetMs` below).
 - `budgets.<kind>.size`: size limit in weighted nodes of the minified program (vendor/measure.js).
 - `budgets.<kind>.perMinute`, `cap`: change budget earned per minute of game time, and the most that can be
@@ -105,8 +106,13 @@ Sessions are provider-independent. Browsers get an HttpOnly cookie, and scripts 
   (UTF-8 bytes of the key + UTF-8 bytes of the value's JSON text): `{"n": 7, "best": "a7"}` is 2 + 8 = 10.
 - `maxLen` bounds the challenge's strings and lists; `maxNodes` its trees and graphs (graphs: ≤ 4 × maxNodes
   edges).
-- `maxResponseBytes` (default 65,536; 16 to 16,777,216): the most UTF-8 bytes of a response's JSON text
+- `maxResponseBytes` (default 1,024; 16 to 16,777,216): the most UTF-8 bytes of a response's JSON text
   (no spaces). Checked by the runner inside the flower's time; over it, the response is null and E = 0.
+- `energy`: `{ bytes }` (default `true`): E has a third factor, (`maxResponseBytes` − the response's bytes) /
+  `maxResponseBytes`, the bytes counted as for the cap: 1 for no bytes, 0 for a response at the cap (still an
+  answer, and a bee can feed on it, but there is nothing to give). Dividing by the cap keeps E in node·ms. A
+  game stored without `energy` (or with `bytes` false) has the two-factor formula, as games before it did
+  (they had a 64 KiB cap); the game view's `config.energy` says which.
   `maxLen` and `maxNodes` don't apply to responses; responses nest at most 256 levels.
 - `revealOnFinish`: when the game ends, everyone can see all code and every bee's print output (everything
   else is revealed at the end regardless).

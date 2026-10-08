@@ -250,8 +250,10 @@ async function cohortReport(arenaId) {
     const E = x.ecology;
     if (E.energySplit) {
       p(`Game ${x.G.gen}: where each species' energy went (shares of its budget, size cap × the flower window per turn), and its mean percent minute by minute:`);
-      table(["species of", "turns", "size", "compute", "short (R below the max)", "nectar", "pollen", "lost", "percent by minute"],
-        Object.entries(E.energySplit).map(([id, e]) => [e.team ?? names[id], e.turns, pct(e.size), pct(e.compute), pct(e.short), pct(e.nectar), pct(e.pollen), pct(e.lost),
+      // (a game whose energy has the byte factor also has the share its responses' bytes took)
+      const withBytes = Object.values(E.energySplit).some((e) => e.bytes != null);
+      table(["species of", "turns", "size", "compute", "short (R below the max)", ...(withBytes ? ["response bytes"] : []), "nectar", "pollen", "lost", "percent by minute"],
+        Object.entries(E.energySplit).map(([id, e]) => [e.team ?? names[id], e.turns, pct(e.size), pct(e.compute), pct(e.short), ...(withBytes ? [pct(e.bytes)] : []), pct(e.nectar), pct(e.pollen), pct(e.lost),
           ((E.percentOverTime || []).find((y) => y.teamId === id)?.byWindow || []).map((v) => (v == null ? "-" : Math.round(v))).join(" ")]));
     }
     if ((x.grains.uses || []).length) {

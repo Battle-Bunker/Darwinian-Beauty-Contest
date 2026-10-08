@@ -2,7 +2,9 @@
 #
 # The bee's challenge c seeds the raw material: n nodes and, for each property, its own set of node pairs
 # (with a target distance t per pair). The response is one arrangement of the n nodes in a line: node v at
-# position p[v], given as the graph's labels (labels[v] = p[v]). Every property is a sum over its own pairs:
+# position p[v], packed into one string label, one character per node, chr(35 + p[v]), and a last character
+# chr(35 + round(50 f)), f = the share of 0.6 R spent: 85 bytes of JSON in all, since every byte costs
+# energy. Every property is a sum over its own pairs:
 #   0 arrangement   sum |p[u] - p[v]|              lower is better  (pull these pairs together)
 #   1 spread        sum |p[u] - p[v]|              higher is better (push these pairs apart)
 #   2 bisection     pairs split across the middle  higher is better
@@ -11,7 +13,7 @@
 # directions), and cheap to score. The flower runs one simulated annealing on sum W[d] × score_d (normalised)
 # for 60% of its budget R of CPU time (stopping at 90% of R of wall time), so its answer is always a valid
 # arrangement and gets better the longer it runs. W chooses where on the trade-off the flower lands: its
-# signature. How far it gets shows its wealth. A last label, labels[n], is f: the share of 0.6 R it spent.
+# signature. How far it gets shows its wealth.
 #
 # Paste the whole file as your flower. Change W (non-negative numbers) to move your signature.
 import math, random, time
@@ -49,4 +51,4 @@ def flower(c):
         a = part(u) + part(v)
         if a > b and random.random() >= math.exp((b - a) / (T0 * (1 - time.process_time() / end) + 1e-3)):
             p[u], p[v] = p[v], p[u]
-    return {"nodes": n + 1, "edges": [], "labels": p + [time.process_time() / end]}, 50
+    return {"nodes": 1, "edges": [], "labels": ["".join(chr(35 + x) for x in p + [round(50 * time.process_time() / end)])]}, 50

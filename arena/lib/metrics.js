@@ -276,7 +276,7 @@ export function computeMetrics({ game, teams: teamRows, turns: turnRows, version
   const im = imitation(turns, ids, { liveAt });
   const named = (x) => ({ ...x, team: name[x.teamId] ?? x.teamId });
   const ecology = {
-    energySplit: Object.fromEntries(Object.entries(energySplit(turns, ids, { sizeOf, cap, windowMs: flowerMs })).map(([id, x]) => [id, { team: name[id], ...x }])),
+    energySplit: Object.fromEntries(Object.entries(energySplit(turns, ids, { sizeOf, cap, windowMs: flowerMs, config })).map(([id, x]) => [id, { team: name[id], ...x }])),
     percentOverTime: percentOverTime(turns, ids, W).map(named),
     imitation: { signalsCopied: im.signalsCopied, medianLagMs: im.medianLagMs, lags: im.lags.map((x) => ({ ...x, model: name[x.model] ?? x.model, by: name[x.by] ?? x.by })),
       copies: im.copies.map((e) => ({ copier: name[e.copier] ?? e.copier, copierVersion: e.copierVersion, model: name[e.model] ?? e.model, modelVersion: e.modelVersion, exact: e.exact,

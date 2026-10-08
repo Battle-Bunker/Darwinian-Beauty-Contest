@@ -5,7 +5,7 @@
 // (including what it lost on visits where the bee didn't feed, which only my team sees until the end)
 // and my team over time.
 import { useMemo, useState } from "react";
-import { scoringOf, type GameView, type LedgerEntry, type Team } from "../types";
+import { byteCapOf, energyBytes, scoringOf, type GameView, type LedgerEntry, type Team } from "../types";
 import { gameBase } from "../api";
 import type { LedgerStore } from "../lib/history";
 import { useLiveTick } from "../lib/live";
@@ -56,7 +56,8 @@ export function LedgerPanel({ view, ledger }: { view: GameView; ledger: LedgerSt
 
   const endMs = Math.max(roundMs, g.status === "finished" ? g.clockMs : g.endMs);
   const { alpha, beta } = scoringOf(cfg);
-  const model = useMemo(() => ({ cap: cfg.budgets.flower.size, window: cfg.budgets.flower.ms, alpha, beta, sizeOf: sizeLookup(teams) }), [cfg.budgets.flower.size, cfg.budgets.flower.ms, alpha, beta, teams]);
+  const byteCap = energyBytes(cfg) ? byteCapOf(cfg) : undefined;
+  const model = useMemo(() => ({ cap: cfg.budgets.flower.size, window: cfg.budgets.flower.ms, byteCap, alpha, beta, sizeOf: sizeLookup(teams) }), [cfg.budgets.flower.size, cfg.budgets.flower.ms, byteCap, alpha, beta, teams]);
   const data = useMemo(() => binTurns(ledger.entries.map((e) => recFromEntry(e, roundMs)), order.length, endMs, binWidth(endMs, roundMs), model),
     [ledger, rev, order.length, endMs, roundMs, model]); // eslint-disable-line react-hooks/exhaustive-deps
   const upto = Math.min(data.bins, Math.ceil(((ledger.entries.at(-1)?.round ?? 0) * roundMs) / data.binMs));

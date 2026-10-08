@@ -10,7 +10,8 @@
 //          own included (a public `arrive`, flushed at once), pins both versions, and calls
 //          flower(challenge), which has its hidden budget R (drawn from [flower.minMs, flower.ms]) to
 //          return [response, percent]. The runner reports the CPU time of the call; excess energy E =
-//          (flower size cap − the flower's size) × max(0, R − CPU ms). A late answer, an error, a malformed return or a response over
+//          (flower size cap − the flower's size) × max(0, R − CPU ms), and with energy.bytes × (maxResponseBytes
+//          − response bytes) / maxResponseBytes. A late answer, an error, a malformed return or a response over
 //          maxResponseBytes: response null, E = 0. The response goes to the bee's process at once.
 //   150 ms Every response is delivered at once, however fast its flower was. Each bee that took a turn
 //          is called: decide(challenge, response), with bee.ms to return ["feed" | "leave", next].
@@ -205,9 +206,12 @@ export function readAnswer(config, rType, res, size, budgetMs = config.budgets.f
   if (rBytes === null || rBytes > INLINE_BYTES) {
     full = rawResponse(res) ?? JSON.stringify(v[0]);
     rBytes = Buffer.byteLength(full);
-    if (rBytes > config.maxResponseBytes) return fail(`the response is ${rBytes} bytes of JSON, over the cap of ${config.maxResponseBytes}`);
   }
-  const answer = { r: v[0], rBytes, percent: Math.min(100, Math.max(0, v[1])), energy: ms === null ? 0 : excessEnergy(config, size, ms, budgetMs), ms, budgetMs, flowerError: null };
+  // (The runner checks the cap too, inside the flower's time.)
+  if (rBytes > config.maxResponseBytes) return fail(`the response is ${rBytes} bytes of JSON, over the cap of ${config.maxResponseBytes}`);
+  // E: with energy.bytes, a response at the cap is still an answer, with nothing to give.
+  const energy = ms === null ? 0 : excessEnergy(config, size, ms, budgetMs, rBytes);
+  const answer = { r: v[0], rBytes, percent: Math.min(100, Math.max(0, v[1])), energy, ms, budgetMs, flowerError: null };
   return rBytes > INLINE_BYTES ? { ...answer, ...largeResponse(full) } : answer;
 }
 

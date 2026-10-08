@@ -108,6 +108,9 @@ check("adapt-hi: no steer toward simple code (with fixed teams the interview is 
 check("system: wait by sleeping, never spin (a busy loop makes other teams' flowers late); a warned-about fair-play matter",
   /To wait, sleep: `time\.sleep\(s\)`/.test(sysVet) && /garden\.wait_for_budget/.test(sysVet) && /Never spin in a loop/.test(sysVet) && /other teams' flowers late/.test(sysVet)
   && /only warned about.*\n?.*busy-wait loop/.test(sysVet));
+check("timing: a game with the byte factor states it, and the response cap; one without doesn't",
+  /max\(0, R − the flower's CPU ms\) × \(1,024 − response bytes\) \/ 1,024\.\s+A response's bytes are its JSON text's, at most 1,024: a bigger one is refused/.test(timingText({ ...config, maxResponseBytes: 1024, energy: { bytes: true } }))
+  && !/response bytes/.test(timingText(config)));
 check("adapt-hi lobby: its wall time, and what the team can study (the revealed earlier games, room queries)", /about 10 minutes of wall time/.test(hiLobby)
   && /previous-games\//.test(hiLobby) && /tools\/query\.py --room/.test(hiLobby), hiLobby);
 const startLobby = lobbyBrief({ config, teamName: "Wildmeadow Commons", generation: 1, maxTurns: 100, carried: true, started: ["bee"], brevity: false, minutes: 10 });

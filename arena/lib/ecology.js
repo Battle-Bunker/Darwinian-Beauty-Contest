@@ -12,6 +12,8 @@
 // Turns: [{ atMs, round, bee, flower (team ids), action, c, r, percent, energy, nectar, pollen, ms, flowerVersion }],
 // in game order; a response over 4 KB is a stand-in { $big: its hash, bytes, shape } (lib/metrics.js responseOf).
 
+import { bytesFactor, bytesInEnergy } from "./energy.js";
+
 const r3 = (x) => (x == null || !Number.isFinite(x) ? null : Math.round(x * 1000) / 1000);
 const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
 const median = (xs) => { if (!xs.length) return null; const s = [...xs].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
@@ -35,12 +37,13 @@ export function shapeOf(r) {
 }
 
 /** Where each species' energy went. Per turn the budget is cap × window (node·ms): size × (window − ms) goes to its
- * size, cap × ms to compute, (cap − size) × (window − R) is short (the call's hidden budget R below the window), and
- * the rest, E, to nectar and pollen on a feed or is lost otherwise (a failed answer loses it all). */
-export function energySplit(turns, ids, { sizeOf, cap, windowMs }) {
+ * size, cap × ms to compute, (cap − size) × (window − R) is short (the call's hidden budget R below the window), in a
+ * game whose energy has the byte factor (lib/energy.js) the share of what's left that the response's bytes took, and the
+ * rest, E, to nectar and pollen on a feed or is lost otherwise (a failed answer loses it all). */
+export function energySplit(turns, ids, { sizeOf, cap, windowMs, config = null }) {
   const out = {};
   for (const id of ids) {
-    const s = { turns: 0, budget: 0, size: 0, compute: 0, short: 0, nectar: 0, pollen: 0, lost: 0 };
+    const s = { turns: 0, budget: 0, size: 0, compute: 0, short: 0, bytes: 0, nectar: 0, pollen: 0, lost: 0 };
     for (const t of turns) {
       if (t.flower !== id) continue;
       const size = sizeOf.get(`${id}:${t.flowerVersion}`) ?? 0, ms = Math.min(windowMs, Math.max(0, t.ms ?? 0)), budget = cap * windowMs;
@@ -50,11 +53,14 @@ export function energySplit(turns, ids, { sizeOf, cap, windowMs }) {
       // The call's hidden budget R (when the game has one): (cap − size) × (window − R) of the budget was never there.
       const R = Number.isFinite(t.R) ? Math.min(windowMs, Math.max(ms, t.R)) : windowMs;
       s.short += Math.max(0, (cap - size) * (windowMs - R));
-      const e = Math.max(0, (cap - size) * (R - ms));
+      const e0 = Math.max(0, (cap - size) * (R - ms));
+      const e = t.r == null ? e0 : e0 * bytesFactor(config, t.rBytes); // (an answered call's bytes take their share first)
+      s.bytes += e0 - e;
       if (t.action === "feed" && t.r != null) { s.nectar += t.nectar || 0; s.pollen += t.pollen || 0; } else s.lost += t.r == null ? e : (t.energy ?? e);
     }
     const sh = (x) => r3(s.budget ? x / s.budget : null);
-    out[id] = { turns: s.turns, size: sh(s.size), compute: sh(s.compute), short: sh(s.short), nectar: sh(s.nectar), pollen: sh(s.pollen), lost: sh(s.lost) };
+    out[id] = { turns: s.turns, size: sh(s.size), compute: sh(s.compute), short: sh(s.short), ...(bytesInEnergy(config) ? { bytes: sh(s.bytes) } : {}),
+      nectar: sh(s.nectar), pollen: sh(s.pollen), lost: sh(s.lost) };
   }
   return out;
 }

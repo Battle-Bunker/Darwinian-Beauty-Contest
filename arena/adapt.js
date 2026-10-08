@@ -19,6 +19,7 @@
 //   defectors               conformance (answers at 0%), imitation latency, feeds from rival bees before and after
 //                           they were told apart, feed rate at them over the game
 //   adaptation summary      per veteran over the games: what changed
+//   responses by role       median bytes (p90), and in games with the byte factor the energy share the bytes took
 //   side by side            the two arenas game by game: the agents' effort (sessions, turns, output tokens, spend) and
 //                           the headline measures of each role
 import { Api, gamePath } from "./lib/api.js";
@@ -26,6 +27,7 @@ import { all, one, pool } from "./lib/db.js";
 import { callModel } from "./lib/llm.js";
 import { classifyPrograms, levelOf } from "./lib/mechanisms.js";
 import { queryAll } from "./lib/metrics.js";
+import { bytesFactor, bytesInEnergy } from "./lib/energy.js";
 import { honestyOf } from "./lib/wealth.js";
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((acc, a, i, arr) => {
@@ -80,7 +82,7 @@ async function analyse(id) {
     const lastOf = (teamId, kind) => vs.filter((v) => v.teamId === teamId && v.kind === kind).sort((a, b) => b.version - a.version)[0];
     const flowerLabel = (teamId) => { const v = lastOf(teamId, "flower"); if (!v) return null; const l = label(v); return { mechanism: l.mechanism ?? l.kw.mechanism, families: l.families ?? l.kw.families ?? [], tags: l.tags ?? l.kw.tags ?? [], signal: l.signal ?? l.kw.signal, level: levelOf({ mechanism: l.mechanism ?? l.kw.mechanism, tags: l.tags ?? l.kw.tags, families: l.families ?? l.kw.families }) }; };
     const T = turns.map((t) => ({ bee: byIndex[t.bee], flower: byIndex[t.flower], fed: t.fed, R: t.budgetMs, atMs: t.atMs, percent: t.percent, ms: t.ms,
-      answered: t.response != null || t.responseBytes != null }));
+      answered: t.response != null || t.responseBytes != null, bytes: t.responseBytes ?? null, version: t.flowerVersion }));
     const Rs = T.map((t) => t.R).filter((x) => x != null).sort((a, b) => a - b);
     const lo = Rs[Math.floor(Rs.length / 3)], hi = Rs[Math.floor((2 * Rs.length) / 3)];
     const end = Math.max(...T.map((x) => x.atMs), 1);
@@ -191,6 +193,22 @@ async function analyse(id) {
     S.feeds = byRole;
     p("All bees by role (feed rate at flowers of each role, rival flowers only):");
     table(["bees of", ...groups.map((r) => `at ${r} flowers`)], groups.map((b) => [b, ...groups.map((f) => pct(byRole[b][f]))]));
+    // Responses by role: their size, and (in a game whose energy has the byte factor) the share of the energy left after
+    // compute that the bytes took, Σ e0 × bytes / cap ÷ Σ e0 with e0 = (cap − size) × max(0, R − CPU ms), over answered calls.
+    const config = g.config || {}, sizeCap = config.budgets?.flower?.size ?? 1100;
+    const sizeOf = new Map(versions.filter((v) => v.kind === "flower").map((v) => [`${byIndex[v.team]}:${v.version}`, Number(v.size) || 0]));
+    const bytesRow = (r) => {
+      const ts = T.filter((x) => role(x.flower) === r && x.answered && x.bytes != null);
+      let e0 = 0, lost = 0;
+      for (const x of ts) {
+        const e = Math.max(0, sizeCap - (sizeOf.get(`${x.flower}:${x.version}`) ?? 0)) * Math.max(0, (x.R ?? config.budgets?.flower?.ms ?? 150) - (x.ms ?? 0));
+        e0 += e; lost += e * (1 - bytesFactor(config, x.bytes));
+      }
+      return { median: quantile(ts.map((x) => x.bytes), 0.5), p90: quantile(ts.map((x) => x.bytes), 0.9), lost: bytesInEnergy(config) && e0 ? lost / e0 : null };
+    };
+    S.bytes = Object.fromEntries(groups.map((r) => [r, bytesRow(r)]));
+    p(`Responses by role (bytes of JSON${bytesInEnergy(config) ? `; energy lost to bytes: the share of what compute left that the byte factor took, cap ${n0(config.maxResponseBytes)}` : "; this game's energy has no byte factor"}):`);
+    table(["flowers of", "median bytes (p90)", "energy lost to bytes"], groups.map((r) => [r, `${n0(S.bytes[r].median)} (${n0(S.bytes[r].p90)})`, pct(S.bytes[r].lost)]));
     summary.push(S);
   }
 
@@ -255,6 +273,8 @@ function sideBySide(A, B) {
     ["honest: rival feed rate", (x) => seq(x, (s) => pct(mean(s.honest.map((h) => h.rivalRate))))],
     ["defectors: copies (of honest flowers)", (x) => seq(x, (s) => `${s.defector.reduce((a, d) => a + d.copies, 0)} (${s.defector.reduce((a, d) => a + d.ofHonest, 0)})`)],
     ["defectors: rival feed rate", (x) => seq(x, (s) => pct(mean(s.defector.map((d) => d.rivalRate))))],
+    ["median response bytes: veteran / honest / defector", (x) => seq(x, (s) => ["veteran", "honest", "defector"].map((r) => n0(s.bytes?.[r]?.median)).join("/"))],
+    ["energy lost to bytes: veteran / honest / defector", (x) => seq(x, (s) => ["veteran", "honest", "defector"].map((r) => pct(s.bytes?.[r]?.lost)).join("/"))],
     ["all bees at honest / defector flowers", (x) => seq(x, (s) => `${pct(mean(["veteran", "honest", "defector"].map((b) => s.feeds?.[b]?.honest)))}/${pct(mean(["veteran", "honest", "defector"].map((b) => s.feeds?.[b]?.defector)))}`)],
     ["mean fitness: veteran / honest / defector", (x) => seq(x, (s) => `${f2(mean(s.vet.map((v) => v.fitness)))}/${f2(mean(s.honest.map((h) => h.fitness)))}/${f2(mean(s.defector.map((d) => d.fitness)))}`)],
   ];

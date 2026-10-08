@@ -216,6 +216,21 @@ check("handshakes: two teams favouring each other both ways are mutual", h.hands
   check("budget R: wealth metrics (visible work against R, bees at rich instances)", mR.wealth && mR.wealth.species.find((x) => x.teamId === "A").nodes > 0.9
     && mR.wealth.bees.find((x) => x.teamId === "B").lift > 0.5 && mR.wealth.range[0] === 50, mR.wealth);
   check("no budget R: no wealth metrics", computeMetrics({ game, teams, turns: rows, versions, scores, windowMs: 10000 }).wealth === null);
+  // The byte factor (config.energy.bytes): E × (cap − bytes) / cap; the split gets the share the bytes took, and still adds up.
+  const bytesCfg = { ...config, maxResponseBytes: 1024, energy: { bytes: true }, budgets: { ...config.budgets, flower: { size: 1100, ms: 150, minMs: 3 } } };
+  const rowsB = rowsR.map((r) => ({ ...r, responseBytes: 256, energy: r.energy * 0.75, nectar: r.nectar == null ? null : r.nectar * 0.75, pollen: r.pollen ? r.pollen * 0.75 : 0 }));
+  const eB = computeMetrics({ game: { config: bytesCfg, clockMs: 8000, round: 40 }, teams, turns: rowsB, versions: [ver("A", "flower", 1, 100, 0)], scores: [], windowMs: 10000 }).ecology.energySplit.A;
+  check("byte factor: the energy split's bytes share, and the whole still adds up to the budget", eB.bytes > 0 && eA.bytes === undefined
+    && Math.abs(eB.size + eB.compute + eB.short + eB.bytes + eB.nectar + eB.pollen + eB.lost - 1) < 0.01, eB);
+}
+
+// lib/energy.js: E from the game's own config (old games without the byte factor keep their formula).
+{
+  const { excessEnergy, bytesFactor, bytesTerm } = await import("./lib/energy.js");
+  const oldCfg = { maxResponseBytes: 65536, budgets: { flower: { size: 1100, ms: 150 } } }, newCfg = { maxResponseBytes: 1024, energy: { bytes: true }, budgets: { flower: { size: 1100, ms: 150 } } };
+  check("energy: E = (cap − size) × max(0, R − ms), times (byte cap − bytes) / byte cap with the byte factor (0 over the cap)",
+    excessEnergy(oldCfg, { size: 100, ms: 10, R: 110, bytes: 512 }) === 100000 && excessEnergy(newCfg, { size: 100, ms: 10, R: 110, bytes: 512 }) === 50000
+    && bytesFactor(newCfg, 2000) === 0 && bytesFactor(oldCfg, 2000) === 1 && bytesTerm(oldCfg) === "" && /× \(1,024 − response bytes\) \/ 1,024/.test(bytesTerm(newCfg)));
 }
 
 // Fetching big responses for their shapes: distinct hashes once each, in order of first appearance, within the byte budget.

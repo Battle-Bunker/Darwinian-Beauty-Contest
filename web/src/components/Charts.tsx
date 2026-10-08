@@ -188,6 +188,7 @@ export function TeamSeriesChart({ teams, rows, data, metric, focus, onFocus, cur
 const PARTS = [
   { key: "size", cls: "e-size", label: "size", long: "size: a bigger flower shrinks the whole budget" },
   { key: "compute", cls: "e-compute", label: "compute", long: "compute: CPU time spent answering (and failed answers)" },
+  { key: "bytes", cls: "e-bytes", label: "response bytes", long: "response bytes: what the answers' length took (when bytes cost energy)" },
   { key: "pollen", cls: "e-pollen", label: "pollen given", long: "pollen given to bees that fed, to carry to other flowers" },
   { key: "nectar", cls: "e-nectar", label: "nectar given", long: "nectar given to bees that fed" },
   { key: "lost", cls: "e-lost", label: "lost", long: "lost: the bee didn't feed" },
@@ -196,7 +197,8 @@ const PARTS = [
 
 /**
  * Where each flower's energy went. Every visit has the same budget, size cap × flower window; the flower's
- * size takes a slice, its compute another, and the rest (E) goes to the bee as pollen and nectar on a feed,
+ * size takes a slice, its compute another, its response's bytes another (when the game charges for them),
+ * and the rest (E) goes to the bee as pollen and nectar on a feed,
  * or is lost when the bee doesn't feed. Rows with `t.known` false (another team's flower during play) show
  * only what's public: the pollen and nectar of its feeds.
  */
@@ -232,14 +234,14 @@ export function EnergySplit({ rows }: { rows: { team: Team; t: EnergyTotals; you
         <summary className="small">As a table</summary>
         <div className="table-scroll">
           <table className="data-table">
-            <thead><tr><th className="left">Flower</th><th>Visits</th><th>Fed</th><th>Budget</th><th>Size</th><th>Compute</th><th>Pollen given</th><th>Nectar given</th><th>Lost</th></tr></thead>
+            <thead><tr><th className="left">Flower</th><th>Visits</th><th>Fed</th><th>Budget</th><th>Size</th><th>Compute</th><th>Bytes</th><th>Pollen given</th><th>Nectar given</th><th>Lost</th></tr></thead>
             <tbody>
               {rows.map(({ team, t }) => (
                 <tr key={team.id}>
                   <th scope="row" className="left">{team.name}</th>
                   <td>{t.visits.toLocaleString()}</td>
                   <td>{t.feeds.toLocaleString()}</td>
-                  {(["budget", "size", "compute"] as const).map((k) => <td key={k} title={t.known ? fmtEExact(t[k]) : "private"}>{t.known ? fmtE(t[k]) : "–"}</td>)}
+                  {(["budget", "size", "compute", "bytes"] as const).map((k) => <td key={k} title={t.known ? fmtEExact(t[k]) : "private"}>{t.known ? fmtE(t[k]) : "–"}</td>)}
                   <td title={fmtEExact(t.pollen)}>{fmtE(t.pollen)}</td>
                   <td title={fmtEExact(t.nectar)}>{fmtE(t.nectar)}</td>
                   <td title={t.known ? fmtEExact(t.lost) : "private"}>{t.known ? fmtE(t.lost) : "–"}</td>

@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { ARENA_DIR } from "./db.js";
+import { byteCap, bytesInEnergy, bytesTerm } from "./energy.js";
 
 // Read fresh for every prompt: RULES.md is the players' document and may be edited while arenas run.
 export const rules = () => fs.readFileSync(path.join(ARENA_DIR, "..", "RULES.md"), "utf8");
@@ -40,8 +41,9 @@ export function timingText(config) {
   ${bee.ms} ms to return ["feed" or "leave", next challenge]. Neither is told whose the other is. A feed takes the bee
   out for ${config.feedCost} rounds.
 - A flower's energy goes to compute, nectar and pollen. Its excess energy for a turn is
-  E = (${n0(fl.size)} − flower size) × max(0, R − the flower's CPU ms). The CPU ms are CPU time; the limit R is wall
-  time, which also counts any time the machine spends on other programs during the call. If the bee feeds,
+  E = (${n0(fl.size)} − flower size) × max(0, R − the flower's CPU ms)${bytesTerm(config)}.${bytesInEnergy(config)
+    ? `\n  A response's bytes are its JSON text's, at most ${n0(byteCap(config))}: a bigger one is refused (E = 0).` : ""} The CPU ms are CPU time;
+  the limit R is wall time, which also counts any time the machine spends on other programs during the call. If the bee feeds,
   the flower gives it percent/100 × E as nectar and the rest as pollen. If it doesn't feed, that energy is lost.
 - Programs run fresh for every call: flower(challenge), first(), decide(challenge, response), and the bee's optional
   fed(nectar), which runs after a feed decided in time, in the same instance as that decide. Programs see only their

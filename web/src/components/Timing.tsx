@@ -1,6 +1,6 @@
 // How long programs take against their time limits: a row of figures (typical, slow end, slowest, missed)
 // and a small histogram of the times, with the limit marked and the misses in their own labelled bin.
-// The flower's figure is its CPU time (what the energy formula charges: E = (cap − size) × (150 − ms)); the
+// The flower's figure is its CPU time (what the energy formula charges: E = (cap − size) × (R − ms), times the byte factor); the
 // bee's is its decision time against the 50 ms window. During play you see your own only.
 import { useMemo } from "react";
 import type { Action, GameView, Kind, Team } from "../types";
