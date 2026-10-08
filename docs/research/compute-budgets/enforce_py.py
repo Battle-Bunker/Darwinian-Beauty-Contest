@@ -131,6 +131,7 @@ def trial(mech, r_ms, work):
     if pfd is not None:
         arm_us = (time.perf_counter_ns() - t) / 1000
     c_arm_parent = C.cpu_ns(pid)  # exact: the child is blocked
+    p0 = C.perf_read(pfd) if mech in ("watchdog_perf", "watchdog_rt") else 0
     t0 = time.perf_counter_ns()
     os.write(w_go, b"g")
     buf = b""
@@ -145,7 +146,6 @@ def trial(mech, r_ms, work):
         arm_us = arm_us or 0.0
     else:
         arm_us = child_arm_us
-    p0 = C.perf_read(pfd) if mech in ("watchdog_perf", "watchdog_rt") else 0
     deadline = arm_cpu + r_ns
     backstop = t0 + r_ns + 2_000_000_000
     how, wakeups, reported = None, 0, b""
