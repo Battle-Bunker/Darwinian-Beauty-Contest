@@ -11,8 +11,8 @@
 #   3 distances     sum ||p[u] - p[v]| - t|        lower is better  (place these pairs t apart)
 # All four are hard to push far (each alone is NP-hard; together they pull the one arrangement in different
 # directions), and cheap to score. The flower runs one simulated annealing on the weighted sum for BURN of its
-# budget R of CPU time (stopping at 90% of R of wall time), so its answer is always a valid arrangement and
-# gets better the longer it runs. W chooses where on the trade-off the flower lands: its profile. How far it
+# budget R of CPU time (and never past R less 0.5 ms), so its answer is always a valid arrangement and gets
+# better the longer it runs. W chooses where on the trade-off the flower lands: its profile. How far it
 # gets shows its wealth.
 #
 # Paste the whole file as your flower. Change W to move your profile. W holds each property's weight
@@ -21,6 +21,10 @@
 # BURN and PERCENT are your team's choice, within the cooperators' floors: BURN at least 0.2, PERCENT at least
 # 20. Keep BURN the same for every call of a version (change it only between versions): a fixed share of R is
 # what lets a bee read your wealth from how far the search got.
+#
+# R is CPU time: the call is stopped when its CPU reaches R, and time.sleep does nothing. Budget with
+# time.process_time(), which reads 0 as the call starts (the program's own start-up included), never with the
+# wall clock: under load, wall time runs ahead of CPU and would cut the search short.
 import random, time
 
 BURN = 0.6              # the share of R spent on the search
@@ -31,7 +35,7 @@ W = (0.09, 0.09, 2, 0.11)
 
 def flower(c):
     ms = GAME["ms"]
-    end = BURN * ms / 1e3
+    end = min(BURN * ms, ms - 0.5) / 1e3              # seconds of CPU to search for
     r = random.Random(c)
     inc = [[[] for _ in range(n)] for _ in W]          # per property, per node: (other node, target)
     for e in inc:
@@ -48,7 +52,7 @@ def flower(c):
         return sum(W[d] * ((D := abs(p[v] - p[u])), -D, -((p[v] < 24) != (p[u] < 24)), abs(D - t))[d]
                    for d in range(4) for u, t in inc[d][v])
 
-    while time.process_time() < end and time.perf_counter() < ms / 1100:
+    while time.process_time() < end:
         u, v = random.randrange(n), random.randrange(n)
         b = part(u) + part(v)
         p[u], p[v] = p[v], p[u]

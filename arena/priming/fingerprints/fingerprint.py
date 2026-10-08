@@ -4,9 +4,9 @@
 # i; one unit of work is k nodes of it that induce dimension d's pattern: a clique, a path, a cycle, or a random
 # pattern seeded with the instance. Instances are taken in order, 0, 1, 2, ... in each dimension, and bees credit
 # only the unbroken run from 0, so skipping a hard instance gains nothing. The flower works for 60% of its budget
-# R of CPU time (stopping at 90% of R of wall time), taking dimensions in the order of W, and answers a
-# graph[any]: one node per certificate, labelled [d, i, nodes], and a last node labelled [-1, f], f = the share
-# of 0.6 R it actually spent. At percent 50.
+# R of CPU time, taking dimensions in the order of W, and answers a graph[any]: one node per certificate,
+# labelled [d, i, nodes], and a last node labelled [-1, f], f = the share of 0.6 R it actually spent. At
+# percent 50.
 #
 # Paste the whole file as your flower. Change W to move your profile: each character is a dimension, and the
 # flower cycles through W, so "0012" gives dimension 0 half of its work. (fingerprint_compact.py is a smaller
@@ -22,7 +22,7 @@ def flower(c):
     ms = GAME["ms"]
     end = ms * 6e-4
     out, nxt = [], [0] * len(T)
-    while time.process_time() < end and time.perf_counter() < ms / 1100:
+    while time.process_time() < end:
         d = int(W[sum(nxt) % len(W)])
         n, k, h = T[d]
         i = nxt[d]

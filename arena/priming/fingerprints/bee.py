@@ -46,7 +46,7 @@ def levels(c, response):
         if len(labels) > LMAX:
             return None
         for lab in labels:
-            if time.perf_counter() * 1000 > CHECK_MS:
+            if time.process_time() * 1000 > CHECK_MS:
                 break
             if lab[0] == -1 and len(lab) == 2:     # the flower's record of the share of 0.6 R it spent
                 continue

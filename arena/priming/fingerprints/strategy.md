@@ -17,6 +17,11 @@ Both are constants at the top of `integrated.py`. The starter has BURN = 0.6 and
 E = (1100 − size) × max(0, R − CPU ms) × (1024 − response bytes), in node·ms·bytes. A response over 1,024 bytes is
 refused.
 
+**R is CPU time.** The call is stopped when its CPU reaches R (with a modest wall-clock backstop), and time.sleep
+does nothing. Budget with time.process_time(), which reads 0 as the call starts, the program's own start-up
+included. Don't guard with the wall clock: under load wall time runs ahead of CPU, so a wall guard would cut the
+work short and could push a cooperator below its BURN floor.
+
 Bytes are counted as compact JSON, UTF-8, with non-ASCII characters written raw.
 - **Integers** are exact only up to 2^53, because the engine parses JSON numbers as doubles, so big numbers have to
   travel as strings.
@@ -25,11 +30,11 @@ Bytes are counted as compact JSON, UTF-8, with non-ASCII characters written raw.
 - **The cheapest response** is one string label: `{"nodes":1,"edges":[],"labels":["…"]}` costs 36 bytes plus the
   string.
 
-Marginal cost, as a share of E, for the cooperator flower (`integrated.py`: 410 nodes, 85 bytes):
+Marginal cost, as a share of E, for the cooperator flower (`integrated.py`: 405 nodes, 85 bytes):
 
 | one more | costs |
 |---|---|
-| node of code | 0.15% |
+| node of code | 0.14% |
 | byte of response | 0.11% |
 | ms of CPU | 1 / ((1 − BURN) R): at BURN 0.6, 1.7% at R = 150 and 12.5% at R = 20 |
 
@@ -95,10 +100,10 @@ veteran pays per feed: 11.8M at 15% and 50 bytes, 10.3M at 15% and 170 bytes, 19
 25% and 170 bytes.
 
 Two formulas follow from the rule with CPU = BURN × R, so they hold at any setting:
-- **A turn pays** PERCENT/100 × 690 × 939 × (1 − BURN) × R. On average that is about
-  50M × (1 − BURN) × PERCENT/100 per feed, which is what a blind bee gets.
-- **A turn beats blind feeding at a veteran paying V per feed** when
-  R > R* = V / (648,000 × (1 − BURN) × PERCENT/100).
+- **A turn pays** PERCENT/100 × (1100 − size) × 939 × (1 − BURN) × R. For the 405-node starter, on average that is
+  about 50M × (1 − BURN) × PERCENT/100 per feed, which is what a blind bee gets.
+- **A turn beats blind feeding at a veteran paying V per feed** when R > R* = V / (652,600 × (1 − BURN) ×
+  PERCENT/100), again for the 405-node starter. (The grid's 410 nodes differ from it by under 1%.)
 
 **Attractiveness to bees**, in node·ms·bytes per feed. The selective bee knows the setting (its BURN's curve and
 its PERCENT), reads R from U, and feeds only above R*. The table shows what it gets per feed and the share of turns
@@ -132,20 +137,20 @@ What the grid shows:
   turns. At R = 3, U is 2.1 at 0.30 against 8.5 at 0.60, and the profile reads right 37% of the time against 60%.
   From R = 20 up, all three burns read the profile right 72–95% of the time. Reading R back shows no clear trend
   across burns.
-- **BURN 0.2 is unmeasured.** The formulas still hold: about 19.8M per feed to a blind bee at PERCENT 50, and 7.9M
+- **BURN 0.2 is unmeasured.** The formulas still hold: about 20.0M per feed to a blind bee at PERCENT 50, and 8.0M
   at 20. Readability is where to extrapolate with care. At R = 3 the search would get 0.6 ms, and 0.30 already reads
   only U = 2.1 there, so poor turns at 0.2 would likely read close to chance. How rich turns read at 0.2 is not
   known.
-- **PERCENT 20, at any BURN,** is also outside the grid. By the formulas, blind feeding gets 4.0M (BURN 0.6) to 7.9M
-  (BURN 0.2), and R* against the 15%, 50-byte veteran is 114 ms or more.
+- **PERCENT 20, at any BURN,** is also outside the grid. By the formulas, blind feeding gets 4.0M (BURN 0.6) to 8.0M
+  (BURN 0.2), and R* against the 15%, 50-byte veteran is 113 ms or more.
 - **Changing BURN or PERCENT between versions** changes what a profile pays. A bee that learned the old rate
   re-learns it over its next few feeds.
 
 ## The starter flower and bee
 
-- **Flower: `integrated.py`, 410 nodes.**
-  - One annealing run over the 48-node arrangement, weighted by W, for BURN × R of CPU (stopping at 90% of R of
-    wall time). It returns PERCENT.
+- **Flower: `integrated.py`, 405 nodes.**
+  - One annealing run over the 48-node arrangement, weighted by W, for BURN × R of CPU, read with
+    time.process_time() (and never past R − 0.5 ms). It returns PERCENT.
   - Response: `{"nodes":1,"edges":[],"labels":[S]}`, where S has 49 characters: character v is chr(35 + position
     of node v), and the last is chr(35 + round(50 f)).
   - That's 85 bytes.
@@ -159,17 +164,17 @@ What the grid shows:
     property; the value is the rate in thousands.
   - **Updates:** a reading within 3.5 tenths of a key counts as that profile. Each feed moves the profile's rate
     halfway toward what the feed paid, in log terms.
-  - **The prior:** an unknown profile starts at the starter flower's rate (216 thousand per ms of CPU).
+  - **The prior:** an unknown profile starts at the starter flower's rate (218 thousand per ms of CPU).
   - So the curve fixes only the shape, and the learned rates take up the scale. Other burns, other percents, and
     profiles whose U runs below the equal-weights curve are learned, not assumed.
   - It feeds when the predicted nectar, the rate times the CPU read from U, reaches NEED = 5M (the starter flower at
     about R = 40), and on 5% of other arrangements, so a rate learned too low can recover.
   - In a quick simulation with five cooperators at different settings, its predictions came within about 12% of
     what its feeds paid (median per profile), and it fed the more generous profiles more often.
-  - On the real runner a whole decision, including the program's start-up, takes 4.4 ms at the median and 8.4 ms at
-    most, well inside 50 ms.
+  - On the real runner (measured before R became CPU time) a whole decision, including the program's start-up,
+    takes 4.4 ms at the median and 8.4 ms at most, well inside 50 ms.
 - **The levers that help most,** in order:
-  1. a smaller flower (each 10 nodes is 1.5% of E)
+  1. a smaller flower (each 10 nodes is 1.4% of E)
   2. a sharper wealth read-back on rich turns
   3. bytes, which are already near their floor
 - **The hybrid tally is out,** because its bytes grow with wealth.
