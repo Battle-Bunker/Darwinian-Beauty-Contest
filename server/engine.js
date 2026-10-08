@@ -16,7 +16,8 @@
 //          is called: decide(challenge, response), with bee.ms to return ["feed" | "leave", next].
 //   200 ms The turn is settled. A feed: the flower gives the bee nectar = percent/100 × E and pollen =
 //          (1 − percent/100) × E, and the bee sits out feedCost rounds, starting with fed(nectar).
-//          No feed: nothing is given. `next` is queued for the bee's next turn.
+//          No feed: nothing is given. `next` is queued for the bee's next turn (after a feed, a valid
+//          challenge that fed returns replaces it).
 // A late reply doesn't stop the round: at the deadline the turn is settled without it (never a feed), but
 // the engine keeps listening (the call runs on, up to a hard limit of 2 s). If the late reply is
 // ["leave", c], c is queued; anything else gets the bee asked first() for a challenge, outside the round
@@ -28,7 +29,8 @@
 // bytes, counting each key's UTF-8 bytes plus its value's JSON) and sends with every call; the reply carries
 // it back and the engine saves it if it fits (else keeps the old one). A new bee version starts with {};
 // a crash or a restarted process keeps it. After an in-time feed the bee's instance is kept for fed(nectar)
-// (if it defines it), run as the turn is settled, within bee.ms; MEMORY is saved after it too.
+// (if it defines it), run as the turn is settled, within bee.ms; MEMORY is saved after it too, and a valid
+// challenge it returns replaces the one decide queued (None/undefined keeps decide's; first() waits for it).
 //
 // Programs get no history: only their arguments, GAME and (bees) MEMORY. A response may be up to
 // maxResponseBytes of JSON (checked by the runner, inside the flower's time). It reaches the bee before its
@@ -591,6 +593,7 @@ export class Garden {
   /** Ask the bee for a challenge: first(). Outside the round flow; at most one in flight, one new one a round. */
   #askFirst(b, force = false) {
     if (this.closed || this.stopped || b.broken || b.pending || !b.proc || b.proc.dead || b.busy || b.queued || b.turn) return;
+    if (b.fedDone) return; // fed() may yet give a challenge: asked once it is done, if it didn't
     if (!force && b.askedRound === this.round) return; // asked this round already: again at the next boundary
     b.askedRound = this.round;
     const call = this.#call(b, { op: "first" });
@@ -606,13 +609,17 @@ export class Garden {
     b.asking = asking;
   }
 
-  /** Unpaced: the requests outside the round flow that answer in time make it into the next round. */
+  /**
+   * Unpaced: the requests outside the round flow that answer in time make it into the next round, and so
+   * does the challenge of a fed() still running for a bee that plays this round (feedCost 0).
+   */
   async #awaitRequests() {
     const waited = new Set();
     for (;;) {
-      const asks = this.bees.map((b) => b.asking).filter((a) => a && !waited.has(a));
+      const asks = this.bees.map((b) => b.asking).filter((a) => a && !waited.has(a))
+        .concat(this.bees.filter((b) => b.fedDone && b.sitOut === 0 && !waited.has(b.fedDone)).map((b) => ({ key: b.fedDone, inTime: b.fedDone })));
       if (!asks.length) return;
-      for (const a of asks) waited.add(a);
+      for (const a of asks) waited.add(a.key ?? a);
       await Promise.all(asks.map((a) => a.inTime));
     }
   }
@@ -797,24 +804,35 @@ export class Garden {
 
   /**
    * After a feed decided in time: fed(nectar) in the instance that decided (the runner kept it, if the
-   * program defines fed), within bee.ms; then its MEMORY is saved. It doesn't make the bee busy, so it never
-   * costs a turn, but every later request to the bee waits for it.
+   * program defines fed), within bee.ms; then its MEMORY is saved, and a valid challenge it returns replaces
+   * the one decide queued (null/None keeps decide's). It doesn't make the bee busy, so it never costs a turn,
+   * but every later request to the bee waits for it, and first() is asked only once it is done.
    */
   #fed(b, nectar) {
     const gen = b.gen, proc = b.proc;
+    const queued = b.queued; // decide's challenge (null: it gave none)
     const run = withCpu(() => proc.call({ op: "fed", nectar }, this.beeMs + 1500)).then((res) => {
       if (gen !== b.gen || this.closed) return;
       this.#keepLog(b, res.out);
       if (res.skipped) return;
-      if (res.e) {
+      if (res.e) { // decide's challenge stays, and so does the MEMORY saved after decide
         const error = `fed() failed (${String(res.e).slice(0, 200)}): MEMORY is as saved after decide`;
         this.#setMemory(b, b.memory, b.memoryVersion, error);
         this.#problem(b.ti, "bee", b.version, error);
         return;
       }
       this.#saveMemory(b, res);
+      if (res.a === undefined || res.a === null) return; // nothing returned: decide's challenge stays
+      const bad = checkValue(this.cType, res.a, this.limits, "next challenge");
+      if (bad) this.#problem(b.ti, "bee", b.version, `fed() returned a bad next challenge (${String(bad).slice(0, 200)}): decide's stays queued`);
+      // (With feedCost 0, a slow fed() can end after the bee's next turn began with decide's challenge.)
+      else if (b.queued !== queued || b.turn) this.#problem(b.ti, "bee", b.version, "fed() returned its challenge after the bee's next turn had begun: it was dropped");
+      else b.queued = { c: res.a };
     });
-    const done = logged(run).finally(() => { if (b.fedDone === done) b.fedDone = null; });
+    const done = logged(run).finally(() => {
+      if (b.fedDone === done) b.fedDone = null;
+      if (gen === b.gen) this.#askFirst(b); // neither decide nor fed gave a challenge
+    });
     b.fedDone = done;
   }
 }

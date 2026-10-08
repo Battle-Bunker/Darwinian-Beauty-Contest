@@ -19,7 +19,7 @@ A flower now *chooses* how much to pay, out of energy it can only have by being 
 | `feeds[b][f]`, `nectar[b][f]`, `pollen[b][f]` | **feed / nectar / pollen ledgers** | row = bee team, column = flower team |
 | every finished turn, as one team may see it | **history** | for teams and agents, over HTTP and the generated query clients; programs get none |
 | a bee's only state from one turn to the next | **MEMORY** | a key-value store the engine keeps, 50 bytes by default |
-| a bee's call after an in-time feed, in the instance that decided | **fed(nectar)** | the bee keeps what it worked out that turn long enough to store some of it |
+| a bee's call after an in-time feed, in the instance that decided | **fed(nectar)** | the bee keeps what it worked out that turn long enough to store some of it, and can choose its next challenge knowing the nectar |
 | ⌊pollen^(1/3)⌋ characters of the answering flower's minified code, to the feeding bee's team | **pollen grain** | pollen carries genes |
 | each call's clock, reading 0 as the call's time starts | **the game's clock** | programs can time themselves, not the world |
 | Σ xᵢ^p, 0 < p ≤ 1 | **power sum** | the diversity-weighted size of an earnings vector (p = 0.5: Σ√xᵢ, the old **rootsum**) |
@@ -37,7 +37,7 @@ ms, drawn per call) to return `[response, percent]`. The runner measures the cal
 reaches the bee, `decide(challenge, response)`, which has 50 ms to return `["feed" | "leave", next]`. On a
 feed the flower gives the bee nectar and pollen, the bee sits out `feedCost` rounds, and its optional
 `fed(nectar)` runs in the same program instance that decided; a leave pays nobody. The bee's next challenge
-is queued for its next turn. Every flower call and every bee turn runs a fresh program; the bee's 50-byte
+is queued for its next turn (a challenge `fed` returns replaces it). Every flower call and every bee turn runs a fresh program; the bee's 50-byte
 MEMORY is the only thing that carries over. No program sees any history.
 
 ## A hidden budget per call: R
@@ -122,6 +122,12 @@ thread survives. The exceptions are a bee's **MEMORY** and its **fed** call:
   settled, hard-stopped at `bee.ms`. Then MEMORY is saved again and the instance is dropped. Any other
   request to the bee drops a kept instance first, and every request waits for a `fed` in flight (and its
   MEMORY). It runs during the sit-out, so it never costs a turn, not even with `feedCost` 0.
+- `fed` may return a next challenge: a valid one replaces the one `decide` queued, so the bee can choose
+  what to ask next knowing what it just earned (still never the percent). `None` keeps `decide`'s; an
+  invalid one keeps it too and is reported; a crash or a stop keeps both `decide`'s challenge and the MEMORY
+  saved after `decide`. `first` is asked only once `fed` is done, if neither gave a challenge. With
+  `feedCost` 0 the next turn can start before a slow `fed` ends (a live game doesn't wait; an unpaced one
+  does): that turn plays `decide`'s challenge and `fed`'s is dropped, with a problem for the team.
 - A new bee version starts with `{}`. A crash, a restarted runner, or the game moving to another server
   process keeps it: MEMORY is written with the game's live state (`bee_memories`, four times a second)
   and restored on adoption.
@@ -258,7 +264,7 @@ can't steer that turn.
 |---|---|
 | 0 ms | A crashed bee's runner is restarted (its MEMORY kept); new code for a bee between turns takes over (with an empty MEMORY); a bee with nothing queued is asked `first` (at most once a round). Each bee with a challenge queued, no call in flight and no rounds left to sit out takes its turn: a flower is drawn at random, the arrival is recorded and flushed at once, both versions are pinned, and the flower is called. Each response goes to its bee's runner as soon as it is in. A bee with nothing queued loses the round. |
 | 150 ms | Every response is delivered; each bee with a turn is called: `decide(challenge, response)`, with its MEMORY. |
-| 200 ms | Each reply is in, or its deadline has passed. Each bee's MEMORY is saved if it fits. Each turn is settled: nectar, pollen and the ledgers; the turn's end (`feed` or `leave`, carrying the whole turn) is recorded; a feed sits the bee out `feedCost` rounds and calls its `fed(nectar)` in the instance that decided; new code for the bee takes over. |
+| 200 ms | Each reply is in, or its deadline has passed. Each bee's MEMORY is saved if it fits. Each turn is settled: nectar, pollen and the ledgers; the turn's end (`feed` or `leave`, carrying the whole turn) is recorded; a feed sits the bee out `feedCost` rounds and calls its `fed(nectar)` in the instance that decided (a challenge it returns replaces the queued one); new code for the bee takes over. |
 
 At most one turn per bee per round: with 6 teams, at most 30 turns (60 actions) a second.
 

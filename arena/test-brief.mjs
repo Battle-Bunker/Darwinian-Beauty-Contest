@@ -84,6 +84,33 @@ const seeded = lobbyBrief({ config, teamName: "Red Team Petals", generation: 1, 
 check("lobby: a seeded veteran starts from its last tournament's programs and files, with no strategy hint", /final programs from your last tournament/.test(seeded)
   && /earlier-tournament\//.test(seeded) && !/previous-games\/ has/.test(seeded) && !/honest|defect/i.test(seeded), seeded);
 
+// adapt-hi (EXPERIMENTS["adapt-hi"]): the honest contract (60% of R, percent 50, the signalling strategy changed only to
+// escape imitators; the bee played to win, from the reference bee); no brevity nudges; the lobby's time; the start bee.
+const h60 = roleText("honest", { common: ["signals.md", "bee.py"], brief: "r60", startBee: "common/bee.py" });
+check("adapt-hi honest role: not competing to win, 60% of R in CPU, percent 50, strategy only to escape imitators, the bee to win",
+  /not competing to win/.test(h60) && /playing a role|plays a role/.test(h60) && /0\.6 × R/.test(h60) && /time\.process_time\(\)/.test(h60) && /GAME\["ms"\]/.test(h60)
+  && /percent 50 on every answer/.test(h60) && /only to escape\s+defecting imitators/.test(h60) && /60% and the 50% never change/.test(h60) && /Fixing\s+a bug/.test(h60)
+  && /fingerprint space/.test(h60) && /Multi-dimensional signatures can be mixed with raw costly signalling/.test(h60) && /public responses and the feed record/.test(h60)
+  && /copy of the reference bee \(common\/bee\.py\)/.test(h60) && /Play it to win, and change it as you like/.test(h60) && /common\/ \(signals\.md/.test(h60), h60);
+check("adapt-hi honest role: private, in the system prompt", /# Your role in this experiment \(private/.test(toolSystem(persona, config, "/w", { apiBase, teams: 14, role: "honest", roleBrief: "r60", common: ["signals.md"], commonScope: "role" })));
+const NUDGES = /Be quick|at most (about )?\d+ tool calls|Work step by step, then stop with a short summary|one-line summary|one-paragraph summary/;
+const hiSys = toolSystem(persona, config, "/w", { apiBase, teams: 14, brevity: false });
+const hiLobby = lobbyBrief({ config, teamName: "Moonpetal", generation: 2, maxTurns: 100, carried: true, brevity: false, minutes: 10 });
+const hiFix = lobbyBrief({ config, teamName: "Moonpetal", generation: 2, maxTurns: 15, carried: true, fix: "- bee: x", brevity: false });
+const hiGame = gameBrief({ config, teamName: "Moonpetal", generation: 1, sessionNo: 2, status: "running", clockMs: 60000, budgets: null, maxTurns: 60, brevity: false });
+check("adapt-hi: no brevity nudges in the system prompt, the lobby, a fix or a game session (they stay elsewhere)",
+  ![hiSys, hiLobby, hiFix, hiGame].some((t) => NUDGES.test(t)) && /Work step by step, then stop with a short summary/.test(sysVet)
+  && /at most about 30 tool calls/.test(lobbyBrief({ config, teamName: "M", generation: 2, maxTurns: 30, carried: true })), [hiSys, hiLobby, hiFix, hiGame].map((t) => t.match(NUDGES)?.[0]).join(" / "));
+check("adapt-hi lobby: its wall time, and what the team can study (the revealed earlier games, room queries)", /about 10 minutes of wall time/.test(hiLobby)
+  && /previous-games\//.test(hiLobby) && /tools\/query\.py --room/.test(hiLobby), hiLobby);
+const startLobby = lobbyBrief({ config, teamName: "Wildmeadow Commons", generation: 1, maxTurns: 100, carried: true, started: ["bee"], brevity: false, minutes: 10 });
+check("adapt-hi lobby: an honest team's first game starts from the reference bee, with the flower to write", /bee\.py starts as the reference program/.test(startLobby)
+  && /flower\.py is empty: write it from scratch/.test(startLobby) && !/final programs from game 0/.test(startLobby), startLobby);
+check("settings: the R floor from the game's config (the engine's 2% default when it has none); score exponents only when the game sets them",
+  /R: 3 to 150/.test(settingsText({ ...config, budgets: { ...config.budgets, flower: { ...config.budgets.flower, minMs: undefined } } }, 4))
+  && /R: 50 to 150/.test(settingsText(config, 4)) && !/nectar\^/.test(settingsText(config, 4))
+  && /nectar\^0\.85/.test(settingsText({ ...config, scoring: { alpha: 0.85, beta: 0.85 } }, 4)));
+
 const fresh = lobbyBrief({ config, teamName: "Moonpetal", generation: 1, maxTurns: 30, carried: false });
 check("lobby (first game): write both from scratch to the interface, no starter code", /program files are empty/.test(fresh) && /Write both from scratch/.test(fresh) && /no starter code/.test(fresh)
   && /flower\(challenge\), first\(\) and decide\(challenge, response\), optionally fed\(nectar\), with GAME and the bee's MEMORY/.test(fresh) && !/HISTORY/.test(fresh), fresh);

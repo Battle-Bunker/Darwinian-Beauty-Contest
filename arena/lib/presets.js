@@ -2,9 +2,11 @@
 // Lineup entries: [source, model] where source is a founder slug ("tess" or "founder:tess") or "from:<persona id>"
 // (a persona from an earlier arena: same prompt and team name, plus its last notebook). Models: opus, sonnet, haiku
 // (never a Fable model).
-// Config keys left out take the server's defaults (server/lib/gameConfig.js): 2-minute games, a feeding bee sits out 10
-// rounds, change budgets of one minute's worth, a 50-byte bee MEMORY. maxResponseBytes, grains, pollenGrain and the flower's budget range (R from minMs to ms) are always
-// set (MAX_RESPONSE_BYTES, GRAINS, POLLEN_GRAIN, FLOWER_MIN_MS and FLOWER_MAX_MS).
+// Config keys left out take the server's defaults (server/lib/gameConfig.js): 2-minute games, a feeding bee's rounds out
+// (now 20; 10 before), change budgets of one minute's worth, a 50-byte bee MEMORY, the R floor (now 2% of ms; 50 ms
+// before), the score exponents (now 0.85; √ before). maxResponseBytes, grains and pollenGrain are always set
+// (MAX_RESPONSE_BYTES, GRAINS, POLLEN_GRAIN), and so is the flower's budget range (FLOWER_MIN_MS and FLOWER_MAX_MS) in
+// every preset up to adapt (their R range stays 50 to 150); adapt-hi takes all the engine's new defaults (HI_CONFIG).
 //
 //   minutesByGame  game N lasts minutesByGame[N-1] minutes (the last entry repeats); else config.minutes
 //   session        warmupSeconds: the first in-game sessions start this long before the game does;
@@ -12,9 +14,11 @@
 //                  (up to maxIdleGapSeconds; back to gapSeconds after a submission; idleBackoff false: always gapSeconds);
 //                  endMarginSeconds: no new session with less game time left than this; maxMinutes: wall-clock cap of one
 //                  session (the game ending stops it anyway); lobbyMinutes: wall-clock cap of a lobby session (told to the
-//                  team); effort: the CLI's --effort for every team session; nice: the sessions' CPU priority (default 5)
+//                  team); effort: the CLI's --effort for every team session; nice: the sessions' CPU priority (default 5);
+//                  penaltyMinutes: how long a team waits after a session with a fair-play violation (default maxMinutes)
 //   prompts        { brevity: false }: no "be quick", "at most N tool calls" or "short summary" lines in the briefs
 //   concurrency    model sessions and calls at once (ARENA_CONCURRENCY overrides it; default 8)
+//   expectConfig   { "dotted.key": value } the server's config must have (checked when a game is created)
 //   limits         per-model session limits (turns, usd), optionally per phase: { lobby: {...}, game: {...} }
 //   maxModel       "sonnet": calls that would use opus (judges, breeders) use sonnet instead
 //   reserveUsd     no new team session once the spend is within this of the cap (keeps money for interviews and judges)
@@ -55,10 +59,11 @@ const ADAPT_LINEUP = [
 // adapt (carried over from fen and kiln, not from mesa-a); the four kids without their coding limits (personas.js
 // CODING_LIMITS). The honest specialists' flowers are on a fixed contract (prompts.js honest60: 60% of R on costly
 // signalling, percent 50, only their signalling strategy changing, and only to escape imitators); their bees play to win
-// and start as the reference fingerprint-checking bee of arena/priming/honest-signals/ (ARENA_HONEST_START_BEE: another
-// file, for a dry run before it exists).
-const HONEST_START_BEE = process.env.ARENA_HONEST_START_BEE || `${HONEST_DIR}/reference_bee.py`;
-const HI_HONEST = { role: "honest", brief: "r60", common: HONEST_DIR, start: { bee: HONEST_START_BEE } };
+// and start as the reference fingerprint-checking bee, bee.py in the honest teams' folder (ARENA_HONEST_HI_DIR: another
+// folder; ARENA_HONEST_START_BEE: another bee, for a dry run).
+const HONEST_HI_DIR = process.env.ARENA_HONEST_HI_DIR || HONEST_DIR;
+const HONEST_START_BEE = process.env.ARENA_HONEST_START_BEE || `${HONEST_HI_DIR}/bee.py`;
+const HI_HONEST = { role: "honest", brief: "r60", common: HONEST_HI_DIR, start: { bee: HONEST_START_BEE } };
 const HI_KID = { seed: true, uncap: true };
 const ADAPT_HI_LINEUP = [
   ["from:fen-d/mallory", "opus", VETERAN], ["from:fen-a/kenji", "opus", HI_KID], ["from:fen-a/ada", "opus", VETERAN],
@@ -135,16 +140,19 @@ export const PRESETS = {
   },
   // adapt-hi (EXPERIMENTS["adapt-hi"]): the same arena with everyone on opus at high effort, no brevity nudges, caps of
   // $6 / 100 turns in the lobby and $3 / 60 turns a session in play, a 10-minute lobby, a constant 5-second gap between
-  // sessions, sessions at nice 10, and as many sessions at once as there are teams (and two for interviews and judges).
+  // sessions, sessions at nice 15 (as the scaffolds), and as many sessions at once as there are teams (and two more for
+  // interviews and judges).
   adapt14hi: {
     description: "adapt-hi: adapt's 14 teams, all on opus at high effort; the honest specialists on a fixed 60%-of-R contract; python, int→graph[any], 10-minute games, fixed membership",
     config: HI_CONFIG,
     minutesByGame: [10],
     lineup: ADAPT_HI_LINEUP,
-    session: { warmupSeconds: 10, gapSeconds: 5, idleBackoff: false, maxIdleGapSeconds: 5, endMarginSeconds: 20, maxMinutes: 10, lobbyMinutes: 10, effort: "high", nice: 10 },
+    session: { warmupSeconds: 10, gapSeconds: 5, idleBackoff: false, maxIdleGapSeconds: 5, endMarginSeconds: 20, maxMinutes: 10, penaltyMinutes: 6, lobbyMinutes: 10, effort: "high", nice: 15 },
     limits: { lobby: { opus: { turns: 100, usd: 6 } }, game: { opus: { turns: 60, usd: 3 } } },
     prompts: { brevity: false },
     concurrency: 16,
+    // The engine's new defaults, which this preset leaves to the server: checked on the first game before any session.
+    expectConfig: { "budgets.flower.minMs": 3, feedCost: 20, "scoring.alpha": 0.85, "scoring.beta": 0.85 },
     scaffold: { cpuShare: 0.05 },
     reserveUsd: 10,
     noEvolution: true,
@@ -156,7 +164,7 @@ export const PRESETS = {
     config: { ...HI_CONFIG, feedCost: 20, budgets: { flower: { ms: FLOWER_MAX_MS, minMs: 3 } } },
     minutesByGame: [1],
     lineup: ADAPT_HI_LINEUP,
-    session: { warmupSeconds: 3, gapSeconds: 2, idleBackoff: false, maxIdleGapSeconds: 2, endMarginSeconds: 3, maxMinutes: 2, lobbyMinutes: 1, effort: "high", nice: 10 },
+    session: { warmupSeconds: 3, gapSeconds: 2, idleBackoff: false, maxIdleGapSeconds: 2, endMarginSeconds: 3, maxMinutes: 2, lobbyMinutes: 1, effort: "high", nice: 15 },
     prompts: { brevity: false },
     concurrency: 16,
     scaffold: { cpuShare: 0.05 },

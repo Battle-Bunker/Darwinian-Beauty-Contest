@@ -66,7 +66,7 @@ async function ensureArena(id, presetName, games, extra = {}) {
   const settings = {
     config: preset.config, minutesByGame: preset.minutesByGame || null, teams: preset.lineup.length, games, description: preset.description,
     session: { ...DEFAULT_SESSION, ...(preset.session || {}) }, limits: preset.limits || null, maxModel: preset.maxModel || null,
-    prompts: preset.prompts || null, concurrency: preset.concurrency || null,
+    prompts: preset.prompts || null, concurrency: preset.concurrency || null, expectConfig: preset.expectConfig || null,
     reserveUsd: preset.reserveUsd ?? 5, noEvolution: !!preset.noEvolution, examples: preset.examples || null, scaffold: preset.scaffold || null, budgetUsd: args.budget ? Number(args.budget) : null,
     ...extra,
   };
@@ -133,6 +133,12 @@ async function setupGame(arena, generation, log) {
     const config = configFor(arena, generation);
     const g = await Api.createGame(ownerTok, arena.room_short_id, config);
     const view = await Api.view(ownerTok, gamePath(arena.room_short_id, g.shortId));
+    // A preset that relies on the server's defaults (adapt-hi: the new R floor, feed cost and score exponents) checks
+    // them on its first game, before any session runs: an old server would play the old rules.
+    for (const [key, want] of Object.entries(arena.settings.expectConfig || {})) {
+      const got = key.split(".").reduce((o, k) => o?.[k], view.game.config);
+      if (got !== want) throw new Error(`the server's game config has ${key} = ${JSON.stringify(got)}, not ${JSON.stringify(want)}: restart it with the engine's new defaults (arena/server.sh)`);
+    }
     await q("INSERT INTO arena.games (arena_id, generation, game_short_id, game_url, game_uuid, config) VALUES ($1,$2,$3,$4,$5,$6)",
       [arena.id, generation, g.shortId, g.url, view.game.id, view.game.config]);
     gameRow = await one("SELECT * FROM arena.games WHERE arena_id = $1 AND generation = $2", [arena.id, generation]);
@@ -343,7 +349,8 @@ async function playGame(arena, ctx, log) {
         });
         log(`  ${p.name}: session ${no} ${s.killed ? `stopped (${s.killed})` : "ended"} at ${mmss(stream.clockMs)}: $${s.cost.toFixed(2)}${s.cost && s.killed ? " (estimated)" : ""}, ${s.requests} requests, ` +
           `${s.submitted.length ? `submitted ${s.submitted.map((x) => `${x.kind} v${x.version}`).join(", ")}` : "nothing submitted"}`);
-        if (s.violation) penaltyUntil = Date.now() + S.maxMinutes * 60_000; // a violation costs the team its next session
+        // A violation costs the team its next session (session.penaltyMinutes: how long it waits, else maxMinutes).
+        if (s.violation) penaltyUntil = Date.now() + (S.penaltyMinutes ?? S.maxMinutes) * 60_000;
         // Sessions that change nothing come less often, unless the preset says otherwise (session.idleBackoff false: a
         // constant gap).
         idle = s.submitted.length || S.idleBackoff === false ? 0 : idle + 1;

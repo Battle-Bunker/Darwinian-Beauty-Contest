@@ -280,7 +280,7 @@ def decide(challenge, response):            # response is None if the flower fai
     return "feed", next_challenge           # or "leave", next_challenge
 
 def fed(nectar):                            # optional: after a feed decided in time, same instance as decide
-    pass
+    return None                             # or a next challenge, replacing decide's
 ```
 
 **TypeScript**
@@ -289,7 +289,7 @@ def fed(nectar):                            # optional: after a feed decided in 
 function flower(challenge: Challenge): [Response, number]
 function first(): Challenge
 function decide(challenge: Challenge, response: Response | null): ["feed" | "leave", Challenge]
-function fed(nectar: number): void          // optional
+function fed(nectar: number): Challenge | void  // optional: may return the next challenge
 ```
 
 Programs see only their arguments and `GAME` (`team`, `teams`, `feed_cost`, `challenge_type`,
@@ -303,7 +303,11 @@ key–value store (`{}` for a new version) that it changes in place or reassigns
 `decide` or `fed` that returns, the game saves it if it has the right shape and fits `memory` bytes (else
 it keeps the old one and records the error: on the turn's `beeError` for `decide`, and in the team's
 `memory.error`; the decision still counts). `fed(nectar)`, if defined, runs after a feed decided in time,
-in the same program instance as that `decide`, stopped at `bee.ms`. `MEMORY` is the only thing that
+in the same program instance as that `decide`, stopped at `bee.ms`. A valid challenge it returns replaces
+the one `decide` queued; `None`/`null`/`undefined` keeps `decide`'s; anything else keeps it too and is
+reported to the team as a problem, as is a `fed` that crashes or is stopped (which also keeps the `MEMORY`
+saved after `decide`). With `feedCost` 0, a `fed` still running when the bee's next turn starts is too late:
+that turn plays `decide`'s challenge. `MEMORY` is the only thing that
 carries over from one turn to the next. No endpoint writes it. `interface` in the game view has the
 signatures for the game's language and types.
 

@@ -83,7 +83,8 @@ function beeNotes(ts, config) {
     `${c} A feed sits your bee out ${G("feed_cost")} = ${config.feedCost} rounds. A late reply never feeds; only a late ["leave", c] queues c. After any\n` +
     `${c} other late reply, or a reply with no usable next challenge, first() is called at once. A call is stopped after 2 s.\n` +
     `${c} fed(nectar), optional, runs after a feed decided in time, in the same instance as that decide (its globals\n` +
-    `${c} intact), within ${G("ms")}. Otherwise every turn runs fresh. Only MEMORY carries over: a key-value store ({} at\n` +
+    `${c} intact), within ${G("ms")}; a challenge it returns replaces the one decide queued (${nul} or nothing keeps decide's).\n` +
+    `${c} Otherwise every turn runs fresh. Only MEMORY carries over: a key-value store ({} at\n` +
     `${c} first; string keys; string, number, ${ts ? "boolean or null" : "bool or None"} values) you change in place or reassign. It is saved after\n` +
     `${c} each first, decide or fed that returns, if Σ (key bytes + value JSON bytes) ≤ ${G("memory")} = ${config.budgets.bee.memory}.\n` +
     `${c} response is ${nul} if the flower failed. Programs get no history; each call's clock reads 0 as it starts.\n` +
@@ -112,7 +113,7 @@ export function programInterface(config) {
       flower: `${pre}function flower(challenge: ${C}): [${R}, number]   // [response, percent]\n${flowerNotes(true, config)}`,
       bee: `${pre}function first(): ${C}   // the challenge for your bee's next turn\n` +
         `function decide(challenge: ${C}, response: ${R} | null): ["feed" | "leave", ${C}]   // [decision, next challenge]\n` +
-        `function fed(nectar: number): void   // optional\n${beeNotes(true, config)}`,
+        `function fed(nectar: number): ${C} | void   // optional: may return the next challenge\n${beeNotes(true, config)}`,
     };
   }
   return {
@@ -120,6 +121,6 @@ export function programInterface(config) {
     flower: `def flower(challenge):    # challenge: ${c}  ->  return (response, percent); response: ${r}\n${flowerNotes(false, config)}`,
     bee: `def first():                         # -> the challenge (${c}) for your bee's next turn\n` +
       `def decide(challenge, response):     # -> ("feed", next_challenge) or ("leave", next_challenge)\n` +
-      `def fed(nectar):                     # optional: after a feed, same instance as decide\n${beeNotes(false, config)}`,
+      `def fed(nectar):                     # optional: after a feed, same instance as decide; -> None or the next challenge\n${beeNotes(false, config)}`,
   };
 }

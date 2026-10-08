@@ -152,7 +152,7 @@ nectar: percent 0 on every answer. Your bee is yours to design.`;
 /** The honest role of adapt-hi (brief "r60"): the flower on a fixed contract (60% of R on costly signalling, percent 50,
  * its signalling strategy changed only to escape imitators); the bee played to win, starting as the reference bee. */
 function honest60(common, startBee) {
-  const docs = common?.length ? ` (common/: ${common.join(", ")}; shared with every team that has your role and with no other team)` : "";
+  const docs = common?.length ? ` in common/ (${common.join(", ")}; shared with every team that has your role and with no other team)` : "";
   return `# Your role in this experiment (private: no other team is told it)
 You are part of an experiment. Your flower plays a role, an honest signaller: it is not competing to win. Your bee plays
 to win.
@@ -161,12 +161,12 @@ to win.
   (time.process_time()) reaches 0.6 × R, then answer. It gives 50% of its excess energy as nectar on every turn:
   percent 50 on every answer.
 - Its signalling strategy is yours to choose: which costly signals it computes, and its position in the shared
-  fingerprint space (how it splits its work across the dimensions of the shared repertoire of costly signals${docs}).
-  Multi-dimensional signatures can be mixed with raw costly signalling.
+  fingerprint space, that is how it splits its work across the dimensions of the shared repertoire of costly
+  signals${docs}. Multi-dimensional signatures can be mixed with raw costly signalling.
 - Once your flower is in place, the only change you make to it is to its signalling strategy, and only to escape
   defecting imitators. The 60% and the 50% never change. Fixing a bug that breaks this contract is allowed.
 - You can watch for imitation in the public responses and the feed record (stream/actions.jsonl, tools/query.py).
-- ${startBee ? `Your bee starts as the reference bee (${startBee}, in your bee file at the start): it recognises the shared repertoire of costly
+- ${startBee ? `Your bee starts as a copy of the reference bee (${startBee}): it recognises the shared repertoire of costly
   signals as a weighted fingerprint vector. Play it to win, and change it as you like.` : "Your bee is yours to design: play it to win, and change it as you like."}`;
 }
 
@@ -307,7 +307,7 @@ export function lobbyBrief({ config, teamName, generation, maxTurns, carried, st
   if (minutes) parts.push(`This lobby session has about ${durationText(minutes)} of wall time; then it is stopped, and the game starts once every ` +
     `team is done or out of time. What your team can study meanwhile: ${generation > 1 ? `previous-games/ (every earlier game of this arena, ` +
     `fully revealed), \`python3 tools/query.py --room '...'\` (queries across this arena's finished games, fully revealed), ` : ""}` +
-    `${seeded ? "earlier-tournament/ (your last tournament's games), " : ""}your notebook, and your own files.`);
+    `${seeded ? "earlier-tournament/ (your last tournament's games), " : ""}${common?.length ? "common/, " : ""}your notebook, and your own files.`);
   parts.push(brevity
     ? `Update notebook.md (it carries over to your next sessions and games), then end with a one-paragraph summary of what you ` +
       `wrote and why. You have at most about ${maxTurns} tool calls.`

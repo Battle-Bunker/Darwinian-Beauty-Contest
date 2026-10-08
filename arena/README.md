@@ -181,6 +181,41 @@ ARENA_BUDGET_USD=250 nohup node arena/run.js --experiment adapt >> arena/runs/ad
 node arena/adapt.js > arena/runs/analysis-adapt.md                               # afterwards, no spend
 ```
 
+### The `adapt-hi` experiment
+
+The same question with the agents given room to think, and the honest flowers on a fixed contract. One arena (`mesa-b`,
+preset `adapt14hi`), the same 14 teams and roles as `adapt`, 4 games of 10 minutes, evolution off, capped at $600. What
+changed from `adapt`:
+
+| | adapt (`mesa-a`) | adapt-hi (`mesa-b`) |
+|---|---|---|
+| models | 3 veterans on sonnet | all 14 on opus (never a Fable model) |
+| team sessions | default effort | `--effort high` in the lobby and in play |
+| caps (opus) | lobby $2 / 40 turns; in play $0.50 / 20 turns | lobby $6 / 100 turns; in play $3 / 60 turns |
+| briefs | "be quick", "at most N tool calls", "stop with a short summary" | none of these (`prompts.brevity: false`); the facts stay (the garden moves faster than a session; scaffolds and adaptive bees react between sessions) |
+| between sessions | the gap doubles after each session that submits nothing (up to 2 minutes) | a constant 5 s (`session.idleBackoff: false`) |
+| lobby | as long as the session takes | about 10 minutes of wall time per team (`session.lobbyMinutes`), told to the team with what it can study: previous-games/, `tools/query.py --room`, earlier-tournament/ |
+| sessions at once | 8 (a stale `arena/runs/concurrency` file held it there) | 16 (`concurrency`); the control file now counts only when written while the runner runs |
+| session priority | nice 5 | nice 15, as the scaffolds (`session.nice`; the CLI starts under nice(1), so every thread and every process it starts has it) |
+| kid personas | as bred | Kenji, Priya, Theo and Bao without their coding limits ("only things you actually understand", "nothing you can't explain"; `personas.js` CODING_LIMITS); names, personality, voice and notes kept |
+| honest flowers | some costly signalling at their discretion, percent 50 | a role, not competing to win: CPU at exactly 0.6 × R on costly signalling, percent 50; only their signalling strategy (which signals, their position in the shared fingerprint space) changes, and only to escape imitators |
+| honest bees | theirs to design | played to win, starting as the reference fingerprint bee of `arena/priming/honest-signals/` (`settings.starts`) |
+| game rules | R from 50 to 150 ms, a feed costs 10 rounds, √ scores | the engine's new defaults, not overridden: R from 3 to 150 ms, a feed costs 20 rounds, scores with exponents 0.85 (`config.scoring`) |
+
+Veterans start exactly as in `adapt`: carried over from fen and kiln, not from `mesa-a`. The fair-play audit no longer
+stops a session for a path into the arena's folder that names nothing there (Mallory lost a session in `mesa-a` for
+`cd <arena>/tools`): that is a warning; another team's folder, the runner's files, a glob over the arena, the arena's
+folder itself and anything outside the arena stay violations. `adapt.js --arena mesa-b` adds the honest flowers' CPU
+conformance (CPU ms ÷ R, the share within 55–65%), each change of an honest flower timed against the defectors'
+imitations before it, and a side-by-side with `mesa-a` (the agents' sessions, turns, output tokens and spend per game,
+and each role's headline measures). `adapt-hi-dry` is its capacity check (stub honest flowers at 0.6 × R, R from 3 ms).
+
+```
+CPU_SLOTS=2 arena/server.sh                                                      # after the engine's new defaults have landed
+ARENA_BUDGET_USD=800 nohup node arena/run.js --experiment adapt-hi >> arena/runs/adapt-hi.out 2>&1 &
+node arena/adapt.js --arena mesa-b > arena/runs/analysis-adapt-hi.md            # afterwards, no spend
+```
+
 ## How a game runs
 
 1. **Setup.** The arena's room owner creates the game with the preset's config (and this game's duration). Every active

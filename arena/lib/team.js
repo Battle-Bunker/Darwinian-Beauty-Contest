@@ -392,6 +392,9 @@ export class TeamDesk {
  * control: { cancelled?, kill? } shared with the caller (the runner stops sessions when the game ends). Returns
  * { sessionId, cost, violation, killed, requests, submitted }.
  */
+/** How the brief names a team's start bee: common/<file> when its role's documents include it, else the file's name. */
+const startBeeName = (file, common) => (!file ? null : common?.includes(path.basename(file)) ? `common/${path.basename(file)}` : path.basename(file));
+
 export async function runTeamSession({ desk, arena, gameRow, persona, entry, gPath, stream, phase, sessionNo, attempt = 0, buildPrompt, log, control = {}, timeoutMs, carry = null, api = Api }) {
   const S = arena.settings.session || {};
   const tok = await login(entry.login_name);
@@ -407,7 +410,7 @@ export async function runTeamSession({ desk, arena, gameRow, persona, entry, gPa
   const cf = commonFiles(arena, persona);
   const system = toolSystem(persona, config, dir, { fixed: !!arena.settings.noEvolution, apiBase, teams, common: cf?.files, commonScope: cf?.scope,
     role: arena.settings.roles?.[persona.slug]?.role ?? null, roleBrief: arena.settings.roles?.[persona.slug]?.brief ?? null,
-    startBee: arena.settings.starts?.[persona.slug]?.bee ? path.basename(arena.settings.starts[persona.slug].bee) : null, brevity: arena.settings.prompts?.brevity !== false });
+    startBee: startBeeName(arena.settings.starts?.[persona.slug]?.bee, cf?.files), brevity: arena.settings.prompts?.brevity !== false });
   const scripts = fs.readdirSync(dir).filter((f) => f.endsWith(".py") && !KINDS.includes(f.replace(/\.py$/, "")));
   const prompt = buildPrompt({ view, drafts, status, maxTurns, scripts, dir, brevity: arena.settings.prompts?.brevity !== false });
   const tag = `${arena.id}:${persona.slug}:g${gameRow.generation}:s${sessionNo}${attempt ? `a${attempt}` : ""}:${crypto.randomBytes(3).toString("hex")}`;
