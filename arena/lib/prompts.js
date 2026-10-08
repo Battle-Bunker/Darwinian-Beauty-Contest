@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { ARENA_DIR } from "./db.js";
 import { byteCap, bytesInEnergy, bytesTerm } from "./energy.js";
+import { prevalenceOf, prevalenceText } from "./prevalence.js";
 
 // Read fresh for every prompt: RULES.md is the players' document and may be edited while arenas run.
 export const rules = () => fs.readFileSync(path.join(ARENA_DIR, "..", "RULES.md"), "utf8");
@@ -34,7 +35,7 @@ export function timingText(config) {
   return `- Rounds of 200 ms of game time, all bees in lockstep: a ${durationText(config.minutes)} game is about
   ${Math.round((config.minutes * 60000) / 200)} rounds. Every bee that isn't feeding gets one turn per round.
 - Each team's flower program is its flower species. A turn: the bee's queued challenge goes to one flower of a species
-  drawn at random from all species (yours included); that flower call gets a hidden time budget R, drawn uniformly from
+  drawn ${prevalenceOf(config) ? "by prevalence (below)" : "at random"} from all species (yours included); that flower call gets a hidden time budget R, drawn uniformly from
   ${minR} to ${fl.ms} ms afresh for every call: its hard limit to return [response, percent], on the wall clock from the
   start of the call (the flower is told its R as GAME["ms"]; GAME["flower_ms"] is ${fl.ms}).
   The response reaches the bee at ${fl.ms} ms whatever R and the flower's speed, and the bee is never told R; the bee has
@@ -45,7 +46,7 @@ export function timingText(config) {
     ? `\n  A response's bytes are its JSON text's, at most ${n0(byteCap(config))}: a bigger one is refused (E = 0).` : ""} The CPU ms are CPU time;
   the limit R is wall time, which also counts any time the machine spends on other programs during the call. If the bee feeds,
   the flower gives it percent/100 × E as nectar and the rest as pollen. If it doesn't feed, that energy is lost.
-- Programs run fresh for every call: flower(challenge), first(), decide(challenge, response), and the bee's optional
+${prevalenceText(config) ? `${prevalenceText(config)}\n` : ""}- Programs run fresh for every call: flower(challenge), first(), decide(challenge, response), and the bee's optional
   fed(nectar), which runs after a feed decided in time, in the same instance as that decide. Programs see only their
   arguments and GAME (the settings and their team's index): no history, no round or game time. A program's clock reads 0
   when each call starts (as if it were 1970-01-01, then at real speed): it can time its own work, nothing more. The bee
@@ -236,7 +237,7 @@ ${personaAndSituation(persona, fixed, { simpleCode })}
   builder, kept up to date), \`game\` and \`room\` (the same query builder, run by the game), \`follow()\` (each new turn as it
   arrives), \`response(seq)\` (a whole response over 4 KB), \`grains()\` and \`assemble(flower)\` (your pollen grains),
   \`follow_live()\` (public actions as they happen), \`status()\` (clock, round, live scores, your exact budgets and their
-  refill rate, your versions), \`memory()\` (your bee's MEMORY, read only), \`live(kind)\` (your code playing now),
+  refill rate, your versions, and every species' prevalence in a game that has it), \`memory()\` (your bee's MEMORY, read only), \`live(kind)\` (your code playing now),
   \`measure(kind, code)\` (size and cost, free), \`check(kind, code)\`, \`try_flower(code, challenges)\`, \`try_bee(code)\`,
   \`submit(kind, code)\` (refused with \`wait_s\` if you can't afford it yet), \`wait_for_budget(kind, cost)\`. Its code is
   audited before every start and restart with the fair-play rules below; it also may not start other processes, use

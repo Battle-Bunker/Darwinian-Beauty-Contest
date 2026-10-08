@@ -268,7 +268,9 @@ def game_over():
 
 def status(afford=None):
     """{"status", "clockMs", "endMs", "leftMs", "round", "budgets": {kind: {"available", "exact", "perMinute", "cap", ...}},
-    "scores" (the live scoreboard), "versions": {kind: {"version", "size", "atMs", ...}}, "memory", "text"}"""
+    "scores" (the live scoreboard), "versions": {kind: {"version", "size", "atMs", ...}}, "memory", "text", and in a game
+    with species prevalence "prevalence": [{"species", "teamId", "p", "P"}] (p_s: the chance a turn draws the species;
+    P_s: its recent pollination success)}"""
     return call("status", afford=afford)
 
 

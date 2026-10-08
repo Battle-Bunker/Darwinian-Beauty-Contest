@@ -246,6 +246,7 @@ export class GameStream {
 
   #count(a) {
     this.lastSeq = Math.max(this.lastSeq, a.seq);
+    if (!["arrive", "feed", "leave"].includes(a.action)) return; // (other public events, e.g. species prevalence samples)
     const b = Math.floor(a.atMs / BUCKET_MS);
     let m = this.buckets.get(b);
     if (!m) this.buckets.set(b, (m = new Map()));

@@ -99,98 +99,141 @@ const EXPORTS = `;globalThis.__fns = { ${[...ENTRY, ...OPTIONAL].map((n) => `${n
 const newContext = () => vm.createContext(Object.create(null), { microtaskMode: "afterEvaluate", codeGeneration: { strings: true, wasm: false } });
 
 // CPU-time budgets (docs/research/compute-budgets/REPORT.md §4.2). A call's budget is the main thread's CPU
-// time (process.threadCpuUsage: V8's background compiler and GC threads aren't the program's). Every script
-// runs with breakOnSigint; a watchdog thread reads the main thread's CPU from /proc (stale by up to a tick, never
-// ahead) and, once the call's budget is used, sends SIGINT, again every 2 ms while the call goes on. The
-// vm `timeout` is only the wall-clock backstop. For a bee it also sends notices to the engine: "late" at its
-// ms of CPU, and at the judging wall time either "late" or "fault" (the call spent most of its time waiting
-// for a CPU). Main thread and watchdog share CTL; the watchdog only signals or writes while the state is
-// RUNNING, holding it at BUSY meanwhile, so nothing of one call reaches the next.
+// time (process.threadCpuUsage: V8's background compiler and GC threads aren't the program's). A call is one
+// script, run with breakOnSigint, in which everything of the program runs (its top level, nested; its function;
+// encoding its reply). The script marks its own start and end (call.k, host functions it takes from a
+// property it deletes before any program code runs): only in between is the main thread surely inside a
+// breakOnSigint script, so only then may the watchdog thread send SIGINT (elsewhere one could end the process).
+// The watchdog reads the main thread's CPU from /proc (stale by up to a tick, never ahead) and sends SIGINT once
+// the call's budget is used, or once its wall-clock backstop is up. For a bee it also sends the engine
+// notices: "late" at its ms of CPU; at the judging wall time "late" or "fault" (most of the call's time was
+// spent waiting for a CPU). It acts only while the state is RUNNING, holding it at BUSY meanwhile; the script's
+// end waits for it, so nothing of one call reaches the next.
 const threadMs = () => { const u = process.threadCpuUsage(); return (u.user + u.system) / 1000; };
 const SCHEDSTAT = `/proc/self/task/${process.pid}/schedstat`;
 /** [CPU ms, ms spent runnable but waiting for a CPU] of the main thread, from /proc (tick-stale). */
 const schedstat = () => { try { const [c, w] = fs.readFileSync(SCHEDSTAT, "latin1").split(" "); return [Number(c) / 1e6, Number(w) / 1e6]; } catch { return [0, 0]; } };
 const wallMs = () => Number(process.hrtime.bigint()) / 1e6;
 const IDLE = 0, RUNNING = 1, BUSY = 2;
-const CTL = new SharedArrayBuffer(64);
+const CTL = new SharedArrayBuffer(96);
 const I = new Int32Array(CTL, 0, 4);   // [state, SIGINTs sent, (unused), call number]
-const F = new Float64Array(CTL, 16, 6); // [stop at CPU ms, notice at CPU ms (0: none), start wall ms, judge at wall ms (0: none), wait ms at start, fault share]
+// [stop at CPU ms, notice at CPU ms (0: none), start wall ms, judge at wall ms (0: none), wait ms at start, fault share, stop at wall ms]
+const F = new Float64Array(CTL, 16, 8);
 const WATCHDOG = `
 const { workerData } = require("node:worker_threads");
 const fs = require("node:fs");
-const I = new Int32Array(workerData.ctl, 0, 4), F = new Float64Array(workerData.ctl, 16, 6);
+const I = new Int32Array(workerData.ctl, 0, 4), F = new Float64Array(workerData.ctl, 16, 8);
 const read = () => { try { const [c, w] = fs.readFileSync(workerData.path, "latin1").split(" "); return [Number(c) / 1e6, Number(w) / 1e6]; } catch { return [0, 0]; } };
 const wallMs = () => Number(process.hrtime.bigint()) / 1e6;
-const hold = () => Atomics.compareExchange(I, 0, 1, 2) === 1;          // RUNNING -> BUSY, if the call is still on
+const hold = () => Atomics.compareExchange(I, 0, 1, 2) === 1;          // RUNNING -> BUSY, if still inside the call's script
 const release = () => { Atomics.store(I, 0, 1); Atomics.notify(I, 0); };
+const interrupt = () => { if (hold()) { try { process.kill(process.pid, "SIGINT"); Atomics.add(I, 1, 1); } finally { release(); } } };
 const notice = (kind) => { if (hold()) { try { fs.writeSync(1, '{"notice":"' + kind + '"}\\n'); } finally { release(); } } };
-let noticed = -1;
+let noticed = -1, stopped = -1, walled = -1;
 for (;;) {
+  if (Atomics.load(I, 0) === 0) { Atomics.wait(I, 0, 0, 1000); continue; }
   const call = Atomics.load(I, 3);
-  if (Atomics.load(I, 0) === 0) { Atomics.wait(I, 3, call, 1000); continue; }
   const [cpu, wait] = read();
-  if (cpu >= F[0]) {                       // the budget is used: stop the script (and keep at it while the call goes on)
-    if (hold()) { try { process.kill(process.pid, "SIGINT"); Atomics.add(I, 1, 1); } finally { release(); } }
-    Atomics.wait(I, 3, call, 2);
-    continue;
-  }
+  const wall = wallMs() - F[2];
+  if (cpu >= F[0] && stopped !== call) { stopped = call; interrupt(); continue; }   // its CPU budget is used
+  if (wall >= F[6] && walled !== call) { walled = call; interrupt(); continue; }    // its wall backstop is up
   // A bee: late at its ms of CPU; else judged at its wall time: the server's fault if it spent most of it
   // waiting for a CPU, else late. One notice a call.
-  const wall = wallMs() - F[2];
-  if (F[1] && cpu >= F[1]) { F[1] = 0; F[3] = 0; if (noticed !== call) { noticed = call; notice("late"); } }
-  if (F[3] && wall >= F[3]) { F[3] = 0; if (noticed !== call) { noticed = call; notice((wait - F[4]) >= F[5] * wall ? "fault" : "late"); } }
-  // Wall time can't pass slower than CPU time: sleep for the CPU left (or until the judging time).
-  let next = F[0] - cpu;
-  if (F[1]) next = Math.min(next, F[1] - cpu);
-  if (F[3]) next = Math.min(next, F[3] - wall);
-  Atomics.wait(I, 3, call, Math.max(0.25, Math.min(next, 50)));
+  if (F[1] && cpu >= F[1] && noticed !== call) { noticed = call; notice("late"); }
+  if (F[3] && wall >= F[3] && noticed !== call) { noticed = call; notice((wait - F[4]) >= F[5] * wall ? "fault" : "late"); }
+  // Wall time can't pass slower than CPU time: wait for the CPU left, or the next wall-clock mark.
+  let next = F[6] - wall;
+  if (stopped !== call) next = Math.min(next, F[0] - cpu);
+  if (noticed !== call && F[1]) next = Math.min(next, F[1] - cpu);
+  if (noticed !== call && F[3]) next = Math.min(next, F[3] - wall);
+  Atomics.wait(I, 0, 1, Math.max(0.25, Math.min(next, 50)));
 }`;
-let watchdog = null;
 function startWatchdog() {
-  watchdog = new Worker(WATCHDOG, { eval: true, workerData: { ctl: CTL, path: SCHEDSTAT } });
-  watchdog.unref();
-  watchdog.on("error", () => { watchdog = null; });
+  const w = new Worker(WATCHDOG, { eval: true, workerData: { ctl: CTL, path: SCHEDSTAT } });
+  w.unref();
+  w.on("error", (e) => process.stderr.write(`watchdog: ${short(e)}\n`));
 }
-process.on("SIGINT", () => {}); // a SIGINT that lands between scripts is harmless
+process.on("SIGINT", () => {}); // a stray SIGINT that lands between scripts is harmless
 
-/** Start a call's budget: stop at `budget` ms of CPU; for a bee, a notice at `soft` ms of CPU and judged at `judge` ms of wall time. */
-function begin(budget, wallLimit, soft = 0, judge = 0) {
-  const c0 = threadMs(), [, wait0] = schedstat(), w0 = wallMs();
-  F[0] = c0 + budget; F[1] = soft ? c0 + soft : 0; F[2] = w0; F[3] = judge; F[4] = wait0; F[5] = setup.faultShare || 0.5;
-  Atomics.store(I, 0, RUNNING);
-  Atomics.add(I, 3, 1);
-  Atomics.notify(I, 3);
-  const call = { c0, budget, w0, wait0, wallLimit };
-  call.left = () => Math.max(1, Math.round(wallLimit - (wallMs() - w0)));          // the wall backstop still left
-  call.opts = () => ({ breakOnSigint: true, timeout: call.left() });
+/**
+ * A call's limits: stopped at `budget` ms of CPU, or at `wallStop` ms of wall time; a bee: a notice at `soft`
+ * ms of CPU, judged at `judge` ms of wall time. `run` runs the program's top level in context c.
+ */
+function begin(c, budget, wallStop, soft = 0, judge = 0) {
+  const call = { budget, wallStop };
+  const share = setup.faultShare || 0.5;
+  call.k = Object.freeze({
+    __proto__: null,
+    enter() {
+      const [, wait0] = schedstat(), w0 = wallMs();
+      const c0 = threadMs();
+      Object.assign(call, { c0, w0, wait0 });
+      F[0] = c0 + budget; F[1] = soft ? c0 + soft : 0; F[2] = w0; F[3] = judge; F[4] = wait0; F[5] = share; F[6] = wallStop;
+      Atomics.add(I, 3, 1);
+      Atomics.store(I, 0, RUNNING);
+      Atomics.notify(I, 0);
+    },
+    leave() {
+      call.c1 = threadMs();
+      release(call);
+    },
+    run() { script.runInContext(c); },
+    done(...vals) { call.result = vals; },
+    sig: SIGNATURE,
+    max: setup.maxChars || 20000,
+  });
   return call;
 }
 
-/** End a call's budget (waiting for the watchdog if it is mid-signal): its CPU time in ms. */
-function end(call) {
-  if (call.cpu !== undefined) return call.cpu;
-  while (Atomics.compareExchange(I, 0, RUNNING, IDLE) !== RUNNING) Atomics.wait(I, 0, BUSY, 5);
-  call.cpu = threadMs() - call.c0;
-  return call.cpu;
+/** Leave the RUNNING state, once (waiting while the watchdog is mid-signal or mid-notice). */
+function release(call) {
+  if (call.released) return;
+  call.released = true;
+  while (Atomics.compareExchange(I, 0, RUNNING, IDLE) !== RUNNING) {
+    if (Atomics.load(I, 0) === IDLE) break;
+    Atomics.wait(I, 0, BUSY, 5);
+  }
 }
 
+// The call's script: it takes call.k from a property it deletes first (defined, not assigned, so no setter
+// of the program's runs), marks its start and end, and runs `body` (which may use k) in between.
+const KEY = "__dbcCall";
+function inCall(c, call, body) {
+  Object.defineProperty(c, KEY, { value: call.k, configurable: true, writable: false, enumerable: false });
+  return vm.runInContext(`(() => { const k = globalThis.${KEY}; delete globalThis.${KEY}; k.enter(); try { ${body} } finally { k.leave(); } })()`,
+    c, { breakOnSigint: true });
+}
+
+/** The call's CPU time in ms: from its script's start to its end (or to now, if it was stopped). */
+function cpuOf(call) {
+  release(call);
+  return (call.c1 ?? threadMs()) - (call.c0 ?? threadMs());
+}
+
+// Inside a call's script: JSON text of a value (hooks such as toJSON run here, on the program's clock).
+const ENC = `const enc = (r, what) => {
+    if (r !== undefined && r !== null && typeof r === "object" && typeof r.then === "function") throw new Error(what + " must not be async");
+    let s; try { s = JSON.stringify(r === undefined ? null : r); } catch (e) { throw new Error(what + " returned something that is not plain data"); }
+    if (typeof s !== "string" && s !== undefined) throw new Error(what + " returned something that is not plain data");
+    return s === undefined ? "null" : s; };`;
+// ... and MEMORY's: [text, null] or [null, why it isn't plain data].
+const ENC_MEMORY = `const encMemory = () => { try { const m = enc(globalThis.MEMORY, "MEMORY");
+    return m.length > 1048576 ? [null, "MEMORY is far too large"] : [m, null]; }
+    catch (e) { return [null, String(e && e.message).replace("MEMORY returned something", "MEMORY is something")]; } };`;
+
 const interrupted = (e) => /interrupted/i.test(short(e));
-/** What a call that threw ends with: stopped at its CPU budget, the wall backstop (late or the server's fault), or an error. */
+/** What a call that threw ends with: stopped at its CPU budget, at the wall backstop (late, or the server's fault), or an error. */
 function failure(e, call) {
-  const [cpuNow, waitNow] = schedstat();
-  const cpu = end(call);
-  if (interrupted(e)) {
-    if (cpu >= call.budget - 0.05) return { e: "Timeout: took too long", cpu };
-    return { e: "server fault: interrupted before its time was up", cpu, fault: true }; // (a stray SIGINT)
-  }
-  if (timedOut(e)) {
-    const wall = wallMs() - call.w0, wait = waitNow - call.wait0;
-    const fault = wait >= (setup.faultShare || 0.5) * wall && cpu < call.budget;
-    return fault
-      ? { e: `server fault: it waited ${Math.round(wait)} ms of ${Math.round(wall)} ms for a CPU, and ran ${cpu.toFixed(1)} ms`, cpu, backstop: true, fault: true }
-      : { e: `Timeout: still running after ${Math.round(wall)} ms of wall time (${cpu.toFixed(1)} ms of CPU)`, cpu, backstop: true, fault: false };
-  }
-  return { e: short(e), cpu };
+  const [, waitNow] = schedstat();
+  const cpu = cpuOf(call);
+  if (!interrupted(e)) return { e: short(e), cpu };
+  if (cpu >= call.budget - 0.05) return { e: "Timeout: took too long", cpu };
+  const wall = wallMs() - (call.w0 ?? wallMs()), wait = waitNow - (call.wait0 ?? waitNow);
+  if (wall < call.wallStop - 1) return { e: "server fault: interrupted before its time was up", cpu, fault: true }; // (a stray SIGINT)
+  const fault = wait >= (setup.faultShare || 0.5) * wall;
+  return fault
+    ? { e: `server fault: it waited ${Math.round(wait)} ms of ${Math.round(wall)} ms for a CPU, and ran ${cpu.toFixed(1)} ms`, cpu, backstop: true, fault: true }
+    : { e: `Timeout: still running after ${Math.round(wall)} ms of wall time (${cpu.toFixed(1)} ms of CPU)`, cpu, backstop: true, fault: false };
 }
 
 let setup = null, script = null, loadError = null;
@@ -225,7 +268,7 @@ const text = (v) => JSON.stringify(v === undefined ? null : v);
 
 const takeOut = (c) => {
   try {
-    const o = vm.runInContext("__takeOut()", c, { timeout: 100 });
+    const o = vm.runInContext("__takeOut()", c); // (the prelude's own function: not writable, not the program's)
     return typeof o === "string" ? o : "";
   } catch { return ""; }
 };
@@ -253,19 +296,6 @@ function load(req) {
   out(loadError ? { ok: false, e: loadError, out: o } : { ok: true, out: o });
 }
 
-/**
- * JSON text of a global of context c, encoded inside the context under the call's limits (`opts`: hooks such
- * as toJSON run there, on the program's clock). Only a string comes out.
- */
-function encode(c, name, what, opts) {
-  const s = vm.runInContext(`(() => { const r = globalThis.${name};
-    if (r !== undefined && r !== null && typeof r === "object" && typeof r.then === "function") throw new Error("${what} must not be async");
-    let s; try { s = JSON.stringify(r === undefined ? null : r); } catch (e) { throw new Error("${what} returned something that is not plain data"); }
-    return s === undefined ? "null" : s; })()`, c, opts);
-  if (typeof s !== "string") throw new Error(`${what} returned something that is not plain data`);
-  return s;
-}
-
 function callFlower(req) {
   if (loadError) return out({ e: "the program failed to load: " + loadError, cpu: 0 });
   // R, this call's hidden time budget: its CPU limit, and GAME.ms for the call (at most the flower window).
@@ -273,14 +303,16 @@ function callFlower(req) {
   const c = fresh({ ...setup.game, ms: budget });
   setGlobals(c, { __c: text(req.c) });
   startClock(c);
-  const call = begin(budget, setup.wallMs || 400);
+  const call = begin(c, budget, setup.wallMs || 400);
   try {
     // The flower's compute: its program, flower(challenge), and encoding the reply: all on the clock.
-    script.runInContext(c, call.opts());
-    if (vm.runInContext("typeof __fns.flower", c, call.opts()) !== "function") throw new Error(`program must define ${SIGNATURE}`);
-    vm.runInContext("globalThis.__r = __fns.flower(__c);", c, call.opts());
-    const s = encode(c, "__r", "flower", call.opts());
-    const cpu = end(call);
+    const s = inCall(c, call, `${ENC}
+      k.run();
+      if (typeof __fns.flower !== "function") throw new Error("program must define " + k.sig);
+      globalThis.__r = __fns.flower(__c);
+      return enc(globalThis.__r, "flower");`);
+    const cpu = cpuOf(call);
+    if (typeof s !== "string") throw new Error("flower returned something that is not plain data");
     // The response's size: s is "[" + response + "," + percent + "]" when the flower returned a pair (a
     // percent that isn't a number is refused by the engine anyway).
     let bytes = null;
@@ -294,17 +326,6 @@ function callFlower(req) {
     return send(`{"cpu":${cpu},"bytes":${bytes},"v":${s}}`);
   } catch (e) {
     return out(failure(e, call));
-  }
-}
-
-/** MEMORY as JSON text, encoded in the context under the call's limits: { memory } or { memoryError }. */
-function encodeMemory(c, opts) {
-  try {
-    const m = encode(c, "MEMORY", "MEMORY", opts);
-    return m.length > 1 << 20 ? { memoryError: "MEMORY is far too large" } : { memory: m };
-  } catch (e) {
-    if (timedOut(e) || interrupted(e)) throw e;
-    return { memoryError: short(e).replace("MEMORY returned something", "MEMORY is something") };
   }
 }
 
@@ -327,22 +348,24 @@ function callBee(req) {
   }
   startClock(c);
   // first and decide: late at ms of CPU (a notice), judged at wallMs, stopped at the hard limit (CPU) or hardWallMs.
-  const call = begin(limit, setup.hardWallMs || Math.max(4000, 2 * limit), setup.ms, setup.wallMs || 250);
+  const call = begin(c, limit, setup.hardWallMs || Math.max(4000, 2 * limit), setup.ms, setup.wallMs || 250);
   try {
-    script.runInContext(c, call.opts());
-    if (ENTRY.some((n) => vm.runInContext(`typeof __fns.${n}`, c, call.opts()) !== "function")) throw new Error(`program must define ${SIGNATURE}`);
     const fn = req.op === "first" ? "__fns.first()" : "__fns.decide(__c, __r)";
-    vm.runInContext(`globalThis.__a = ${fn};`, c, call.opts());
-    const s = encode(c, "__a", req.op, call.opts());
-    if (s.length > maxChars()) throw new Error(`${req.op} returned something too large`);
+    inCall(c, call, `${ENC} ${ENC_MEMORY}
+      k.run();
+      if (typeof __fns.first !== "function" || typeof __fns.decide !== "function") throw new Error("program must define " + k.sig);
+      globalThis.__a = ${fn};
+      const s = enc(globalThis.__a, ${JSON.stringify(req.op)});
+      if (s.length > k.max) throw new Error(${JSON.stringify(req.op + " returned something too large")});
+      const [m, me] = encMemory();
+      k.done(s, m, me, ${req.op === "decide"} && typeof __fns.fed === "function");`);
+    const cpu = cpuOf(call);
+    const [s, m, me, fedFn] = call.result ?? [];
+    if (typeof s !== "string") throw new Error(`${req.op} returned something that is not plain data`);
     const a = JSON.parse(s);
-    const reply = { a, ...encodeMemory(c, call.opts()) };
+    const reply = { a, ...(typeof m === "string" ? { memory: m } : { memoryError: String(me ?? "MEMORY could not be read") }), cpu, out: takeOut(c) };
     // A feed decision keeps its context for fed(nectar), if the program defines it.
-    const keep = req.op === "decide" && (a === "feed" || (Array.isArray(a) && a.length === 2 && a[0] === "feed")) &&
-        vm.runInContext("typeof __fns.fed", c, call.opts()) === "function";
-    reply.cpu = end(call);
-    reply.out = takeOut(c);
-    if (keep) kept = c;
+    if (req.op === "decide" && fedFn === true && (a === "feed" || (Array.isArray(a) && a.length === 2 && a[0] === "feed"))) kept = c;
     return out(reply);
   } catch (e) {
     return out({ ...failure(e, call), out: takeOut(c) });
@@ -354,24 +377,26 @@ function callFed(req) {
   kept = null;
   if (!c) return out({ skipped: true });
   try { startClock(c); } catch { return out({ e: "the bee's clock could not be started", out: "" }); }
-  const call = begin(setup.ms, setup.wallMs || 250); // fed: stopped at ms of CPU
+  const call = begin(c, setup.ms, setup.wallMs || 250); // fed: stopped at ms of CPU
   try {
     // The context has run the program's code, so nothing of it is trusted now: the nectar goes in as a literal.
     const nectar = typeof req.nectar === "number" && Number.isFinite(req.nectar) ? req.nectar : 0;
-    vm.runInContext(`globalThis.__a = __fns.fed(${JSON.stringify(nectar)});`, c, call.opts());
-    const reply = { ok: true };
-    if (!vm.runInContext("globalThis.__a === undefined || globalThis.__a === null", c, call.opts())) {
-      try {
-        const s = encode(c, "__a", "fed", call.opts());
-        if (s.length > maxChars()) reply.aError = "fed returned something too large";
-        else reply.a = JSON.parse(s);
-      } catch (e) {
-        if (timedOut(e) || interrupted(e)) throw e;
-        reply.aError = short(e);
+    inCall(c, call, `${ENC} ${ENC_MEMORY}
+      globalThis.__a = __fns.fed(${JSON.stringify(nectar)});
+      let s = null, ae = null;
+      if (globalThis.__a !== undefined && globalThis.__a !== null) {
+        try { s = enc(globalThis.__a, "fed"); if (s.length > k.max) { s = null; ae = "fed returned something too large"; } }
+        catch (e) { ae = String(e && e.message); }
       }
-    }
-    Object.assign(reply, encodeMemory(c, call.opts()));
-    reply.cpu = end(call);
+      const [m, me] = encMemory();
+      k.done(s, ae, m, me);`);
+    const cpu = cpuOf(call);
+    const [s, ae, m, me] = call.result ?? [];
+    const reply = { ok: true };
+    if (typeof s === "string") reply.a = JSON.parse(s);
+    else if (ae !== null && ae !== undefined) reply.aError = String(ae).slice(0, 300);
+    Object.assign(reply, typeof m === "string" ? { memory: m } : { memoryError: String(me ?? "MEMORY could not be read") });
+    reply.cpu = cpu;
     reply.out = takeOut(c);
     return out(reply);
   } catch (e) {

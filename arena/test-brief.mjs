@@ -130,6 +130,11 @@ check("adapt-hi: no cryptographic words in what the arena writes for a team (RUL
   && !CRYPTO.test(lobbyBrief({ config: smallCfg, teamName: "M", generation: 2, maxTurns: 100, carried: true, brevity: false, minutes: 10 }))
   && !CRYPTO.test(gameBrief({ config: smallCfg, teamName: "M", generation: 1, sessionNo: 2, status: "running", clockMs: 60000, budgets: null, maxTurns: 60, brevity: false })),
   smallSys.match(new RegExp(`.{0,80}(${CRYPTO.source}).{0,80}`, "i"))?.[0]);
+const prevCfg = { ...config, prevalence: { on: true, basis: "pollination", halfLifeS: 60, cStart: 1, cEnd: 0.1 } };
+check("timing: species prevalence, when the game has it: the draw, P_s as recent pollination, public in the tools, never to programs; no strategy",
+  /species\s+drawn by prevalence/.test(timingText(prevCfg)) && /p_s = \(c \+ P_s\) \/ \(N \(c \+ 1\)\)/.test(timingText(prevCfg)) && /recent pollination success/.test(timingText(prevCfg))
+  && /half-life of 60 s/.test(timingText(prevCfg)) && /c falls from 1 to 0\.1/.test(timingText(prevCfg)) && /tools\/status\.py/.test(timingText(prevCfg)) && /Programs never see them/.test(timingText(prevCfg))
+  && !/prevalence/i.test(timingText(config)) && /drawn at random/.test(timingText(config)), timingText(prevCfg));
 check("adapt-hi lobby: its wall time, and what the team can study (the revealed earlier games, room queries)", /about 10 minutes of wall time/.test(hiLobby)
   && /previous-games\//.test(hiLobby) && /tools\/query\.py --room/.test(hiLobby), hiLobby);
 const bothLobby = lobbyBrief({ config, teamName: "Wildmeadow Commons", generation: 1, maxTurns: 100, carried: true, started: ["flower", "bee"], brevity: false, minutes: 10 });

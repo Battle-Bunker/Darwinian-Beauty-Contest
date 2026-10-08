@@ -14,6 +14,7 @@ import { Broker } from "./broker.js";
 import { Scaffold } from "./scaffold.js";
 import { definesFed } from "./mechanisms.js";
 import { byteCap, bytesFactor, bytesInEnergy, bytesTerm, energyUnit } from "./energy.js";
+import { currentOf, prevalenceOf } from "./prevalence.js";
 import { SPIN_WARNING, TRANSCRIPTS, audit, collect, commonFiles, extOf, killLeftovers, prepareWorkspace, recordViolations, spillDir, writeMinified } from "./workspace.js";
 
 const KINDS = ["flower", "bee"];
@@ -169,6 +170,14 @@ export function statusOf(view, teamId, { afford = null, code = false, memory = f
     lines.push(`Your bee's MEMORY: ${n0(mem.bytes ?? 0)} of ${n0(out.memory.cap ?? 0)} bytes (bee v${mem.version ?? "-"}; only your bee writes it)` +
       (mem.error ? `; its last save failed: ${String(mem.error).slice(0, 200)}` : "") +
       (memory ? `:\n  ${JSON.stringify(mem.value ?? null).slice(0, 4000)}` : ". tools/status.py --memory shows it."));
+  }
+  // Species prevalence (a game that draws species by prevalence): public, about once a second.
+  const prev = prevalenceOf(config) ? currentOf(view) : null;
+  if (prev?.length) {
+    const nameOfSpecies = (t) => name[t] ?? (Number.isInteger(Number(t)) ? view.teams[Number(t)]?.name : null) ?? String(t);
+    out.prevalence = prev.map((x) => ({ species: nameOfSpecies(x.team), teamId: name[x.team] ? x.team : view.teams[Number(x.team)]?.id ?? null, p: x.p, P: x.P }));
+    lines.push(`Species prevalence now (p_s: the chance a turn draws the species; P_s: its recent pollination success):\n` +
+      [...out.prevalence].sort((a, b) => b.p - a.p).map((x) => `  ${x.species}${x.teamId === teamId ? " (you)" : ""}: p ${x.p.toFixed(3)}, P ${x.P == null ? "-" : x.P.toFixed(2)}`).join("\n"));
   }
   out.text = lines.join("\n");
   return out;

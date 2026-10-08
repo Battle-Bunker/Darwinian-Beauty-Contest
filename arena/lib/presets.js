@@ -92,7 +92,7 @@ const ADAPT_HI_LINEUP = [
 const HI_CONFIG = { language: "python", challengeType: "int", responseType: "graph[any]", grains: GRAINS, budgets: { flower: { ms: FLOWER_MAX_MS } } };
 // ...and checked on the first game, before any session (an old server would play the old rules).
 const HI_EXPECT = { "budgets.flower.minMs": 3, feedCost: 20, "scoring.alpha": 0.85, "scoring.beta": 0.85, maxResponseBytes: 1024, "energy.bytes": true,
-  "pollenGrain.scale": 0.1 };
+  "pollenGrain.scale": 0.1, "prevalence.on": true };
 
 export const DEFAULT_SESSION = { warmupSeconds: 8, gapSeconds: 5, maxIdleGapSeconds: 20, endMarginSeconds: 10, maxMinutes: 6 };
 

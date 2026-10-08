@@ -226,6 +226,19 @@ check("handshakes: two teams favouring each other both ways are mutual", h.hands
     && Math.abs(eB.size + eB.compute + eB.short + eB.bytes + eB.nectar + eB.pollen + eB.lost - 1) < 0.01, eB);
 }
 
+// lib/prevalence.js: the game's settings, c and the floor over the game, and the published samples in any of the shapes
+// the engine may give them.
+{
+  const { prevalenceOf, cAt, floorAt, samplesOf, currentOf } = await import("./lib/prevalence.js");
+  const cfg = { prevalence: { on: true, basis: "pollination", halfLifeS: 60, cStart: 1, cEnd: 0.1 } };
+  check("prevalence: off without the key; c falls linearly from 1 to 0.1; the floor is c / (N (c + 1))",
+    prevalenceOf({}) === null && prevalenceOf({ prevalence: { on: false } }) === null && cAt(cfg, 0, 600000) === 1 && Math.abs(cAt(cfg, 600000, 600000) - 0.1) < 1e-12
+    && Math.abs(cAt(cfg, 300000, 600000) - 0.55) < 1e-12 && Math.abs(floorAt(cfg, 0, 600000, 14) - 1 / 28) < 1e-12);
+  const s = samplesOf([{ atMs: 1000, team: "A", p: 0.1, P: 1.2 }, { atMs: 2000, species: [{ teamId: "A", p_s: 0.2, P_s: 2 }, { index: 1, prob: 0.05 }] }]);
+  check("prevalence: samples from flat rows or one row per instant", s.length === 3 && s[1].p === 0.2 && s[1].P === 2 && s[1].atMs === 2000 && s[2].team === 1 && s[2].P === null, s);
+  check("prevalence: the view's current values, as a list or a map", currentOf({ prevalence: [{ team: "A", p: 0.3, P: 1 }] })[0].p === 0.3 && currentOf({ game: { prevalence: { A: { p: 0.4, P: 2 } } } })[0].team === "A");
+}
+
 // lib/energy.js: E from the game's own config (old games without the byte factor keep their formula).
 {
   const { excessEnergy, bytesFactor, bytesShare, bytesTerm, energyUnit } = await import("./lib/energy.js");

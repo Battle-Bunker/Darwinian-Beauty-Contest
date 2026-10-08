@@ -32,7 +32,8 @@ import { callModel } from "./lib/llm.js";
 import { classifyPrograms, levelOf } from "./lib/mechanisms.js";
 import { queryAll } from "./lib/metrics.js";
 import { bytesInEnergy, bytesShare } from "./lib/energy.js";
-import { honestyOf } from "./lib/wealth.js";
+import { honestyOf, spearman } from "./lib/wealth.js";
+import { floorAt, prevalenceOf, samplesOf } from "./lib/prevalence.js";
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((acc, a, i, arr) => {
   if (a.startsWith("--")) acc.push([a.slice(2), arr[i + 1] && !arr[i + 1].startsWith("--") ? arr[i + 1] : true]);
@@ -183,6 +184,7 @@ async function analyse(id) {
     } else if (honestEnts.length) { p("No honest flower changed during this game."); p(); }
 
     fingerprintReport({ T, ents, role, copies, teamIdByName, gen: g.generation, S });
+    await prevalenceReport({ g, gp, teams, ents, role, T, copies, teamIdByName, S });
 
     // Defectors.
     p("Defectors (conformance: answers at 0%; imitation: their versions' first close copies of another species' answers; detection: rival bees' feed rate falling below half the model's):");
@@ -265,6 +267,73 @@ async function analyse(id) {
     }));
   }
   return { id, arena, summary, effort: await effortOf(id, games) };
+}
+
+// ---------------------------------------------------------------- species prevalence (adapt-hi)
+
+/** The game's published prevalence samples ({ atMs, team id, p, P }), from its history queries (lib/prevalence.js reads
+ * whatever shape the engine gives them); [] when the game has none or the query isn't there. */
+async function prevalenceSamples(gp, teams) {
+  let rows = [];
+  try { rows = await queryAll(Api, gp, { from: "prevalence" }); } catch { return []; }
+  const idOf = (t) => (teams.some((x) => x.id === t) ? t : teams.find((x) => x.index === Number(t))?.id ?? null);
+  return samplesOf(rows).map((s) => ({ ...s, team: idOf(s.team) })).filter((s) => s.team);
+}
+
+/** Each species' prevalence p_s over the game, by role; the share each role holds and the concentration (HHI = Σ p_s²),
+ * minute by minute; whether prevalent species cut their percent; and extinctions (p_s at its floor, c / (N (c + 1)), for
+ * a minute or more). */
+async function prevalenceReport({ g, gp, teams, ents, role, T, S }) {
+  const config = g.config || {};
+  if (!prevalenceOf(config)) return;
+  const samples = await prevalenceSamples(gp, teams);
+  if (!samples.length) { p(`Species prevalence, game ${g.generation}: no samples (the game publishes none, or its query entity has another name).`); p(); return; }
+  const n = teams.length, duration = Math.max(g.metrics?.durationMs ?? 0, (config.minutes ?? 0) * 60000, ...samples.map((x) => x.atMs));
+  const nWin = Math.max(1, Math.ceil(duration / 60000));
+  const name = Object.fromEntries(ents.map((e) => [e.team_id, e.team_name]));
+  const species = [...new Set(samples.map((x) => x.team))];
+  const pAt = (team, w) => mean(samples.filter((x) => x.team === team && Math.floor(x.atMs / 60000) === w).map((x) => x.p));
+  const roles = ["veteran", "honest", "defector"];
+  // Per species, minute by minute.
+  p(`Species prevalence, game ${g.generation} (p_s: the chance a turn draws the species, mean per minute; uniform would be ${f2(1 / n)}):`);
+  table(["species", "role", ...Array.from({ length: nWin }, (_, w) => `min ${w + 1}`)],
+    [...species].sort((a, b) => roles.indexOf(role(a)) - roles.indexOf(role(b))).map((t) => [name[t] ?? t, role(t), ...Array.from({ length: nWin }, (_, w) => f2(pAt(t, w)))]));
+  // Role shares and concentration.
+  const share = (r, w) => { const xs = species.filter((t) => role(t) === r).map((t) => pAt(t, w)).filter((x) => x != null); return xs.length ? xs.reduce((a, b) => a + b, 0) : null; };
+  const hhi = (w) => { const xs = species.map((t) => pAt(t, w)).filter((x) => x != null); return xs.length ? xs.reduce((a, b) => a + b * b, 0) : null; };
+  p(`Prevalence held by each role, and its concentration (HHI = Σ p_s²; ${f2(1 / n)} when uniform), minute by minute:`);
+  table(["", ...Array.from({ length: nWin }, (_, w) => `min ${w + 1}`)], [
+    ...roles.map((r) => [`${r} (${species.filter((t) => role(t) === r).length} species; uniform ${f2(species.filter((t) => role(t) === r).length / n)})`, ...Array.from({ length: nWin }, (_, w) => f2(share(r, w)))]),
+    ["HHI", ...Array.from({ length: nWin }, (_, w) => f2(hhi(w)))]]);
+  // Prevalence against percent: per species, over its minutes; and pooled over every species-minute.
+  const pairs = [], rows = [];
+  for (const t of species) {
+    const own = [];
+    for (let w = 0; w < nWin; w++) {
+      const pc = T.filter((x) => x.flower === t && x.answered && x.percent != null && Math.floor(x.atMs / 60000) === w).map((x) => x.percent);
+      const pw = pAt(t, w);
+      if (pw != null && pc.length) { const med = quantile(pc, 0.5); own.push([pw, med]); pairs.push([pw, med]); }
+    }
+    rows.push([name[t] ?? t, role(t), own.length, f2(spearman(own))]);
+  }
+  p(`Do prevalent species cut their percent? Spearman rho of a species' prevalence and its median percent over its minutes (negative: it gives less when it is drawn more); pooled over every species-minute: ${f2(spearman(pairs))}.`);
+  table(["species", "role", "minutes", "rho(p_s, percent)"], rows);
+  // Extinctions: at the floor (within 10%) for a minute or more of samples in a row.
+  const ext = [];
+  for (const t of species) {
+    const xs = samples.filter((x) => x.team === t).sort((a, b) => a.atMs - b.atMs);
+    let from = null, longest = 0, total = 0;
+    for (let i = 0; i < xs.length; i++) {
+      const fl = floorAt(config, xs[i].atMs, duration, n), low = fl != null && xs[i].p <= fl * 1.1;
+      if (low && from == null) from = xs[i].atMs;
+      if ((!low || i === xs.length - 1) && from != null) { const len = (low ? xs[i].atMs : xs[i - 1]?.atMs ?? from) - from; if (len >= 60000) { total += len; longest = Math.max(longest, len); } from = null; }
+    }
+    if (total) ext.push([name[t] ?? t, role(t), mmss(total), mmss(longest)]);
+  }
+  if (ext.length) { p("Extinctions (p_s within 10% of its floor c / (N (c + 1)) for a minute or more):"); table(["species", "role", "time at the floor", "longest stretch"], ext); }
+  else { p("No species sat at its floor for a minute or more."); p(); }
+  S.prevalence = { share: Object.fromEntries(roles.map((r) => [r, mean(Array.from({ length: nWin }, (_, w) => share(r, w)))])),
+    hhi: mean(Array.from({ length: nWin }, (_, w) => hhi(w))), extinct: ext.length, rho: spearman(pairs) };
 }
 
 // ---------------------------------------------------------------- cooperators' spend and generosity (adapt-hi)
@@ -420,6 +489,9 @@ function sideBySide(A, B) {
     ["energy lost to bytes: veteran / honest / defector", (x) => seq(x, (s) => ["veteran", "honest", "defector"].map((r) => pct(s.bytes?.[r]?.lost)).join("/"))],
     ["cooperators' mean fingerprint profile (4 properties)", (x) => seq(x, (s) => { const ps = Object.values(s.fingerprints || {}).filter((f) => f.role === "honest" && f.profile);
       return ps.length ? ps[0].profile.map((_, d) => mean(ps.map((f) => f.profile[d])).toFixed(2)).join(" ") : null; })],
+    ["prevalence held: veteran / honest / defector (game mean)", (x) => seq(x, (s) => (s.prevalence ? ["veteran", "honest", "defector"].map((r) => f2(s.prevalence.share[r])).join("/") : null))],
+    ["prevalence HHI (game mean); species extinct a minute or more", (x) => seq(x, (s) => (s.prevalence ? `${f2(s.prevalence.hhi)}; ${s.prevalence.extinct}` : null))],
+    ["prevalence against percent (pooled rho)", (x) => seq(x, (s) => (s.prevalence ? f2(s.prevalence.rho) : null))],
     ["all bees at honest / defector flowers", (x) => seq(x, (s) => `${pct(mean(["veteran", "honest", "defector"].map((b) => s.feeds?.[b]?.honest)))}/${pct(mean(["veteran", "honest", "defector"].map((b) => s.feeds?.[b]?.defector)))}`)],
     ["mean fitness: veteran / honest / defector", (x) => seq(x, (s) => `${f2(mean(s.vet.map((v) => v.fitness)))}/${f2(mean(s.honest.map((h) => h.fitness)))}/${f2(mean(s.defector.map((d) => d.fitness)))}`)],
   ];
