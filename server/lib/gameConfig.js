@@ -32,8 +32,10 @@ export const KINDS = ["flower", "bee"];
 export const GRAINS = ["feeder", "public", "off"];
 /** The default feed price, as a share of Emax (prevalence.js): 0.05 × 56,320,000 = 2,816,000 at the defaults. */
 export const FEED_PRICE_SHARE = 0.05;
-/** The default prior of every prevalence ledger cell, as a share of Emax. */
+/** The default prior of every prevalence pollen cell, as a share of Emax. */
 export const PREVALENCE_PRIOR_SHARE = 0.12;
+/** A bee's default nectar endowment (prevalence.pools), in feed prices. */
+export const PREVALENCE_ENDOWMENT_FEEDS = 10;
 
 export const DEFAULT_CONFIG = Object.freeze({
   language: "python",          // "python" | "typescript"
