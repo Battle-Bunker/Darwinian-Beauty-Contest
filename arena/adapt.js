@@ -73,7 +73,7 @@ async function analyse(id) {
   p(`# Adapt: ${id}${arena.settings.experiment?.name ? ` (${arena.settings.experiment.name})` : ""}`);
   p();
   p(`${personas.length} teams: ${["veteran", "honest", "defector"].map((r) => `${personas.filter((x) => roleOf(x.slug) === r).length} ${r}`).join(", ")}. ` +
-    `${games.length} game(s). Veterans: ${personas.filter((x) => seeds[x.slug]).map((x) => `${x.name} (from ${seeds[x.slug]}, ${x.model})`).join(", ")}.`);
+    `${games.length} game(s). Carried over: ${personas.filter((x) => seeds[x.slug]).map((x) => `${x.name} (from ${seeds[x.slug]}, ${x.model})`).join(", ")}.`);
   p();
   const perVet = new Map(); // slug -> [{ gen, ... }]
   const summary = [];
@@ -190,7 +190,7 @@ async function analyse(id) {
 
     fingerprintReport({ T, ents, role, copies, teamIdByName, gen: g.generation, S });
     await prevalenceReport({ g, gp, teams, ents, role, T, copies, teamIdByName, S });
-    if (coopRules(g.config).on) await coopReport({ g, gp, teams, ents, role, T, S });
+    if (coopRules(g.config).on) await coopReport({ g, gp, teams, ents, role, T, S, title: `${arena.settings.experiment?.name ?? arena.preset ?? id} (${id})` });
 
     // Defectors.
     p("Defectors (conformance: answers at 0%; imitation: their versions' first close copies of another species' answers; detection: rival bees' feed rate falling below half the model's):");
@@ -349,7 +349,7 @@ async function prevalenceReport({ g, gp, teams, ents, role, T, S }) {
  * flower success F and bee success B per role (and per team, by bin), the defector's draw chances and F and B; fitness
  * (F × B's time-average) per team at the end; each bee's visits and dud feeds (net nectar below 0: nectar under the feed
  * price) and their cost; and the verdict: did the cooperators' shares hold or grow in the last ten minutes? */
-async function coopReport({ g, gp, teams, ents, role, T, S }) {
+async function coopReport({ g, gp, teams, ents, role, T, S, title = "coop-eq" }) {
   const config = g.config || {}, co = coopRules(config, ents.length);
   const samples = await prevalenceSamples(gp, teams);
   const duration = Math.max((config.minutes ?? 0) * 60000, ...samples.map((x) => x.atMs), 1), nMin = Math.ceil(duration / 60000);
@@ -358,7 +358,7 @@ async function coopReport({ g, gp, teams, ents, role, T, S }) {
   const sumOf = (r, w, f) => { const v = teamsOf(r).map((t) => at(t, w, f)).filter((x) => x != null); return v.length ? v.reduce((a, b) => a + b, 0) : null; };
   const meanOf = (r, w, f) => mean(teamsOf(r).map((t) => at(t, w, f)).filter((x) => x != null));
   const FB = (r, w) => `${f2(meanOf(r, w, (x) => x.F))} / ${f2(meanOf(r, w, (x) => x.B))}`;
-  p(`## coop-eq, game ${g.generation}: prevalence on both sides`);
+  p(`## ${title}, game ${g.generation}: prevalence on both sides`);
   p();
   p(`Rules: ${co.perRound ?? "?"} of ${ents.length} bees visit each round; a feed price of ${n0(co.price)} ${co.unit} (${pct(co.priceShare)} of the most E); responses at ${co.windowMs} ms, R up to ${config.budgets?.flower?.ms ?? "?"} ms; fitness ${co.final ? "N² × pF × pB at the last round" : "the time-average of F × B"}.`);
   p();
@@ -372,9 +372,13 @@ async function coopReport({ g, gp, teams, ents, role, T, S }) {
   const nBin = Math.ceil(duration / BIN);
   const binAt = (team, b, f) => mean(samples.filter((x) => x.team === team && Math.floor(x.atMs / BIN) === b).map(f).filter((v) => v != null));
   const lastOf = (team) => g.metrics?.final?.find((f) => f.teamId === team)?.fitness ?? samples.filter((x) => x.team === team && x.fitness != null).sort((a, b) => b.atMs - a.atMs)[0]?.fitness ?? null;
-  p("F / B per team, over time, and its fitness (F × B's time-average) at the end:");
-  table(["team", "role", ...Array.from({ length: nBin }, (_, b) => binLabel(b)), "fitness"],
-    ents.map((e) => [e.team_name, role(e.team_id), ...Array.from({ length: nBin }, (_, b) => `${f2(binAt(e.team_id, b, (x) => x.F))} / ${f2(binAt(e.team_id, b, (x) => x.B))}`), f2(lastOf(e.team_id))]));
+  // (scoring mode "final": the score is N² × pF × pB at the last round; beside it the time-average of the same over the samples)
+  const avgFinal = (team) => mean(samples.filter((x) => x.team === team && x.pF != null && x.pB != null).map((x) => N * N * x.pF * x.pB));
+  p(co.final ? "F / B per team, over time, its final score N² × pF × pB at the last round, and the time-average of N² × pF × pB over the game:"
+    : "F / B per team, over time, and its fitness (F × B's time-average) at the end:");
+  table(["team", "role", ...Array.from({ length: nBin }, (_, b) => binLabel(b)), co.final ? "final score" : "fitness", ...(co.final ? ["time-average of N² × pF × pB"] : [])],
+    ents.map((e) => [e.team_name, role(e.team_id), ...Array.from({ length: nBin }, (_, b) => `${f2(binAt(e.team_id, b, (x) => x.F))} / ${f2(binAt(e.team_id, b, (x) => x.B))}`), f2(lastOf(e.team_id)),
+      ...(co.final ? [f2(avgFinal(e.team_id))] : [])]));
   // Visits and dud feeds: a feed whose net nectar (nectar − price) was below 0.
   const netOf = (x) => x.net ?? (x.nectar != null ? x.nectar - (x.price ?? co.price) : null);
   const drows = ents.map((e) => {
