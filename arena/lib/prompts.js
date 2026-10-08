@@ -157,30 +157,34 @@ nectar: percent 0 on every answer. Your bee is yours to design.`;
   return "";
 }
 
-/** The cooperators' default contract (adapt-hi; a preset's `honest` overrides it): the share of R spent on costly
- * signalling in CPU, and the percent of the excess energy given as nectar. */
-export const HONEST_CONTRACT = Object.freeze({ burn: 0.6, nectar: 50 });
+/** The cooperators' mandate (adapt-hi; a preset's `honest` overrides it): floors on the share b of R spent on costly
+ * signalling in CPU and on the percent given, and where the reference flower starts. */
+export const HONEST_MANDATE = Object.freeze({ burnMin: 0.2, nectarMin: 20, startBurn: 0.6, startNectar: 50 });
 
-/** The honest role of adapt-hi (brief "contract"): the flower on a fixed contract (burn × R of CPU on costly signalling,
- * percent `nectar`, its signalling strategy changed only to escape imitators); the bee played to win. `start`: the
- * names of its start programs ({ flower, bee }: common/<file>). */
-function honestContract(common, start = {}, contract = HONEST_CONTRACT) {
-  const { burn, nectar } = { ...HONEST_CONTRACT, ...(contract || {}) };
+/** The honest role of adapt-hi (brief "contract"): pinned cooperators, not competing to win, exploring the spend and the
+ * generosity of honest costly signalling above floors (CPU at b × R with b ≥ burnMin, one fixed b per version; percent ≥
+ * nectarMin), and their fingerprint profile to escape imitators; the bee played to win. `start`: the names of its start
+ * programs ({ flower, bee }: common/<file>). */
+function honestContract(common, start = {}, mandate = HONEST_MANDATE) {
+  const { burnMin, nectarMin, startBurn, startNectar } = { ...HONEST_MANDATE, ...(mandate || {}) };
   const docs = common?.length ? ` in common/ (${common.join(", ")}; shared with every team that has your role and with no other team)` : "";
+  const notes = common?.includes("strategy.md") ? "\n  common/strategy.md has measured numbers for spend and generosity: information, not instructions." : "";
   return `# Your role in this experiment (private: no other team is told it)
-You are part of an experiment. Your flower plays a role, an honest signaller: it is not competing to win. Your bee plays
-to win.
-- Your flower does costly signalling work that reveals its true per-turn wealth, and it spends exactly ${+(burn * 100).toFixed(1)}% of its
-  time budget on it. The call's hidden budget R is GAME["ms"]; do signal work until the call's CPU time
-  (time.process_time()) reaches ${burn} × R, then answer. It gives ${nectar}% of its excess energy as nectar on every turn:
-  percent ${nectar} on every answer.
-- Its signalling strategy is yours to choose: which costly signals it computes, and its position in the shared
-  fingerprint space, that is how it splits its work across the dimensions of the shared repertoire of costly
-  signals${docs}. Multi-dimensional fingerprints can be mixed with raw costly signalling.
-- Once your flower is in place, the only change you make to it is to its signalling strategy, and only to escape
-  defecting imitators. The ${+(burn * 100).toFixed(1)}% and the ${nectar}% never change. Fixing a bug that breaks this contract is allowed.
+You are part of an experiment, as a pinned cooperator. Your flower plays a role, an honest and generous costly signaller:
+it is not competing to win. Your bee plays to win.
+- Within that role, explore: find the costly-signalling spend and the generosity that make honest, generous costly
+  signalling attractive to bees and robust to imitators.
+- Spend: on every call your flower does signal work until the call's CPU time (time.process_time()) reaches b × R, where R
+  is the call's hidden budget (GAME["ms"]) and b is a fraction of your choosing, at least ${burnMin}. It is always a fraction
+  of R, so the work keeps revealing the call's wealth, never a fixed number of ms. Within one version b is one fixed
+  fraction; it may differ between versions.
+- Generosity: percent at least ${nectarMin} on every answer, of your choosing; it may differ between versions.
+- What you may change in your flower: b, its percent, and its fingerprint profile: its position in the shared fingerprint
+  space, that is how it splits its work across the dimensions of the shared repertoire of costly signals${docs}.
+  The profile is your way to escape defecting imitators. Multi-dimensional fingerprints can be mixed with raw costly
+  signalling. Fixing a bug is allowed.
 - You can watch for imitation in the public responses and the feed record (stream/actions.jsonl, tools/query.py).
-${start.flower ? `- Your flower starts as a copy of the reference flower (${start.flower}).\n` : ""}- ${start.bee ? `Your bee starts as a copy of the reference bee (${start.bee}): it recognises the shared repertoire of costly
+${start.flower ? `- Your flower starts as a copy of the reference flower (${start.flower}), at b = ${startBurn} and percent ${startNectar}.${notes}\n` : notes ? `- ${notes.trim()}\n` : ""}- ${start.bee ? `Your bee starts as a copy of the reference bee (${start.bee}): it recognises the shared repertoire of costly
   signals as a weighted fingerprint vector. Play it to win, and change it as you like.` : "Your bee is yours to design: play it to win, and change it as you like."}`;
 }
 

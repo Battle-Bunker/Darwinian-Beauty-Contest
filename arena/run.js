@@ -436,14 +436,13 @@ async function analyseGame(arena, ctx, log) {
     for (const e of ctx.entries) {
       const p = personas.find((x) => x.id === e.persona_id), r = roles[p?.slug]?.role, f = m.teams?.[e.team_id]?.flower;
       if (!r || !f) continue;
-      // adapt-hi's honest contract (settings.honest: { burn, nectar }) fixes both the percent and the work: CPU at burn × R
-      // (within ±0.05 of R).
-      const c = roles[p.slug]?.brief === "contract" ? (arena.settings.honest ?? { burn: 0.6, nectar: 50 }) : null;
-      const share = c ? f.contract?.percentAt ?? null : r === "honest" ? f.percentAt50 : r === "defector" ? f.percentAt0 : null;
+      // adapt-hi's cooperators (settings.honest: floors burnMin and nectarMin): percent ≥ nectarMin, CPU ≥ (burnMin − 0.05) × R.
+      const c = roles[p.slug]?.brief === "contract" ? (arena.settings.honest ?? { burnMin: 0.2, nectarMin: 20 }) : null;
+      const share = c ? f.contract?.percentOk ?? null : r === "honest" ? f.percentAt50 : r === "defector" ? f.percentAt0 : null;
       m.roles[e.team_id] = { role: r, brief: roles[p.slug]?.brief ?? null, persona: p.name, conform: share, medianPercent: f.percent?.p50 ?? null,
-        ...(c ? { contract: c, cpuAt: f.contract?.cpuAt ?? null, cpuOfR: f.cpuOfR ?? null } : {}) };
-      if (share != null && share < 0.99) log(`  ROLE DRIFT: ${p.name} (${r}) answered at its role's percent${c ? ` (${c.nectar})` : ""} on ${Math.round(100 * share)}% of turns (median percent ${f.percent?.p50 ?? "-"})`);
-      if (c && f.contract?.cpuAt != null && f.contract.cpuAt < 0.9) log(`  ROLE DRIFT: ${p.name} (${r}) spent ${c.burn} × R (±0.05) of CPU on ${Math.round(100 * f.contract.cpuAt)}% of its answered turns (median CPU ÷ R ${f.cpuOfR?.p50 ?? "-"})`);
+        ...(c ? { contract: c, cpuOk: f.contract?.cpuOk ?? null, cpuOfR: f.cpuOfR ?? null } : {}) };
+      if (share != null && share < 0.99) log(`  ROLE DRIFT: ${p.name} (${r}) answered ${c ? `at a percent of at least ${c.nectarMin}` : "at its role's percent"} on ${Math.round(100 * share)}% of turns (median percent ${f.percent?.p50 ?? "-"})`);
+      if (c && f.contract?.cpuOk != null && f.contract.cpuOk < 0.9) log(`  ROLE DRIFT: ${p.name} (${r}) spent at least ${c.burnMin} × R (−0.05) of CPU on only ${Math.round(100 * f.contract.cpuOk)}% of its answered turns (median CPU ÷ R ${f.cpuOfR?.p50 ?? "-"})`);
     }
   }
   await q("UPDATE arena.games SET metrics = $2 WHERE id = $1", [gameRow.id, m]);

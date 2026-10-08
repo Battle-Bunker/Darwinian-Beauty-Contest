@@ -84,18 +84,23 @@ const seeded = lobbyBrief({ config, teamName: "Red Team Petals", generation: 1, 
 check("lobby: a seeded veteran starts from its last tournament's programs and files, with no strategy hint", /final programs from your last tournament/.test(seeded)
   && /earlier-tournament\//.test(seeded) && !/previous-games\/ has/.test(seeded) && !/honest|defect/i.test(seeded), seeded);
 
-// adapt-hi (EXPERIMENTS["adapt-hi"]): the honest contract (60% of R, percent 50, the signalling strategy changed only to
-// escape imitators; the bee played to win, from the reference bee); no brevity nudges; the lobby's time; the start bee.
+// adapt-hi (EXPERIMENTS["adapt-hi"]): pinned cooperators exploring spend and generosity above floors (b ≥ 0.2 of R, one
+// fixed b per version, never fixed ms; percent ≥ 20), their fingerprint profile to escape imitators, starting where the
+// old mandate stood (b 0.6, percent 50); the bee played to win, from the reference bee. No brevity nudges; the lobby's
+// time; the start programs.
 const h60 = roleText("honest", { common: ["integrated.py", "integrated_bee.py", "strategy.md"], brief: "contract", start: { flower: "common/integrated.py", bee: "common/integrated_bee.py" } });
-check("adapt-hi honest role: not competing to win, 60% of R in CPU, percent 50, strategy only to escape imitators, the bee to win",
-  /not competing to win/.test(h60) && /playing a role|plays a role/.test(h60) && /0\.6 × R/.test(h60) && /time\.process_time\(\)/.test(h60) && /GAME\["ms"\]/.test(h60)
-  && /percent 50 on every answer/.test(h60) && /only to escape\s+defecting imitators/.test(h60) && /60% and the 50% never change/.test(h60) && /Fixing\s+a bug/.test(h60)
-  && /fingerprint space/.test(h60) && /Multi-dimensional fingerprints can be mixed with raw costly signalling/.test(h60) && /public responses and the feed record/.test(h60)
-  && /copy of the reference flower \(common\/integrated\.py\)/.test(h60) && /copy of the reference bee \(common\/integrated_bee\.py\)/.test(h60)
-  && /Play it to win, and change it as you like/.test(h60) && /common\/ \(integrated\.py, integrated_bee\.py, strategy\.md/.test(h60), h60);
-const h7040 = roleText("honest", { brief: "contract", contract: { burn: 0.7, nectar: 40 } });
-check("adapt-hi honest role: the contract's numbers come from the preset (one place)", /exactly 70% of its/.test(h7040) && /reaches 0\.7 × R/.test(h7040)
-  && /percent 40 on every answer/.test(h7040) && /The 70% and the 40% never change/.test(h7040) && !/60%|percent 50/.test(h7040), h7040);
+check("adapt-hi cooperators: a role, not competing to win; explore spend and generosity above the floors; profile against imitators; the bee to win",
+  /pinned cooperator/.test(h60) && /not competing to win/.test(h60) && /plays a role/.test(h60) && /explore/.test(h60) && /attractive to bees and robust to imitators/.test(h60)
+  && /reaches b × R/.test(h60) && /at least 0\.2\b/.test(h60) && /never a fixed number of ms/.test(h60) && /Within one version b is one fixed\s+fraction/.test(h60)
+  && /time\.process_time\(\)/.test(h60) && /GAME\["ms"\]/.test(h60) && /percent at least 20 on every answer/.test(h60)
+  && /may change in your flower: b, its percent, and its fingerprint profile/.test(h60) && /escape defecting imitators/.test(h60) && /Fixing a bug/.test(h60)
+  && /Multi-dimensional fingerprints can be mixed with raw costly signalling/.test(h60) && /public responses and the feed record/.test(h60)
+  && /copy of the reference flower \(common\/integrated\.py\), at b = 0\.6 and percent 50/.test(h60) && /strategy\.md has measured numbers for spend and generosity: information, not instructions/.test(h60)
+  && /copy of the reference bee \(common\/integrated_bee\.py\)/.test(h60) && /Play it to win, and change it as you like/.test(h60)
+  && /common\/ \(integrated\.py, integrated_bee\.py, strategy\.md/.test(h60) && !/never change|exactly \d+%/.test(h60), h60);
+const hFloors = roleText("honest", { brief: "contract", contract: { burnMin: 0.3, nectarMin: 25, startBurn: 0.5, startNectar: 40 }, start: { flower: "common/integrated.py" } });
+check("adapt-hi cooperators: the mandate's numbers come from the preset (one place)", /at least 0\.3\b/.test(hFloors) && /percent at least 25 on every answer/.test(hFloors)
+  && /at b = 0\.5 and percent 40/.test(hFloors) && !/0\.2\b|at least 20|0\.6|percent 50/.test(hFloors), hFloors);
 check("adapt-hi honest role: private, in the system prompt", /# Your role in this experiment \(private/.test(toolSystem(persona, config, "/w", { apiBase, teams: 14, role: "honest", roleBrief: "contract", common: ["signals.md"], commonScope: "role" })));
 const NUDGES = /Be quick|at most (about )?\d+ tool calls|Work step by step, then stop with a short summary|one-line summary|one-paragraph summary/;
 const hiSys = toolSystem(persona, config, "/w", { apiBase, teams: 14, brevity: false });

@@ -22,8 +22,9 @@
 //                  described: nothing depends on its scores)
 //   concurrency    model sessions and calls at once (ARENA_CONCURRENCY overrides it; default 8)
 //   expectConfig   { "dotted.key": value } the server's config must have (checked when a game is created)
-//   honest         the cooperators' contract { burn, nectar } (role brief "contract"): CPU at burn × R on costly
-//                  signalling, percent `nectar`; used in the brief, the conformance metrics and the role-drift log
+//   honest         the cooperators' mandate { burnMin, nectarMin, startBurn, startNectar } (role brief "contract"): CPU at
+//                  b × R on costly signalling with b ≥ burnMin, percent ≥ nectarMin, starting at startBurn and
+//                  startNectar; used in the brief, the conformance metrics, the role-drift log and adapt.js
 //   limits         per-model session limits (turns, usd), optionally per phase: { lobby: {...}, game: {...} }
 //   maxModel       "sonnet": calls that would use opus (judges, breeders) use sonnet instead
 //   reserveUsd     no new team session once the spend is within this of the cap (keeps money for interviews and judges)
@@ -62,9 +63,10 @@ const ADAPT_LINEUP = [
 
 // adapt-hi: the same 14 teams and roles, every agent on opus with high effort and room to think. Veterans start as in
 // adapt (carried over from fen and kiln, not from mesa-a); the four kids without their coding limits (personas.js
-// CODING_LIMITS). The honest specialists (cooperators) are on a fixed contract (prompts.js honestContract; the numbers
-// in the preset's `honest`): CPU at burn × R on costly signalling and percent `nectar` on every answer, only their
-// signalling strategy changing, and only to escape imitators; their bees play to win. Their common/ is
+// CODING_LIMITS). The honest specialists are pinned cooperators (prompts.js honestContract; the numbers in the preset's
+// `honest`): not competing to win, they explore the spend (CPU at b × R, b ≥ burnMin, one fixed b per version) and the
+// generosity (percent ≥ nectarMin) of honest costly signalling, and their fingerprint profile to escape imitators; their
+// bees play to win. They start where the old mandate stood (b 0.6, percent 50). Their common/ is
 // arena/priming/fingerprints/ (the shared repertoire, the reference programs and the cooperators' notes), and they start
 // from its integrated flower and starter bee (ARENA_HONEST_HI_DIRS: other folders, comma-separated;
 // ARENA_HONEST_START_FLOWER / ARENA_HONEST_START_BEE: other files, for a dry run).
@@ -73,8 +75,9 @@ const HONEST_HI_DIRS = process.env.ARENA_HONEST_HI_DIRS ? process.env.ARENA_HONE
 const HONEST_START_FLOWER = process.env.ARENA_HONEST_START_FLOWER || `${FINGERPRINT_DIR}/integrated.py`;
 const HONEST_START_BEE = process.env.ARENA_HONEST_START_BEE || `${FINGERPRINT_DIR}/integrated_bee.py`;
 const HI_HONEST = { role: "honest", brief: "contract", common: HONEST_HI_DIRS, start: { flower: HONEST_START_FLOWER, bee: HONEST_START_BEE } };
-// The cooperators' contract, in one place: the share of R spent on costly signalling in CPU, and the percent given.
-const HI_CONTRACT = { burn: 0.6, nectar: 50 };
+// The cooperators' mandate, in one place: floors on the share b of R spent on costly signalling in CPU and on the percent
+// given, and the reference flower's start.
+const HI_CONTRACT = { burnMin: 0.2, nectarMin: 20, startBurn: 0.6, startNectar: 50 };
 const HI_KID = { seed: true, uncap: true };
 const ADAPT_HI_LINEUP = [
   ["from:fen-d/mallory", "opus", VETERAN], ["from:fen-a/kenji", "opus", HI_KID], ["from:fen-a/ada", "opus", VETERAN],

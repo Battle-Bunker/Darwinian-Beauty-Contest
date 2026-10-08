@@ -148,11 +148,11 @@ export function computeMetrics({ game, teams: teamRows, turns: turnRows, version
         // The flower's CPU as a share of its call's budget R (adapt-hi's honest contract: 0.6), over the calls that answered:
         // its quantiles, and the share within ±0.05 of 0.6.
         cpuOfR: q5(answered.filter((t) => t.ms != null && t.R > 0).map((t) => t.ms / t.R)),
-        // Against the cooperators' contract (adapt-hi's settings.honest), when given: the shares of answered turns at its
-        // percent and with CPU within ±0.05 of burn × R.
+        // Against the cooperators' floors (adapt-hi's settings.honest), when given: the shares of answered turns at a percent
+        // of at least nectarMin, and with CPU of at least (burnMin − 0.05) × R.
         ...(contract ? { contract: { ...contract,
-          percentAt: r3(answered.length ? answered.filter((t) => Math.abs((t.percent ?? -1) - contract.nectar) < 0.5).length / answered.length : null),
-          cpuAt: r3((() => { const xs = answered.filter((t) => t.ms != null && t.R > 0).map((t) => t.ms / t.R); return xs.length ? xs.filter((x) => Math.abs(x - contract.burn) <= 0.05).length / xs.length : null; })()) } } : {}) },
+          percentOk: r3(answered.length ? answered.filter((t) => (t.percent ?? -1) >= contract.nectarMin - 0.5).length / answered.length : null),
+          cpuOk: r3((() => { const xs = answered.filter((t) => t.ms != null && t.R > 0).map((t) => t.ms / t.R); return xs.length ? xs.filter((x) => x >= contract.burnMin - 0.05).length / xs.length : null; })()) } } : {}) },
       bee: { turns: byBee.length, feeds: beeFed.length, feedRate: r3(byBee.length ? beeFed.length / byBee.length : null), nectar: r3(sum(beeFed.map((t) => t.nectar))),
         nectarPerFeed: r3(beeFed.length ? sum(beeFed.map((t) => t.nectar)) / beeFed.length : null), flowersFedAt: new Set(beeFed.map((t) => t.flower)).size,
         tooSlow: byBee.filter((t) => TOO_SLOW.test(t.beeError || "")).length, errors: byBee.filter((t) => t.beeError && !TOO_SLOW.test(t.beeError)).length, decisionMs: q5(beeMs) },

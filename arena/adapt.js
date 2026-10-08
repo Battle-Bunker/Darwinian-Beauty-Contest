@@ -64,7 +64,7 @@ async function analyse(id) {
   const roleOf = (slug) => roles[slug]?.role || (seeds[slug] ? "veteran" : "other");
   // The cooperators' contract (adapt-hi: settings.honest { burn, nectar }); else the adapt brief (percent 50, work free).
   const onContract = (slug) => roles[slug]?.brief === "contract";
-  const C = { burn: 0.6, nectar: 50, ...(arena.settings.honest || {}) };
+  const C = { burnMin: 0.2, nectarMin: 20, startBurn: 0.6, startNectar: 50, ...(arena.settings.honest || {}) };
   const games = await all("SELECT * FROM arena.games WHERE arena_id = $1 AND metrics IS NOT NULL ORDER BY generation", [id]);
   p(`# Adapt: ${id}${arena.settings.experiment?.name ? ` (${arena.settings.experiment.name})` : ""}`);
   p();
@@ -129,25 +129,28 @@ async function analyse(id) {
     const W = m.wealth?.species || [];
     const honestEnts = ents.filter((x) => role(x.team_id) === "honest");
     const contract = honestEnts.some((e) => onContract(e.slug));
-    const nectar = contract ? C.nectar : 50, band = [Math.round(100 * (C.burn - 0.05)), Math.round(100 * (C.burn + 0.05))];
-    p(`Honest specialists (conformance: answers at ${nectar}%${contract ? `; CPU at ${C.burn} × R, over answered calls: CPU ms ÷ R and the share within ±5 points of ${Math.round(100 * C.burn)}%` : ""}; ` +
+    // adapt's honest teams answer at exactly 50%; adapt-hi's cooperators keep above the floors (percent ≥ nectarMin, CPU
+    // ≥ (burnMin − 0.05) × R) and choose their spend b and percent.
+    p(`Honest specialists (${contract ? `cooperators: floors percent ≥ ${C.nectarMin} and CPU ≥ ${C.burnMin} × R (less 0.05 of R), their burn b the realised CPU ms ÷ R` : "conformance: answers at 50%"}; ` +
       `honesty: costly when effort and visible work both follow R, cheap when only the work does):`);
-    table(["team", `conformance (percent ${nectar})`, ...(contract ? ["CPU ÷ R p10 / p50 / p90", `within ${band[0]}–${band[1]}%`, "no response"] : []), "median percent", "CPU share", "effort ~ R", "work ~ R", "honesty",
-      "feeds from rival bees", "rival feed rate", "fitness (rank)"],
+    table(["team", contract ? `percent ≥ ${C.nectarMin}` : "conformance (percent 50)", ...(contract ? [`CPU ≥ ${C.burnMin} × R`, "burn: CPU ÷ R p10 / p50 / p90", "no response"] : []),
+      "median percent", "CPU share", "effort ~ R", "work ~ R", "honesty", "feeds from rival bees", "rival feed rate", "fitness (rank)"],
       honestEnts.map((e) => {
         const tid = e.team_id, t = m.teams?.[tid], w = W.find((s) => s.teamId === tid), rv = T.filter((x) => x.flower === tid && x.bee !== tid);
         const work = [w?.bytes, w?.nodes].filter((x) => x != null);
         const mine = T.filter((x) => x.flower === tid);
         const share = mine.filter((x) => x.answered && x.ms != null && x.R > 0).map((x) => x.ms / x.R);
-        const at60 = share.length ? share.filter((x) => Math.abs(x - C.burn) <= 0.05).length / share.length : null;
+        const cpuOk = share.length ? share.filter((x) => x >= C.burnMin - 0.05).length / share.length : null;
         const noResponse = mine.length ? mine.filter((x) => !x.answered).length / mine.length : null;
         const answered = mine.filter((x) => x.answered && x.percent != null);
-        const conform = answered.length ? answered.filter((x) => Math.abs(x.percent - nectar) < 0.5).length / answered.length : null;
-        S.honest.push({ conform, at60, cpuP50: quantile(share, 0.5), noResponse, rivalRate: rate(rv), fitness: final[tid]?.fitness ?? null });
-        return [e.team_name, pct(conform), ...(contract ? [`${f2(quantile(share, 0.1))} / ${f2(quantile(share, 0.5))} / ${f2(quantile(share, 0.9))}`, pct(at60), pct(noResponse)] : []),
+        const conform = !answered.length ? null : contract ? answered.filter((x) => x.percent >= C.nectarMin - 0.5).length / answered.length
+          : answered.filter((x) => Math.abs(x.percent - 50) < 0.5).length / answered.length;
+        S.honest.push({ slug: e.slug, name: e.team_name, conform, cpuOk, burn: quantile(share, 0.5), percent: quantile(answered.map((x) => x.percent), 0.5), noResponse, rivalRate: rate(rv), fitness: final[tid]?.fitness ?? null });
+        return [e.team_name, pct(conform), ...(contract ? [pct(cpuOk), `${f2(quantile(share, 0.1))} / ${f2(quantile(share, 0.5))} / ${f2(quantile(share, 0.9))}`, pct(noResponse)] : []),
           f2(t?.flower?.percent?.p50), pct(t?.flower?.computeShare), f2(w?.effort), f2(work.length ? Math.max(...work) : null),
           honesty(w), rv.filter((x) => x.fed).length, pct(rate(rv)), `${f2(final[tid]?.fitness)} (#${rank.indexOf(tid) + 1})`];
       }));
+    if (contract) cooperatorTrajectories({ T, honestEnts, vs, copies, role, teamIdByName });
     // Each change of an honest flower, against the defectors' imitations that came before it: the imitations of the
     // version it replaced (by then), how long after the last one it came, and the rival feed rates in the minute before
     // and after, at the honest flower and at its imitators; whether a defector copied the new version too.
@@ -243,6 +246,14 @@ async function analyse(id) {
     return [`${v.name}`, signs.join("; ") || "no adaptation seen"];
   }).filter(Boolean);
   if (adapted.length) table(["veteran", "signs of adaptation (first game → last)"], adapted);
+  // Cooperators across games: realised burn and median percent, rival feed rate and fitness, game by game.
+  const coop = [...new Set(summary.flatMap((s) => s.honest.map((h) => h.slug)))];
+  if (coop.length && Object.values(roles).some((r) => r.brief === "contract")) {
+    p("## Cooperators game by game (burn b: median CPU ms ÷ R · median percent · rival feed rate · fitness)");
+    p();
+    table(["cooperator", ...summary.map((s) => `game ${s.gen}`)], coop.map((slug) => [summary.map((s) => s.honest.find((h) => h.slug === slug)?.name).find(Boolean),
+      ...summary.map((s) => { const h = s.honest.find((x) => x.slug === slug); return h ? `b ${f2(h.burn)} · ${h.percent ?? "-"}% · ${pct(h.rivalRate)} · ${f2(h.fitness)}` : "-"; })]));
+  }
   // Fingerprints across games: each flower's whole-game profile, game by game, and how often defectors copied it.
   const fpSlugs = [...new Set(summary.flatMap((s) => Object.keys(s.fingerprints || {})))];
   if (fpSlugs.length) {
@@ -254,6 +265,45 @@ async function analyse(id) {
     }));
   }
   return { id, arena, summary, effort: await effortOf(id, games) };
+}
+
+// ---------------------------------------------------------------- cooperators' spend and generosity (adapt-hi)
+
+/** Each cooperator's realised burn b (median CPU ms ÷ R; its p10–p90 spread shows whether a version kept one fixed b) and
+ * median percent, per version and minute by minute, alongside its rival feed rate and the defectors' imitations. */
+function cooperatorTrajectories({ T, honestEnts, vs, copies, role, teamIdByName }) {
+  const stats = (ts) => {
+    const share = ts.filter((x) => x.answered && x.ms != null && x.R > 0).map((x) => x.ms / x.R);
+    const pc = ts.filter((x) => x.answered && x.percent != null).map((x) => x.percent);
+    return { n: ts.length, b: quantile(share, 0.5), b10: quantile(share, 0.1), b90: quantile(share, 0.9), percent: quantile(pc, 0.5) };
+  };
+  const vrows = [];
+  for (const e of honestEnts) {
+    const tid = e.team_id;
+    for (const v of vs.filter((x) => x.teamId === tid && x.kind === "flower").sort((a, b) => a.version - b.version)) {
+      const ts = T.filter((x) => x.flower === tid && Number(x.version) === Number(v.version));
+      if (!ts.length) continue;
+      const st = stats(ts), rv = ts.filter((x) => x.bee !== tid);
+      const imit = copies.filter((c) => c.model === e.team_name && Number(c.modelVersion) === Number(v.version) && role(teamIdByName[c.copier]) === "defector");
+      vrows.push([e.team_name, `v${v.version}`, Number(v.atMs) ? mmss(Number(v.atMs)) : "lobby", st.n, `${f2(st.b)} (${f2(st.b10)}–${f2(st.b90)})`, f2(st.percent), pct(rate(rv)),
+        imit.length ? `${imit.length} (first ${mmss(Math.min(...imit.map((c) => c.lagMs)))} after it appeared)` : "-"]);
+    }
+  }
+  p("Cooperators by version (burn b: median CPU ms ÷ R, p10–p90 in brackets, one fixed b per version keeps it narrow; median percent; rival feed rate; defector copies of the version):");
+  table(["cooperator", "version", "live from", "turns", "burn b", "percent", "rival feed rate", "defector copies"], vrows);
+  const end = Math.max(...T.map((x) => x.atMs), 1), nWin = Math.ceil(end / 60000);
+  const mrows = honestEnts.map((e) => {
+    const tid = e.team_id;
+    const copied = new Set(copies.filter((c) => c.model === e.team_name && role(teamIdByName[c.copier]) === "defector").map((c) => Math.floor(c.atMs / 60000)));
+    return [e.team_name, ...Array.from({ length: nWin }, (_, w) => {
+      const ts = T.filter((x) => x.flower === tid && Math.floor(x.atMs / 60000) === w);
+      if (!ts.length) return "-";
+      const st = stats(ts);
+      return `b ${f2(st.b)} · ${st.percent ?? "-"}% · ${pct(rate(ts.filter((x) => x.bee !== tid)))}${copied.has(w) ? " ←copied" : ""}`;
+    })];
+  });
+  p("Cooperators minute by minute (burn b · median percent · rival feed rate; \"←copied\" where a defector's close copy of it began):");
+  table(["cooperator", ...Array.from({ length: nWin }, (_, w) => `min ${w + 1}`)], mrows);
 }
 
 // ---------------------------------------------------------------- fingerprints (adapt-hi's cooperators)
@@ -359,8 +409,9 @@ function sideBySide(A, B) {
     ["veterans' bees: feed rate at honest / defector flowers", (x) => seq(x, (s) => `${pct(mean(s.vet.map((v) => v.feedHonest)))}/${pct(mean(s.vet.map((v) => v.feedDefector)))}`)],
     ["veterans' bees: feed rate at poor / rich R", (x) => seq(x, (s) => `${pct(mean(s.vet.map((v) => v.feedPoor)))}/${pct(mean(s.vet.map((v) => v.feedRich)))}`)],
     ["veterans: copies of honest flowers", (x) => seq(x, (s) => s.vet.reduce((a, v) => a + v.copiedHonest.length, 0))],
-    ["honest: answers at their percent (50, or the contract's)", (x) => seq(x, (s) => pct(mean(s.honest.map((h) => h.conform))))],
-    ["honest: CPU within ±5 points of the contract's share of R", (x) => seq(x, (s) => pct(mean(s.honest.map((h) => h.at60))))],
+    ["honest: answers at their percent (adapt: 50; adapt-hi: at or above the floor)", (x) => seq(x, (s) => pct(mean(s.honest.map((h) => h.conform))))],
+    ["honest: CPU at or above the burn floor (adapt-hi)", (x) => seq(x, (s) => pct(mean(s.honest.map((h) => h.cpuOk))))],
+    ["honest: mean burn (median CPU ÷ R) / mean percent", (x) => seq(x, (s) => `${f2(mean(s.honest.map((h) => h.burn)))} / ${f2(mean(s.honest.map((h) => h.percent)))}`)],
     ["honest: no response", (x) => seq(x, (s) => pct(mean(s.honest.map((h) => h.noResponse))))],
     ["honest: rival feed rate", (x) => seq(x, (s) => pct(mean(s.honest.map((h) => h.rivalRate))))],
     ["defectors: copies (of honest flowers)", (x) => seq(x, (s) => `${s.defector.reduce((a, d) => a + d.copies, 0)} (${s.defector.reduce((a, d) => a + d.ofHonest, 0)})`)],
