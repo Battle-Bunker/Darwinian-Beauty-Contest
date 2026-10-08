@@ -10,9 +10,9 @@
     python3 tools/try.py bee --json                 # raw result: every turn of the try, and the test bee's final MEMORY
 
 A flower shows each response with its percent, the call's hidden budget R (its time limit, which it reads as
-GAME["ms"]), the turn's excess energy E = (size cap - size) x max(0, R - CPU ms), times (byte cap - response bytes) /
-byte cap when the game's energy has the byte factor (config.json: energy.bytes; the cap is maxResponseBytes, and a
-bigger response is refused), its CPU time and its size in bytes (a response over 4 KB as its size, hash and first
+GAME["ms"]), the turn's excess energy E = (size cap - size) x max(0, R - CPU ms) in node-ms, times
+(maxResponseBytes - response bytes), in node-ms-bytes, when the game's energy has the byte factor (config.json:
+energy.bytes; a response over maxResponseBytes is refused), its CPU time and its size in bytes (a response over 4 KB as its size, hash and first
 characters). A bee plays your latest submitted flower unless you name a flower file; as in a
 game, its fed(nectar), if it defines one, runs after every feed it decides in time, in the same instance as that
 decide, and MEMORY is saved after it. The result says how often fed ran and whether it failed. A try runs a separate

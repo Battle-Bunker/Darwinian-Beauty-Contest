@@ -1,5 +1,5 @@
 // Honest wealth signalling, from each flower call's hidden time budget R (uniform in a range, its hard limit; E = (cap −
-// size) × max(0, R − CPU ms), times (byte cap − response bytes) / byte cap in games with the byte factor, lib/energy.js;
+// size) × max(0, R − CPU ms), times (byte cap − response bytes) in games with the byte factor, lib/energy.js;
 // private to the flower's team during play, revealed after the game). Pure computation over a
 // finished game's turns, each with `R` (ms), `ms` (CPU), the response's size in bytes, its visible work (see workOf) and
 // whether the bee fed:

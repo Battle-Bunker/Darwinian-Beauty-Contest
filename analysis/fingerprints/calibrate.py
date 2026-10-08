@@ -1,7 +1,7 @@
 """Calibrate the fingerprint dimensions on this machine: CPU per unit, its tail, unsolvable instances, and the
 bee's cost to check a unit.
 
-    python3 -B arena/priming/fingerprints/calibrate.py [--target 1.0] [--n 300]
+    python3 -B analysis/fingerprints/calibrate.py [--target 1.0] [--n 300]
 
 Per candidate (n, k, h) it solves instances 0..--n-1 in order, exactly as the flowers do (the search below is a
 copy of theirs, checked against fingerprint.py at start-up), and reports: mean CPU ms per instance, the
@@ -14,10 +14,11 @@ that abandons a dimension whenever an instance runs longer than x times the medi
 its other dimensions, gets more units per ms; the speed-up is reported for x = 2, 4, 8. Run on an idle machine.
 """
 import sys
-sys.dont_write_bytecode = True          # keep __pycache__ out of the priming folder
+sys.dont_write_bytecode = True          # keep __pycache__ out of the cooperators' folder
 import importlib.util, json, os, random, statistics, time
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+# The flowers and bees live in the cooperators' folder; this harness stays outside it.
+HERE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "arena", "priming", "fingerprints")
 arg = lambda k, d: float(sys.argv[sys.argv.index(k) + 1]) if k in sys.argv else d
 TARGET, COUNT = arg("--target", 1.0), int(arg("--n", 300))
 

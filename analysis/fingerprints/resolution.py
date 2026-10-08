@@ -1,7 +1,7 @@
 """Resolution and worth of the fingerprint, measured on this machine.
 
-    python3 -B arena/priming/fingerprints/resolution.py [--flower fingerprint] [--calls 40] [--size 434]
-    python3 -B arena/priming/fingerprints/resolution.py --flower fingerprint_compact --size 302
+    python3 -B analysis/fingerprints/resolution.py [--flower fingerprint] [--calls 40] [--size 434]
+    python3 -B analysis/fingerprints/resolution.py --flower fingerprint_compact --size 302
 
 1. Per R (3, 20, 76, 150 ms) and per split W: the level vector's size U (mean, spread), the spread per
    dimension, how far a response's direction lands from its split (degrees), how often the nearest split (by
@@ -16,10 +16,11 @@ The game's per-call clock is imitated (process_time and perf_counter start at 0 
 idle machine.
 """
 import sys
-sys.dont_write_bytecode = True          # keep __pycache__ out of the priming folder
+sys.dont_write_bytecode = True          # keep __pycache__ out of the cooperators' folder
 import importlib.util, json, math, os, random, statistics, time
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+# The flowers and bees live in the cooperators' folder; this harness stays outside it.
+HERE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "arena", "priming", "fingerprints")
 arg = lambda k, d: sys.argv[sys.argv.index(k) + 1] if k in sys.argv else d
 FLOWER, CALLS, SIZE = arg("--flower", "fingerprint"), int(arg("--calls", 40)), int(arg("--size", 434))
 

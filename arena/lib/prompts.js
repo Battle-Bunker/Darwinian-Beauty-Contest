@@ -41,7 +41,7 @@ export function timingText(config) {
   ${bee.ms} ms to return ["feed" or "leave", next challenge]. Neither is told whose the other is. A feed takes the bee
   out for ${config.feedCost} rounds.
 - A flower's energy goes to compute, nectar and pollen. Its excess energy for a turn is
-  E = (${n0(fl.size)} − flower size) × max(0, R − the flower's CPU ms)${bytesTerm(config)}.${bytesInEnergy(config)
+  E = (${n0(fl.size)} − flower size) × max(0, R − the flower's CPU ms)${bytesTerm(config)}${bytesInEnergy(config) ? ", in node·ms·bytes" : ""}.${bytesInEnergy(config)
     ? `\n  A response's bytes are its JSON text's, at most ${n0(byteCap(config))}: a bigger one is refused (E = 0).` : ""} The CPU ms are CPU time;
   the limit R is wall time, which also counts any time the machine spends on other programs during the call. If the bee feeds,
   the flower gives it percent/100 × E as nectar and the rest as pollen. If it doesn't feed, that energy is lost.

@@ -224,7 +224,7 @@ for (const a of arenas) {
       Object.values(D.perBee).map((x) => [x.team, x.turns, `${big(x.offerWhenFed)} / ${big(x.offerWhenLeft)}`, `${f2(x.percentWhenFed)} / ${f2(x.percentWhenLeft)}`]));
 
     // Versions.
-    p(`Flower versions: size and compute against energy (max energy = (size cap − size) × the flower window${m.config?.energy?.bytes ? " × (byte cap − its median response's bytes) / byte cap" : ""}; mean energy is per turn, 0 when it failed):`);
+    p(`Flower versions: size and compute against energy (max energy = (size cap − size) × the flower window${m.config?.energy?.bytes ? " × (byte cap − its median response's bytes), in node·ms·bytes" : ", in node·ms"}; mean energy is per turn, 0 when it failed):`);
     table(["species of", "version", "live from", "size", "max energy", "turns", "mean ms / p90", "mean energy", "mean percent", "feed rate", "nectar/feed", "pollen given", "no response"],
       m.versions.map((v) => [v.team, v.version != null ? `v${v.version}` : "-", v.atMs != null ? (v.atMs ? mmss(v.atMs) : "lobby") : "-", v.size ?? "-", big(v.maxEnergy), v.turns, `${f2(v.meanMs)} / ${f2(v.p90Ms)}`,
         big(v.meanEnergy), f2(v.meanPercent), pc(v.feedRate), big(v.nectarPerFeed), big(v.pollen), v.failures]));

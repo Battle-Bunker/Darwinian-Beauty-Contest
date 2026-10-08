@@ -1,6 +1,6 @@
 """Measure the integrated fingerprint (integrated.py, integrated_bee.py) on this machine.
 
-    python3 -B arena/priming/fingerprints/integrated_curve.py [--calls 30] [--size 410]
+    python3 -B analysis/fingerprints/integrated_curve.py [--calls 30] [--size 410]
 
 1. Level against CPU: for R in 3, 10, 20, 42, 76, 150 ms and several W, the mean and spread of each property's
    z and of U = sum(z), one fresh challenge per call. Shows whether the curve is concave.
@@ -19,10 +19,11 @@
 The game's per-call clock is imitated. Run it on an idle machine.
 """
 import sys
-sys.dont_write_bytecode = True          # keep __pycache__ out of the priming folder
+sys.dont_write_bytecode = True          # keep __pycache__ out of the cooperators' folder
 import importlib.util, itertools, json, math, os, random, statistics, time
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+# The flowers and bees live in the cooperators' folder; this harness stays outside it.
+HERE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "arena", "priming", "fingerprints")
 arg = lambda k, d: sys.argv[sys.argv.index(k) + 1] if k in sys.argv else d
 CALLS, SIZE = int(arg("--calls", 30)), int(arg("--size", 410))
 SC = (11, 11, 0.5, 9)             # the properties' natural scales: the flower's W is relative weight / scale

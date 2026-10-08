@@ -91,7 +91,7 @@ from the flower team's own ledger, which records each call's CPU ms and R.
   - A cooperator's U shows its R, so a bee can feed only on rich turns. A cooperator turn beats that 15% veteran
     above R ≈ 91 ms, and the 170-byte one above about 80 ms.
   - Against 25% veterans it wins only above about 133 ms (at 170 bytes) and never at 50 bytes.
-  - `integrated_curve.py` will measure this with the real read-back of wealth, across burn and nectar shares.
+  - Still to measure: this with the real read-back of wealth, across burn and nectar shares.
 - **The levers that help most,** in order:
   1. a smaller flower (each 10 nodes is 1.5% of E)
   2. a sharper wealth read-back on rich turns

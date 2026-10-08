@@ -1,6 +1,6 @@
 """Optimiser headroom: how much CPU a deliberately stronger optimiser saves, against the reference flowers.
 
-    python3 -B arena/priming/fingerprints/headroom.py [--calls 20]
+    python3 -B analysis/fingerprints/headroom.py [--calls 20]
 
 Skill that reaches the same level with less CPU makes a flower look richer than it is, so this measures how much
 of the wealth signal skill can fake, for both designs.
@@ -17,10 +17,11 @@ of the wealth signal skill can fake, for both designs.
 The game's per-call clock is imitated. Run it on an idle machine.
 """
 import sys
-sys.dont_write_bytecode = True          # keep __pycache__ out of the priming folder
+sys.dont_write_bytecode = True          # keep __pycache__ out of the cooperators' folder
 import importlib.util, json, math, os, random, statistics, time
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+# The flowers and bees live in the cooperators' folder; this harness stays outside it.
+HERE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "arena", "priming", "fingerprints")
 CALLS = int(sys.argv[sys.argv.index("--calls") + 1]) if "--calls" in sys.argv else 20
 
 
