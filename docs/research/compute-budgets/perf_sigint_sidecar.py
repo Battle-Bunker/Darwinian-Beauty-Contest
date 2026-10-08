@@ -7,7 +7,8 @@ vm `breakOnSigint`, the running script is terminated and the runner lives on.
 
 Protocol (lines on stdin -> one line on stdout each):
     arm TID R_NS OWNER_PID [SIGNAL]   -> ok OPEN_US        (SIGNAL defaults to SIGINT)
-    disarm                            -> ok COUNT_NS       (the thread's task clock since arming)
+    read                              -> ok COUNT_NS       (the thread's task clock since arming)
+    disarm                            -> ok COUNT_NS       (the same, then the event is closed)
     quit
 """
 import os, signal, sys, time
@@ -33,6 +34,8 @@ for line in sys.stdin:
             reply = f"ok {(time.perf_counter_ns() - t) / 1000:.1f}"
         except OSError as e:
             fd, reply = None, f"error {e}"
+    elif parts[0] == "read":
+        reply = f"ok {C.perf_read(fd) if fd is not None else -1}"
     elif parts[0] == "disarm":
         n = C.perf_read(fd) if fd is not None else -1
         if fd is not None:
