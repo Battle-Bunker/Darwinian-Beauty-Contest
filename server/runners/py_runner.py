@@ -35,8 +35,9 @@
 # No user code runs after the clock stops: the reply and MEMORY are copied into exact built-in types, and
 # the response written as JSON, inside the timed window.
 # NOT a security sandbox: restricted builtins + import whitelist + timeouts + memory cap only.
-import builtins, importlib, io, json, math, os, random, resource, select, signal, sys, time, types
+import builtins, importlib, io, json, math, os, random, resource, select, signal, struct, sys, time, types
 import py_rules  # (this directory)
+import ctypes
 
 ALLOWED_MODULES = {
     "math", "cmath", "random", "hashlib", "string", "itertools", "functools", "collections",
@@ -161,6 +162,13 @@ def game_clock():
     def strftime(fmt, t=None):
         return time.strftime(fmt, gmtime() if t is None else t)
 
+    def sleep(secs):
+        """Returns at once: there is nothing to wait for (limits are CPU time; waiting earns nothing)."""
+        if type(secs) not in (int, float):
+            raise TypeError(f"'{type(secs).__name__}' object cannot be interpreted as a number of seconds")
+        if not secs >= 0:
+            raise ValueError("sleep length must be non-negative")
+
     def get_clock_info(name):
         if name in ("process_time", "thread_time"):
             return time.get_clock_info(name)
@@ -175,7 +183,7 @@ def game_clock():
                      ("process_time_ns", process_time_ns), ("thread_time", thread_time), ("thread_time_ns", thread_time_ns),
                      ("clock_gettime", clock_gettime), ("clock_gettime_ns", clock_gettime_ns), ("clock_getres", clock_getres),
                      ("gmtime", gmtime), ("localtime", localtime), ("ctime", ctime), ("asctime", asctime),
-                     ("strftime", strftime), ("mktime", time.mktime), ("strptime", time.strptime), ("sleep", time.sleep),
+                     ("strftime", strftime), ("mktime", time.mktime), ("strptime", time.strptime), ("sleep", sleep),
                      ("get_clock_info", get_clock_info)]:
         if callable(fn) and getattr(fn, "__module__", None) == __name__:
             fn.__name__ = fn.__qualname__ = name
@@ -280,15 +288,97 @@ class Timeout(BaseException):
     pass
 
 
-def _alarm(*_):
-    raise Timeout("took too long")
+# CPU-time budgets (docs/research/compute-budgets/REPORT.md §4.2). A call's budget is CPU time on the forked
+# child's own thread clock (exact, and it leaves out host steal): the call is stopped when it has used it.
+#   graceful: ITIMER_REAL (an hrtimer, so it fires on time) armed for the CPU still left, and re-armed until
+#             the thread clock reaches the budget; then Timeout is raised in the program (at most ~0.1 ms past it)
+#   hard:     a POSIX timer on CLOCK_THREAD_CPUTIME_ID that has the kernel SIGKILL the child at budget + 5 ms of
+#             CPU, so a long C call (or a program that swallows Timeout) is stopped too (tick precision: ≤ ~9 ms)
+# No ITIMER_PROF, ITIMER_VIRTUAL or process-clock timers: they would make process_time() tick-stale.
+HARD_GRACE_NS = 5_000_000
+SLACK_NS = 20_000
 
 
-signal.signal(signal.SIGALRM, _alarm)
+class _Itimerspec(ctypes.Structure):
+    _fields_ = [("it_interval_s", ctypes.c_long), ("it_interval_ns", ctypes.c_long),
+                ("it_value_s", ctypes.c_long), ("it_value_ns", ctypes.c_long)]
 
 
-def timer(seconds):
-    signal.setitimer(signal.ITIMER_REAL, seconds)
+def _thread_cpu_killer():
+    """(arm(ns) -> timer, disarm(timer)): SIGKILL after ns of this thread's CPU. Resolved before any fork; None
+    if the C library can't (then the parent's wall backstop is the only hard stop)."""
+    try:
+        librt = ctypes.CDLL("librt.so.1", use_errno=True)
+        create, settime, delete = librt.timer_create, librt.timer_settime, librt.timer_delete
+        create.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+        settime.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p]
+        delete.argtypes = [ctypes.c_void_p]
+        sev = ctypes.create_string_buffer(64)  # struct sigevent: sigev_value, sigev_signo, sigev_notify (SIGEV_SIGNAL)
+        struct.pack_into("qii", sev, 0, 0, signal.SIGKILL, 0)
+        clock = time.CLOCK_THREAD_CPUTIME_ID
+
+        def arm(ns):
+            tid = ctypes.c_void_p()
+            if create(clock, sev, ctypes.byref(tid)) != 0:
+                return None
+            settime(tid, 0, ctypes.byref(_Itimerspec(0, 0, ns // 1_000_000_000, ns % 1_000_000_000)), None)
+            return tid
+
+        def disarm(tid):
+            delete(tid)
+
+        disarm(arm(10 ** 12))  # works here
+        return arm, disarm
+    except Exception:
+        return None
+
+
+_KILLER = _thread_cpu_killer()
+
+
+class _Guard:
+    """The budget of the call in progress (in a forked child)."""
+
+    def __init__(self):
+        self.armed, self.cpu, self.killer = False, None, None
+
+    def arm(self, budget_ms, soft_ms=None, on_soft=None):
+        """Stop at budget_ms of this thread's CPU from now; at soft_ms (if given), call on_soft once and go on."""
+        self.c0 = time.thread_time_ns()
+        self.hard = self.c0 + int(budget_ms * 1e6)
+        self.soft = self.c0 + int(soft_ms * 1e6) if soft_ms is not None else None
+        self.on_soft = on_soft
+        self.cpu = None
+        self.killer = _KILLER[0](int(budget_ms * 1e6) + HARD_GRACE_NS) if _KILLER else None
+        self.armed = True
+        signal.setitimer(signal.ITIMER_REAL, ((self.soft if self.soft is not None else self.hard) - self.c0) / 1e9)
+
+    def alarm(self, *_):
+        if not self.armed:
+            return
+        now = time.thread_time_ns()
+        if self.soft is not None and now >= self.soft - SLACK_NS:
+            self.soft = None
+            self.on_soft()
+        if now >= self.hard - SLACK_NS:
+            raise Timeout("took too long")
+        # The CPU left can't take less wall time than this.
+        signal.setitimer(signal.ITIMER_REAL, max((self.soft if self.soft is not None else self.hard) - now, 1000) / 1e9)
+
+    def stop(self):
+        """Disarm, and return this call's CPU time so far in ms (the same figure on every later stop)."""
+        if self.armed:
+            self.armed = False
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            self.cpu = (time.thread_time_ns() - self.c0) / 1e6
+            if self.killer is not None:
+                _KILLER[1](self.killer)
+                self.killer = None
+        return self.cpu
+
+
+GUARD = _Guard()
+signal.signal(signal.SIGALRM, GUARD.alarm)
 
 
 def short(e):
@@ -377,7 +467,6 @@ def reply(obj):
 
 
 try:
-    import ctypes
     _LIBC = ctypes.CDLL(None)
 except Exception:
     _LIBC = None
@@ -423,9 +512,52 @@ SIGNATURE = {"flower": "flower(challenge)", "bee": "first() and decide(challenge
 KEPT_FOR_MS = 30000  # a kept bee instance waits this long for fed() at most
 
 
+def schedstat(pid):
+    """(CPU ns, ns spent runnable but waiting for a CPU) of process pid, from /proc (stale by up to a tick)."""
+    try:
+        with open(f"/proc/{pid}/schedstat") as f:
+            cpu, wait, _ = f.read().split()
+        return int(cpu), int(wait)
+    except (OSError, ValueError):
+        return 0, 0
+
+
+class Lines:
+    """Lines from a forked call's reply pipe (a bee's call may send a notice line before its reply)."""
+
+    def __init__(self, fd):
+        self.fd, self.chunks = fd, []
+
+    def next(self, seconds):
+        """(line without its newline, "line") | (what was left, "eof") | (None, "timeout") within `seconds`."""
+        deadline = time.monotonic() + seconds
+        while True:
+            if self.chunks and b"\n" in self.chunks[-1]:
+                data = b"".join(self.chunks)
+                i = data.index(b"\n")
+                rest = data[i + 1:]
+                self.chunks = [rest] if rest else []
+                return data[:i], "line"
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return None, "timeout"
+            ready, _, _ = select.select([self.fd], [], [], left)
+            if not ready:
+                return None, "timeout"
+            b = os.read(self.fd, 1 << 20)
+            if not b:
+                return b"".join(self.chunks), "eof"
+            self.chunks.append(b)
+
+
 def main(role, setup):
-    ms = setup["ms"]
-    limit = setup.get("limitMs") or ms  # the hard stop for first and decide
+    ms = setup["ms"]  # a flower's most R; a bee's CPU time to decide (and fed's hard limit)
+    limit = setup.get("limitMs") or ms  # a bee's hard CPU limit for first and decide
+    # Wall-clock backstops (ms): a flower is stopped at wallMs of wall time; a bee's first or decide is judged
+    # at wallMs (a notice: late, or the server's fault) and stopped at hardWallMs; fed is stopped at wallMs.
+    wall_ms = setup.get("wallMs") or (400 if role == "flower" else 250)
+    hard_wall_ms = setup.get("hardWallMs") or max(4000, 2 * limit)
+    fault_share = setup.get("faultShare") or 0.5
     max_chars = setup.get("maxChars", 20000)
     max_bytes = setup.get("maxResponseBytes") or 1048576
     game = dict(setup["game"])
@@ -440,22 +572,26 @@ def main(role, setup):
         os.dup2(devnull, 2)
         random.seed()  # fresh entropy: the forked child would otherwise repeat the parent's sequence
         die_with_parent()
-        t0 = time.process_time()
         _CLOCK["module"], start_clock = game_clock()
         ns = {"__name__": "__program__", "__builtins__": SAFE_BUILTINS, "GAME": dict(game)}
         if role == "flower" and not trial:
-            ns["GAME"]["ms"] = budget  # this call's hidden time budget R: its hard limit
+            ns["GAME"]["ms"] = budget  # this call's hidden time budget R: its CPU limit
         keep = False
         try:
             if role == "bee":
                 ns["MEMORY"] = json.loads(req["memory"]) if req.get("memory") is not None else {}
-            start_clock()  # the program's clock reads 0 as its time starts
-            timer(budget / 1000)
+            start_clock()  # the program's clock reads 0 as its time starts, and so does its CPU budget
+            # A flower: stopped at R of CPU. A bee's first or decide: a notice to the engine at ms of CPU (it
+            # is late), stopped at its hard limit.
+            soft = ms if role == "bee" and not trial else None
+            GUARD.arm(budget, soft, (lambda: write_all(w, b"N\n")) if soft is not None else None)
+            write_all(w, b"S%d\n" % GUARD.c0)  # its CPU before the call's: if it's killed, rusage less this is the call's
             exec(code, ns)
             for name in ENTRY[role]:
                 if not callable(ns.get(name)):
                     raise NameError(f"program must define {SIGNATURE[role]}")
             if trial:
+                GUARD.stop()
                 line = "{}"
             elif role == "flower":
                 v = ns["flower"](req["c"])
@@ -474,8 +610,7 @@ def main(role, setup):
                     tail = '"e":' + json.dumps(m if m.startswith("the response") else f"flower returned something that is not plain data ({m})") + "}"
                 except UnicodeEncodeError:
                     tail = '"e":' + json.dumps("the response is not valid Unicode (a lone surrogate)") + "}"
-                timer(0)
-                line = f'{{"cpu":{(time.process_time() - t0) * 1000},' + tail
+                line = f'{{"cpu":{GUARD.stop()},' + tail
             else:
                 if req["op"] == "first":
                     v = ns["first"]()
@@ -486,9 +621,8 @@ def main(role, setup):
                 keep = (req["op"] == "decide" and callable(ns.get("fed"))
                         and (a == "feed" or (type(a) is list and len(a) == 2 and a[0] == "feed")))
         except BaseException as e:
-            timer(0)
-            line = json.dumps({"e": "Timeout: took too long" if isinstance(e, Timeout) else short(e),
-                               "cpu": (time.process_time() - t0) * 1000})
+            cpu = GUARD.stop()
+            line = json.dumps({"e": "Timeout: took too long" if isinstance(e, Timeout) else short(e), "cpu": cpu})
             keep = False
         if role == "bee" and not trial:
             line = line[:-1] + ',"out":' + json.dumps(captured.getvalue()[:2000]) + "}"
@@ -507,12 +641,13 @@ def main(role, setup):
         try:
             nectar = json.loads(got)["nectar"]
             start_clock()
-            timer(ms / 1000)
+            GUARD.arm(ms)  # fed: stopped at ms of CPU
+            write_all(w, b"S%d\n" % GUARD.c0)
             v = ns["fed"](nectar)
             line, _ = bee_reply("fed", v, ns)
         except BaseException as e:
-            timer(0)
-            line = json.dumps({"e": "Timeout: took too long" if isinstance(e, Timeout) else short(e)})
+            cpu = GUARD.stop()
+            line = json.dumps({"e": "Timeout: took too long" if isinstance(e, Timeout) else short(e), "cpu": cpu})
         line = line[:-1] + ',"out":' + json.dumps(captured.getvalue()[:2000]) + "}"
         write_all(w, b"." + line.encode("utf-8") + b"\n")
         os._exit(0)
@@ -520,7 +655,7 @@ def main(role, setup):
     def bee_reply(op, v, ns):
         """
         Still on the clock: the reply (for fed, what it returned unless None) and MEMORY as plain data, then
-        the clock stops. Returns (the reply's JSON text, the plain reply or None).
+        the clock stops. Returns (the reply's JSON text, with the call's CPU time, and the plain reply or None).
         """
         out = {"ok": True}
         a = None
@@ -539,11 +674,9 @@ def main(role, setup):
             try:
                 a = plain(v)
             except NotPlain as e:
-                timer(0)
-                return json.dumps({"e": f"{op} returned something that is not plain data ({e})"}), None
+                return json.dumps({"e": f"{op} returned something that is not plain data ({e})", "cpu": GUARD.stop()}), None
             if len(json.dumps(a)) > max_chars:
-                timer(0)
-                return json.dumps({"e": f"{op} returned something too large (over {max_chars} characters)"}), None
+                return json.dumps({"e": f"{op} returned something too large (over {max_chars} characters)", "cpu": GUARD.stop()}), None
             out = {"a": a}
         try:
             memory = json.dumps(plain_memory(ns.get("MEMORY")), allow_nan=False)
@@ -553,35 +686,13 @@ def main(role, setup):
                 out["memoryError"] = "MEMORY is far too large"
         except NotPlain as e:
             out["memoryError"] = str(e) if str(e).startswith("MEMORY") else f"MEMORY is not plain data ({e})"
-        timer(0)
+        out["cpu"] = GUARD.stop()
         return json.dumps(out), a
 
-    def run(req, budget, trial=False):
-        """Run the program once in a forked child: its reply line (bytes)."""
-        r, w = os.pipe()
-        cr, cw = os.pipe() if role == "bee" else (None, None)
-        pid = os.fork()
-        if pid == 0:
-            os.close(r)
-            if cw is not None:
-                os.close(cw)
-            serve(req, budget, trial, w, cr)
-            os._exit(0)
-        os.close(w)
-        if cr is not None:
-            os.close(cr)
-        # Wall-clock backstop for a child that ignores its timer (well before proc.js gives up on this process).
-        data, ok = read_line(r, (2 * budget if role == "flower" else budget) / 1000 + 0.5)
-        if ok and data[:1] == b"W":
-            state["kept"] = (pid, r, cw)
-            return data[1:]
-        finish(pid, r, cw, ok)
-        if not ok:
-            return b'{"e":"Timeout: took too long","out":""}' if role == "bee" else b'{"e":"Timeout: took too long","cpu":null}'
-        return data[1:]
-
-    def finish(pid, r, cw, ok=True):
-        if not ok:
+    def reap(pid, r, cw, kill, before_ns=0):
+        """Close the call's pipes and reap its child (killed first if `kill`): (the call's CPU ms by rusage, less
+        `before_ns`, its CPU before the call; killed by SIGKILL)."""
+        if kill:
             try:
                 os.kill(pid, signal.SIGKILL)
             except OSError:
@@ -593,29 +704,106 @@ def main(role, setup):
                 except OSError:
                     pass
         try:
-            os.waitpid(pid, 0)
+            _, status, ru = os.wait4(pid, 0)
+            cpu = max(0.0, (ru.ru_utime + ru.ru_stime) * 1000 - before_ns / 1e6)
+            return cpu, os.WIFSIGNALED(status) and os.WTERMSIG(status) == signal.SIGKILL
         except ChildProcessError:
-            pass
+            return None, False
+
+    def ended(pid, r, cw, extra, before_ns):
+        """The child closed its pipe without a reply: stopped by its hard CPU limit, or it died."""
+        cpu, killed = reap(pid, r, cw, False, before_ns)
+        e = "Timeout: took too long (stopped by its CPU limit)" if killed else "the program's process ended without a reply"
+        return json.dumps({"e": e, "cpu": cpu, **extra}).encode()
+
+    def backstop(pid, r, cw, t0, budget, extra, before_ns):
+        """Past the wall backstop: stopped, and the server's fault if it spent most of the time waiting for a CPU."""
+        cpu_ns, wait_ns = schedstat(pid)
+        wall = (time.monotonic() - t0) * 1000
+        cpu, _ = reap(pid, r, cw, True, before_ns)
+        cpu = cpu if cpu is not None else max(0.0, (cpu_ns - before_ns) / 1e6)
+        fault = wait_ns / 1e6 >= fault_share * wall and cpu < budget
+        e = (f"server fault: it waited {wait_ns / 1e6:.0f} ms of {wall:.0f} ms for a CPU, and ran {cpu:.1f} ms" if fault
+             else f"Timeout: still running after {wall:.0f} ms of wall time ({cpu:.1f} ms of CPU)")
+        return json.dumps({"e": e, "cpu": cpu, "backstop": True, "fault": fault, **extra}).encode()
+
+    def run(req, budget, trial=False):
+        """Run the program once in a forked child: its reply line (bytes). A bee's call may send a notice first."""
+        r, w = os.pipe()
+        cr, cw = os.pipe() if role == "bee" else (None, None)
+        t0 = time.monotonic()
+        pid = os.fork()
+        if pid == 0:
+            os.close(r)
+            if cw is not None:
+                os.close(cw)
+            serve(req, budget, trial, w, cr)
+            os._exit(0)
+        os.close(w)
+        if cr is not None:
+            os.close(cr)
+        extra = {"out": ""} if role == "bee" and not trial else {}
+        lines = Lines(r)
+        # A bee's first or decide is judged at wall_ms (unless it has replied, or used its ms of CPU, by then);
+        # every call is stopped at the backstop.
+        judge = None if trial or role == "flower" else wall_ms / 1000
+        stop = max(5.0, 4 * budget / 1000) if trial else (wall_ms if role == "flower" else hard_wall_ms) / 1000
+        before = 0
+        while True:
+            line, status = lines.next(t0 + (judge if judge is not None else stop) - time.monotonic())
+            if status == "line":
+                if line[:1] == b"S":
+                    before = int(line[1:])
+                    continue
+                if line[:1] == b"N":  # the bee has used its ms of CPU: it is late
+                    if judge is not None:
+                        send(b'{"notice":"late"}')
+                        judge = None
+                    continue
+                if line[:1] == b"W":
+                    state["kept"] = (pid, r, cw)
+                    return line[1:]
+                reap(pid, r, cw, False)
+                return line[1:]
+            if status == "eof":
+                return ended(pid, r, cw, extra, before)
+            if judge is not None:  # no reply yet at wall_ms: late, unless it was waiting for a CPU
+                cpu_ns, wait_ns = schedstat(pid)
+                fault = cpu_ns - before < ms * 1e6 and wait_ns / 1e6 >= fault_share * (time.monotonic() - t0) * 1000
+                send(b'{"notice":"fault"}' if fault else b'{"notice":"late"}')
+                judge = None
+                continue
+            return backstop(pid, r, cw, t0, budget, extra, before)
 
     def drop_kept():
         if state["kept"]:
             pid, r, cw = state["kept"]
             state["kept"] = None
-            finish(pid, r, cw, ok=False)
+            reap(pid, r, cw, True)
 
     def fed(req):
         if not state["kept"]:
             return b'{"skipped":true}'
         pid, r, cw = state["kept"]
         state["kept"] = None
+        t0 = time.monotonic()
         try:
             write_all(cw, json.dumps({"nectar": req.get("nectar")}).encode() + b"\n")
         except OSError:
-            finish(pid, r, cw, ok=False)
+            reap(pid, r, cw, True)
             return b'{"e":"the bee crashed","out":""}'
-        data, ok = read_line(r, ms / 1000 + 0.5)
-        finish(pid, r, cw, ok)
-        return data[1:] if ok else b'{"e":"Timeout: took too long","out":""}'
+        lines, before = Lines(r), 0
+        while True:
+            line, status = lines.next(t0 + wall_ms / 1000 - time.monotonic())
+            if status == "line" and line[:1] == b"S":
+                before = int(line[1:])
+                continue
+            if status == "line":
+                reap(pid, r, cw, False)
+                return line[1:]
+            if status == "eof":
+                return ended(pid, r, cw, {"out": ""}, before)
+            return backstop(pid, r, cw, t0, ms, {"out": ""}, before)
 
     try:
         code = compile(setup["code"], f"<{role}>", "exec")
