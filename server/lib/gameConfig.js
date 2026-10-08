@@ -1,5 +1,6 @@
 // Per-game parameters, chosen by the room owner in the lobby and locked once the game starts.
 import { parseType, typeToString } from "./types.js";
+import { scoringOf } from "./scoring.js";
 
 // Budgets per program kind, in weighted syntax-tree nodes of the minified program (vendor/measure.js).
 //   flower: small (1,100 nodes) and slow to change (220 a minute), with the whole 150 ms flower window.
@@ -8,12 +9,17 @@ import { parseType, typeToString } from "./types.js";
 //           at most `memory` bytes (a key-value store: Σ key bytes + value JSON bytes): the only thing
 //           that carries over from one of its turns to the next.
 // Time: a round is one turn for every bee, flower.ms (the flower window: every response is delivered then)
-// + bee.ms (the bees' decision window) = 200 ms of game time.
+// + bee.ms (the bees' decision window) = 200 ms of game time. Each flower call's hidden budget R is drawn from
+// [flower.minMs, flower.ms]; minMs defaults to 2% of ms, at least 1 ms (3 ms of 150).
 // Change budget accrues continuously while the game runs, `perMinute` nodes a minute, and banks up to
 // `cap` (one minute's worth): spend it whenever you like, on any change you can afford, and the new
 // program goes live at once. Before the game starts, writing programs is free.
+/** The default floor of R: 2% of the flower's ms, rounded, at least 1 ms. */
+export const FLOWER_MIN_SHARE = 0.02;
+export const defaultMinMs = (ms) => Math.max(1, Math.round(ms * FLOWER_MIN_SHARE));
+
 const BUDGETS = {
-  flower: { size: 1100, perMinute: 220, cap: 220, ms: 150, minMs: 50 },
+  flower: { size: 1100, perMinute: 220, cap: 220, ms: 150, minMs: defaultMinMs(150) },
   bee: { size: 11000, perMinute: 2200, cap: 2200, ms: 50, memory: 50 },
 };
 
@@ -23,7 +29,7 @@ export const GRAINS = ["feeder", "public", "off"];
 export const DEFAULT_CONFIG = Object.freeze({
   language: "python",          // "python" | "typescript"
   minutes: 2,                  // how long the game runs (game time: it stops while paused)
-  feedCost: 10,                // rounds a bee sits out after the round it feeds in
+  feedCost: 20,                // rounds a bee sits out after the round it feeds in
   challengeType: "int",        // type of the value a bee asks with
   responseType: "int",         // type of the value a flower answers with
   maxLen: 64,                  // max length of strings and lists in challenges
@@ -32,6 +38,9 @@ export const DEFAULT_CONFIG = Object.freeze({
   revealOnFinish: true,        // when the game ends, everyone can see all code and every bee's print output
   grains: "feeder",            // who sees a feed's pollen grain during play: "feeder" (the bee's team) | "public" | "off"
   pollenGrain: Object.freeze({ exponent: 1 / 3, scale: 1 }), // a grain is ⌊scale × pollen^exponent⌋ characters of code
+  // forage = Σ nectar^alpha (over flower teams), pollination = Σ pollen^beta (over bee teams); each in (0, 1].
+  // A config stored without `scoring` is from before it existed: those games were scored with √ (scoring.js).
+  scoring: Object.freeze({ alpha: 0.85, beta: 0.85 }),
   budgets: BUDGETS,
 });
 
@@ -44,6 +53,13 @@ const num = (v, lo, hi, dflt) => {
   return v !== null && v !== undefined && v !== "" && Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : dflt;
 };
 const bool = (v, dflt) => (typeof v === "boolean" ? v : v === "true" ? true : v === "false" ? false : dflt);
+/** A scoring exponent: in (0, 1], else an error; left out, `dflt`. */
+const exponent = (v, name, dflt) => {
+  if (v === null || v === undefined || v === "") return dflt;
+  const x = Number(v);
+  if (!Number.isFinite(x) || x <= 0 || x > 1) throw new Error(`scoring.${name} must be a number in (0, 1]`);
+  return x;
+};
 
 /** Merge a partial config onto `base`, clamping everything to sane ranges. Throws on bad types. */
 export function normalizeConfig(input = {}, base = DEFAULT_CONFIG) {
@@ -63,6 +79,8 @@ export function normalizeConfig(input = {}, base = DEFAULT_CONFIG) {
       exponent: num(c.pollenGrain?.exponent, 0.01, 1, base.pollenGrain?.exponent ?? DEFAULT_CONFIG.pollenGrain.exponent),
       scale: num(c.pollenGrain?.scale, 0, 1000, base.pollenGrain?.scale ?? DEFAULT_CONFIG.pollenGrain.scale),
     },
+    // Left out, the base's (a base stored without them is a √ game: it stays one unless they are set).
+    scoring: { alpha: exponent(c.scoring?.alpha, "alpha", scoringOf(base).alpha), beta: exponent(c.scoring?.beta, "beta", scoringOf(base).beta) },
     budgets: {},
   };
   for (const kind of KINDS) {
@@ -74,8 +92,11 @@ export function normalizeConfig(input = {}, base = DEFAULT_CONFIG) {
       ms: int(b.ms, 1, 10000, d.ms),
     };
     if (kind === "flower") {
-      // R, the per-call time budget, is drawn from [minMs, ms]; minMs can't exceed ms.
-      out.budgets.flower.minMs = Math.min(out.budgets.flower.ms, int(b.minMs, 1, 10000, d.minMs ?? BUDGETS.flower.minMs));
+      // R, the per-call time budget, is drawn from [minMs, ms]; minMs can't exceed ms. Left out, minMs is 2% of
+      // ms (at least 1), following ms, unless the base's was set to something else, which is kept.
+      const ms = out.budgets.flower.ms;
+      const auto = d.minMs == null || d.minMs === defaultMinMs(d.ms);
+      out.budgets.flower.minMs = Math.min(ms, int(b.minMs, 1, 10000, auto ? defaultMinMs(ms) : d.minMs));
     }
     if (kind === "bee") out.budgets.bee.memory = int(b.memory, 0, 1000000, d.memory ?? BUDGETS.bee.memory);
   }

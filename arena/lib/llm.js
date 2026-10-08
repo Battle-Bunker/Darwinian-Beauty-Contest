@@ -14,7 +14,9 @@ export const MODELS = ["opus", "sonnet", "haiku"];
 const EMPTY_CWD = path.join(ARENA_DIR, "runs", "cwd"); // no CLAUDE.md, no repo: nothing leaks into prompts
 // The CLI to run (tests point it at a stub that makes no model calls).
 const CLAUDE = process.env.ARENA_CLAUDE_BIN || "claude";
-const SESSION_NICE = 5; // team sessions (and their tools) run below the game server
+// Team sessions (the CLI and everything it starts: the agents' python, their tools) run below the game server, whose
+// programs' time limits are wall clock; a preset can lower them further (session.nice). Scaffolds run at nice 15.
+const SESSION_NICE = 5;
 fs.mkdirSync(EMPTY_CWD, { recursive: true });
 
 export class BudgetError extends Error {}
@@ -26,10 +28,16 @@ const waiters = [];
 let coolUntil = 0; // global pause after a rate limit / overload
 
 export function setConcurrency(n) { maxConcurrent = n; pump(); }
-// Live tuning without a restart: echo 16 > arena/runs/concurrency
+// Live tuning without a restart: echo 16 > arena/runs/concurrency. Only a file written while this runner is running
+// counts: one left over from an earlier run doesn't override ARENA_CONCURRENCY or a preset's concurrency.
 const CONTROL = path.join(ARENA_DIR, "runs", "concurrency");
+const STARTED = Date.now();
 setInterval(() => {
-  try { const n = Number(fs.readFileSync(CONTROL, "utf8").trim()); if (n > 0 && n !== maxConcurrent) { console.log(`[llm] concurrency ${maxConcurrent} -> ${n}`); setConcurrency(n); } } catch {}
+  try {
+    if (fs.statSync(CONTROL).mtimeMs < STARTED) return;
+    const n = Number(fs.readFileSync(CONTROL, "utf8").trim());
+    if (n > 0 && n !== maxConcurrent) { console.log(`[llm] concurrency ${maxConcurrent} -> ${n}`); setConcurrency(n); }
+  } catch {}
 }, 20_000).unref();
 function pump() {
   while (active < maxConcurrent && waiters.length) { active++; waiters.shift()(); }
@@ -213,6 +221,7 @@ export function extractTag(text, tag) {
 // saved for auditing, and kept in memory (control.lines) so the runner can audit it while the session runs. Same
 // limiter, cost ledger and usage-limit pause as callModel.
 const SESSION_PATH = ["/opt/node22/bin", "/usr/local/bin", "/usr/bin", "/bin"].join(":");
+const NICE_BIN = "/usr/bin/nice";
 
 // Per-million-token prices, used only to estimate the cost of a session the runner had to stop before the CLI
 // reported its cost (stream-json reports usage per message). Conservative public list prices.
@@ -246,7 +255,7 @@ export function capModel(model, maxModel) {
   return order.indexOf(model) > order.indexOf(maxModel) ? maxModel : model;
 }
 
-function runSessionCli({ model, cwd, appendSystem, prompt, maxTurns, maxBudgetUsd, transcriptFile, timeoutMs, python = true, control, env = {} }) {
+function runSessionCli({ model, cwd, appendSystem, prompt, maxTurns, maxBudgetUsd, transcriptFile, timeoutMs, python = true, control, env = {}, effort = null, nice = SESSION_NICE }) {
   return new Promise((resolve) => {
     const args = ["-p", "--model", model, "--tools", "Bash,Read,Write,Edit,Glob,Grep", "--permission-mode", "acceptEdits",
       // The user explicitly approved a Python interpreter for team agents (this container is isolated and
@@ -258,12 +267,17 @@ function runSessionCli({ model, cwd, appendSystem, prompt, maxTurns, maxBudgetUs
       // ~/.claude/projects/ (outside the workspace, next to the other teams'), plus env and cwd details.
       "--system-prompt", appendSystem];
     if (maxBudgetUsd) args.push("--max-budget-usd", String(maxBudgetUsd));
+    if (effort) args.push("--effort", effort);
     fs.mkdirSync(path.dirname(transcriptFile), { recursive: true });
     const out = fs.createWriteStream(transcriptFile);
-    const child = spawn(CLAUDE, args, { cwd, stdio: ["pipe", "pipe", "pipe"], env: { HOME: process.env.HOME || "/root", PATH: SESSION_PATH, LANG: "C.UTF-8", ...env } });
     // A team's own scripts (tests, stream analysis) yield the CPU to the garden's programs, whose time limits are wall
-    // clock: the session and everything it starts run at a lower priority (scaffolds lower still).
-    try { os.setPriority(child.pid, SESSION_NICE); } catch {}
+    // clock: the session and everything it starts run at a lower priority. Started through nice(1), so every thread of
+    // the CLI, and every process it starts, has it from the first instruction (nice 0 keeps the old way: no wrapper).
+    const env2 = { HOME: process.env.HOME || "/root", PATH: SESSION_PATH, LANG: "C.UTF-8", ...env };
+    const child = nice > 0 && fs.existsSync(NICE_BIN)
+      ? spawn(NICE_BIN, ["-n", String(nice), CLAUDE, ...args], { cwd, stdio: ["pipe", "pipe", "pipe"], env: env2 })
+      : spawn(CLAUDE, args, { cwd, stdio: ["pipe", "pipe", "pipe"], env: env2 });
+    if (nice > 0 && !fs.existsSync(NICE_BIN)) try { os.setPriority(child.pid, nice); } catch {}
     const lines = [];
     let buf = "", last = null, err = "", limitText = null, killed = null, closed = false;
     if (control) {
@@ -319,7 +333,7 @@ function runSessionCli({ model, cwd, appendSystem, prompt, maxTurns, maxBudgetUs
  * `holdOnLimit` is false (sessions in a running game: the moment has passed, so the caller decides). `env`: extra
  * environment (a session tag, so the runner can find what the session left running).
  */
-export async function runSession({ model, cwd, appendSystem, prompt, maxTurns = 30, maxBudgetUsd = null, transcriptFile, timeoutMs = 40 * 60_000, python = true, ctx = {}, control = null, holdOnLimit = true, env = {} }) {
+export async function runSession({ model, cwd, appendSystem, prompt, maxTurns = 30, maxBudgetUsd = null, transcriptFile, timeoutMs = 40 * 60_000, python = true, ctx = {}, control = null, holdOnLimit = true, env = {}, effort = null, nice = SESSION_NICE }) {
   if (!MODELS.includes(model)) throw new Error("unknown model " + model);
   for (let hold = 0; ; hold++) {
     await waitIfPaused();
@@ -330,7 +344,7 @@ export async function runSession({ model, cwd, appendSystem, prompt, maxTurns = 
     const t0 = Date.now();
     let r;
     try {
-      r = await runSessionCli({ model, cwd, appendSystem, prompt, maxTurns, maxBudgetUsd, python, control, env, transcriptFile: hold ? transcriptFile.replace(/\.jsonl$/, `.hold${hold}.jsonl`) : transcriptFile, timeoutMs });
+      r = await runSessionCli({ model, cwd, appendSystem, prompt, maxTurns, maxBudgetUsd, python, control, env, effort, nice, transcriptFile: hold ? transcriptFile.replace(/\.jsonl$/, `.hold${hold}.jsonl`) : transcriptFile, timeoutMs });
     } finally {
       release();
     }

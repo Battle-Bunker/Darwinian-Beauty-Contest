@@ -313,6 +313,34 @@ check("audit: writing to stream/ is a violation", sev(["Write", { file_path: pat
 check("audit: reading stream/ is fine", sev(bash("tail -n 5 stream/actions.jsonl")) === "ok" && sev(writePy(`for l in open("stream/actions.jsonl"):\n    pass\n`)) === "ok" && sev(bash("cp stream/actions.jsonl copy.jsonl")) === "ok");
 check("audit: paths outside the workspace are violations", sev(bash("cat /etc/hostname")) === "violation" && sev(["Read", { file_path: "/etc/hostname" }]) === "violation" && sev(bash("ls ../")) === "violation");
 check("audit: another team's workspace is a violation", sev(bash(`cat ${root}/${AID}/tess/flower.py`.replace(root, "/home/user/arena-ws"))) === "violation");
+// mesa-a game 2: Mallory was stopped (and lost a session) for `cd <arena>/tools`, her own tools/ with "mallory/" left out:
+// a path that names nothing in the arena's folder (no team's folder, not the runner's) is a warning, never a stop.
+// Another team's folder, the runner's files, a glob over the arena, the arena's folder itself and anything outside the
+// arena stay violations, whether named by cd, a path, a Read or written code.
+const A = path.join(root, AID);
+const mallory = `cd ${A}/tools && python3 -c "\nimport garden; ts=garden.turns(); print(len(ts), garden.MY_INDEX)"; wc -l ../stream/history.jsonl`;
+const stops = (...tools) => audit(tr(...tools), dir, AID, "luna", { port: 4100 }).filter((f) => f.severity === "violation");
+check("audit: a mistyped path into the arena's folder (no team's folder) is a warning, not a stop",
+  sev(bash(mallory)) === "warning" && stops(bash(mallory)).length === 0 && sev(["Read", { file_path: `${A}/tools/garden.py` }]) === "warning"
+  && sev(["Glob", { pattern: `${A}/tools/*.py` }]) === "warning", JSON.stringify(audit(tr(bash(mallory)), dir, AID, "luna", { port: 4100 })));
+check("audit: the same shapes into another team's folder or outside the arena are violations, and stop the session",
+  sev(bash(`cd ${A}/tess && cat flower.py`)) === "violation" && sev(bash("cat ../tess/flower.py")) === "violation" && sev(bash("cat /home/user/nowhere/x")) === "violation"
+  && sev(["Read", { file_path: `${A}/tess/flower.py` }]) === "violation" && sev(["Glob", { pattern: "../*/flower.py" }]) === "violation"
+  && stops(bash(`cd ${A}/tess && cat flower.py`)).length > 0);
+{ // Under a folder called arena-ws (as /home/user/arena-ws/<arena>/<team> is), where every path naming arena-ws/ is judged.
+  const W = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "aw-")), "arena-ws", "AR");
+  for (const t of ["luna", "tess", "luna-2", ".runner/g1"]) fs.mkdirSync(path.join(W, t), { recursive: true });
+  const writeIn = (content) => ["Write", { file_path: path.join(W, "luna", "f.py"), content }];
+  const s2 = (...tools) => { const f = audit(tr(...tools), path.join(W, "luna"), "AR", "luna", { port: 4100 }); return f.some((x) => x.severity === "violation") ? "violation" : f.length ? "warning" : "ok"; };
+  check("audit (arena-ws): a mistyped arena path is a warning, in a command or in code",
+    s2(bash(`cd ${W}/tools && python3 -c "import garden"; wc -l ../stream/history.jsonl`)) === "warning" && s2(writeIn(`P = "arena-ws/AR/nobody/x"\n`)) === "warning"
+    && s2(writeIn(`P = "${W}/tools/x.json"\n`)) === "warning");
+  check("audit (arena-ws): another team's folder (even one whose name starts with this team's), the runner's files, a glob, the arena's folder and another arena are violations",
+    s2(bash(`cat ${W}/tess/flower.py`)) === "violation" && s2(bash(`cat ${W}/luna-2/flower.py`)) === "violation" && s2(bash(`cat ${W}/.runner/g1/actions.jsonl`)) === "violation"
+    && s2(bash(`cat ${W}/*/flower.py`)) === "violation" && s2(bash(`ls ${W}`)) === "violation" && s2(bash(`cat ${path.dirname(W)}/BR/luna/flower.py`)) === "violation"
+    && s2(writeIn(`P = "arena-ws/AR/tess/flower.py"\n`)) === "violation" && s2(writeIn(`P = "${W}/tess/flower.py"\n`)) === "violation");
+  fs.rmSync(path.dirname(path.dirname(W)), { recursive: true, force: true });
+}
 check("audit: environment and database access are violations", sev(bash("env | head")) === "violation" && sev(bash("psql -c 'select 1'")) === "violation");
 check("audit: allowedUrl", allowedUrl(`${apiBase}/events?after=3`) && allowedUrl("http://127.0.0.1:4100/api/rooms/X") && !allowedUrl("http://localhost:4100/api/auth/dev/login") && !allowedUrl("http://localhost:5432/") && !allowedUrl("http://localhost:4000/api/rooms/X"));
 check("audit: a Python variable called nc is not netcat; netcat still is", sev(writePy(`nc = sum(1 for x in small if x)\nif nc >= 3 and no <= 0.1 * (nc + no):\n    nc += 1\n`)) === "ok" && sev(writePy(`import os\nos.system("cat f | nc localhost 80")\n`)) === "violation");

@@ -15,6 +15,13 @@ const n0 = (x) => Math.floor(x).toLocaleString("en-US");
 /** "30 seconds", "1 minute", "2 minutes", "1.5 minutes" */
 export const durationText = (minutes) => minutes < 1 ? `${Math.round(minutes * 60)} seconds` : minutes === 1 ? "1 minute" : `${+minutes.toFixed(2)} minutes`;
 
+/** The floor of a flower call's hidden budget R: the game's own (budgets.flower.minMs), else the engine's default, 2% of
+ * the most R can be (3 ms of 150). */
+export const rFloor = (config) => { const fl = config?.budgets?.flower || {}; return fl.minMs ?? Math.max(1, Math.round(0.02 * (fl.ms ?? 150))); };
+/** The score exponents: forage sums nectar^alpha over species, pollination pollen^beta over bee teams. Games from before
+ * the exponents were configurable used square roots (0.5). */
+export const scoreExponents = (config) => ({ alpha: config?.alpha ?? config?.scoring?.alpha ?? 0.5, beta: config?.beta ?? config?.scoring?.beta ?? 0.5 });
+
 export const sizeText = () => `Size is measured in nodes of your program's syntax tree after the game minifies it: comments, spacing and the ` +
   `lengths of names you define are free, and every literal (a string or a number) counts one node per byte.`;
 export const changeText = () => `A change costs the node edits that turn the version playing now into the new one (inserting or deleting a ` +
@@ -22,7 +29,7 @@ export const changeText = () => `A change costs the node edits that turn the ver
 
 /** How a turn works, in short; RULES.md has the official wording. Every time limit is public. */
 export function timingText(config) {
-  const b = config.budgets, fl = b.flower, bee = b.bee, minR = fl.minMs ?? 50;
+  const b = config.budgets, fl = b.flower, bee = b.bee, minR = rFloor(config);
   return `- Rounds of 200 ms of game time, all bees in lockstep: a ${durationText(config.minutes)} game is about
   ${Math.round((config.minutes * 60000) / 200)} rounds. Every bee that isn't feeding gets one turn per round.
 - Each team's flower program is its flower species. A turn: the bee's queued challenge goes to one flower of a species
@@ -69,7 +76,7 @@ ${timingText(config)}
 
 | program | size | change budget earned per minute | most it can bank | time per call |
 |---|---|---|---|---|
-${KINDS.map((k) => `| ${k} | ${n0(b[k].size)} | ${n0(b[k].perMinute)} | ${n0(b[k].cap)} | ${k === "flower" ? `R: ${b[k].minMs ?? 50} to ${b[k].ms}` : b[k].ms} |`).join("\n")}
+${KINDS.map((k) => `| ${k} | ${n0(b[k].size)} | ${n0(b[k].perMinute)} | ${n0(b[k].cap)} | ${k === "flower" ? `R: ${rFloor(config)} to ${b[k].ms}` : b[k].ms} |`).join("\n")}
 
   Change budget starts at 0 when the game starts and grows with game time, up to its cap. The bee's MEMORY holds at most
   ${n0(b.bee.memory ?? 50)} bytes. A response may be at most ${n0(config.maxResponseBytes ?? 65536)} bytes of JSON.`;
@@ -115,9 +122,10 @@ ${fixed
 
 /** System prompt of a session (lobby or game): tools, persona, how the workspace works, fair play, RULES.md, settings. */
 /** A role's private brief (EXPERIMENTS.adapt): what the team specialises in. Nobody else is told it. */
-export function roleText(role, { common = null } = {}) {
+export function roleText(role, { common = null, brief = null } = {}) {
   if (!role) return "";
   const docs = common?.length ? ` common/ (${common.join(", ")}) holds candidate costly signals, shared with every team that has your role and with no other team: ideas, not rules.` : "";
+  if (role === "honest" && brief === "r60") return honest60(common);
   if (role === "honest") {
     return `# Your role in this tournament (private: no other team is told it)
 You specialise in honesty. Your flower does some level of costly signalling, at your discretion, that reveals its true
@@ -133,6 +141,22 @@ nectar: percent 0 on every answer. Your bee is yours to design.`;
   return "";
 }
 
+/** The honest role of adapt-hi (brief "r60"): a fixed contract, 60% of R on costly signalling and percent 50, changed only
+ * to escape imitators. */
+function honest60(common) {
+  const docs = common?.length ? `\n- common/ (${common.join(", ")}) holds candidate costly signals, shared with every team that has your role and with no other team.` : "";
+  return `# Your role in this experiment (private: no other team is told it)
+You are not competing to win. You are playing a role, as part of an experiment: an honest signaller.
+- Your flower does costly signalling work that reveals its true per-turn wealth, and it spends exactly 60% of its time
+  budget on it. The call's hidden budget R is GAME["ms"]; do signal work until the call's CPU time
+  (time.process_time()) reaches 0.6 × R, then answer.
+- It gives 50% of its excess energy as nectar on every turn: percent 50 on every answer.
+- Write your flower and your bee before game 1. After that, the only change you make is to your costly signalling
+  strategy, and only to escape defecting imitators. The 60% and the 50% never change, and your bee stays as it is. Fixing
+  a bug that breaks this contract is allowed.
+- You can watch for imitation in the public responses and the feed record (stream/actions.jsonl, tools/query.py).${docs}`;
+}
+
 /** The common-knowledge notice of a primed cohort (files: the names in common/). */
 export function commonNotice(files) {
   return `Common knowledge: every team in this garden, including any team that joins in a later game, received exactly the same ` +
@@ -140,14 +164,13 @@ export function commonNotice(files) {
     `examples, not rules: use them, change them or ignore them.`;
 }
 
-export function toolSystem(persona, config, dir, { fixed = false, apiBase, teams, common = null, commonScope = "all", role = null }) {
+export function toolSystem(persona, config, dir, { fixed = false, apiBase, teams, common = null, commonScope = "all", role = null, roleBrief = null, brevity = true }) {
   const x = ext(config);
   return `You are a team agent in a coding game, working with tools inside your own workspace folder: ${dir}
 Tools: Read (absolute paths inside your workspace; use offset/limit for big files), Write and Edit (files in your workspace),
 Glob and Grep (search inside your workspace), and Bash inside your workspace: simple shell commands (ls, grep, wc, head) and
 python3. Use python3 to analyse the action stream and to test your programs; the workspace tools in tools/ run with python3 too.
-Work step by step, then stop with a short summary.
-
+${brevity ? "Work step by step, then stop with a short summary.\n" : ""}
 ${personaAndSituation(persona, fixed)}
 
 # How you work
@@ -208,7 +231,7 @@ ${personaAndSituation(persona, fixed)}
   shows it).
 ${common && commonScope !== "role" ? `- ${commonNotice(common)}
 ` : ""}${role ? `
-${roleText(role, { common: commonScope === "role" ? common : null })}
+${roleText(role, { common: commonScope === "role" ? common : null, brief: roleBrief })}
 ` : ""}
 # Fair play (breaking these ends your session at once; anything you try to submit after that is refused)
 - Use only the files in this workspace. Do not read, list or write any other directory (not even /tmp).
