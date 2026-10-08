@@ -86,13 +86,17 @@ check("lobby: a seeded veteran starts from its last tournament's programs and fi
 
 // adapt-hi (EXPERIMENTS["adapt-hi"]): the honest contract (60% of R, percent 50, the signalling strategy changed only to
 // escape imitators; the bee played to win, from the reference bee); no brevity nudges; the lobby's time; the start bee.
-const h60 = roleText("honest", { common: ["signals.md", "bee.py"], brief: "r60", startBee: "common/bee.py" });
+const h60 = roleText("honest", { common: ["integrated.py", "integrated_bee.py", "strategy.md"], brief: "contract", start: { flower: "common/integrated.py", bee: "common/integrated_bee.py" } });
 check("adapt-hi honest role: not competing to win, 60% of R in CPU, percent 50, strategy only to escape imitators, the bee to win",
   /not competing to win/.test(h60) && /playing a role|plays a role/.test(h60) && /0\.6 × R/.test(h60) && /time\.process_time\(\)/.test(h60) && /GAME\["ms"\]/.test(h60)
   && /percent 50 on every answer/.test(h60) && /only to escape\s+defecting imitators/.test(h60) && /60% and the 50% never change/.test(h60) && /Fixing\s+a bug/.test(h60)
   && /fingerprint space/.test(h60) && /Multi-dimensional fingerprints can be mixed with raw costly signalling/.test(h60) && /public responses and the feed record/.test(h60)
-  && /copy of the reference bee \(common\/bee\.py\)/.test(h60) && /Play it to win, and change it as you like/.test(h60) && /common\/ \(signals\.md/.test(h60), h60);
-check("adapt-hi honest role: private, in the system prompt", /# Your role in this experiment \(private/.test(toolSystem(persona, config, "/w", { apiBase, teams: 14, role: "honest", roleBrief: "r60", common: ["signals.md"], commonScope: "role" })));
+  && /copy of the reference flower \(common\/integrated\.py\)/.test(h60) && /copy of the reference bee \(common\/integrated_bee\.py\)/.test(h60)
+  && /Play it to win, and change it as you like/.test(h60) && /common\/ \(integrated\.py, integrated_bee\.py, strategy\.md/.test(h60), h60);
+const h7040 = roleText("honest", { brief: "contract", contract: { burn: 0.7, nectar: 40 } });
+check("adapt-hi honest role: the contract's numbers come from the preset (one place)", /exactly 70% of its/.test(h7040) && /reaches 0\.7 × R/.test(h7040)
+  && /percent 40 on every answer/.test(h7040) && /The 70% and the 40% never change/.test(h7040) && !/60%|percent 50/.test(h7040), h7040);
+check("adapt-hi honest role: private, in the system prompt", /# Your role in this experiment \(private/.test(toolSystem(persona, config, "/w", { apiBase, teams: 14, role: "honest", roleBrief: "contract", common: ["signals.md"], commonScope: "role" })));
 const NUDGES = /Be quick|at most (about )?\d+ tool calls|Work step by step, then stop with a short summary|one-line summary|one-paragraph summary/;
 const hiSys = toolSystem(persona, config, "/w", { apiBase, teams: 14, brevity: false });
 const hiLobby = lobbyBrief({ config, teamName: "Moonpetal", generation: 2, maxTurns: 100, carried: true, brevity: false, minutes: 10 });
@@ -115,14 +119,17 @@ check("timing: a game with the byte factor states it, and the response cap; one 
 // before RULES.md, role briefs, lobby and game briefs) mentions hashes, signatures, nonces, HMACs or cryptography.
 const CRYPTO = /hash|sha-?\d|nonce|hmac|signature|cryptograph/i;
 const smallCfg = { ...config, maxResponseBytes: 1024, energy: { bytes: true } };
-const smallSys = toolSystem(persona, smallCfg, "/w", { apiBase, teams: 14, fixed: true, brevity: false, simpleCode: false, role: "honest", roleBrief: "r60",
-  common: ["signals.md", "bee.py"], commonScope: "role", startBee: "common/bee.py" }).split("# The rules (also in RULES.md)")[0];
+const smallSys = toolSystem(persona, smallCfg, "/w", { apiBase, teams: 14, fixed: true, brevity: false, simpleCode: false, role: "honest", roleBrief: "contract",
+  common: ["integrated.py", "integrated_bee.py", "strategy.md"], commonScope: "role", start: { flower: "common/integrated.py", bee: "common/integrated_bee.py" } }).split("# The rules (also in RULES.md)")[0];
 check("adapt-hi: no cryptographic words in what the arena writes for a team (RULES.md aside)", !CRYPTO.test(smallSys) && !CRYPTO.test(roleText("defector"))
   && !CRYPTO.test(lobbyBrief({ config: smallCfg, teamName: "M", generation: 2, maxTurns: 100, carried: true, brevity: false, minutes: 10 }))
   && !CRYPTO.test(gameBrief({ config: smallCfg, teamName: "M", generation: 1, sessionNo: 2, status: "running", clockMs: 60000, budgets: null, maxTurns: 60, brevity: false })),
   smallSys.match(new RegExp(`.{0,80}(${CRYPTO.source}).{0,80}`, "i"))?.[0]);
 check("adapt-hi lobby: its wall time, and what the team can study (the revealed earlier games, room queries)", /about 10 minutes of wall time/.test(hiLobby)
   && /previous-games\//.test(hiLobby) && /tools\/query\.py --room/.test(hiLobby), hiLobby);
+const bothLobby = lobbyBrief({ config, teamName: "Wildmeadow Commons", generation: 1, maxTurns: 100, carried: true, started: ["flower", "bee"], brevity: false, minutes: 10 });
+check("adapt-hi lobby: an honest team's first game starts from the reference flower and bee", /flower\.py and bee\.py start as the reference programs/.test(bothLobby)
+  && /you may rewrite them/.test(bothLobby) && !/is empty/.test(bothLobby), bothLobby);
 const startLobby = lobbyBrief({ config, teamName: "Wildmeadow Commons", generation: 1, maxTurns: 100, carried: true, started: ["bee"], brevity: false, minutes: 10 });
 check("adapt-hi lobby: an honest team's first game starts from the reference bee, with the flower to write", /bee\.py starts as the reference program/.test(startLobby)
   && /flower\.py is empty: write it from scratch/.test(startLobby) && !/final programs from game 0/.test(startLobby), startLobby);

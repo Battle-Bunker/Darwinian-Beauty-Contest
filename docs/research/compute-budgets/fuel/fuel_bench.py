@@ -7,8 +7,9 @@ does metering cost? The same C source (work.c) runs natively and as wasm.
 
 Needs the `wasmtime` package on sys.path (pip install --target DIR wasmtime; PYTHONPATH=DIR).
 Each line: {tag, mode: native | wasm | wasm_fuel | limit, rep, cpu_ms, fuel, result}.
-"limit" runs give the call exactly its measured fuel, then one unit less: the first completes, the second
-traps (a fuel limit is exact, whatever the machine is doing).
+"limit" runs give the call exactly its measured fuel, then a little less (1, 100, 10^4, 10^6 units): where
+the trap starts shows the limit's granularity (wasmtime checks fuel at loop headers and calls, so the work
+after the last check can run a few units over).
 """
 import ctypes, json, sys, time
 
@@ -80,7 +81,7 @@ def main():
             r, cpu, used, _ = run(metered, 10**15)
             w({"mode": "wasm_fuel", "rep": rep, "cpu_ms": cpu, "fuel": used, "result": str(r)})
         _, _, need, _ = run(metered, 10**15)
-        for give in (need, need - 1):
+        for give in (need, need - 1, need - 100, need - 10_000, need - 1_000_000):
             r, cpu, used, err = run(metered, give)
             w({"mode": "limit", "given": give, "cpu_ms": cpu, "fuel": used, "result": None if r is None else str(r), "error": err})
 

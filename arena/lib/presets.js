@@ -22,6 +22,8 @@
 //                  described: nothing depends on its scores)
 //   concurrency    model sessions and calls at once (ARENA_CONCURRENCY overrides it; default 8)
 //   expectConfig   { "dotted.key": value } the server's config must have (checked when a game is created)
+//   honest         the cooperators' contract { burn, nectar } (role brief "contract"): CPU at burn × R on costly
+//                  signalling, percent `nectar`; used in the brief, the conformance metrics and the role-drift log
 //   limits         per-model session limits (turns, usd), optionally per phase: { lobby: {...}, game: {...} }
 //   maxModel       "sonnet": calls that would use opus (judges, breeders) use sonnet instead
 //   reserveUsd     no new team session once the spend is within this of the cap (keeps money for interviews and judges)
@@ -60,15 +62,19 @@ const ADAPT_LINEUP = [
 
 // adapt-hi: the same 14 teams and roles, every agent on opus with high effort and room to think. Veterans start as in
 // adapt (carried over from fen and kiln, not from mesa-a); the four kids without their coding limits (personas.js
-// CODING_LIMITS). The honest specialists' flowers are on a fixed contract (prompts.js honest60: 60% of R on costly
-// signalling, percent 50, only their signalling strategy changing, and only to escape imitators); their bees play to win
-// and start as the reference fingerprint-checking bee, bee.py of arena/priming/fingerprints/. Their common/ holds
-// honest-signals/ and fingerprints/ merged (ARENA_HONEST_HI_DIRS: other folders, comma-separated; ARENA_HONEST_START_BEE:
-// another bee, for a dry run).
+// CODING_LIMITS). The honest specialists (cooperators) are on a fixed contract (prompts.js honestContract; the numbers
+// in the preset's `honest`): CPU at burn × R on costly signalling and percent `nectar` on every answer, only their
+// signalling strategy changing, and only to escape imitators; their bees play to win. Their common/ is
+// arena/priming/fingerprints/ (the shared repertoire, the reference programs and the cooperators' notes), and they start
+// from its integrated flower and starter bee (ARENA_HONEST_HI_DIRS: other folders, comma-separated;
+// ARENA_HONEST_START_FLOWER / ARENA_HONEST_START_BEE: other files, for a dry run).
 const FINGERPRINT_DIR = "arena/priming/fingerprints";
-const HONEST_HI_DIRS = process.env.ARENA_HONEST_HI_DIRS ? process.env.ARENA_HONEST_HI_DIRS.split(",") : [HONEST_DIR, FINGERPRINT_DIR];
-const HONEST_START_BEE = process.env.ARENA_HONEST_START_BEE || `${FINGERPRINT_DIR}/bee.py`;
-const HI_HONEST = { role: "honest", brief: "r60", common: HONEST_HI_DIRS, start: { bee: HONEST_START_BEE } };
+const HONEST_HI_DIRS = process.env.ARENA_HONEST_HI_DIRS ? process.env.ARENA_HONEST_HI_DIRS.split(",") : [FINGERPRINT_DIR];
+const HONEST_START_FLOWER = process.env.ARENA_HONEST_START_FLOWER || `${FINGERPRINT_DIR}/integrated.py`;
+const HONEST_START_BEE = process.env.ARENA_HONEST_START_BEE || `${FINGERPRINT_DIR}/integrated_bee.py`;
+const HI_HONEST = { role: "honest", brief: "contract", common: HONEST_HI_DIRS, start: { flower: HONEST_START_FLOWER, bee: HONEST_START_BEE } };
+// The cooperators' contract, in one place: the share of R spent on costly signalling in CPU, and the percent given.
+const HI_CONTRACT = { burn: 0.6, nectar: 50 };
 const HI_KID = { seed: true, uncap: true };
 const ADAPT_HI_LINEUP = [
   ["from:fen-d/mallory", "opus", VETERAN], ["from:fen-a/kenji", "opus", HI_KID], ["from:fen-a/ada", "opus", VETERAN],
@@ -158,6 +164,7 @@ export const PRESETS = {
     session: { warmupSeconds: 10, gapSeconds: 5, idleBackoff: false, maxIdleGapSeconds: 5, endMarginSeconds: 20, maxMinutes: 10, penaltyMinutes: 6, lobbyMinutes: 10, effort: "high", nice: 15 },
     limits: { lobby: { opus: { turns: 100, usd: 6 } }, game: { opus: { turns: 60, usd: 3 } } },
     prompts: { brevity: false, simpleCode: false },
+    honest: HI_CONTRACT,
     concurrency: 16,
     expectConfig: HI_EXPECT,
     scaffold: { cpuShare: 0.05 },
@@ -175,6 +182,7 @@ export const PRESETS = {
     lineup: ADAPT_HI_LINEUP,
     session: { warmupSeconds: 3, gapSeconds: 2, idleBackoff: false, maxIdleGapSeconds: 2, endMarginSeconds: 3, maxMinutes: 2, lobbyMinutes: 1, effort: "high", nice: 15 },
     prompts: { brevity: false, simpleCode: false },
+    honest: HI_CONTRACT,
     concurrency: 16,
     scaffold: { cpuShare: 0.05 },
     reserveUsd: 0,

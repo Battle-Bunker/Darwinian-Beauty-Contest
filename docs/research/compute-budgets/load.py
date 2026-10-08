@@ -23,20 +23,25 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 TAG = "cb-load-hog"
 
 
+MAX_LIFE_S = 900  # every hog ends by itself after this, even if nobody stops it
+
+
 def hog(kind):
+    end_of_life = time.monotonic() + MAX_LIFE_S
+    alive = lambda: time.monotonic() < end_of_life
     if kind == "spin":
-        x = 0
-        while True:
-            x += 1
+        while alive():
+            for _ in range(1_000_000):
+                pass
     elif kind == "mem":
         a = bytearray(os.urandom(1 << 16)) * (1 << 10)  # 64 MB
         b = bytearray(len(a))
-        while True:
+        while alive():
             b[:] = a
             a[:] = b
     elif kind == "bursty":
         rnd = random.Random(os.getpid())
-        while True:
+        while alive():
             end = time.perf_counter() + rnd.uniform(0.005, 0.05)
             while time.perf_counter() < end:
                 pass

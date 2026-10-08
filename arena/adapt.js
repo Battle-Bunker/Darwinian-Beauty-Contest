@@ -22,6 +22,10 @@
 //   responses by role       median bytes (p90), and in games with the byte factor the energy share the bytes took
 //   side by side            the two arenas game by game: the agents' effort (sessions, turns, output tokens, spend) and
 //                           the headline measures of each role
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { Api, gamePath } from "./lib/api.js";
 import { all, one, pool } from "./lib/db.js";
 import { callModel } from "./lib/llm.js";
@@ -58,7 +62,9 @@ async function analyse(id) {
   const roles = arena.settings.roles || {}, seeds = arena.settings.seeds || {};
   const personas = await all("SELECT * FROM arena.personas WHERE arena_id = $1", [id]);
   const roleOf = (slug) => roles[slug]?.role || (seeds[slug] ? "veteran" : "other");
-  const r60 = (slug) => roles[slug]?.brief === "r60";
+  // The cooperators' contract (adapt-hi: settings.honest { burn, nectar }); else the adapt brief (percent 50, work free).
+  const onContract = (slug) => roles[slug]?.brief === "contract";
+  const C = { burn: 0.6, nectar: 50, ...(arena.settings.honest || {}) };
   const games = await all("SELECT * FROM arena.games WHERE arena_id = $1 AND metrics IS NOT NULL ORDER BY generation", [id]);
   p(`# Adapt: ${id}${arena.settings.experiment?.name ? ` (${arena.settings.experiment.name})` : ""}`);
   p();
@@ -82,7 +88,7 @@ async function analyse(id) {
     const lastOf = (teamId, kind) => vs.filter((v) => v.teamId === teamId && v.kind === kind).sort((a, b) => b.version - a.version)[0];
     const flowerLabel = (teamId) => { const v = lastOf(teamId, "flower"); if (!v) return null; const l = label(v); return { mechanism: l.mechanism ?? l.kw.mechanism, families: l.families ?? l.kw.families ?? [], tags: l.tags ?? l.kw.tags ?? [], signal: l.signal ?? l.kw.signal, level: levelOf({ mechanism: l.mechanism ?? l.kw.mechanism, tags: l.tags ?? l.kw.tags, families: l.families ?? l.kw.families }) }; };
     const T = turns.map((t) => ({ bee: byIndex[t.bee], flower: byIndex[t.flower], fed: t.fed, R: t.budgetMs, atMs: t.atMs, percent: t.percent, ms: t.ms,
-      answered: t.response != null || t.responseBytes != null, bytes: t.responseBytes ?? null, version: t.flowerVersion }));
+      answered: t.response != null || t.responseBytes != null, bytes: t.responseBytes ?? null, version: t.flowerVersion, c: t.challenge, r: t.response }));
     const Rs = T.map((t) => t.R).filter((x) => x != null).sort((a, b) => a - b);
     const lo = Rs[Math.floor(Rs.length / 3)], hi = Rs[Math.floor((2 * Rs.length) / 3)];
     const end = Math.max(...T.map((x) => x.atMs), 1);
@@ -122,19 +128,21 @@ async function analyse(id) {
     // Honest specialists.
     const W = m.wealth?.species || [];
     const honestEnts = ents.filter((x) => role(x.team_id) === "honest");
-    const contract = honestEnts.some((e) => r60(e.slug));
-    p(`Honest specialists (conformance: answers at 50%${contract ? "; CPU at 0.6 × R, over answered calls: CPU ms ÷ R and the share within ±5 points of 60%" : ""}; ` +
+    const contract = honestEnts.some((e) => onContract(e.slug));
+    const nectar = contract ? C.nectar : 50, band = [Math.round(100 * (C.burn - 0.05)), Math.round(100 * (C.burn + 0.05))];
+    p(`Honest specialists (conformance: answers at ${nectar}%${contract ? `; CPU at ${C.burn} × R, over answered calls: CPU ms ÷ R and the share within ±5 points of ${Math.round(100 * C.burn)}%` : ""}; ` +
       `honesty: costly when effort and visible work both follow R, cheap when only the work does):`);
-    table(["team", "conformance (percent 50)", ...(contract ? ["CPU ÷ R p10 / p50 / p90", "within 55–65%", "no response"] : []), "median percent", "CPU share", "effort ~ R", "work ~ R", "honesty",
+    table(["team", `conformance (percent ${nectar})`, ...(contract ? ["CPU ÷ R p10 / p50 / p90", `within ${band[0]}–${band[1]}%`, "no response"] : []), "median percent", "CPU share", "effort ~ R", "work ~ R", "honesty",
       "feeds from rival bees", "rival feed rate", "fitness (rank)"],
       honestEnts.map((e) => {
         const tid = e.team_id, t = m.teams?.[tid], w = W.find((s) => s.teamId === tid), rv = T.filter((x) => x.flower === tid && x.bee !== tid);
         const work = [w?.bytes, w?.nodes].filter((x) => x != null);
         const mine = T.filter((x) => x.flower === tid);
         const share = mine.filter((x) => x.answered && x.ms != null && x.R > 0).map((x) => x.ms / x.R);
-        const at60 = share.length ? share.filter((x) => Math.abs(x - 0.6) <= 0.05).length / share.length : null;
+        const at60 = share.length ? share.filter((x) => Math.abs(x - C.burn) <= 0.05).length / share.length : null;
         const noResponse = mine.length ? mine.filter((x) => !x.answered).length / mine.length : null;
-        const conform = m.roles?.[tid]?.conform ?? t?.flower?.percentAt50;
+        const answered = mine.filter((x) => x.answered && x.percent != null);
+        const conform = answered.length ? answered.filter((x) => Math.abs(x.percent - nectar) < 0.5).length / answered.length : null;
         S.honest.push({ conform, at60, cpuP50: quantile(share, 0.5), noResponse, rivalRate: rate(rv), fitness: final[tid]?.fitness ?? null });
         return [e.team_name, pct(conform), ...(contract ? [`${f2(quantile(share, 0.1))} / ${f2(quantile(share, 0.5))} / ${f2(quantile(share, 0.9))}`, pct(at60), pct(noResponse)] : []),
           f2(t?.flower?.percent?.p50), pct(t?.flower?.computeShare), f2(w?.effort), f2(work.length ? Math.max(...work) : null),
@@ -170,6 +178,8 @@ async function analyse(id) {
       p("Changes of the honest flowers, against the defectors' imitations before them (rival feed rates in the minute before → after):");
       table(["team", "change", "defector imitations of the old version before it", "came", "rival feed rate at it", "at its imitators", "new version imitated too"], crows);
     } else if (honestEnts.length) { p("No honest flower changed during this game."); p(); }
+
+    fingerprintReport({ T, ents, role, copies, teamIdByName, gen: g.generation, S });
 
     // Defectors.
     p("Defectors (conformance: answers at 0%; imitation: their versions' first close copies of another species' answers; detection: rival bees' feed rate falling below half the model's):");
@@ -233,7 +243,89 @@ async function analyse(id) {
     return [`${v.name}`, signs.join("; ") || "no adaptation seen"];
   }).filter(Boolean);
   if (adapted.length) table(["veteran", "signs of adaptation (first game → last)"], adapted);
+  // Fingerprints across games: each flower's whole-game profile, game by game, and how often defectors copied it.
+  const fpSlugs = [...new Set(summary.flatMap((s) => Object.keys(s.fingerprints || {})))];
+  if (fpSlugs.length) {
+    p("## Fingerprints game by game (whole-game profile over the four properties, U; defector copies of it that game)");
+    p();
+    table(["flower", "role", ...summary.map((s) => `game ${s.gen}`)], fpSlugs.map((slug) => {
+      const any = summary.map((s) => s.fingerprints?.[slug]).find(Boolean);
+      return [any.name, any.role, ...summary.map((s) => { const f = s.fingerprints?.[slug]; return f?.profile ? `${f.profile.map((x) => x.toFixed(2)).join(" ")} (U ${f.U.toFixed(1)}; ${f.copied} copied)` : "-"; })];
+    }));
+  }
   return { id, arena, summary, effort: await effortOf(id, games) };
+}
+
+// ---------------------------------------------------------------- fingerprints (adapt-hi's cooperators)
+
+// The integrated fingerprint (arena/priming/fingerprints/integrated.py): a response {"nodes": 1, "edges": [], "labels":
+// [S]}, S of 49 characters: p[v] = ord(S[v]) − 35 for v < 48 (an arrangement of the 48 nodes) and S[48] its spend share
+// f = (ord − 35) / 50. The starter bee's levels(challenge, response) scores the arrangement on its four properties as
+// z-scores (its pair sets come from Python's random.Random(challenge), so it runs in Python): profile z / Σz, wealth Σz.
+const FINGERPRINT_BEE = args["fingerprint-bee"] || path.join(path.dirname(new URL(import.meta.url).pathname), "priming", "fingerprints", "integrated_bee.py");
+const PER_WINDOW = 40; // responses scored per flower and minute at most (levels() is a few ms each)
+const isFingerprint = (r) => !!r && Array.isArray(r.labels) && typeof r.labels[0] === "string" && r.labels[0].length === 49;
+
+/** z per (challenge, response), from the starter bee's own levels() (one Python run): Map key -> z array or null. */
+function fingerprintLevels(items) {
+  if (!items.length || !fs.existsSync(FINGERPRINT_BEE)) return new Map();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "adapt-fp-")), file = path.join(dir, "items.json");
+  fs.writeFileSync(file, JSON.stringify(items.map(({ k, c, r }) => ({ k, c, r }))));
+  const py = `import json, sys
+ns = {"__name__": "fingerprint_bee"}
+exec(compile(open(sys.argv[1]).read(), sys.argv[1], "exec"), ns)
+out = {}
+for it in json.load(open(sys.argv[2])):
+    try:
+        out[it["k"]] = ns["levels"](it["c"], it["r"])
+    except Exception:
+        out[it["k"]] = None
+print(json.dumps(out))`;
+  const res = spawnSync("python3", ["-I", "-c", py, FINGERPRINT_BEE, file], { encoding: "utf8", maxBuffer: 1 << 28 });
+  fs.rmSync(dir, { recursive: true, force: true });
+  if (res.status !== 0) { p(`(fingerprint levels failed: ${String(res.stderr).slice(0, 300)})`); return new Map(); }
+  return new Map(Object.entries(JSON.parse(res.stdout)));
+}
+
+/** Each cooperator's fingerprint over the game, minute by minute (its profile z / Σz, wealth Σz and claimed spend share
+ * f), against the defectors' imitations of it; and the defectors' own, where they answer in the format. */
+function fingerprintReport({ T, ents, role, copies, teamIdByName, gen, S }) {
+  const who = ents.filter((e) => ["honest", "defector"].includes(role(e.team_id)));
+  const items = [];
+  for (const e of who) {
+    const perWin = new Map();
+    for (const [i, x] of T.entries()) {
+      if (x.flower !== e.team_id || !x.answered || !isFingerprint(x.r)) continue;
+      const w = Math.floor(x.atMs / 60000), n = perWin.get(w) || 0;
+      if (n >= PER_WINDOW) continue;
+      perWin.set(w, n + 1);
+      items.push({ k: String(i), c: x.c, r: x.r, team: e.team_id, w, f: (x.r.labels[0].charCodeAt(48) - 35) / 50 });
+    }
+  }
+  if (!items.length) return;
+  const z = fingerprintLevels(items);
+  const prof = (zs) => { const v = zs.filter((x) => x && x.reduce((a, b) => a + b, 0) > 0); if (!v.length) return null;
+    const ps = v.map((x) => { const U = x.reduce((a, b) => a + b, 0); return x.map((y) => y / U); });
+    return { p: ps[0].map((_, d) => mean(ps.map((x) => x[d]))), U: mean(v.map((x) => x.reduce((a, b) => a + b, 0))), n: v.length }; };
+  const fmtP = (q) => (q ? `${q.p.map((x) => x.toFixed(2)).join(" ")} (U ${q.U.toFixed(1)})` : "-");
+  const nWin = Math.max(...items.map((x) => x.w)) + 1;
+  const rows = [], summary = {};
+  for (const e of who) {
+    const mine = items.filter((x) => x.team === e.team_id);
+    if (!mine.length) continue;
+    const all = prof(mine.map((x) => z.get(x.k)));
+    const imit = copies.filter((c) => c.model === e.team_name && role(teamIdByName[c.copier]) === "defector").map((c) => Math.floor(c.atMs / 60000));
+    const cells = Array.from({ length: nWin }, (_, w) => {
+      const q = prof(mine.filter((x) => x.w === w).map((x) => z.get(x.k)));
+      return `${q ? q.p.map((x) => x.toFixed(2)).join(" ") : "-"}${imit.includes(w) ? " ←copied" : ""}`;
+    });
+    summary[e.slug] = { name: e.team_name, role: role(e.team_id), profile: all?.p ?? null, U: all?.U ?? null, f: mean(mine.map((x) => x.f)), copied: imit.length };
+    rows.push([e.team_name, role(e.team_id), fmtP(all), f2(mean(mine.map((x) => x.f))), ...cells]);
+  }
+  S.fingerprints = summary;
+  p(`Fingerprints, game ${gen} (the integrated format, scored by the starter bee's levels(): profile z / Σz over its four properties, ` +
+    `U = Σz; f the spend share it claims; minute by minute, "←copied" where a defector's close copy of it began; at most ${PER_WINDOW} responses a minute):`);
+  table(["flower", "role", "profile (U), whole game", "f", ...Array.from({ length: nWin }, (_, w) => `min ${w + 1}`)], rows);
 }
 
 /** The agents' effort per game: team sessions (lobby and in play), their turns, output tokens and spend, per team. */
@@ -267,14 +359,16 @@ function sideBySide(A, B) {
     ["veterans' bees: feed rate at honest / defector flowers", (x) => seq(x, (s) => `${pct(mean(s.vet.map((v) => v.feedHonest)))}/${pct(mean(s.vet.map((v) => v.feedDefector)))}`)],
     ["veterans' bees: feed rate at poor / rich R", (x) => seq(x, (s) => `${pct(mean(s.vet.map((v) => v.feedPoor)))}/${pct(mean(s.vet.map((v) => v.feedRich)))}`)],
     ["veterans: copies of honest flowers", (x) => seq(x, (s) => s.vet.reduce((a, v) => a + v.copiedHonest.length, 0))],
-    ["honest: answers at 50%", (x) => seq(x, (s) => pct(mean(s.honest.map((h) => h.conform))))],
-    ["honest: CPU within 55–65% of R", (x) => seq(x, (s) => pct(mean(s.honest.map((h) => h.at60))))],
+    ["honest: answers at their percent (50, or the contract's)", (x) => seq(x, (s) => pct(mean(s.honest.map((h) => h.conform))))],
+    ["honest: CPU within ±5 points of the contract's share of R", (x) => seq(x, (s) => pct(mean(s.honest.map((h) => h.at60))))],
     ["honest: no response", (x) => seq(x, (s) => pct(mean(s.honest.map((h) => h.noResponse))))],
     ["honest: rival feed rate", (x) => seq(x, (s) => pct(mean(s.honest.map((h) => h.rivalRate))))],
     ["defectors: copies (of honest flowers)", (x) => seq(x, (s) => `${s.defector.reduce((a, d) => a + d.copies, 0)} (${s.defector.reduce((a, d) => a + d.ofHonest, 0)})`)],
     ["defectors: rival feed rate", (x) => seq(x, (s) => pct(mean(s.defector.map((d) => d.rivalRate))))],
     ["median response bytes: veteran / honest / defector", (x) => seq(x, (s) => ["veteran", "honest", "defector"].map((r) => n0(s.bytes?.[r]?.median)).join("/"))],
     ["energy lost to bytes: veteran / honest / defector", (x) => seq(x, (s) => ["veteran", "honest", "defector"].map((r) => pct(s.bytes?.[r]?.lost)).join("/"))],
+    ["cooperators' mean fingerprint profile (4 properties)", (x) => seq(x, (s) => { const ps = Object.values(s.fingerprints || {}).filter((f) => f.role === "honest" && f.profile);
+      return ps.length ? ps[0].profile.map((_, d) => mean(ps.map((f) => f.profile[d])).toFixed(2)).join(" ") : null; })],
     ["all bees at honest / defector flowers", (x) => seq(x, (s) => `${pct(mean(["veteran", "honest", "defector"].map((b) => s.feeds?.[b]?.honest)))}/${pct(mean(["veteran", "honest", "defector"].map((b) => s.feeds?.[b]?.defector)))}`)],
     ["mean fitness: veteran / honest / defector", (x) => seq(x, (s) => `${f2(mean(s.vet.map((v) => v.fitness)))}/${f2(mean(s.honest.map((h) => h.fitness)))}/${f2(mean(s.defector.map((d) => d.fitness)))}`)],
   ];

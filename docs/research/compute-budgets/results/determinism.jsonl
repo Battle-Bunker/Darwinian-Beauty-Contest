@@ -1,0 +1,180 @@
+{"units": null, "cpu_ms": 27.56845, "tag": "idle", "python": "3.11.15", "mode": "native", "work": "interp", "rep": 0}
+{"units": null, "cpu_ms": 30.838241, "tag": "idle", "python": "3.11.15", "mode": "native", "work": "interp", "rep": 1}
+{"units": null, "cpu_ms": 28.121177, "tag": "idle", "python": "3.11.15", "mode": "native", "work": "interp", "rep": 2}
+{"units": 2647575, "cpu_ms": 440.620308, "tag": "idle", "python": "3.11.15", "mode": "opcodes", "work": "interp", "rep": 0}
+{"units": 2647575, "cpu_ms": 436.496033, "tag": "idle", "python": "3.11.15", "mode": "opcodes", "work": "interp", "rep": 1}
+{"units": 2647575, "cpu_ms": 445.143571, "tag": "idle", "python": "3.11.15", "mode": "opcodes", "work": "interp", "rep": 2}
+{"units": 441657, "cpu_ms": 115.953517, "tag": "idle", "python": "3.11.15", "mode": "lines", "work": "interp", "rep": 0}
+{"units": 441657, "cpu_ms": 100.457257, "tag": "idle", "python": "3.11.15", "mode": "lines", "work": "interp", "rep": 1}
+{"units": 441657, "cpu_ms": 98.807257, "tag": "idle", "python": "3.11.15", "mode": "lines", "work": "interp", "rep": 2}
+{"units": 221317, "cpu_ms": 68.129741, "tag": "idle", "python": "3.11.15", "mode": "calls", "work": "interp", "rep": 0}
+{"units": 221317, "cpu_ms": 67.952339, "tag": "idle", "python": "3.11.15", "mode": "calls", "work": "interp", "rep": 1}
+{"units": 221317, "cpu_ms": 64.19619, "tag": "idle", "python": "3.11.15", "mode": "calls", "work": "interp", "rep": 2}
+{"units": null, "cpu_ms": null, "error": "no sys.monitoring", "tag": "idle", "python": "3.11.15", "mode": "mon_instr", "work": "interp", "rep": 0}
+{"units": null, "cpu_ms": null, "error": "no sys.monitoring", "tag": "idle", "python": "3.11.15", "mode": "mon_instr", "work": "interp", "rep": 1}
+{"units": null, "cpu_ms": null, "error": "no sys.monitoring", "tag": "idle", "python": "3.11.15", "mode": "mon_instr", "work": "interp", "rep": 2}
+{"units": null, "cpu_ms": null, "error": "no sys.monitoring", "tag": "idle", "python": "3.11.15", "mode": "mon_branch", "work": "interp", "rep": 0}
+{"units": null, "cpu_ms": null, "error": "no sys.monitoring", "tag": "idle", "python": "3.11.15", "mode": "mon_branch", "work": "interp", "rep": 1}
+{"units": null, "cpu_ms": null, "error": "no sys.monitoring", "tag": "idle", "python": "3.11.15", "mode": "mon_branch", "work": "interp", "rep": 2}
+{"units": null, "cpu_ms": 28.827892, "tag": "idle", "python": "3.11.15", "mode": "native", "work": "memory", "rep": 0}
+{"units": null, "cpu_ms": 29.130323, "tag": "idle", "python": "3.11.15", "mode": "native", "work": "memory", "rep": 1}
+{"units": null, "cpu_ms": 28.428522, "tag": "idle", "python": "3.11.15", "mode": "native", "work": "memory", "rep": 2}
+{"units": 2310030, "cpu_ms": 385.51148, "tag": "idle", "python": "3.11.15", "mode": "opcodes", "work": "memory", "rep": 0}
+{"units": 2310030, "cpu_ms": 379.257458, "tag": "idle", "python": "3.11.15", "mode": "opcodes", "work": "memory", "rep": 1}
+{"units": 2310030, "cpu_ms": 399.885915, "tag": "idle", "python": "3.11.15", "mode": "opcodes", "work": "memory", "rep": 2}
+{"units": 350008, "cpu_ms": 77.679285, "tag": "idle", "python": "3.11.15", "mode": "lines", "work": "memory", "rep": 0}
+{"units": 350008, "cpu_ms": 77.53977, "tag": "idle", "python": "3.11.15", "mode": "lines", "work": "memory", "rep": 1}
+{"units": 350008, "cpu_ms": 84.2077, "tag": "idle", "python": "3.11.15", "mode": "lines", "work": "memory", "rep": 2}
+{"units": 140005, "cpu_ms": 49.465147, "tag": "idle", "python": "3.11.15", "mode": "calls", "work": "memory", "rep": 0}
+{"units": 140005, "cpu_ms": 48.680273, "tag": "idle", "python": "3.11.15", "mode": "calls", "work": "memory", "rep": 1}
+{"units": 140005, "cpu_ms": 49.498406, "tag": "idle", "python": "3.11.15", "mode": "calls", "work": "memory", "rep": 2}
+{"units": null, "cpu_ms": null, "error": "no sys.monitoring", "tag": "idle", "python": "3.11.15", "mode": "mon_instr", "work": "memory", "rep": 0}
+{"units": null, "cpu_ms": null, "error": "no sys.monitoring", "tag": "idle", "python": "3.11.15", "mode": "mon_instr", "work": "memory", "rep": 1}
+{"units": null, "cpu_ms": null, "error": "no sys.monitoring", "tag": "idle", "python": "3.11.15", "mode": "mon_instr", "work": "memory", "rep": 2}
+{"units": null, "cpu_ms": null, "error": "no sys.monitoring", "tag": "idle", "python": "3.11.15", "mode": "mon_branch", "work": "memory", "rep": 0}
+{"units": null, "cpu_ms": null, "error": "no sys.monitoring", "tag": "idle", "python": "3.11.15", "mode": "mon_branch", "work": "memory", "rep": 1}
+{"units": null, "cpu_ms": null, "error": "no sys.monitoring", "tag": "idle", "python": "3.11.15", "mode": "mon_branch", "work": "memory", "rep": 2}
+{"units": null, "cpu_ms": 87.829493, "tag": "idle", "python": "3.11.15", "mode": "native", "work": "cbig", "rep": 0}
+{"units": null, "cpu_ms": 87.676637, "tag": "idle", "python": "3.11.15", "mode": "native", "work": "cbig", "rep": 1}
+{"units": null, "cpu_ms": 93.213806, "tag": "idle", "python": "3.11.15", "mode": "native", "work": "cbig", "rep": 2}
+{"units": 26, "cpu_ms": 80.927537, "tag": "idle", "python": "3.11.15", "mode": "opcodes", "work": "cbig", "rep": 0}
+{"units": 26, "cpu_ms": 82.596122, "tag": "idle", "python": "3.11.15", "mode": "opcodes", "work": "cbig", "rep": 1}
+{"units": 26, "cpu_ms": 83.307781, "tag": "idle", "python": "3.11.15", "mode": "opcodes", "work": "cbig", "rep": 2}
+{"units": 2, "cpu_ms": 82.633087, "tag": "idle", "python": "3.11.15", "mode": "lines", "work": "cbig", "rep": 0}
+{"units": 2, "cpu_ms": 84.033746, "tag": "idle", "python": "3.11.15", "mode": "lines", "work": "cbig", "rep": 1}
+{"units": 2, "cpu_ms": 84.160673, "tag": "idle", "python": "3.11.15", "mode": "lines", "work": "cbig", "rep": 2}
+{"units": 11, "cpu_ms": 112.113994, "tag": "idle", "python": "3.11.15", "mode": "calls", "work": "cbig", "rep": 0}
+{"units": 11, "cpu_ms": 84.931615, "tag": "idle", "python": "3.11.15", "mode": "calls", "work": "cbig", "rep": 1}
+{"units": 11, "cpu_ms": 83.23661, "tag": "idle", "python": "3.11.15", "mode": "calls", "work": "cbig", "rep": 2}
+{"units": null, "cpu_ms": null, "error": "no sys.monitoring", "tag": "idle", "python": "3.11.15", "mode": "mon_instr", "work": "cbig", "rep": 0}
+{"units": null, "cpu_ms": null, "error": "no sys.monitoring", "tag": "idle", "python": "3.11.15", "mode": "mon_instr", "work": "cbig", "rep": 1}
+{"units": null, "cpu_ms": null, "error": "no sys.monitoring", "tag": "idle", "python": "3.11.15", "mode": "mon_instr", "work": "cbig", "rep": 2}
+{"units": null, "cpu_ms": null, "error": "no sys.monitoring", "tag": "idle", "python": "3.11.15", "mode": "mon_branch", "work": "cbig", "rep": 0}
+{"units": null, "cpu_ms": null, "error": "no sys.monitoring", "tag": "idle", "python": "3.11.15", "mode": "mon_branch", "work": "cbig", "rep": 1}
+{"units": null, "cpu_ms": null, "error": "no sys.monitoring", "tag": "idle", "python": "3.11.15", "mode": "mon_branch", "work": "cbig", "rep": 2}
+{"units": null, "cpu_ms": 30.960583, "tag": "idle", "python": "3.12.3", "mode": "native", "work": "interp", "rep": 0}
+{"units": null, "cpu_ms": 30.253431, "tag": "idle", "python": "3.12.3", "mode": "native", "work": "interp", "rep": 1}
+{"units": null, "cpu_ms": 29.624413, "tag": "idle", "python": "3.12.3", "mode": "native", "work": "interp", "rep": 2}
+{"units": 0, "cpu_ms": 48.337779, "tag": "idle", "python": "3.12.3", "mode": "opcodes", "work": "interp", "rep": 0}
+{"units": 0, "cpu_ms": 45.035917, "tag": "idle", "python": "3.12.3", "mode": "opcodes", "work": "interp", "rep": 1}
+{"units": 0, "cpu_ms": 45.922102, "tag": "idle", "python": "3.12.3", "mode": "opcodes", "work": "interp", "rep": 2}
+{"units": 441682, "cpu_ms": 117.732559, "tag": "idle", "python": "3.12.3", "mode": "lines", "work": "interp", "rep": 0}
+{"units": 441682, "cpu_ms": 119.121154, "tag": "idle", "python": "3.12.3", "mode": "lines", "work": "interp", "rep": 1}
+{"units": 441682, "cpu_ms": 119.73921, "tag": "idle", "python": "3.12.3", "mode": "lines", "work": "interp", "rep": 2}
+{"units": 221333, "cpu_ms": 69.978195, "tag": "idle", "python": "3.12.3", "mode": "calls", "work": "interp", "rep": 0}
+{"units": 221333, "cpu_ms": 70.119838, "tag": "idle", "python": "3.12.3", "mode": "calls", "work": "interp", "rep": 1}
+{"units": 221333, "cpu_ms": 73.497587, "tag": "idle", "python": "3.12.3", "mode": "calls", "work": "interp", "rep": 2}
+{"units": 2537052, "cpu_ms": 563.509672, "tag": "idle", "python": "3.12.3", "mode": "mon_instr", "work": "interp", "rep": 0}
+{"units": 2537052, "cpu_ms": 544.042085, "tag": "idle", "python": "3.12.3", "mode": "mon_instr", "work": "interp", "rep": 1}
+{"units": 2537052, "cpu_ms": 539.184085, "tag": "idle", "python": "3.12.3", "mode": "mon_instr", "work": "interp", "rep": 2}
+{"units": 221105, "cpu_ms": 62.706486, "tag": "idle", "python": "3.12.3", "mode": "mon_branch", "work": "interp", "rep": 0}
+{"units": 221105, "cpu_ms": 66.083487, "tag": "idle", "python": "3.12.3", "mode": "mon_branch", "work": "interp", "rep": 1}
+{"units": 221105, "cpu_ms": 64.769795, "tag": "idle", "python": "3.12.3", "mode": "mon_branch", "work": "interp", "rep": 2}
+{"units": null, "cpu_ms": 30.855064, "tag": "idle", "python": "3.12.3", "mode": "native", "work": "memory", "rep": 0}
+{"units": null, "cpu_ms": 31.610527, "tag": "idle", "python": "3.12.3", "mode": "native", "work": "memory", "rep": 1}
+{"units": null, "cpu_ms": 41.454165, "tag": "idle", "python": "3.12.3", "mode": "native", "work": "memory", "rep": 2}
+{"units": 0, "cpu_ms": 43.702261, "tag": "idle", "python": "3.12.3", "mode": "opcodes", "work": "memory", "rep": 0}
+{"units": 0, "cpu_ms": 44.390809, "tag": "idle", "python": "3.12.3", "mode": "opcodes", "work": "memory", "rep": 1}
+{"units": 0, "cpu_ms": 44.153667, "tag": "idle", "python": "3.12.3", "mode": "opcodes", "work": "memory", "rep": 2}
+{"units": 350008, "cpu_ms": 107.553865, "tag": "idle", "python": "3.12.3", "mode": "lines", "work": "memory", "rep": 0}
+{"units": 350008, "cpu_ms": 106.412643, "tag": "idle", "python": "3.12.3", "mode": "lines", "work": "memory", "rep": 1}
+{"units": 350008, "cpu_ms": 106.862569, "tag": "idle", "python": "3.12.3", "mode": "lines", "work": "memory", "rep": 2}
+{"units": 140005, "cpu_ms": 57.445825, "tag": "idle", "python": "3.12.3", "mode": "calls", "work": "memory", "rep": 0}
+{"units": 140005, "cpu_ms": 53.303129, "tag": "idle", "python": "3.12.3", "mode": "calls", "work": "memory", "rep": 1}
+{"units": 140005, "cpu_ms": 103.477432, "tag": "idle", "python": "3.12.3", "mode": "calls", "work": "memory", "rep": 2}
+{"units": 2240036, "cpu_ms": 524.848506, "tag": "idle", "python": "3.12.3", "mode": "mon_instr", "work": "memory", "rep": 0}
+{"units": 2240036, "cpu_ms": 485.987983, "tag": "idle", "python": "3.12.3", "mode": "mon_instr", "work": "memory", "rep": 1}
+{"units": 2240036, "cpu_ms": 562.672435, "tag": "idle", "python": "3.12.3", "mode": "mon_instr", "work": "memory", "rep": 2}
+{"units": 280004, "cpu_ms": 70.10942, "tag": "idle", "python": "3.12.3", "mode": "mon_branch", "work": "memory", "rep": 0}
+{"units": 280004, "cpu_ms": 87.590525, "tag": "idle", "python": "3.12.3", "mode": "mon_branch", "work": "memory", "rep": 1}
+{"units": 280004, "cpu_ms": 69.263128, "tag": "idle", "python": "3.12.3", "mode": "mon_branch", "work": "memory", "rep": 2}
+{"units": null, "cpu_ms": 106.368622, "tag": "idle", "python": "3.12.3", "mode": "native", "work": "cbig", "rep": 0}
+{"units": null, "cpu_ms": 116.671102, "tag": "idle", "python": "3.12.3", "mode": "native", "work": "cbig", "rep": 1}
+{"units": null, "cpu_ms": 108.251516, "tag": "idle", "python": "3.12.3", "mode": "native", "work": "cbig", "rep": 2}
+{"units": 0, "cpu_ms": 93.016625, "tag": "idle", "python": "3.12.3", "mode": "opcodes", "work": "cbig", "rep": 0}
+{"units": 0, "cpu_ms": 93.979195, "tag": "idle", "python": "3.12.3", "mode": "opcodes", "work": "cbig", "rep": 1}
+{"units": 0, "cpu_ms": 94.077025, "tag": "idle", "python": "3.12.3", "mode": "opcodes", "work": "cbig", "rep": 2}
+{"units": 2, "cpu_ms": 89.233499, "tag": "idle", "python": "3.12.3", "mode": "lines", "work": "cbig", "rep": 0}
+{"units": 2, "cpu_ms": 91.653631, "tag": "idle", "python": "3.12.3", "mode": "lines", "work": "cbig", "rep": 1}
+{"units": 2, "cpu_ms": 90.262862, "tag": "idle", "python": "3.12.3", "mode": "lines", "work": "cbig", "rep": 2}
+{"units": 11, "cpu_ms": 96.258869, "tag": "idle", "python": "3.12.3", "mode": "calls", "work": "cbig", "rep": 0}
+{"units": 11, "cpu_ms": 92.063285, "tag": "idle", "python": "3.12.3", "mode": "calls", "work": "cbig", "rep": 1}
+{"units": 11, "cpu_ms": 154.55163, "tag": "idle", "python": "3.12.3", "mode": "calls", "work": "cbig", "rep": 2}
+{"units": 30, "cpu_ms": 102.968993, "tag": "idle", "python": "3.12.3", "mode": "mon_instr", "work": "cbig", "rep": 0}
+{"units": 30, "cpu_ms": 103.289488, "tag": "idle", "python": "3.12.3", "mode": "mon_instr", "work": "cbig", "rep": 1}
+{"units": 30, "cpu_ms": 101.246743, "tag": "idle", "python": "3.12.3", "mode": "mon_instr", "work": "cbig", "rep": 2}
+{"units": 2, "cpu_ms": 87.327822, "tag": "idle", "python": "3.12.3", "mode": "mon_branch", "work": "cbig", "rep": 0}
+{"units": 2, "cpu_ms": 94.579726, "tag": "idle", "python": "3.12.3", "mode": "mon_branch", "work": "cbig", "rep": 1}
+{"units": 2, "cpu_ms": 91.31229, "tag": "idle", "python": "3.12.3", "mode": "mon_branch", "work": "cbig", "rep": 2}
+{"units": null, "cpu_ms": 28.773805, "tag": "idle", "python": "3.13.14", "mode": "native", "work": "interp", "rep": 0}
+{"units": null, "cpu_ms": 29.031232, "tag": "idle", "python": "3.13.14", "mode": "native", "work": "interp", "rep": 1}
+{"units": null, "cpu_ms": 31.184759, "tag": "idle", "python": "3.13.14", "mode": "native", "work": "interp", "rep": 2}
+{"units": 4563, "cpu_ms": 35.307208, "tag": "idle", "python": "3.13.14", "mode": "opcodes", "work": "interp", "rep": 0}
+{"units": 4563, "cpu_ms": 34.563285, "tag": "idle", "python": "3.13.14", "mode": "opcodes", "work": "interp", "rep": 1}
+{"units": 4563, "cpu_ms": 36.334678, "tag": "idle", "python": "3.13.14", "mode": "opcodes", "work": "interp", "rep": 2}
+{"units": 441681, "cpu_ms": 80.990614, "tag": "idle", "python": "3.13.14", "mode": "lines", "work": "interp", "rep": 0}
+{"units": 441681, "cpu_ms": 82.768624, "tag": "idle", "python": "3.13.14", "mode": "lines", "work": "interp", "rep": 1}
+{"units": 441681, "cpu_ms": 80.439863, "tag": "idle", "python": "3.13.14", "mode": "lines", "work": "interp", "rep": 2}
+{"units": 221333, "cpu_ms": 90.379644, "tag": "idle", "python": "3.13.14", "mode": "calls", "work": "interp", "rep": 0}
+{"units": 221333, "cpu_ms": 77.127681, "tag": "idle", "python": "3.13.14", "mode": "calls", "work": "interp", "rep": 1}
+{"units": 221333, "cpu_ms": 80.380211, "tag": "idle", "python": "3.13.14", "mode": "calls", "work": "interp", "rep": 2}
+{"units": 2317010, "cpu_ms": 278.993541, "tag": "idle", "python": "3.13.14", "mode": "mon_instr", "work": "interp", "rep": 0}
+{"units": 2317010, "cpu_ms": 275.85646, "tag": "idle", "python": "3.13.14", "mode": "mon_instr", "work": "interp", "rep": 1}
+{"units": 2317010, "cpu_ms": 275.555496, "tag": "idle", "python": "3.13.14", "mode": "mon_instr", "work": "interp", "rep": 2}
+{"units": 221100, "cpu_ms": 58.962714, "tag": "idle", "python": "3.13.14", "mode": "mon_branch", "work": "interp", "rep": 0}
+{"units": 221100, "cpu_ms": 55.651094, "tag": "idle", "python": "3.13.14", "mode": "mon_branch", "work": "interp", "rep": 1}
+{"units": 221100, "cpu_ms": 56.714608, "tag": "idle", "python": "3.13.14", "mode": "mon_branch", "work": "interp", "rep": 2}
+{"units": null, "cpu_ms": 29.880058, "tag": "idle", "python": "3.13.14", "mode": "native", "work": "memory", "rep": 0}
+{"units": null, "cpu_ms": 40.446278, "tag": "idle", "python": "3.13.14", "mode": "native", "work": "memory", "rep": 1}
+{"units": null, "cpu_ms": 33.313736, "tag": "idle", "python": "3.13.14", "mode": "native", "work": "memory", "rep": 2}
+{"units": 0, "cpu_ms": 35.191031, "tag": "idle", "python": "3.13.14", "mode": "opcodes", "work": "memory", "rep": 0}
+{"units": 0, "cpu_ms": 35.401137, "tag": "idle", "python": "3.13.14", "mode": "opcodes", "work": "memory", "rep": 1}
+{"units": 0, "cpu_ms": 35.050961, "tag": "idle", "python": "3.13.14", "mode": "opcodes", "work": "memory", "rep": 2}
+{"units": 350008, "cpu_ms": 85.212317, "tag": "idle", "python": "3.13.14", "mode": "lines", "work": "memory", "rep": 0}
+{"units": 350008, "cpu_ms": 73.027075, "tag": "idle", "python": "3.13.14", "mode": "lines", "work": "memory", "rep": 1}
+{"units": 350008, "cpu_ms": 73.856503, "tag": "idle", "python": "3.13.14", "mode": "lines", "work": "memory", "rep": 2}
+{"units": 140005, "cpu_ms": 46.200735, "tag": "idle", "python": "3.13.14", "mode": "calls", "work": "memory", "rep": 0}
+{"units": 140005, "cpu_ms": 49.009582, "tag": "idle", "python": "3.13.14", "mode": "calls", "work": "memory", "rep": 1}
+{"units": 140005, "cpu_ms": 47.316029, "tag": "idle", "python": "3.13.14", "mode": "calls", "work": "memory", "rep": 2}
+{"units": 2030036, "cpu_ms": 296.713172, "tag": "idle", "python": "3.13.14", "mode": "mon_instr", "work": "memory", "rep": 0}
+{"units": 2030036, "cpu_ms": 262.199639, "tag": "idle", "python": "3.13.14", "mode": "mon_instr", "work": "memory", "rep": 1}
+{"units": 2030036, "cpu_ms": 264.255196, "tag": "idle", "python": "3.13.14", "mode": "mon_instr", "work": "memory", "rep": 2}
+{"units": 280004, "cpu_ms": 63.262065, "tag": "idle", "python": "3.13.14", "mode": "mon_branch", "work": "memory", "rep": 0}
+{"units": 280004, "cpu_ms": 60.519267, "tag": "idle", "python": "3.13.14", "mode": "mon_branch", "work": "memory", "rep": 1}
+{"units": 280004, "cpu_ms": 62.399486, "tag": "idle", "python": "3.13.14", "mode": "mon_branch", "work": "memory", "rep": 2}
+{"units": null, "cpu_ms": 85.744382, "tag": "idle", "python": "3.13.14", "mode": "native", "work": "cbig", "rep": 0}
+{"units": null, "cpu_ms": 82.572819, "tag": "idle", "python": "3.13.14", "mode": "native", "work": "cbig", "rep": 1}
+{"units": null, "cpu_ms": 81.32627, "tag": "idle", "python": "3.13.14", "mode": "native", "work": "cbig", "rep": 2}
+{"units": 0, "cpu_ms": 86.745818, "tag": "idle", "python": "3.13.14", "mode": "opcodes", "work": "cbig", "rep": 0}
+{"units": 0, "cpu_ms": 81.707198, "tag": "idle", "python": "3.13.14", "mode": "opcodes", "work": "cbig", "rep": 1}
+{"units": 0, "cpu_ms": 88.225897, "tag": "idle", "python": "3.13.14", "mode": "opcodes", "work": "cbig", "rep": 2}
+{"units": 2, "cpu_ms": 82.809578, "tag": "idle", "python": "3.13.14", "mode": "lines", "work": "cbig", "rep": 0}
+{"units": 2, "cpu_ms": 80.470511, "tag": "idle", "python": "3.13.14", "mode": "lines", "work": "cbig", "rep": 1}
+{"units": 2, "cpu_ms": 88.115991, "tag": "idle", "python": "3.13.14", "mode": "lines", "work": "cbig", "rep": 2}
+{"units": 11, "cpu_ms": 80.797646, "tag": "idle", "python": "3.13.14", "mode": "calls", "work": "cbig", "rep": 0}
+{"units": 11, "cpu_ms": 80.241928, "tag": "idle", "python": "3.13.14", "mode": "calls", "work": "cbig", "rep": 1}
+{"units": 11, "cpu_ms": 81.019911, "tag": "idle", "python": "3.13.14", "mode": "calls", "work": "cbig", "rep": 2}
+{"units": 30, "cpu_ms": 79.301777, "tag": "idle", "python": "3.13.14", "mode": "mon_instr", "work": "cbig", "rep": 0}
+{"units": 30, "cpu_ms": 84.788424, "tag": "idle", "python": "3.13.14", "mode": "mon_instr", "work": "cbig", "rep": 1}
+{"units": 30, "cpu_ms": 83.946288, "tag": "idle", "python": "3.13.14", "mode": "mon_instr", "work": "cbig", "rep": 2}
+{"units": 2, "cpu_ms": 108.473994, "tag": "idle", "python": "3.13.14", "mode": "mon_branch", "work": "cbig", "rep": 0}
+{"units": 2, "cpu_ms": 89.368803, "tag": "idle", "python": "3.13.14", "mode": "mon_branch", "work": "cbig", "rep": 1}
+{"units": 2, "cpu_ms": 82.752195, "tag": "idle", "python": "3.13.14", "mode": "mon_branch", "work": "cbig", "rep": 2}
+{"units": null, "cpu_ms": 27.216444, "tag": "autogroup", "python": "3.11.15", "mode": "native", "work": "interp", "rep": 0}
+{"units": null, "cpu_ms": 31.33971, "tag": "autogroup", "python": "3.11.15", "mode": "native", "work": "interp", "rep": 1}
+{"units": null, "cpu_ms": 31.640348, "tag": "autogroup", "python": "3.11.15", "mode": "native", "work": "interp", "rep": 2}
+{"units": 2647575, "cpu_ms": 476.847365, "tag": "autogroup", "python": "3.11.15", "mode": "opcodes", "work": "interp", "rep": 0}
+{"units": 2647575, "cpu_ms": 453.212049, "tag": "autogroup", "python": "3.11.15", "mode": "opcodes", "work": "interp", "rep": 1}
+{"units": 2647575, "cpu_ms": 436.615452, "tag": "autogroup", "python": "3.11.15", "mode": "opcodes", "work": "interp", "rep": 2}
+{"units": null, "cpu_ms": null, "error": "no sys.monitoring", "tag": "autogroup", "python": "3.11.15", "mode": "mon_instr", "work": "interp", "rep": 0}
+{"units": null, "cpu_ms": null, "error": "no sys.monitoring", "tag": "autogroup", "python": "3.11.15", "mode": "mon_instr", "work": "interp", "rep": 1}
+{"units": null, "cpu_ms": null, "error": "no sys.monitoring", "tag": "autogroup", "python": "3.11.15", "mode": "mon_instr", "work": "interp", "rep": 2}
+{"units": null, "cpu_ms": 30.089545, "tag": "autogroup", "python": "3.12.3", "mode": "native", "work": "interp", "rep": 0}
+{"units": null, "cpu_ms": 30.173248, "tag": "autogroup", "python": "3.12.3", "mode": "native", "work": "interp", "rep": 1}
+{"units": null, "cpu_ms": 30.329026, "tag": "autogroup", "python": "3.12.3", "mode": "native", "work": "interp", "rep": 2}
+{"units": 0, "cpu_ms": 47.103953, "tag": "autogroup", "python": "3.12.3", "mode": "opcodes", "work": "interp", "rep": 0}
+{"units": 0, "cpu_ms": 48.012967, "tag": "autogroup", "python": "3.12.3", "mode": "opcodes", "work": "interp", "rep": 1}
+{"units": 0, "cpu_ms": 46.209867, "tag": "autogroup", "python": "3.12.3", "mode": "opcodes", "work": "interp", "rep": 2}
+{"units": 2537052, "cpu_ms": 554.030735, "tag": "autogroup", "python": "3.12.3", "mode": "mon_instr", "work": "interp", "rep": 0}
+{"units": 2537052, "cpu_ms": 544.818894, "tag": "autogroup", "python": "3.12.3", "mode": "mon_instr", "work": "interp", "rep": 1}
+{"units": 2537052, "cpu_ms": 559.595939, "tag": "autogroup", "python": "3.12.3", "mode": "mon_instr", "work": "interp", "rep": 2}

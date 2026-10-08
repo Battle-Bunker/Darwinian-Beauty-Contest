@@ -11,7 +11,7 @@ Protocol (lines on stdin -> one line on stdout each):
     disarm                            -> ok COUNT_NS       (the same, then the event is closed)
     quit
 """
-import os, signal, sys, time
+import fcntl, os, signal, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import common as C
@@ -29,8 +29,11 @@ for line in sys.stdin:
         try:
             if fd is not None:
                 os.close(fd)
-            fd = C.perf_open(tid, period_ns=r_ns)
+            # One-shot: opened disabled, then enabled for exactly one overflow (PERF_EVENT_IOC_REFRESH 1),
+            # so a thread that runs on after the alarm doesn't get a second signal R later.
+            fd = C.perf_open(tid, period_ns=r_ns, disabled=True)
             C.perf_signal_on_overflow(fd, owner, sig)
+            fcntl.ioctl(fd, C.PERF_EVENT_IOC_REFRESH, 1)
             reply = f"ok {(time.perf_counter_ns() - t) / 1000:.1f}"
         except OSError as e:
             fd, reply = None, f"error {e}"

@@ -77,7 +77,7 @@ const potential = (t) => (t.percent != null && t.energy != null ? (t.percent / 1
  * teams, turns, versions, scores: the rows of those entities (teams by index); submits: [{ team_id, kind, version, source,
  * session_no }] from arena.requests (who submitted each version), optional. Teams in the result are keyed by team id.
  */
-export function computeMetrics({ game, teams: teamRows, turns: turnRows, versions: versionRows = [], scores: scoreRows = [], submits = [], memorySamples = [], windowMs, shapes = null, minified = null }) {
+export function computeMetrics({ game, teams: teamRows, turns: turnRows, versions: versionRows = [], scores: scoreRows = [], submits = [], memorySamples = [], windowMs, shapes = null, minified = null, contract = null }) {
   const config = game.config;
   const byIndex = [...teamRows].sort((a, b) => a.index - b.index);
   const ids = byIndex.map((t) => t.id);
@@ -148,7 +148,11 @@ export function computeMetrics({ game, teams: teamRows, turns: turnRows, version
         // The flower's CPU as a share of its call's budget R (adapt-hi's honest contract: 0.6), over the calls that answered:
         // its quantiles, and the share within ±0.05 of 0.6.
         cpuOfR: q5(answered.filter((t) => t.ms != null && t.R > 0).map((t) => t.ms / t.R)),
-        cpuAt60: r3((() => { const xs = answered.filter((t) => t.ms != null && t.R > 0).map((t) => t.ms / t.R); return xs.length ? xs.filter((x) => Math.abs(x - 0.6) <= 0.05).length / xs.length : null; })()) },
+        // Against the cooperators' contract (adapt-hi's settings.honest), when given: the shares of answered turns at its
+        // percent and with CPU within ±0.05 of burn × R.
+        ...(contract ? { contract: { ...contract,
+          percentAt: r3(answered.length ? answered.filter((t) => Math.abs((t.percent ?? -1) - contract.nectar) < 0.5).length / answered.length : null),
+          cpuAt: r3((() => { const xs = answered.filter((t) => t.ms != null && t.R > 0).map((t) => t.ms / t.R); return xs.length ? xs.filter((x) => Math.abs(x - contract.burn) <= 0.05).length / xs.length : null; })()) } } : {}) },
       bee: { turns: byBee.length, feeds: beeFed.length, feedRate: r3(byBee.length ? beeFed.length / byBee.length : null), nectar: r3(sum(beeFed.map((t) => t.nectar))),
         nectarPerFeed: r3(beeFed.length ? sum(beeFed.map((t) => t.nectar)) / beeFed.length : null), flowersFedAt: new Set(beeFed.map((t) => t.flower)).size,
         tooSlow: byBee.filter((t) => TOO_SLOW.test(t.beeError || "")).length, errors: byBee.filter((t) => t.beeError && !TOO_SLOW.test(t.beeError)).length, decisionMs: q5(beeMs) },
@@ -331,12 +335,12 @@ export async function queryAll(api, gPath, ast, tok = null) {
 
 /** A finished game's metrics, from its history (everything is revealed once it is over). submits: who submitted each
  * version (arena.requests), optional. */
-export async function computeGameMetrics(gPath, { api = Api, submits = [], memorySamples = [], windowMs, fetchBytes = BIG_FETCH_BYTES } = {}) {
+export async function computeGameMetrics(gPath, { api = Api, submits = [], memorySamples = [], windowMs, fetchBytes = BIG_FETCH_BYTES, contract = null } = {}) {
   const view = await api.view(null, gPath);
   const [teams, turns, versions, scores] = await Promise.all(["teams", "turns", "versions", "scores"].map((from) => queryAll(api, gPath, { from })));
   const shapes = await bigShapes(api, gPath, turns, fetchBytes);
   const minified = await minifiedCodes(view.game.config?.language || "python", versions);
-  return { ...computeMetrics({ game: view.game, teams, turns, versions, scores, submits, memorySamples, windowMs, shapes, minified }), bigResponses: shapes.stats };
+  return { ...computeMetrics({ game: view.game, teams, turns, versions, scores, submits, memorySamples, windowMs, shapes, minified, contract }), bigResponses: shapes.stats };
 }
 
 /** Every version's minified code, as the game ran it (the game's own minifier): Map(`${team index}:${kind}:${version}` ->

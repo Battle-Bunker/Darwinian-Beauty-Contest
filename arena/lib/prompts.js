@@ -138,10 +138,10 @@ ${fixed && !simpleCode
 
 /** System prompt of a session (lobby or game): tools, persona, how the workspace works, fair play, RULES.md, settings. */
 /** A role's private brief (EXPERIMENTS.adapt): what the team specialises in. Nobody else is told it. */
-export function roleText(role, { common = null, brief = null, startBee = null } = {}) {
+export function roleText(role, { common = null, brief = null, start = null, contract = null } = {}) {
   if (!role) return "";
   const docs = common?.length ? ` common/ (${common.join(", ")}) holds candidate costly signals, shared with every team that has your role and with no other team: ideas, not rules.` : "";
-  if (role === "honest" && brief === "r60") return honest60(common, startBee);
+  if (role === "honest" && brief === "contract") return honestContract(common, start || {}, contract);
   if (role === "honest") {
     return `# Your role in this tournament (private: no other team is told it)
 You specialise in honesty. Your flower does some level of costly signalling, at your discretion, that reveals its true
@@ -157,24 +157,30 @@ nectar: percent 0 on every answer. Your bee is yours to design.`;
   return "";
 }
 
-/** The honest role of adapt-hi (brief "r60"): the flower on a fixed contract (60% of R on costly signalling, percent 50,
- * its signalling strategy changed only to escape imitators); the bee played to win, starting as the reference bee. */
-function honest60(common, startBee) {
+/** The cooperators' default contract (adapt-hi; a preset's `honest` overrides it): the share of R spent on costly
+ * signalling in CPU, and the percent of the excess energy given as nectar. */
+export const HONEST_CONTRACT = Object.freeze({ burn: 0.6, nectar: 50 });
+
+/** The honest role of adapt-hi (brief "contract"): the flower on a fixed contract (burn × R of CPU on costly signalling,
+ * percent `nectar`, its signalling strategy changed only to escape imitators); the bee played to win. `start`: the
+ * names of its start programs ({ flower, bee }: common/<file>). */
+function honestContract(common, start = {}, contract = HONEST_CONTRACT) {
+  const { burn, nectar } = { ...HONEST_CONTRACT, ...(contract || {}) };
   const docs = common?.length ? ` in common/ (${common.join(", ")}; shared with every team that has your role and with no other team)` : "";
   return `# Your role in this experiment (private: no other team is told it)
 You are part of an experiment. Your flower plays a role, an honest signaller: it is not competing to win. Your bee plays
 to win.
-- Your flower does costly signalling work that reveals its true per-turn wealth, and it spends exactly 60% of its time
-  budget on it. The call's hidden budget R is GAME["ms"]; do signal work until the call's CPU time
-  (time.process_time()) reaches 0.6 × R, then answer. It gives 50% of its excess energy as nectar on every turn:
-  percent 50 on every answer.
+- Your flower does costly signalling work that reveals its true per-turn wealth, and it spends exactly ${+(burn * 100).toFixed(1)}% of its
+  time budget on it. The call's hidden budget R is GAME["ms"]; do signal work until the call's CPU time
+  (time.process_time()) reaches ${burn} × R, then answer. It gives ${nectar}% of its excess energy as nectar on every turn:
+  percent ${nectar} on every answer.
 - Its signalling strategy is yours to choose: which costly signals it computes, and its position in the shared
   fingerprint space, that is how it splits its work across the dimensions of the shared repertoire of costly
   signals${docs}. Multi-dimensional fingerprints can be mixed with raw costly signalling.
 - Once your flower is in place, the only change you make to it is to its signalling strategy, and only to escape
-  defecting imitators. The 60% and the 50% never change. Fixing a bug that breaks this contract is allowed.
+  defecting imitators. The ${+(burn * 100).toFixed(1)}% and the ${nectar}% never change. Fixing a bug that breaks this contract is allowed.
 - You can watch for imitation in the public responses and the feed record (stream/actions.jsonl, tools/query.py).
-- ${startBee ? `Your bee starts as a copy of the reference bee (${startBee}): it recognises the shared repertoire of costly
+${start.flower ? `- Your flower starts as a copy of the reference flower (${start.flower}).\n` : ""}- ${start.bee ? `Your bee starts as a copy of the reference bee (${start.bee}): it recognises the shared repertoire of costly
   signals as a weighted fingerprint vector. Play it to win, and change it as you like.` : "Your bee is yours to design: play it to win, and change it as you like."}`;
 }
 
@@ -185,7 +191,7 @@ export function commonNotice(files) {
     `examples, not rules: use them, change them or ignore them.`;
 }
 
-export function toolSystem(persona, config, dir, { fixed = false, apiBase, teams, common = null, commonScope = "all", role = null, roleBrief = null, startBee = null, brevity = true, simpleCode = true }) {
+export function toolSystem(persona, config, dir, { fixed = false, apiBase, teams, common = null, commonScope = "all", role = null, roleBrief = null, start = null, contract = null, brevity = true, simpleCode = true }) {
   const x = ext(config);
   return `You are a team agent in a coding game, working with tools inside your own workspace folder: ${dir}
 Tools: Read (absolute paths inside your workspace; use offset/limit for big files), Write and Edit (files in your workspace),
@@ -255,7 +261,7 @@ ${personaAndSituation(persona, fixed, { simpleCode })}
   shows it).
 ${common && commonScope !== "role" ? `- ${commonNotice(common)}
 ` : ""}${role ? `
-${roleText(role, { common: commonScope === "role" ? common : null, brief: roleBrief, startBee })}
+${roleText(role, { common: commonScope === "role" ? common : null, brief: roleBrief, start, contract })}
 ` : ""}
 # Fair play (breaking these ends your session at once; anything you try to submit after that is refused)
 - Use only the files in this workspace. Do not read, list or write any other directory (not even /tmp).

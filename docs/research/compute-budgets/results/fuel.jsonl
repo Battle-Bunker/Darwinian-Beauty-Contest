@@ -1,0 +1,130 @@
+{"tag": "idle", "mode": "native", "rep": 0, "cpu_ms": 26.191661, "result": "14483578326438935707"}
+{"tag": "idle", "mode": "wasm", "rep": 0, "cpu_ms": 32.813068, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "wasm_fuel", "rep": 0, "cpu_ms": 35.869729, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "native", "rep": 1, "cpu_ms": 25.62557, "result": "14483578326438935707"}
+{"tag": "idle", "mode": "wasm", "rep": 1, "cpu_ms": 32.555656, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "wasm_fuel", "rep": 1, "cpu_ms": 36.843644, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "native", "rep": 2, "cpu_ms": 25.646552, "result": "14483578326438935707"}
+{"tag": "idle", "mode": "wasm", "rep": 2, "cpu_ms": 32.316474, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "wasm_fuel", "rep": 2, "cpu_ms": 36.387744, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "native", "rep": 3, "cpu_ms": 25.546517, "result": "14483578326438935707"}
+{"tag": "idle", "mode": "wasm", "rep": 3, "cpu_ms": 32.295836, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "wasm_fuel", "rep": 3, "cpu_ms": 36.386958, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "native", "rep": 4, "cpu_ms": 25.558739, "result": "14483578326438935707"}
+{"tag": "idle", "mode": "wasm", "rep": 4, "cpu_ms": 32.180539, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "wasm_fuel", "rep": 4, "cpu_ms": 52.955006, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "native", "rep": 5, "cpu_ms": 35.106912, "result": "14483578326438935707"}
+{"tag": "idle", "mode": "wasm", "rep": 5, "cpu_ms": 47.15836, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "wasm_fuel", "rep": 5, "cpu_ms": 51.284685, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "native", "rep": 6, "cpu_ms": 26.559232, "result": "14483578326438935707"}
+{"tag": "idle", "mode": "wasm", "rep": 6, "cpu_ms": 33.180242, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "wasm_fuel", "rep": 6, "cpu_ms": 35.74155, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "native", "rep": 7, "cpu_ms": 25.63259, "result": "14483578326438935707"}
+{"tag": "idle", "mode": "wasm", "rep": 7, "cpu_ms": 32.452919, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "wasm_fuel", "rep": 7, "cpu_ms": 37.034632, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "native", "rep": 8, "cpu_ms": 26.435647, "result": "14483578326438935707"}
+{"tag": "idle", "mode": "wasm", "rep": 8, "cpu_ms": 33.553062, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "wasm_fuel", "rep": 8, "cpu_ms": 37.045873, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "native", "rep": 9, "cpu_ms": 25.959235, "result": "14483578326438935707"}
+{"tag": "idle", "mode": "wasm", "rep": 9, "cpu_ms": 33.351081, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "wasm_fuel", "rep": 9, "cpu_ms": 36.480521, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "native", "rep": 10, "cpu_ms": 26.031705, "result": "14483578326438935707"}
+{"tag": "idle", "mode": "wasm", "rep": 10, "cpu_ms": 33.564694, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "wasm_fuel", "rep": 10, "cpu_ms": 36.128823, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "native", "rep": 11, "cpu_ms": 26.330866, "result": "14483578326438935707"}
+{"tag": "idle", "mode": "wasm", "rep": 11, "cpu_ms": 32.53298, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "wasm_fuel", "rep": 11, "cpu_ms": 36.585397, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "native", "rep": 12, "cpu_ms": 25.674708, "result": "14483578326438935707"}
+{"tag": "idle", "mode": "wasm", "rep": 12, "cpu_ms": 32.691175, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "wasm_fuel", "rep": 12, "cpu_ms": 36.132087, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "native", "rep": 13, "cpu_ms": 26.29375, "result": "14483578326438935707"}
+{"tag": "idle", "mode": "wasm", "rep": 13, "cpu_ms": 32.522198, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "wasm_fuel", "rep": 13, "cpu_ms": 37.366746, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "native", "rep": 14, "cpu_ms": 27.058495, "result": "14483578326438935707"}
+{"tag": "idle", "mode": "wasm", "rep": 14, "cpu_ms": 32.620096, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "wasm_fuel", "rep": 14, "cpu_ms": 37.14674, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "native", "rep": 15, "cpu_ms": 26.146321, "result": "14483578326438935707"}
+{"tag": "idle", "mode": "wasm", "rep": 15, "cpu_ms": 33.191607, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "wasm_fuel", "rep": 15, "cpu_ms": 37.735927, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "native", "rep": 16, "cpu_ms": 25.704546, "result": "14483578326438935707"}
+{"tag": "idle", "mode": "wasm", "rep": 16, "cpu_ms": 33.265826, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "wasm_fuel", "rep": 16, "cpu_ms": 36.491307, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "native", "rep": 17, "cpu_ms": 25.767876, "result": "14483578326438935707"}
+{"tag": "idle", "mode": "wasm", "rep": 17, "cpu_ms": 33.360058, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "wasm_fuel", "rep": 17, "cpu_ms": 38.446315, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "native", "rep": 18, "cpu_ms": 32.259193, "result": "14483578326438935707"}
+{"tag": "idle", "mode": "wasm", "rep": 18, "cpu_ms": 32.96246, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "wasm_fuel", "rep": 18, "cpu_ms": 38.809484, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "native", "rep": 19, "cpu_ms": 25.751018, "result": "14483578326438935707"}
+{"tag": "idle", "mode": "wasm", "rep": 19, "cpu_ms": 32.640784, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "wasm_fuel", "rep": 19, "cpu_ms": 36.064938, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "idle", "mode": "limit", "given": 478852091, "cpu_ms": 36.07285, "fuel": 478852091, "result": "-3963165747270615909", "error": null}
+{"tag": "idle", "mode": "limit", "given": 478852090, "cpu_ms": 36.836908, "fuel": 478852090, "result": "-3963165747270615909", "error": null}
+{"tag": "idle", "mode": "limit", "given": 478851991, "cpu_ms": 37.139622, "fuel": 478851991, "result": null, "error": "error while executing at wasm backtrace:"}
+{"tag": "idle", "mode": "limit", "given": 478842091, "cpu_ms": 36.271474, "fuel": 478842091, "result": null, "error": "error while executing at wasm backtrace:"}
+{"tag": "idle", "mode": "limit", "given": 477852091, "cpu_ms": 39.269741, "fuel": 477852091, "result": null, "error": "error while executing at wasm backtrace:"}
+{"tag": "autogroup", "mode": "native", "rep": 0, "cpu_ms": 26.540024, "result": "14483578326438935707"}
+{"tag": "autogroup", "mode": "wasm", "rep": 0, "cpu_ms": 34.199489, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "wasm_fuel", "rep": 0, "cpu_ms": 37.911117, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "native", "rep": 1, "cpu_ms": 26.717256, "result": "14483578326438935707"}
+{"tag": "autogroup", "mode": "wasm", "rep": 1, "cpu_ms": 33.612306, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "wasm_fuel", "rep": 1, "cpu_ms": 38.194527, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "native", "rep": 2, "cpu_ms": 27.333623, "result": "14483578326438935707"}
+{"tag": "autogroup", "mode": "wasm", "rep": 2, "cpu_ms": 34.013446, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "wasm_fuel", "rep": 2, "cpu_ms": 38.267545, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "native", "rep": 3, "cpu_ms": 26.750183, "result": "14483578326438935707"}
+{"tag": "autogroup", "mode": "wasm", "rep": 3, "cpu_ms": 34.038177, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "wasm_fuel", "rep": 3, "cpu_ms": 38.038143, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "native", "rep": 4, "cpu_ms": 26.677024, "result": "14483578326438935707"}
+{"tag": "autogroup", "mode": "wasm", "rep": 4, "cpu_ms": 34.525359, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "wasm_fuel", "rep": 4, "cpu_ms": 37.750022, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "native", "rep": 5, "cpu_ms": 26.669955, "result": "14483578326438935707"}
+{"tag": "autogroup", "mode": "wasm", "rep": 5, "cpu_ms": 34.075096, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "wasm_fuel", "rep": 5, "cpu_ms": 37.615678, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "native", "rep": 6, "cpu_ms": 27.053684, "result": "14483578326438935707"}
+{"tag": "autogroup", "mode": "wasm", "rep": 6, "cpu_ms": 34.373101, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "wasm_fuel", "rep": 6, "cpu_ms": 38.181356, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "native", "rep": 7, "cpu_ms": 26.837184, "result": "14483578326438935707"}
+{"tag": "autogroup", "mode": "wasm", "rep": 7, "cpu_ms": 34.173925, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "wasm_fuel", "rep": 7, "cpu_ms": 38.759803, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "native", "rep": 8, "cpu_ms": 26.191943, "result": "14483578326438935707"}
+{"tag": "autogroup", "mode": "wasm", "rep": 8, "cpu_ms": 32.821526, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "wasm_fuel", "rep": 8, "cpu_ms": 36.169774, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "native", "rep": 9, "cpu_ms": 25.786102, "result": "14483578326438935707"}
+{"tag": "autogroup", "mode": "wasm", "rep": 9, "cpu_ms": 32.226768, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "wasm_fuel", "rep": 9, "cpu_ms": 36.000879, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "native", "rep": 10, "cpu_ms": 26.031138, "result": "14483578326438935707"}
+{"tag": "autogroup", "mode": "wasm", "rep": 10, "cpu_ms": 32.280635, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "wasm_fuel", "rep": 10, "cpu_ms": 35.882748, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "native", "rep": 11, "cpu_ms": 25.70434, "result": "14483578326438935707"}
+{"tag": "autogroup", "mode": "wasm", "rep": 11, "cpu_ms": 32.169595, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "wasm_fuel", "rep": 11, "cpu_ms": 35.851667, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "native", "rep": 12, "cpu_ms": 25.961148, "result": "14483578326438935707"}
+{"tag": "autogroup", "mode": "wasm", "rep": 12, "cpu_ms": 32.288723, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "wasm_fuel", "rep": 12, "cpu_ms": 36.349921, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "native", "rep": 13, "cpu_ms": 26.147458, "result": "14483578326438935707"}
+{"tag": "autogroup", "mode": "wasm", "rep": 13, "cpu_ms": 32.910341, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "wasm_fuel", "rep": 13, "cpu_ms": 35.865812, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "native", "rep": 14, "cpu_ms": 25.567717, "result": "14483578326438935707"}
+{"tag": "autogroup", "mode": "wasm", "rep": 14, "cpu_ms": 32.42833, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "wasm_fuel", "rep": 14, "cpu_ms": 35.744953, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "native", "rep": 15, "cpu_ms": 25.600019, "result": "14483578326438935707"}
+{"tag": "autogroup", "mode": "wasm", "rep": 15, "cpu_ms": 32.373354, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "wasm_fuel", "rep": 15, "cpu_ms": 35.710403, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "native", "rep": 16, "cpu_ms": 25.865366, "result": "14483578326438935707"}
+{"tag": "autogroup", "mode": "wasm", "rep": 16, "cpu_ms": 32.212987, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "wasm_fuel", "rep": 16, "cpu_ms": 35.694563, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "native", "rep": 17, "cpu_ms": 25.520551, "result": "14483578326438935707"}
+{"tag": "autogroup", "mode": "wasm", "rep": 17, "cpu_ms": 32.206333, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "wasm_fuel", "rep": 17, "cpu_ms": 35.867114, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "native", "rep": 18, "cpu_ms": 25.601341, "result": "14483578326438935707"}
+{"tag": "autogroup", "mode": "wasm", "rep": 18, "cpu_ms": 32.169768, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "wasm_fuel", "rep": 18, "cpu_ms": 35.932066, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "native", "rep": 19, "cpu_ms": 25.708841, "result": "14483578326438935707"}
+{"tag": "autogroup", "mode": "wasm", "rep": 19, "cpu_ms": 32.106058, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "wasm_fuel", "rep": 19, "cpu_ms": 37.212542, "fuel": 478852091, "result": "-3963165747270615909"}
+{"tag": "autogroup", "mode": "limit", "given": 478852091, "cpu_ms": 35.977472, "fuel": 478852091, "result": "-3963165747270615909", "error": null}
+{"tag": "autogroup", "mode": "limit", "given": 478852090, "cpu_ms": 35.797092, "fuel": 478852090, "result": "-3963165747270615909", "error": null}
+{"tag": "autogroup", "mode": "limit", "given": 478851991, "cpu_ms": 36.590385, "fuel": 478851991, "result": null, "error": "error while executing at wasm backtrace:"}
+{"tag": "autogroup", "mode": "limit", "given": 478842091, "cpu_ms": 36.690093, "fuel": 478842091, "result": null, "error": "error while executing at wasm backtrace:"}
+{"tag": "autogroup", "mode": "limit", "given": 477852091, "cpu_ms": 37.875768, "fuel": 477852091, "result": null, "error": "error while executing at wasm backtrace:"}

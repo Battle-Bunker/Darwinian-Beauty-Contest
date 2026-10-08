@@ -1,0 +1,293 @@
+{"tag":"idle","test":"noise","thread":40.314,"process":48.744,"wall":37.10873899999999}
+{"tag":"idle","test":"noise","thread":33.56099999999999,"process":40.870999999999995,"wall":33.995433000000006}
+{"tag":"idle","test":"noise","thread":32.804,"process":41.333,"wall":32.612373000000005}
+{"tag":"idle","test":"noise","thread":32.53899999999999,"process":39.51400000000001,"wall":32.871275}
+{"tag":"idle","test":"noise","thread":34.712999999999994,"process":40.791,"wall":36.00489999999999}
+{"tag":"idle","test":"noise","thread":35.480999999999995,"process":41.71599999999998,"wall":37.363407000000024}
+{"tag":"idle","test":"noise","thread":32.18100000000001,"process":39.28199999999998,"wall":32.87116599999999}
+{"tag":"idle","test":"noise","thread":31.42900000000003,"process":37.81400000000002,"wall":31.11477500000001}
+{"tag":"idle","test":"noise","thread":30.968999999999994,"process":37.07400000000001,"wall":31.240590999999995}
+{"tag":"idle","test":"noise","thread":31.864000000000033,"process":37.66199999999998,"wall":32.858344000000045}
+{"tag":"idle","test":"noise","thread":31.09899999999999,"process":37.51299999999998,"wall":32.496073000000024}
+{"tag":"idle","test":"noise","thread":31.875,"process":37.194999999999936,"wall":32.49071100000003}
+{"tag":"idle","test":"noise","thread":30.70999999999998,"process":38.047000000000025,"wall":31.575586999999985}
+{"tag":"idle","test":"noise","thread":31.36500000000001,"process":37.29900000000009,"wall":31.380128999999954}
+{"tag":"idle","test":"noise","thread":33.73199999999997,"process":40.62199999999996,"wall":34.65164200000004}
+{"tag":"idle","test":"noise","thread":31.710000000000036,"process":37.69200000000001,"wall":31.788019000000077}
+{"tag":"idle","test":"noise","thread":32.63600000000008,"process":39.424999999999955,"wall":33.00477999999998}
+{"tag":"idle","test":"noise","thread":32.98900000000003,"process":38.087999999999965,"wall":32.44320399999992}
+{"tag":"idle","test":"noise","thread":33.947,"process":39.966999999999985,"wall":36.649487999999906}
+{"tag":"idle","test":"noise","thread":31.890999999999963,"process":37.20500000000004,"wall":31.469562999999994}
+{"tag":"idle","test":"noise","thread":31.845000000000027,"process":37.500999999999976,"wall":31.55840699999999}
+{"tag":"idle","test":"noise","thread":32.44799999999998,"process":38.555999999999926,"wall":32.436148}
+{"tag":"idle","test":"noise","thread":40.19999999999993,"process":45.124000000000024,"wall":39.243472}
+{"tag":"idle","test":"noise","thread":31.581000000000017,"process":37.86500000000001,"wall":31.156842000000097}
+{"tag":"idle","test":"noise","thread":33.11400000000003,"process":40.79499999999996,"wall":33.36601799999994}
+{"tag":"idle","test":"noise","thread":33.21900000000005,"process":41.047000000000025,"wall":32.76311099999998}
+{"tag":"idle","test":"noise","thread":31.288999999999987,"process":37.942999999999984,"wall":31.693412999999964}
+{"tag":"idle","test":"noise","thread":30.4670000000001,"process":35.36299999999983,"wall":30.033841999999936}
+{"tag":"idle","test":"noise","thread":31.610000000000014,"process":36.57099999999991,"wall":31.179935999999998}
+{"tag":"idle","test":"noise","thread":32.138000000000034,"process":38.45900000000006,"wall":31.89644599999997}
+{"tag":"idle","test":"worker_cpuUsage_live","samples":[[0.2624940000000606,0],[2.9861430000000837,3.966],[5.454071000000113,7.969],[7.759246000000076,7.969],[10.00969699999996,12.659],[12.388703999999962,15.733],[14.641006000000061,15.733],[16.825949000000037,19.736],[19.02465499999994,21.716],[20.26567100000011,23.703],[22.482531999999992,23.703],[24.77096900000015,27.702],[27.060068,28.774],[29.275601999999935,31.579],[31.45003500000007,31.579],[33.65334699999994,35.575],[35.83283600000004,35.575],[38.04241500000012,39.575],[40.29465099999993,43.575],[42.46830100000011,43.575],[44.64742700000011,47.574],[46.893935000000056,47.574],[49.09757000000013,51.574],[51.28681000000006,51.574],[53.505720999999994,55.576],[55.68438900000001,55.576],[57.90888700000005,59.575],[60.129952,59.575],[62.31437800000003,63.573],[64.47403299999996,67.574],[66.66225600000007,67.574],[68.84216200000014,71.574],[71.0664690000001,71.574],[73.44857900000011,75.574],[75.67013700000007,75.574],[77.88584100000003,79.572],[80.0873180000001,79.572],[82.27533300000005,83.58],[84.44329100000004,87.576],[86.61142399999994,87.576],[88.92983700000013,91.575],[91.14254900000014,91.575],[93.33432300000004,95.574],[95.52548100000013,95.574],[97.72830700000009,99.575],[99.99702000000002,99.575],[102.20861800000011,103.575],[104.39295800000014,107.574],[106.60378700000001,107.574],[108.93281300000012,111.574],[111.13790700000004,111.574],[113.32924000000003,115.575],[115.57559100000003,115.575],[117.75534400000015,119.573],[120.02052200000003,119.573],[122.21203400000013,123.574],[124.4159790000001,127.574],[126.59160700000007,127.574],[128.76191300000005,131.574],[131.0386900000001,131.574],[133.25159400000007,135.575],[135.4507390000001,135.575],[137.66102999999998,139.575],[140.03806699999996,139.575],[142.3330820000001,143.575],[144.554527,147.574],[146.80941000000007,147.574],[149.0757920000001,151.574],[151.71939700000007,151.574],[154.02112699999998,155.576],[156.32324300000005,159.574],[158.57209699999999,159.574],[160.81467399999997,163.575],[163.03631100000007,163.575],[165.26704900000004,167.574],[167.48736099999996,167.574],[169.74969499999997,171.572],[171.98555899999997,171.572],[174.2265950000001,175.578],[176.41661399999998,179.577],[178.64906500000006,179.577],[180.9123320000001,183.58],[183.132208,183.58],[185.37897900000007,187.551],[189.17497500000013,190.268],[191.4801930000001,190.268],[193.68523000000005,193.536],[195.94559700000013,193.536],[198.2212810000001,197.539],[200.45055700000012,201.54],[202.70361900000012,201.54],[204.95834800000011,205.54],[207.14221399999997,205.54],[209.37503400000014,209.539],[211.59372800000006,209.539],[213.77445899999998,213.536],[215.97056399999997,213.536],[218.18355700000006,217.535],[220.33093400000007,221.539],[222.52581499999997,221.539],[224.7138930000001,225.539],[226.90021100000013,225.539],[229.2522550000001,229.536],[231.52156800000012,229.536],[233.71458499999994,233.559],[235.8914360000001,233.559],[238.11875600000008,237.537],[240.30753600000003,241.536],[242.55207500000006,241.536],[244.70828900000015,245.54],[246.949971,245.54],[249.09107700000004,249.535],[251.269497,249.535],[253.44711000000007,253.535],[255.647199,253.535],[257.830876,257.537],[259.97255399999995,257.537],[262.123507,261.534],[264.3122430000001,265.536],[266.514318,265.536],[268.6893480000001,269.535],[270.81931899999995,269.535],[272.96027300000014,273.536],[275.15457100000003,273.536],[276.2618830000001,277.535],[278.42132800000013,277.535],[280.5784960000001,281.536],[282.76871900000015,281.536],[284.96994100000006,285.538],[287.0991570000001,285.538],[289.3450250000001,289.538],[291.58744,289.538],[293.7830200000001,293.541],[295.94431899999995,293.541],[298.0898730000001,297.535],[300.2718070000001,301.535],[302.4673520000001,301.535],[304.703614,305.535]]}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":10,"err":"Script execution was interrupted by `SIGINT`","wall":11.164732999999842,"over":-0.9470000000001164}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":3,"arm_us":154.3,"head_ms":0.660697,"err":"Script execution was interrupted by `SIGINT`","wall":2.806491000000051,"over":-2.3393029999999726,"count_ms":3.558255}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":10,"err":"Script execution timed out after 10ms","wall":10.634019999999964,"over":-2.272999999999911}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":150,"arm_us":176.7,"head_ms":0.207193,"err":"Script execution was interrupted by `SIGINT`","wall":150.60258700000009,"over":-3.12180699999999,"count_ms":150.773469}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":10,"arm_us":169.6,"head_ms":0.260118,"err":"Script execution was interrupted by `SIGINT`","wall":10.3865780000001,"over":-2.959882000000107,"count_ms":10.795854}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":10,"err":"Script execution timed out after 10ms","wall":10.653171000000157,"over":-2.0319999999999254}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":3,"err":"Script execution timed out after 3ms","wall":3.650772000000188,"over":-3}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":150,"arm_us":161.6,"head_ms":0.197298,"err":"Script execution was interrupted by `SIGINT`","wall":150.58108600000014,"over":-3.1157020000000557,"count_ms":150.794146}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":10,"err":"Script execution timed out after 10ms","wall":9.608813000000055,"over":-2.2049999999999272}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":150,"err":"Script execution timed out after 150ms","wall":150.7761599999999,"over":1.8689999999999145}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":3,"err":"Script execution timed out after 3ms","wall":3.5553509999999733,"over":1.0040000000001328}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":50,"arm_us":169.2,"head_ms":0.255205,"err":"Script execution was interrupted by `SIGINT`","wall":50.47179500000016,"over":-1.1787950000000365,"count_ms":50.734412}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":150,"arm_us":152,"head_ms":0.093603,"err":"Script execution was interrupted by `SIGINT`","wall":150.7963149999996,"over":-1.47739700000011,"count_ms":150.845411}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":10,"err":"Script execution timed out after 10ms","wall":10.630181999999877,"over":-0.4960000000000946}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":50,"arm_us":148.8,"head_ms":0.189475,"err":"Script execution was interrupted by `SIGINT`","wall":50.622045999999955,"over":-0.9805250000001706,"count_ms":50.785553}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":50,"err":"Script execution timed out after 50ms","wall":49.63785199999984,"over":-0.21000000000003638}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":150,"arm_us":129.8,"head_ms":0.134975,"err":"Script execution was interrupted by `SIGINT`","wall":301.78116999999975,"over":147.47597500000006,"count_ms":300.758987}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":50,"err":"Script execution timed out after 50ms","wall":50.69394599999987,"over":-2.0030000000001564}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":3,"err":"Script execution timed out after 3ms","wall":3.618960999999672,"over":1.0199999999999818}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":3,"arm_us":171.5,"head_ms":0.146915,"err":"Script execution was interrupted by `SIGINT`","wall":3.509038000000146,"over":-2.853085000000192,"count_ms":3.817867}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":50,"err":"Script execution timed out after 50ms","wall":49.65006900000026,"over":-2.2539999999999054}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":10,"err":"Script execution timed out after 10ms","wall":10.643651000000318,"over":2.005999999999858}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":50,"arm_us":142.7,"head_ms":0.159431,"err":"Script execution was interrupted by `SIGINT`","wall":50.519221000000016,"over":-0.7705690000002505,"count_ms":50.668455}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":50,"arm_us":109.6,"head_ms":0.123411,"err":"Script execution was interrupted by `SIGINT`","wall":50.55371000000014,"over":-0.7485889999998108,"count_ms":50.645899}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":150,"arm_us":114.2,"head_ms":0.094962,"err":"Script execution was interrupted by `SIGINT`","wall":150.63908600000013,"over":-2.504038000000037,"count_ms":150.701903}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":3,"err":"Script execution timed out after 3ms","wall":2.5725710000001527,"over":-0.987999999999829}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":50,"err":"Script execution timed out after 50ms","wall":50.63268199999993,"over":0.487999999999829}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":10,"arm_us":124.3,"head_ms":0.186392,"err":"Script execution was interrupted by `SIGINT`","wall":10.438505999999961,"over":-3.6226079999996728,"count_ms":10.547975}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":50,"err":"Script execution timed out after 50ms","wall":50.76422000000002,"over":-2.593999999999596}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":10,"arm_us":120.3,"head_ms":0.226805,"err":"Script execution was interrupted by `SIGINT`","wall":10.40023599999995,"over":-3.2941950000004,"count_ms":10.722234}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":150,"err":"Script execution timed out after 150ms","wall":150.9261260000003,"over":-6.407000000000153}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":150,"arm_us":144.8,"head_ms":0.209904,"err":"Script execution was interrupted by `SIGINT`","wall":150.53245199999992,"over":-12.826096000000234,"count_ms":150.722083}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":3,"arm_us":121.8,"head_ms":0.143438,"err":"Script execution was interrupted by `SIGINT`","wall":3.3367000000002918,"over":-0.5035619999998744,"count_ms":3.484336}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":10,"arm_us":80.2,"head_ms":0.076874,"err":"Script execution was interrupted by `SIGINT`","wall":10.479432999999972,"over":0.0658739999998943,"count_ms":10.541609}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":150,"arm_us":90.5,"head_ms":0.083566,"err":"Script execution was interrupted by `SIGINT`","wall":300.59223699999984,"over":139.81156599999986,"count_ms":300.688603}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":3,"err":"Script execution timed out after 3ms","wall":4.693443000000116,"over":-1.40099999999984}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":50,"arm_us":131,"head_ms":0.134795,"err":"Script execution was interrupted by `SIGINT`","wall":50.56433500000003,"over":-7.869204999999965,"count_ms":50.726507}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":10,"arm_us":126.9,"head_ms":0.103576,"err":"Script execution was interrupted by `SIGINT`","wall":10.549694000000272,"over":-2.813423999999941,"count_ms":10.650453}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":150,"arm_us":144.6,"head_ms":0.096617,"err":"Script execution was interrupted by `SIGINT`","wall":150.79193299999997,"over":-2.8953829999995833,"count_ms":150.828047}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":3,"arm_us":125.1,"head_ms":0.096743,"err":"Script execution was interrupted by `SIGINT`","wall":3.423761999999897,"over":-0.26925699999992503,"count_ms":3.50417}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":150,"err":"Script execution timed out after 150ms","wall":150.8928420000002,"over":0.7210000000000036}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":10,"arm_us":124.8,"head_ms":0.174688,"err":"Script execution was interrupted by `SIGINT`","wall":10.61322300000029,"over":-3.5903119999998125,"count_ms":10.741863}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":3,"err":"Script execution timed out after 3ms","wall":3.5371959999993123,"over":0.375}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":10,"err":"Script execution timed out after 10ms","wall":10.623759000000064,"over":1.9659999999998945}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":50,"err":"Script execution was interrupted by `SIGINT`","wall":52.9501479999999,"over":1.961999999999989}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":150,"err":"Script execution was interrupted by `SIGINT`","wall":151.02095100000042,"over":0.08699999999998909}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":150,"err":"Script execution timed out after 150ms","wall":150.84241399999974,"over":0.40699999999969805}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":3,"err":"Script execution timed out after 3ms","wall":3.679690999999366,"over":1.0030000000001564}
+{"tag":"idle","test":"stop","mech":"vm_wall","r":3,"err":"Script execution timed out after 3ms","wall":3.5452070000001186,"over":1}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":50,"err":"Script execution was interrupted by `SIGINT`","wall":51.13515800000005,"over":-0.23499999999967258}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":50,"arm_us":122.3,"head_ms":0.13251,"err":"Script execution was interrupted by `SIGINT`","wall":100.80976100000044,"over":46.647509999999784,"count_ms":100.748239}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":3,"err":"Script execution was interrupted by `SIGINT`","wall":3.6221949999999197,"over":0.6289999999999054}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":3,"terminate_ms":3.9951350000001185,"wall":10.728556999999455,"over":3.729000000000042,"polls":5,"respawn_ms":47.683939000000464}
+{"tag":"idle","test":"stop","mech":"sigint_perf","r":50,"arm_us":148.4,"head_ms":0.165836,"err":"Script execution was interrupted by `SIGINT`","wall":50.67069999999967,"over":-3.1691639999999097,"count_ms":50.694116}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":150,"err":"Script execution was interrupted by `SIGINT`","wall":153.44306099999994,"over":1.4650000000001455}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":50,"err":"Script execution was interrupted by `SIGINT`","wall":52.13438200000019,"over":-0.38699999999971624}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":150,"err":"Script execution was interrupted by `SIGINT`","wall":154.62058799999977,"over":-0.5399999999999636}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":50,"err":"Script execution was interrupted by `SIGINT`","wall":53.025777000000744,"over":-0.5849999999991269}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":50,"err":"Script execution was interrupted by `SIGINT`","wall":53.215642999999545,"over":1.6719999999995707}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":150,"terminate_ms":2.1800240000002304,"wall":155.1752980000001,"over":2.1299999999999955,"polls":5,"respawn_ms":39.435363999999936}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":3,"terminate_ms":1.8657090000006065,"wall":1.8979609999996683,"over":-3,"polls":1,"respawn_ms":39.932466000000204}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":3,"terminate_ms":1.7597560000003796,"wall":1.8314689999997427,"over":-3,"polls":1,"respawn_ms":35.65604100000019}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":10,"terminate_ms":5.534606000000167,"wall":13.777356999999938,"over":-2.012999999999998,"polls":4,"respawn_ms":39.4661100000003}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":150,"terminate_ms":2.4904820000001564,"wall":149.28960200000074,"over":-2.3189999999999884,"polls":6,"respawn_ms":38.27289799999926}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":3,"err":"Script execution was interrupted by `SIGINT`","wall":3.7493210000002364,"over":-0.04500000000007276}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":50,"terminate_ms":2.222182999999859,"wall":56.9363170000006,"over":3.824000000000005,"polls":5,"respawn_ms":38.02355400000033}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":50,"err":"Script execution was interrupted by `SIGINT`","wall":51.244032999999945,"over":0.7219999999997526}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":50,"terminate_ms":2.1175720000001093,"wall":54.7432289999997,"over":-0.04200000000000159,"polls":3,"respawn_ms":40.47663300000022}
+{"tag":"idle","test":"stop","mech":"sigint_poll","r":3,"err":"Script execution was interrupted by `SIGINT`","wall":3.739383999999518,"over":-0.7080000000005384}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":10,"terminate_ms":2.156612999999197,"wall":13.737441999999646,"over":0.007999999999995566,"polls":3,"respawn_ms":41.099850999999944}
+{"tag":"idle","test":"stop","mech":"worker_kill","r":50,"terminate_ms":2.1190520000000106,"wall":48.77129299999979,"over":-2.0630000000000095,"polls":3,"respawn_ms":36.95638700000018}
+{"tag":"autogroup","test":"noise","thread":46.45700000000001,"process":55.582,"wall":54.29085}
+{"tag":"autogroup","test":"noise","thread":32.218,"process":37.650999999999996,"wall":46.656311}
+{"tag":"autogroup","test":"noise","thread":32.42400000000001,"process":37.964,"wall":38.714393}
+{"tag":"autogroup","test":"noise","thread":27.699000000000012,"process":32.757000000000005,"wall":84.30609200000004}
+{"tag":"autogroup","test":"noise","thread":34.373999999999995,"process":40.172000000000025,"wall":98.39115200000003}
+{"tag":"autogroup","test":"noise","thread":31.021000000000015,"process":37.244999999999976,"wall":86.78672600000004}
+{"tag":"autogroup","test":"noise","thread":28.83099999999999,"process":35.23000000000002,"wall":91.23679399999997}
+{"tag":"autogroup","test":"noise","thread":35.49600000000004,"process":40.75600000000003,"wall":41.096356000000014}
+{"tag":"autogroup","test":"noise","thread":37.874000000000024,"process":44.47900000000004,"wall":117.50565900000004}
+{"tag":"autogroup","test":"noise","thread":29.764999999999986,"process":35.374000000000024,"wall":56.537579999999934}
+{"tag":"autogroup","test":"noise","thread":29.96199999999999,"process":34.80799999999999,"wall":68.45934699999998}
+{"tag":"autogroup","test":"noise","thread":28.74000000000001,"process":33.94799999999998,"wall":63.74562900000001}
+{"tag":"autogroup","test":"noise","thread":28.789999999999964,"process":34.09400000000005,"wall":53.22725600000001}
+{"tag":"autogroup","test":"noise","thread":31.930000000000007,"process":37.803999999999974,"wall":76.01625100000001}
+{"tag":"autogroup","test":"noise","thread":31.94500000000005,"process":38.902000000000044,"wall":75.82117900000003}
+{"tag":"autogroup","test":"noise","thread":37.146999999999935,"process":44.43399999999997,"wall":113.1649010000001}
+{"tag":"autogroup","test":"noise","thread":39.30200000000002,"process":43.254999999999995,"wall":129.56574899999987}
+{"tag":"autogroup","test":"noise","thread":32.76999999999998,"process":38.15899999999999,"wall":120.89274499999988}
+{"tag":"autogroup","test":"noise","thread":32.004999999999995,"process":36.928999999999974,"wall":75.91227200000003}
+{"tag":"autogroup","test":"noise","thread":43.972999999999956,"process":50.60699999999997,"wall":118.47272499999985}
+{"tag":"autogroup","test":"noise","thread":32.295999999999935,"process":36.21799999999996,"wall":139.24078999999983}
+{"tag":"autogroup","test":"noise","thread":30.618999999999915,"process":36.50299999999993,"wall":151.225907}
+{"tag":"autogroup","test":"noise","thread":31.92100000000005,"process":37.82300000000009,"wall":103.38293799999997}
+{"tag":"autogroup","test":"noise","thread":35.22300000000007,"process":40.88900000000001,"wall":150.76988800000026}
+{"tag":"autogroup","test":"noise","thread":29.19900000000007,"process":33.587999999999965,"wall":98.82742999999982}
+{"tag":"autogroup","test":"noise","thread":30.077999999999975,"process":35.05899999999997,"wall":72.19045700000015}
+{"tag":"autogroup","test":"noise","thread":29.787000000000035,"process":34.57400000000007,"wall":66.34478599999966}
+{"tag":"autogroup","test":"noise","thread":28.189000000000078,"process":33.309999999999945,"wall":77.49572399999988}
+{"tag":"autogroup","test":"noise","thread":32.71399999999994,"process":37.922000000000025,"wall":96.76291700000002}
+{"tag":"autogroup","test":"noise","thread":33.3359999999999,"process":40.13799999999992,"wall":111.00171399999999}
+{"tag":"autogroup","test":"worker_cpuUsage_live","samples":[[7.607332000000042,0],[10.116209999999683,0],[15.433929999999691,4.019],[17.756241000000045,5.85],[23.49196299999994,8.011],[28.513378999999986,9.487],[39.5885089999997,11.924],[41.789230999999745,11.924],[52.175095000000056,15.727],[54.82659999999987,15.91],[62.407104999999774,19.095],[64.63348700000006,20.17],[75.73687699999982,22.749],[77.94357300000001,22.749],[83.44008899999972,26.662],[85.62276799999972,26.662],[95.42074599999978,30.666],[103.52943800000003,34.38],[108.51552099999981,34.38],[117.86910999999964,38.382],[127.45595099999991,42.385],[139.57607299999972,45.592],[141.79802599999994,47.674],[144.12073499999997,49.749],[146.275212,51.971],[148.41833399999996,54.043],[150.5899629999999,56.105],[152.74540099999967,58.198],[154.88650999999982,60.262],[157.0257029999998,62.335],[159.18205099999977,64.403],[161.34763900000007,66.444],[163.49153399999977,68.502],[165.66033599999992,70.567],[167.79857300000003,72.64],[169.9423029999998,74.703],[172.14361899999994,76.777],[174.29233499999964,78.842],[176.46579199999996,80.661],[178.78395899999987,82.62],[180.9448739999998,84.557],[183.1018949999998,86.526],[185.28585699999985,88.602],[187.42102999999997,90.628],[189.60340599999972,92.599],[191.7649779999997,94.673],[193.9092099999998,96.718],[196.069665,98.79],[198.20728499999996,100.848],[200.34456199999977,102.919],[202.5027439999999,104.948],[204.6451589999997,107.022],[206.781606,109.083],[209.01612399999976,111.157],[211.15941199999997,113.311],[215.427866,117.374],[217.61236099999996,119.44],[219.757611,121.514],[221.91311799999994,123.545],[224.06242699999984,125.603],[226.198351,127.665],[228.35302899999988,129.736],[230.64789999999994,131.807],[232.79743800000006,133.83],[235.21619099999998,135.733],[237.37468899999976,137.693],[239.51620699999967,139.765],[241.6743489999999,141.814],[244.04041499999994,143.768],[246.2058179999999,145.83],[248.37213699999984,147.769],[250.50805300000002,149.832],[252.65760199999977,151.879],[254.79934299999968,153.943],[256.93247900000006,156.017],[259.35281499999974,158.08],[261.50470499999983,160.376],[263.65153299999974,162.424],[265.78503699999965,164.487],[271.37293899999986,166.534],[273.5302139999999,172.002],[275.6724509999999,174.074],[277.8330719999999,175.912],[279.97385799999984,177.964],[282.12902699999995,179.998],[284.2603559999998,182.07],[286.39942699999983,184.132],[288.56787399999985,186.205],[290.82168,187.847],[292.9630739999998,189.923],[295.10336400000006,191.986],[297.2435839999998,194.059],[299.38326800000004,196.125],[301.517284,198.187],[303.6896429999997,200.259],[305.8246879999997,202.322],[307.9573339999997,204.393],[310.1009939999999,206.456],[312.25175599999966,208.529],[314.3861589999997,210.59],[316.794668,212.753]]}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":50,"err":"Script execution was interrupted by `SIGINT`","wall":67.65317099999993,"over":-4.038000000000011}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":50,"err":"Script execution was interrupted by `SIGINT`","wall":131.35542600000008,"over":-2.3220000000001164}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":3,"terminate_ms":3.154830999999831,"wall":3.2143550000000687,"over":-3,"polls":1,"respawn_ms":104.7989090000001}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":50,"terminate_ms":2.3819479999997384,"wall":98.28570099999979,"over":-4.120999999999995,"polls":6,"respawn_ms":60.5613629999998}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":3,"err":"Script execution was interrupted by `SIGINT`","wall":13.202771000000212,"over":0.4210000000000491}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":3,"err":"Script execution was interrupted by `SIGINT`","wall":3.3958800000000338,"over":-1.5769999999999982}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":50,"terminate_ms":2.086496999999781,"wall":78.70544000000018,"over":-0.37599999999999767,"polls":4,"respawn_ms":53.38612000000012}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":3,"err":"Script execution was interrupted by `SIGINT`","wall":7.823038000000452,"over":-2.09900000000016}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":150,"terminate_ms":2.1436030000004394,"wall":320.0676630000007,"over":-1.853999999999985,"polls":10,"respawn_ms":66.42786299999989}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":150,"terminate_ms":2.0792169999995167,"wall":273.68980999999985,"over":-2.9350000000000023,"polls":14,"respawn_ms":66.31178600000021}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":10,"err":"Script execution was interrupted by `SIGINT`","wall":11.190796000000773,"over":-6.5470000000000255}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":10,"terminate_ms":1.7718450000002122,"wall":14.35194600000068,"over":-0.9129999999999967,"polls":4,"respawn_ms":160.48066400000062}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":10,"err":"Script execution was interrupted by `SIGINT`","wall":16.418625000000247,"over":-0.41599999999994}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":3,"err":"Script execution was interrupted by `SIGINT`","wall":3.42274499999985,"over":0.20199999999999818}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":150,"err":"Script execution was interrupted by `SIGINT`","wall":362.9173630000005,"over":-1.2960000000000491}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":50,"arm_us":192.2,"head_ms":1.109637,"err":"Script execution was interrupted by `SIGINT`","wall":150.62248100000033,"over":-1.0073629999999412,"count_ms":50.075894}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":50,"err":"Script execution was interrupted by `SIGINT`","wall":159.30646799999977,"over":1.3669999999999618}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":10,"err":"Script execution was interrupted by `SIGINT`","wall":43.55941299999995,"over":-2.2080000000000837}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":50,"arm_us":108.2,"head_ms":0.184346,"err":"Script execution was interrupted by `SIGINT`","wall":206.49509600000056,"over":0.1323459999998704,"count_ms":50.081216}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":50,"terminate_ms":2.082296999999926,"wall":112.54214400000001,"over":-0.33899999999999864,"polls":7,"respawn_ms":98.8625519999996}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":150,"arm_us":113.8,"head_ms":0.174669,"err":"Script execution was interrupted by `SIGINT`","wall":338.5377559999997,"over":-0.8963310000001457,"count_ms":150.082605}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":50,"err":"Script execution was interrupted by `SIGINT`","wall":154.50046799999927,"over":0.31300000000010186}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":150,"terminate_ms":14.126400000000103,"wall":444.67144499999995,"over":2.8100000000000023,"polls":16,"respawn_ms":119.93176299999959}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":150,"err":"Script execution was interrupted by `SIGINT`","wall":393.0266810000003,"over":-6.384999999999991}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":10,"terminate_ms":2.942446000000018,"wall":11.27893899999981,"over":-0.05500000000000682,"polls":4,"respawn_ms":128.74092800000017}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":50,"err":"Script execution was interrupted by `SIGINT`","wall":71.68103500000052,"over":6.194999999999936}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":150,"err":"Script execution was interrupted by `SIGINT`","wall":343.0988179999995,"over":-3.6549999999999727}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":150,"arm_us":116,"head_ms":0.171798,"err":"Script execution was interrupted by `SIGINT`","wall":382.72554499999933,"over":-0.17720200000030673,"count_ms":150.11489}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":50,"err":"Script execution timed out after 50ms","wall":54.80984300000091,"over":-30.822999999999865}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":50,"arm_us":109.6,"head_ms":0.284494,"err":"Script execution was interrupted by `SIGINT`","wall":163.01248899999882,"over":-3.6745059999998375,"count_ms":50.077132}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":3,"err":"Script execution was interrupted by `SIGINT`","wall":4.457851999999548,"over":-2.150000000000091}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":10,"err":"Script execution was interrupted by `SIGINT`","wall":19.43851100000029,"over":4.333000000000084}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":3,"err":"Script execution timed out after 3ms","wall":2.903986999999688,"over":-2.3079999999999927}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":10,"err":"Script execution was interrupted by `SIGINT`","wall":15.634699000000182,"over":1.2640000000001237}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":50,"err":"Script execution was interrupted by `SIGINT`","wall":122.88611999999921,"over":-0.43699999999989814}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":150,"arm_us":112.9,"head_ms":0.210601,"err":"Script execution was interrupted by `SIGINT`","wall":253.8513750000002,"over":-1.1133989999998448,"count_ms":150.079872}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":3,"err":"Script execution was interrupted by `SIGINT`","wall":42.80152400000043,"over":-0.3009999999999309}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":50,"arm_us":118,"head_ms":0.179587,"err":"Script execution was interrupted by `SIGINT`","wall":168.2853439999999,"over":-1.8404129999998986,"count_ms":50.080382}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":10,"err":"Script execution timed out after 10ms","wall":14.853476999998747,"over":-7.018999999999778}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":150,"terminate_ms":14.017868999999337,"wall":316.9633269999995,"over":0.31399999999999295,"polls":10,"respawn_ms":119.45628500000021}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":3,"err":"Script execution was interrupted by `SIGINT`","wall":18.039400999999998,"over":0.5259999999998399}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":10,"err":"Script execution timed out after 10ms","wall":19.160407999999734,"over":-2.5459999999998217}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":3,"err":"Script execution timed out after 3ms","wall":3.0767520000008517,"over":-0.3240000000000691}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":10,"err":"Script execution timed out after 10ms","wall":9.432475999999951,"over":-3.143000000000029}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":50,"err":"Script execution was interrupted by `SIGINT`","wall":125.66655100000025,"over":-3.5579999999999927}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":150,"arm_us":108.9,"head_ms":0.163395,"err":"Script execution was interrupted by `SIGINT`","wall":517.8139609999998,"over":147.21639499999992,"count_ms":300.095029}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":3,"err":"Script execution was interrupted by `SIGINT`","wall":5.682598999999755,"over":1.9450000000001637}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":10,"terminate_ms":2.247283000000607,"wall":26.269544999999198,"over":-0.9500000000000028,"polls":5,"respawn_ms":121.58713599999828}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":50,"err":"Script execution timed out after 50ms","wall":65.96797199999855,"over":-33.53699999999981}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":3,"arm_us":109.3,"head_ms":0.205799,"err":"Script execution was interrupted by `SIGINT`","wall":22.657690000000002,"over":-0.008201000000553904,"count_ms":3.067543}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":50,"err":"Script execution was interrupted by `SIGINT`","wall":170.99687099999937,"over":-0.34799999999995634}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":3,"arm_us":105,"head_ms":0.175223,"err":"Script execution was interrupted by `SIGINT`","wall":4.003086999999141,"over":-0.5407769999997072,"count_ms":3.072492}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":3,"arm_us":115.8,"head_ms":0.179414,"err":"Script execution was interrupted by `SIGINT`","wall":11.976629999999204,"over":-0.3685859999995955,"count_ms":3.060926}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":3,"err":"Script execution timed out after 3ms","wall":14.852165000000241,"over":-2.1520000000000437}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":10,"terminate_ms":2.9839449999999488,"wall":20.249612999999954,"over":-0.013999999999995794,"polls":4,"respawn_ms":147.0490609999997}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":3,"arm_us":115.5,"head_ms":0.173013,"err":"Script execution was interrupted by `SIGINT`","wall":3.6990459999997256,"over":-2.5879869999998846,"count_ms":3.062803}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":150,"terminate_ms":2.2779199999986304,"wall":310.72962200000075,"over":-5.646999999999991,"polls":12,"respawn_ms":49.24995200000012}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":10,"arm_us":103.8,"head_ms":0.1346,"err":"Script execution was interrupted by `SIGINT`","wall":16.578520999999455,"over":-2.1374000000005253,"count_ms":10.061993}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":150,"err":"Script execution was interrupted by `SIGINT`","wall":352.30741900000066,"over":1.4340000000001965}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":10,"arm_us":139.5,"head_ms":0.240515,"err":"Script execution was interrupted by `SIGINT`","wall":11.009245000001101,"over":-2.9914850000000115,"count_ms":10.063952}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":50,"err":"Script execution was interrupted by `SIGINT`","wall":107.39297299999998,"over":-1.0910000000003492}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":3,"terminate_ms":1.9910020000006625,"wall":5.176975000000311,"over":-0.5549999999999997,"polls":3,"respawn_ms":86.458482}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":10,"terminate_ms":2.850827999998728,"wall":10.635747000000265,"over":-4.244999999999997,"polls":4,"respawn_ms":57.302098000000115}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":50,"terminate_ms":2.100323999999091,"wall":59.96853600000031,"over":-5.102000000000004,"polls":4,"respawn_ms":55.107443999999305}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":150,"err":"Script execution timed out after 150ms","wall":154.96841400000085,"over":-78.52499999999964}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":10,"arm_us":110.5,"head_ms":0.17503,"err":"Script execution was interrupted by `SIGINT`","wall":26.906770999999935,"over":0.07603000000017346,"count_ms":10.062219}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":10,"arm_us":104,"head_ms":0.092154,"err":"Script execution was interrupted by `SIGINT`","wall":22.317215999999462,"over":0.02615399999967849,"count_ms":10.059607}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":150,"err":"Script execution timed out after 150ms","wall":154.55171899999914,"over":-38.09999999999991}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":150,"err":"Script execution was interrupted by `SIGINT`","wall":279.637087000001,"over":-2.494999999999891}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":50,"arm_us":100.4,"head_ms":0.150558,"err":"Script execution was interrupted by `SIGINT`","wall":84.1605240000008,"over":-1.2654419999998936,"count_ms":50.063944}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":3,"err":"Script execution timed out after 3ms","wall":5.3863430000001244,"over":-3}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":3,"err":"Script execution timed out after 3ms","wall":7.3380250000009255,"over":-3}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":150,"err":"Script execution was interrupted by `SIGINT`","wall":250.84779200000048,"over":1.3910000000000764}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":3,"terminate_ms":2.788567999999941,"wall":3.670179000000644,"over":-2.075000000000003,"polls":1,"respawn_ms":108.61851799999931}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":3,"err":"Script execution timed out after 3ms","wall":11.97906200000034,"over":-1.8220000000001164}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":150,"arm_us":107.2,"head_ms":0.196087,"err":"Script execution was interrupted by `SIGINT`","wall":322.2823239999998,"over":0.0830869999999777,"count_ms":150.119501}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":10,"arm_us":103.9,"head_ms":0.088511,"err":"Script execution was interrupted by `SIGINT`","wall":14.739682999999786,"over":0.07151100000010047,"count_ms":10.058561}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":10,"err":"Script execution was interrupted by `SIGINT`","wall":26.458018999999695,"over":-0.18699999999989814}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":150,"err":"Script execution was interrupted by `SIGINT`","wall":303.4021990000001,"over":-0.13400000000001455}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":10,"err":"Script execution timed out after 10ms","wall":11.073136000000886,"over":-6.860999999999876}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":10,"err":"Script execution timed out after 10ms","wall":15.365490999998656,"over":-6.407000000000153}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":10,"err":"Script execution timed out after 10ms","wall":15.287342999999964,"over":-6.668000000000575}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":50,"err":"Script execution timed out after 50ms","wall":59.16654000000017,"over":-24.7470000000003}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":10,"terminate_ms":2.5873959999989893,"wall":18.65666699999929,"over":-1.7070000000000007,"polls":3,"respawn_ms":90.91269900000043}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":10,"err":"Script execution timed out after 10ms","wall":17.941248999999516,"over":-0.005000000000109139}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":150,"err":"Script execution timed out after 150ms","wall":154.92065699999876,"over":-80.16499999999996}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":3,"terminate_ms":1.7946019999999407,"wall":4.9219410000005155,"over":0.4130000000000038,"polls":2,"respawn_ms":95.64088199999969}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":10,"err":"Script execution was interrupted by `SIGINT`","wall":11.03556799999933,"over":-6.122000000000298}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":10,"arm_us":106.1,"head_ms":0.143637,"err":"Script execution was interrupted by `SIGINT`","wall":25.901535000000877,"over":0.06963699999960227,"count_ms":10.05883}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":3,"terminate_ms":2.115977000001294,"wall":28.903583999999682,"over":0.015000000000000568,"polls":3,"respawn_ms":109.81100200000037}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":10,"terminate_ms":1.8147420000004786,"wall":14.865719999999783,"over":-1.1850000000000023,"polls":5,"respawn_ms":104.92955500000062}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":150,"arm_us":109.3,"head_ms":0.278819,"err":"Script execution was interrupted by `SIGINT`","wall":391.16801000000123,"over":0.2788190000001123,"count_ms":150.093614}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":10,"arm_us":92.9,"head_ms":0.09105,"err":"Script execution was interrupted by `SIGINT`","wall":15.923431000001074,"over":-0.8709499999995387,"count_ms":10.078816}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":10,"err":"Script execution timed out after 10ms","wall":9.488956000001053,"over":-0.22000000000025466}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":3,"err":"Script execution timed out after 3ms","wall":7.845278999999209,"over":-1.6190000000005966}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":10,"arm_us":127.7,"head_ms":0.129177,"err":"Script execution was interrupted by `SIGINT`","wall":10.420416999999361,"over":-0.2028229999996256,"count_ms":10.057611}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":3,"terminate_ms":1.966511000000537,"wall":7.346609999998691,"over":0.7199999999999989,"polls":2,"respawn_ms":73.51706000000013}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":10,"err":"Script execution timed out after 10ms","wall":10.724679999999353,"over":-7.0590000000001965}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":150,"err":"Script execution was interrupted by `SIGINT`","wall":183.48191599999882,"over":-4.54700000000048}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":3,"arm_us":106,"head_ms":0.155424,"err":"Script execution was interrupted by `SIGINT`","wall":3.3302910000002157,"over":-0.34757600000011735,"count_ms":3.055023}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":50,"err":"Script execution timed out after 50ms","wall":50.502418000000034,"over":-20.61999999999989}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":10,"arm_us":109.2,"head_ms":0.15509,"err":"Script execution was interrupted by `SIGINT`","wall":25.23486799999955,"over":7.718090000000302,"count_ms":20.062428}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":150,"err":"Script execution timed out after 150ms","wall":150.45210899999984,"over":-45.7529999999997}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":3,"terminate_ms":1.948475999999573,"wall":4.391778000001068,"over":-0.9949999999999974,"polls":3,"respawn_ms":58.05307999999968}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":50,"arm_us":109.8,"head_ms":0.132517,"err":"Script execution was interrupted by `SIGINT`","wall":184.0496009999988,"over":-3.8264829999998256,"count_ms":50.091329}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":150,"terminate_ms":2.1879269999990356,"wall":312.5002179999992,"over":-0.9609999999999843,"polls":9,"respawn_ms":36.071601999999984}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":3,"terminate_ms":1.8901000000005297,"wall":1.9759850000009465,"over":-3,"polls":1,"respawn_ms":39.489872999998624}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":50,"err":"Script execution timed out after 50ms","wall":50.399624000001495,"over":-7.655999999999949}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":150,"err":"Script execution was interrupted by `SIGINT`","wall":248.5777760000019,"over":-1.2510000000002037}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":150,"arm_us":141.6,"head_ms":0.78827,"err":"Script execution was interrupted by `SIGINT`","wall":395.17495000000054,"over":-3.6857300000001487,"count_ms":150.1002}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":3,"arm_us":124.8,"head_ms":0.287364,"err":"Script execution was interrupted by `SIGINT`","wall":12.855740000002697,"over":-0.7146360000006098,"count_ms":3.093815}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":3,"arm_us":98.8,"head_ms":0.072734,"err":"Script execution was interrupted by `SIGINT`","wall":5.460591999999451,"over":-1.8172660000000178,"count_ms":3.055548}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":50,"terminate_ms":2.523843000002671,"wall":55.485044000000926,"over":-0.8099999999999952,"polls":4,"respawn_ms":41.4782610000002}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":3,"arm_us":104,"head_ms":0.149771,"err":"Script execution was interrupted by `SIGINT`","wall":4.428691000000981,"over":-2.6322289999998247,"count_ms":3.070769}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":3,"arm_us":103.3,"head_ms":0.141192,"err":"Script execution was interrupted by `SIGINT`","wall":4.0604180000009364,"over":-2.468807999999626,"count_ms":3.0606}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":50,"err":"Script execution was interrupted by `SIGINT`","wall":53.48002700000143,"over":-0.7280000000000655}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":150,"err":"Script execution timed out after 150ms","wall":150.0958290000017,"over":-44.779999999999745}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":150,"arm_us":103.2,"head_ms":0.169732,"err":"Script execution was interrupted by `SIGINT`","wall":314.9865239999999,"over":-1.9322680000004766,"count_ms":150.083112}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":50,"arm_us":129.7,"head_ms":0.093303,"err":"Script execution was interrupted by `SIGINT`","wall":74.24747800000114,"over":-3.133697000000211,"count_ms":50.079515}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":150,"arm_us":99,"head_ms":0.088956,"err":"Script execution was interrupted by `SIGINT`","wall":276.45504900000014,"over":-6.113044000000627,"count_ms":150.081462}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":150,"err":"Script execution timed out after 150ms","wall":150.2651859999969,"over":-50.832000000000335}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":3,"err":"Script execution timed out after 3ms","wall":8.934932000000117,"over":-0.8890000000001237}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":50,"terminate_ms":2.1526430000012624,"wall":64.58917099999962,"over":-1.2930000000000064,"polls":4,"respawn_ms":72.12604600000122}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":3,"err":"Script execution was interrupted by `SIGINT`","wall":18.97725999999966,"over":0.023000000000138243}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":50,"err":"Script execution timed out after 50ms","wall":59.05716200000097,"over":-43.12299999999959}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":50,"err":"Script execution timed out after 50ms","wall":55.133818999998766,"over":-26.76800000000003}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":10,"err":"Script execution timed out after 10ms","wall":11.630992999998853,"over":-9.04700000000048}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":3,"err":"Script execution was interrupted by `SIGINT`","wall":31.544982999999775,"over":0.03899999999975989}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":50,"arm_us":164.4,"head_ms":0.225093,"err":"Script execution was interrupted by `SIGINT`","wall":148.1773949999988,"over":-1.90390699999989,"count_ms":50.086127}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":3,"terminate_ms":2.0457019999994372,"wall":5.388439999998809,"over":-0.8689999999999998,"polls":3,"respawn_ms":135.5472919999993}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":50,"err":"Script execution timed out after 50ms","wall":57.22155500000008,"over":-37.5659999999998}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":50,"arm_us":169.4,"head_ms":0.184037,"err":"Script execution was interrupted by `SIGINT`","wall":205.9634679999981,"over":-2.139962999999625,"count_ms":50.069189}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":150,"err":"Script execution was interrupted by `SIGINT`","wall":358.83190599999944,"over":4.861000000000786}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":150,"err":"Script execution timed out after 150ms","wall":150.62067700000262,"over":-60.88799999999992}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":50,"arm_us":117.1,"head_ms":0.20003,"err":"Script execution was interrupted by `SIGINT`","wall":134.77734000000055,"over":-1.1039700000001176,"count_ms":50.111984}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":10,"err":"Script execution was interrupted by `SIGINT`","wall":16.656551000000036,"over":-1.0979999999999563}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":10,"arm_us":113.8,"head_ms":0.343233,"err":"Script execution was interrupted by `SIGINT`","wall":19.405524000001606,"over":-3.6027670000003127,"count_ms":10.063337}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":150,"arm_us":100.2,"head_ms":0.098921,"err":"Script execution was interrupted by `SIGINT`","wall":202.89965200000006,"over":-3.617079000000558,"count_ms":150.070735}
+{"tag":"autogroup","test":"stop","mech":"sigint_perf","r":3,"arm_us":95.7,"head_ms":0.090657,"err":"Script execution was interrupted by `SIGINT`","wall":10.313932000000932,"over":-0.7973430000001827,"count_ms":3.057941}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":10,"err":"Script execution was interrupted by `SIGINT`","wall":43.08752800000002,"over":-0.47000000000025466}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":10,"terminate_ms":2.624973999998474,"wall":15.205422000002727,"over":-0.7249999999999943,"polls":4,"respawn_ms":118.94062399999893}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":50,"terminate_ms":2.008293999999296,"wall":139.22500600000058,"over":-1.8369999999999962,"polls":5,"respawn_ms":52.89085900000282}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":150,"err":"Script execution timed out after 150ms","wall":153.2077599999975,"over":-73.27100000000064}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":50,"terminate_ms":2.795921000000817,"wall":158.92282299999715,"over":2.4820000000000064,"polls":9,"respawn_ms":105.26944699999876}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":50,"terminate_ms":2.4045340000011493,"wall":126.1652920000015,"over":-3.1880000000000024,"polls":6,"respawn_ms":97.0238360000003}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":150,"err":"Script execution timed out after 150ms","wall":155.96027599999798,"over":-114.8119999999999}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":150,"err":"Script execution timed out after 150ms","wall":149.68450099999973,"over":-103.9930000000004}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":50,"err":"Script execution timed out after 50ms","wall":57.068403000001126,"over":-36.51099999999951}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":50,"terminate_ms":4.765213999999105,"wall":98.42655699999887,"over":-0.6929999999999907,"polls":6,"respawn_ms":67.73757800000021}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":3,"err":"Script execution timed out after 3ms","wall":8.27335999999923,"over":-1.4029999999993379}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":10,"terminate_ms":2.9890029999987746,"wall":15.041552999999112,"over":-1.3810000000000002,"polls":4,"respawn_ms":155.3368339999979}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":50,"err":"Script execution timed out after 50ms","wall":49.8281259999967,"over":-19.49200000000019}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":150,"terminate_ms":2.087981000000582,"wall":301.4018730000025,"over":-0.7039999999999793,"polls":10,"respawn_ms":102.70689399999901}
+{"tag":"autogroup","test":"stop","mech":"vm_wall","r":3,"err":"Script execution timed out after 3ms","wall":10.59081199999855,"over":-1.7800000000006548}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":150,"terminate_ms":2.0396509999991395,"wall":163.51275600000008,"over":0.5349999999999966,"polls":8,"respawn_ms":79.50026000000071}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":150,"terminate_ms":1.9075419999971928,"wall":296.1598449999983,"over":-4.13900000000001,"polls":12,"respawn_ms":55.83209599999827}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":3,"terminate_ms":1.756424999999581,"wall":1.8014710000024934,"over":-3,"polls":1,"respawn_ms":41.35670499999833}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":150,"terminate_ms":2.8321389999982785,"wall":293.29779899999994,"over":-4.918000000000006,"polls":8,"respawn_ms":113.09415999999692}
+{"tag":"autogroup","test":"stop","mech":"worker_kill","r":10,"terminate_ms":8.750027000001865,"wall":32.10103499999968,"over":-5.802,"polls":3,"respawn_ms":63.17198100000314}
+{"tag":"autogroup","test":"stop","mech":"sigint_poll","r":10,"err":"Script execution was interrupted by `SIGINT`","wall":9.595511999999871,"over":-2.3820000000005166}
