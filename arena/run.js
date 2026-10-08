@@ -68,6 +68,7 @@ async function ensureArena(id, presetName, games, extra = {}) {
     config: preset.config, minutesByGame: preset.minutesByGame || null, teams: preset.lineup.length, games, description: preset.description,
     session: { ...DEFAULT_SESSION, ...(preset.session || {}) }, limits: preset.limits || null, maxModel: preset.maxModel || null,
     prompts: preset.prompts || null, concurrency: preset.concurrency || null, expectConfig: preset.expectConfig || null, honest: preset.honest || null,
+    social: preset.social ?? true,
     reserveUsd: preset.reserveUsd ?? 5, noEvolution: !!preset.noEvolution, examples: preset.examples || null, scaffold: preset.scaffold || null, budgetUsd: args.budget ? Number(args.budget) : null,
     ...extra,
   };
@@ -460,6 +461,11 @@ async function analyseGame(arena, ctx, log) {
 
 async function socialEvaluation(arena, ctx, log) {
   const { gameRow } = ctx;
+  // social false (coop-eq): no interviews and no judges (with fixed teams nothing depends on them).
+  if (arena.settings.social === false) {
+    if (!atLeast(gameRow.stage, "judged")) { await q("UPDATE arena.games SET stage = 'judged' WHERE id = $1", [gameRow.id]); gameRow.stage = "judged"; log(`game ${gameRow.generation}: no interviews or judges (social: false)`); }
+    return;
+  }
   const entries = await all("SELECT * FROM arena.entries WHERE game_id = $1 AND NOT sat_out", [gameRow.id]);
   const personas = await all("SELECT * FROM arena.personas WHERE id = ANY($1)", [entries.map((e) => e.persona_id)]);
   const finals = await finalPrograms(ctx.gPath);

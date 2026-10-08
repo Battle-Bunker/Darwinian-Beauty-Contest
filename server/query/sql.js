@@ -6,7 +6,7 @@
 import { createRequire } from "node:module";
 import { tx } from "../db/pool.js";
 import { SCHEMA } from "./schema.js";
-import { score, scoringOf } from "../lib/scoring.js";
+import { scoreboard } from "../lib/prevalence.js";
 
 const require = createRequire(import.meta.url);
 const History = require("../../vendor/query/history.js");
@@ -28,9 +28,10 @@ const SOURCES = {
       WHERE a.action IN ('feed', 'leave')`,
     roles: { bee: "pb.idx", flower: "pf.idx", fed: "(a.action = 'feed')" },
     cols: {
-      game: "gs.short", seq: "a.seq::int", round: "a.round::int", atMs: "(a.at_ms - gs.flower_ms)::int", turn: "a.turn", bee: "pb.idx", flower: "pf.idx",
+      game: "gs.short", seq: "a.seq::int", round: "a.round::int", atMs: "(a.at_ms - gs.window_ms)::int", turn: "a.turn", bee: "pb.idx", flower: "pf.idx",
       challenge: "a.c", response: "a.r", responseBytes: "a.r_bytes", responseHash: "a.r_hash",
       fed: "(a.action = 'feed')", percent: "a.percent", energy: "a.energy", nectar: "a.nectar",
+      price: "CASE WHEN a.action = 'feed' THEN coalesce(a.price, 0) END", net: "CASE WHEN a.action = 'feed' THEN a.nectar - coalesce(a.price, 0) END",
       pollen: "coalesce(a.pollen, 0)", ms: "a.cpu_ms", budgetMs: "a.budget_ms", flowerVersion: "a.flower_version", flowerError: "a.flower_error",
       beeMs: "a.bee_ms", beeVersion: "a.bee_version", beeError: "a.bee_error",
       grain: "a.grain", grainVersion: "a.grain_version", grainCodeLength: "a.grain_code_length",
@@ -66,15 +67,18 @@ const SOURCES = {
     },
   },
   prevalence: {
-    from: `prevalence x JOIN gs ON gs.id = x.game_id, jsonb_array_elements(x.p) WITH ORDINALITY AS e(v, o)`,
+    from: `prevalence x JOIN gs ON gs.id = x.game_id, jsonb_array_elements(x.flower_p) WITH ORDINALITY AS e(v, o)
+      WHERE x.bee_p IS NOT NULL`,
     roles: { owner: "(e.o - 1)::int" },
     cols: {
       game: "gs.short", round: "x.round::int", atMs: "x.at_ms::int", team: "(e.o - 1)::int",
-      p: "(e.v)::float8", success: "(x.success -> (e.o - 1)::int)::float8", c: "x.c",
+      flowerSuccess: "(x.flower_success -> (e.o - 1)::int)::float8", beeSuccess: "(x.bee_success -> (e.o - 1)::int)::float8",
+      flowerP: "(e.v)::float8", beeP: "(x.bee_p -> (e.o - 1)::int)::float8", fitness: "(x.fitness -> (e.o - 1)::int)::float8",
+      c: "x.c", slots: "x.slots",
     },
   },
   scores: {
-    // Computed by server/lib/scoring.js (the one definition of the score) and passed in as a parameter.
+    // Computed by server/lib/prevalence.js scoreboard (the one definition of the score) and passed in as a parameter.
     from: (param) => `jsonb_to_recordset(${param}::jsonb) AS s(${SCHEMA.entities.scores.fields.map((f) => `${q(f.name)} ${f.type === "str" ? "text" : f.type === "int" ? "int" : "float8"}`).join(", ")})
       JOIN gs ON gs.short = s.game`,
     roles: { owner: "s.team" },
@@ -111,8 +115,9 @@ export function compile(ast, { gameId = null, roomId = null, userId = null, scor
     SELECT g.id, substr(g.code, 1, g.prefix_len) AS short, g.participants, g.status = 'finished' AS over,
       (g.status = 'finished' AND coalesce((g.config->>'revealOnFinish')::boolean, true)) AS revealed,
       coalesce(g.config->>'grains', 'feeder') = 'public' AS grains_public,
-      (g.config->'budgets'->'flower'->>'ms')::int AS flower_ms,
-      ((g.config->'budgets'->'flower'->>'ms')::int + (g.config->'budgets'->'bee'->>'ms')::int) AS round_ms,
+      -- the flower window: flowerWindowMs (at least the flower's ms), or the flower's ms in games from before it
+      greatest(coalesce((g.config->>'flowerWindowMs')::int, 0), (g.config->'budgets'->'flower'->>'ms')::int) AS window_ms,
+      (greatest(coalesce((g.config->>'flowerWindowMs')::int, 0), (g.config->'budgets'->'flower'->>'ms')::int) + (g.config->'budgets'->'bee'->>'ms')::int) AS round_ms,
       (SELECT (array_position(g.participants, m.team_id) - 1)::int FROM team_members m
         WHERE m.game_id = g.id AND m.user_id = ${viewer}::uuid) AS viewer
     FROM games g WHERE ${games} AND g.participants IS NOT NULL
@@ -196,13 +201,13 @@ export async function runQuery(input, where) {
 /** Every team's score in the games queried (public), as rows of the scores entity. */
 async function scoreRows(c, { gameId = null, roomId = null }) {
   const { rows } = await c.query(
-    `SELECT substr(code, 1, prefix_len) AS short, config, participants, feeds, nectar, pollen FROM games
+    `SELECT substr(code, 1, prefix_len) AS short, config, participants, feeds, nectar, pollen, fitness, prevalence FROM games
       WHERE ${gameId ? "id = $1" : "room_id = $1 AND status = 'finished'"} AND participants IS NOT NULL`, [gameId ?? roomId]);
   const out = [];
   for (const g of rows) {
     const n = g.participants.length;
     const zero = () => Array.from({ length: n }, () => new Array(n).fill(0));
-    score(g.participants, g.feeds ?? zero(), g.nectar ?? zero(), g.pollen ?? zero(), scoringOf(g.config)).forEach((s, team) => {
+    scoreboard(g.config, g.participants, g.feeds ?? zero(), g.nectar ?? zero(), g.pollen ?? zero(), g.fitness, g.prevalence).forEach((s, team) => {
       const { teamId, ...rest } = s;
       out.push({ game: g.short, team, ...rest });
     });

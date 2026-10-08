@@ -15,6 +15,8 @@ so `import garden` works). Sessions can use it too (after sys.path.insert(0, "to
         if t.fed and t.flower == garden.MY_INDEX:
             ...                                     # a bee fed at your species: t.percent, t.energy, t.nectar, t.pollen
     s = garden.status()                             # clock, round, live scores; YOUR budgets (exact) and versions
+    p = garden.prevalence()                         # species prevalence samples, in a game that has it (also in
+                                                    # garden.scores(), and as garden.game.prevalence in queries)
     r = garden.response(t)                          # a turn's whole response (one over 4 KB is None in t.response)
     for g in garden.grains(flower=2): ...           # your pollen grains (a piece of the code of each flower your bee
                                                     # fed at): {"seq", "round", "at_ms", "flower", "version",
@@ -251,8 +253,17 @@ def follow_live(after=None):
 
 
 def scores():
-    """The live scoreboard from the public API: status, clockMs, endMs, round, scores, ledgers."""
+    """The live scoreboard from the public API: status, clockMs, endMs, round, scores, ledgers, and in a game with species
+    prevalence its latest sample (prevalence: {..., "c", "species": [{"team", "index", "p", "P"}]})."""
     with urllib.request.urlopen(API + "/scores", timeout=10) as resp:
+        return json.loads(resp.read())
+
+
+def prevalence(after=0):
+    """Species prevalence (games that have it), from the public API: {"prevalence": its settings (None: uniform draws),
+    "samples": [{"round", "atMs", "c", "species": [{"team", "index", "p", "P"}]}]}, the samples after round `after`, about
+    one a second of game time. p is a species' chance of being drawn for a turn, P its recent success."""
+    with urllib.request.urlopen("%s/prevalence?after=%d" % (API, after), timeout=10) as resp:
         return json.loads(resp.read())
 
 

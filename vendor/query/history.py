@@ -26,6 +26,8 @@ class Turn(NamedTuple):
     percent: Optional[float]  # the share of E the flower offered, 0-100 (null if it failed)
     energy: Optional[float]  # E, the flower's excess energy (node·ms·bytes with the game's byte factor, else node·ms; 0 if it failed)
     nectar: Optional[float]  # the nectar the flower gave the bee: percent/100 × E on a feed, else null
+    price: Optional[float]  # on a feed, the feed price the bee paid out of its nectar (0 in games without one), else null
+    net: Optional[float]  # on a feed, the bee's net nectar: nectar - price (it can be negative), else null
     pollen: float  # the pollen the flower gave the bee: (1 − percent/100) × E on a feed, else 0
     ms: Optional[float]  # the flower's CPU time for the call (ms)
     budget_ms: Optional[float]  # R: the call's hidden time budget (ms of CPU time, uniform in minMs..ms): its hard limit, and E's ceiling
@@ -42,14 +44,14 @@ class Turn(NamedTuple):
     def from_json(cls, d: dict) -> "Turn":
         """From a dict with canonical (camelCase) field names."""
         g = d.get
-        return cls(g("game"), g("seq"), g("round"), g("atMs"), g("turn"), g("bee"), g("flower"), g("challenge"), g("response"), g("responseBytes"), g("responseHash"), g("fed"), g("percent"), g("energy"), g("nectar"), g("pollen"), g("ms"), g("budgetMs"), g("flowerVersion"), g("flowerError"), g("beeMs"), g("beeVersion"), g("beeError"), g("grain"), g("grainVersion"), g("grainCodeLength"))
+        return cls(g("game"), g("seq"), g("round"), g("atMs"), g("turn"), g("bee"), g("flower"), g("challenge"), g("response"), g("responseBytes"), g("responseHash"), g("fed"), g("percent"), g("energy"), g("nectar"), g("price"), g("net"), g("pollen"), g("ms"), g("budgetMs"), g("flowerVersion"), g("flowerError"), g("beeMs"), g("beeVersion"), g("beeError"), g("grain"), g("grainVersion"), g("grainCodeLength"))
 
     def to_json(self) -> dict:
         """As a dict with canonical (camelCase) field names."""
-        return {"game": self.game, "seq": self.seq, "round": self.round, "atMs": self.at_ms, "turn": self.turn, "bee": self.bee, "flower": self.flower, "challenge": self.challenge, "response": self.response, "responseBytes": self.response_bytes, "responseHash": self.response_hash, "fed": self.fed, "percent": self.percent, "energy": self.energy, "nectar": self.nectar, "pollen": self.pollen, "ms": self.ms, "budgetMs": self.budget_ms, "flowerVersion": self.flower_version, "flowerError": self.flower_error, "beeMs": self.bee_ms, "beeVersion": self.bee_version, "beeError": self.bee_error, "grain": self.grain, "grainVersion": self.grain_version, "grainCodeLength": self.grain_code_length}
+        return {"game": self.game, "seq": self.seq, "round": self.round, "atMs": self.at_ms, "turn": self.turn, "bee": self.bee, "flower": self.flower, "challenge": self.challenge, "response": self.response, "responseBytes": self.response_bytes, "responseHash": self.response_hash, "fed": self.fed, "percent": self.percent, "energy": self.energy, "nectar": self.nectar, "price": self.price, "net": self.net, "pollen": self.pollen, "ms": self.ms, "budgetMs": self.budget_ms, "flowerVersion": self.flower_version, "flowerError": self.flower_error, "beeMs": self.bee_ms, "beeVersion": self.bee_version, "beeError": self.bee_error, "grain": self.grain, "grainVersion": self.grain_version, "grainCodeLength": self.grain_code_length}
 
 
-TurnField = Literal["game", "seq", "round", "at_ms", "turn", "bee", "flower", "challenge", "response", "response_bytes", "response_hash", "fed", "percent", "energy", "nectar", "pollen", "ms", "budget_ms", "flower_version", "flower_error", "bee_ms", "bee_version", "bee_error", "grain", "grain_version", "grain_code_length"]
+TurnField = Literal["game", "seq", "round", "at_ms", "turn", "bee", "flower", "challenge", "response", "response_bytes", "response_hash", "fed", "percent", "energy", "nectar", "price", "net", "pollen", "ms", "budget_ms", "flower_version", "flower_error", "bee_ms", "bee_version", "bee_error", "grain", "grain_version", "grain_code_length"]
 
 
 class Version(NamedTuple):
@@ -131,38 +133,46 @@ PairField = Literal["game", "bee", "flower", "feeds", "nectar", "pollen"]
 
 
 class Prevalence(NamedTuple):
-    """Species prevalence (games that have it): every species' chance of being drawn and its recent success, sampled about once a second of game time. (entity "prevalence")"""
+    """Prevalence on both sides (games that have it): every team's flower and bee success and draw chances, and its fitness so far, sampled about once a second of game time. (entity "prevalence")"""
     game: str  # the game's short id
     round: int  # the round whose draws it gave (sampled as the round began)
     at_ms: int  # game time that round began: (round - 1) × round_ms
-    team: int  # the species' (its team's) index
-    p: float  # p_s: the chance a turn's flower is of this species, (c + P_s) / Σ (c + P_k)
-    success: float  # P_s: N × its share of recent success (the game's prevalence basis, decayed), capped; par 1
-    c: float  # c(t): the weight every species has whatever its success (cStart to cEnd over the game)
+    team: int  # the team's index (its species and its bee)
+    flower_success: float  # F_s: N × its species' share of recent pollination (Σ over bee teams of decayed pollen^beta), capped; par 1
+    bee_success: float  # B_b: N × its bee's share of recent net nectar (max(0, Σ over species of signed decayed (nectar - price)^alpha)), capped; par 1
+    flower_p: float  # p^F_s: the chance a visit is to its species, (c + F_s) / Σ (c + F_k)
+    bee_p: float  # p^B_b: its bee's share of the bee weights, (c + B_b) / Σ (c + B_k): the chance it fills a given slot first
+    fitness: Optional[float]  # its fitness so far: the time-average of F × B over the rounds played
+    c: float  # c(t): the weight every species and bee has whatever its success (cStart to cEnd over the game)
+    slots: Optional[int]  # bees visiting each round: ceil(slots × N)
 
     @classmethod
     def from_json(cls, d: dict) -> "Prevalence":
         """From a dict with canonical (camelCase) field names."""
         g = d.get
-        return cls(g("game"), g("round"), g("atMs"), g("team"), g("p"), g("success"), g("c"))
+        return cls(g("game"), g("round"), g("atMs"), g("team"), g("flowerSuccess"), g("beeSuccess"), g("flowerP"), g("beeP"), g("fitness"), g("c"), g("slots"))
 
     def to_json(self) -> dict:
         """As a dict with canonical (camelCase) field names."""
-        return {"game": self.game, "round": self.round, "atMs": self.at_ms, "team": self.team, "p": self.p, "success": self.success, "c": self.c}
+        return {"game": self.game, "round": self.round, "atMs": self.at_ms, "team": self.team, "flowerSuccess": self.flower_success, "beeSuccess": self.bee_success, "flowerP": self.flower_p, "beeP": self.bee_p, "fitness": self.fitness, "c": self.c, "slots": self.slots}
 
 
-PrevalenceField = Literal["game", "round", "at_ms", "team", "p", "success", "c"]
+PrevalenceField = Literal["game", "round", "at_ms", "team", "flower_success", "bee_success", "flower_p", "bee_p", "fitness", "c", "slots"]
 
 
 class Score(NamedTuple):
-    """The scoreboard: each team's pollination, forage, shares and fitness over the whole game. (entity "scores")"""
+    """The scoreboard: each team's fitness (the game's rule), pollination, forage and shares over the whole game, and its latest prevalence. (entity "scores")"""
     game: str  # the game's short id
     team: int  # the team's index
     pollination: float  # Σ over bee teams of (pollen this species gave their bee)^beta (the game's scoring.beta; √ in games without one)
     forage: float  # Σ over flower teams of (nectar this bee got there)^alpha (the game's scoring.alpha; √ in games without one)
     pollination_share: float  # pollination ÷ everyone's (1/N if that is 0)
     forage_share: float  # forage ÷ everyone's (1/N if that is 0)
-    fitness: float  # N² × pollination share × forage share (par 1)
+    fitness: float  # with prevalence, the time-average of F × B over the rounds played; else N² × pollination share × forage share (par 1)
+    flower_success: Optional[float]  # with prevalence, F_s at the latest sample, else null
+    bee_success: Optional[float]  # with prevalence, B_b at the latest sample, else null
+    flower_p: Optional[float]  # with prevalence, p^F_s at the latest sample, else null
+    bee_p: Optional[float]  # with prevalence, p^B_b at the latest sample, else null
     pollen: float  # all the pollen this species gave
     feeds_received: int  # feeds at this flower
     feeds_given: int  # feeds by this bee
@@ -175,14 +185,14 @@ class Score(NamedTuple):
     def from_json(cls, d: dict) -> "Score":
         """From a dict with canonical (camelCase) field names."""
         g = d.get
-        return cls(g("game"), g("team"), g("pollination"), g("forage"), g("pollinationShare"), g("forageShare"), g("fitness"), g("pollen"), g("feedsReceived"), g("feedsGiven"), g("pollinators"), g("nectarCollected"), g("nectarGiven"), g("nectarSources"))
+        return cls(g("game"), g("team"), g("pollination"), g("forage"), g("pollinationShare"), g("forageShare"), g("fitness"), g("flowerSuccess"), g("beeSuccess"), g("flowerP"), g("beeP"), g("pollen"), g("feedsReceived"), g("feedsGiven"), g("pollinators"), g("nectarCollected"), g("nectarGiven"), g("nectarSources"))
 
     def to_json(self) -> dict:
         """As a dict with canonical (camelCase) field names."""
-        return {"game": self.game, "team": self.team, "pollination": self.pollination, "forage": self.forage, "pollinationShare": self.pollination_share, "forageShare": self.forage_share, "fitness": self.fitness, "pollen": self.pollen, "feedsReceived": self.feeds_received, "feedsGiven": self.feeds_given, "pollinators": self.pollinators, "nectarCollected": self.nectar_collected, "nectarGiven": self.nectar_given, "nectarSources": self.nectar_sources}
+        return {"game": self.game, "team": self.team, "pollination": self.pollination, "forage": self.forage, "pollinationShare": self.pollination_share, "forageShare": self.forage_share, "fitness": self.fitness, "flowerSuccess": self.flower_success, "beeSuccess": self.bee_success, "flowerP": self.flower_p, "beeP": self.bee_p, "pollen": self.pollen, "feedsReceived": self.feeds_received, "feedsGiven": self.feeds_given, "pollinators": self.pollinators, "nectarCollected": self.nectar_collected, "nectarGiven": self.nectar_given, "nectarSources": self.nectar_sources}
 
 
-ScoreField = Literal["game", "team", "pollination", "forage", "pollination_share", "forage_share", "fitness", "pollen", "feeds_received", "feeds_given", "pollinators", "nectar_collected", "nectar_given", "nectar_sources"]
+ScoreField = Literal["game", "team", "pollination", "forage", "pollination_share", "forage_share", "fitness", "flower_success", "bee_success", "flower_p", "bee_p", "pollen", "feeds_received", "feeds_given", "pollinators", "nectar_collected", "nectar_given", "nectar_sources"]
 
 
 RECORDS = {"turns": Turn, "versions": Version, "teams": Team, "pairs": Pair, "prevalence": Prevalence, "scores": Score}
@@ -205,6 +215,8 @@ _NAMES = {
         "percent": "percent",
         "energy": "energy",
         "nectar": "nectar",
+        "price": "price",
+        "net": "net",
         "pollen": "pollen",
         "ms": "ms",
         "budget_ms": "budgetMs",
@@ -248,9 +260,13 @@ _NAMES = {
         "round": "round",
         "at_ms": "atMs",
         "team": "team",
-        "p": "p",
-        "success": "success",
+        "flower_success": "flowerSuccess",
+        "bee_success": "beeSuccess",
+        "flower_p": "flowerP",
+        "bee_p": "beeP",
+        "fitness": "fitness",
         "c": "c",
+        "slots": "slots",
     },
     "scores": {
         "game": "game",
@@ -260,6 +276,10 @@ _NAMES = {
         "pollination_share": "pollinationShare",
         "forage_share": "forageShare",
         "fitness": "fitness",
+        "flower_success": "flowerSuccess",
+        "bee_success": "beeSuccess",
+        "flower_p": "flowerP",
+        "bee_p": "beeP",
         "pollen": "pollen",
         "feeds_received": "feedsReceived",
         "feeds_given": "feedsGiven",
@@ -309,6 +329,8 @@ SCHEMA = {
                 {"name": "percent", "type": "float", "nullable": True},
                 {"name": "energy", "type": "float", "nullable": True},
                 {"name": "nectar", "type": "float", "nullable": True},
+                {"name": "price", "type": "float", "nullable": True},
+                {"name": "net", "type": "float", "nullable": True},
                 {"name": "pollen", "type": "float", "nullable": False},
                 {"name": "ms", "type": "float", "nullable": True},
                 {"name": "budgetMs", "type": "float", "nullable": True},
@@ -407,9 +429,13 @@ SCHEMA = {
                 {"name": "round", "type": "int", "nullable": False},
                 {"name": "atMs", "type": "int", "nullable": False},
                 {"name": "team", "type": "int", "nullable": False},
-                {"name": "p", "type": "float", "nullable": False},
-                {"name": "success", "type": "float", "nullable": False},
+                {"name": "flowerSuccess", "type": "float", "nullable": False},
+                {"name": "beeSuccess", "type": "float", "nullable": False},
+                {"name": "flowerP", "type": "float", "nullable": False},
+                {"name": "beeP", "type": "float", "nullable": False},
+                {"name": "fitness", "type": "float", "nullable": True},
                 {"name": "c", "type": "float", "nullable": False},
+                {"name": "slots", "type": "int", "nullable": True},
             ],
         },
         "scores": {
@@ -429,6 +455,10 @@ SCHEMA = {
                 {"name": "pollinationShare", "type": "float", "nullable": False},
                 {"name": "forageShare", "type": "float", "nullable": False},
                 {"name": "fitness", "type": "float", "nullable": False},
+                {"name": "flowerSuccess", "type": "float", "nullable": True},
+                {"name": "beeSuccess", "type": "float", "nullable": True},
+                {"name": "flowerP", "type": "float", "nullable": True},
+                {"name": "beeP", "type": "float", "nullable": True},
                 {"name": "pollen", "type": "float", "nullable": False},
                 {"name": "feedsReceived", "type": "int", "nullable": False},
                 {"name": "feedsGiven", "type": "int", "nullable": False},

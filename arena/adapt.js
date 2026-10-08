@@ -33,7 +33,7 @@ import { classifyPrograms, levelOf } from "./lib/mechanisms.js";
 import { queryAll } from "./lib/metrics.js";
 import { bytesInEnergy, bytesShare } from "./lib/energy.js";
 import { honestyOf, spearman } from "./lib/wealth.js";
-import { floorAt, prevalenceOf, samplesOf } from "./lib/prevalence.js";
+import { coopRules, floorAt, prevalenceOf, samplesOf } from "./lib/prevalence.js";
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((acc, a, i, arr) => {
   if (a.startsWith("--")) acc.push([a.slice(2), arr[i + 1] && !arr[i + 1].startsWith("--") ? arr[i + 1] : true]);
@@ -55,6 +55,9 @@ const quantile = (xs, q) => { const v = xs.filter((x) => x != null).sort((a, b) 
 // costly / cheap (lib/wealth.js), or effort that follows R with no visible work to show it, or neither.
 const honesty = (w) => (!w || !(w.turns >= 30) ? "-" : honestyOf(w) ?? ((w.effort ?? 0) >= 0.3 ? "costly, not visible" : "none"));
 const WINDOW_MS = 60_000; // before / after an honest flower's change
+// The time bins of the over-time tables: a minute, or five in a long game (coop-eq's 40 minutes), so they stay readable.
+let BIN = 60_000;
+const binLabel = (w) => (BIN === 60_000 ? `min ${w + 1}` : `${(w * BIN) / 60_000}–${((w + 1) * BIN) / 60_000} min`);
 
 /** One arena's analysis: printed (unless quiet), and its per-game summary for the side-by-side. */
 async function analyse(id) {
@@ -77,6 +80,7 @@ async function analyse(id) {
   const prevFinal = new Map(); // honest slug -> its final flower code in the previous game
   for (const g of games) {
     const gp = gamePath(arena.room_short_id, g.game_short_id);
+    BIN = (g.config?.minutes ?? 10) > 15 ? 300_000 : 60_000;
     const [teams, turns, versions] = await Promise.all([queryAll(Api, gp, { from: "teams" }), queryAll(Api, gp, { from: "turns" }), queryAll(Api, gp, { from: "versions" })]);
     const ents = await all("SELECT e.*, p.slug, p.name FROM arena.entries e JOIN arena.personas p ON p.id = e.persona_id WHERE e.game_id = $1", [g.id]);
     const byIndex = Object.fromEntries(teams.map((t) => [t.index, t.id]));
@@ -89,7 +93,8 @@ async function analyse(id) {
     const lastOf = (teamId, kind) => vs.filter((v) => v.teamId === teamId && v.kind === kind).sort((a, b) => b.version - a.version)[0];
     const flowerLabel = (teamId) => { const v = lastOf(teamId, "flower"); if (!v) return null; const l = label(v); return { mechanism: l.mechanism ?? l.kw.mechanism, families: l.families ?? l.kw.families ?? [], tags: l.tags ?? l.kw.tags ?? [], signal: l.signal ?? l.kw.signal, level: levelOf({ mechanism: l.mechanism ?? l.kw.mechanism, tags: l.tags ?? l.kw.tags, families: l.families ?? l.kw.families }) }; };
     const T = turns.map((t) => ({ bee: byIndex[t.bee], flower: byIndex[t.flower], fed: t.fed, R: t.budgetMs, atMs: t.atMs, percent: t.percent, ms: t.ms,
-      answered: t.response != null || t.responseBytes != null, bytes: t.responseBytes ?? null, version: t.flowerVersion, c: t.challenge, r: t.response }));
+      answered: t.response != null || t.responseBytes != null, bytes: t.responseBytes ?? null, version: t.flowerVersion, c: t.challenge, r: t.response,
+      nectar: t.nectar ?? null, price: t.price ?? t.feedPrice ?? null })); // (price: coop-eq's feed price, a PROVISIONAL field name)
     const Rs = T.map((t) => t.R).filter((x) => x != null).sort((a, b) => a - b);
     const lo = Rs[Math.floor(Rs.length / 3)], hi = Rs[Math.floor((2 * Rs.length) / 3)];
     const end = Math.max(...T.map((x) => x.atMs), 1);
@@ -185,6 +190,7 @@ async function analyse(id) {
 
     fingerprintReport({ T, ents, role, copies, teamIdByName, gen: g.generation, S });
     await prevalenceReport({ g, gp, teams, ents, role, T, copies, teamIdByName, S });
+    if (coopRules(g.config).bees) await coopReport({ g, gp, teams, ents, role, T, S });
 
     // Defectors.
     p("Defectors (conformance: answers at 0%; imitation: their versions' first close copies of another species' answers; detection: rival bees' feed rate falling below half the model's):");
@@ -286,23 +292,23 @@ async function prevalenceSamples(gp, teams) {
 async function prevalenceReport({ g, gp, teams, ents, role, T, S }) {
   const config = g.config || {};
   if (!prevalenceOf(config)) return;
-  const samples = await prevalenceSamples(gp, teams);
+  const samples = (await prevalenceSamples(gp, teams)).filter((x) => x.side !== "bee"); // (the flower side; coop-eq's bee side: coopReport)
   if (!samples.length) { p(`Species prevalence, game ${g.generation}: no samples (the game publishes none, or its query entity has another name).`); p(); return; }
   const n = teams.length, duration = Math.max(g.metrics?.durationMs ?? 0, (config.minutes ?? 0) * 60000, ...samples.map((x) => x.atMs));
-  const nWin = Math.max(1, Math.ceil(duration / 60000));
+  const nWin = Math.max(1, Math.ceil(duration / BIN));
   const name = Object.fromEntries(ents.map((e) => [e.team_id, e.team_name]));
   const species = [...new Set(samples.map((x) => x.team))];
-  const pAt = (team, w) => mean(samples.filter((x) => x.team === team && Math.floor(x.atMs / 60000) === w).map((x) => x.p));
+  const pAt = (team, w) => mean(samples.filter((x) => x.team === team && Math.floor(x.atMs / BIN) === w).map((x) => x.p));
   const roles = ["veteran", "honest", "defector"];
   // Per species, minute by minute.
   p(`Species prevalence, game ${g.generation} (p_s: the chance a turn draws the species, mean per minute; uniform would be ${f2(1 / n)}):`);
-  table(["species", "role", ...Array.from({ length: nWin }, (_, w) => `min ${w + 1}`)],
+  table(["species", "role", ...Array.from({ length: nWin }, (_, w) => binLabel(w))],
     [...species].sort((a, b) => roles.indexOf(role(a)) - roles.indexOf(role(b))).map((t) => [name[t] ?? t, role(t), ...Array.from({ length: nWin }, (_, w) => f2(pAt(t, w)))]));
   // Role shares and concentration.
   const share = (r, w) => { const xs = species.filter((t) => role(t) === r).map((t) => pAt(t, w)).filter((x) => x != null); return xs.length ? xs.reduce((a, b) => a + b, 0) : null; };
   const hhi = (w) => { const xs = species.map((t) => pAt(t, w)).filter((x) => x != null); return xs.length ? xs.reduce((a, b) => a + b * b, 0) : null; };
   p(`Prevalence held by each role, and its concentration (HHI = Σ p_s²; ${f2(1 / n)} when uniform), minute by minute:`);
-  table(["", ...Array.from({ length: nWin }, (_, w) => `min ${w + 1}`)], [
+  table(["", ...Array.from({ length: nWin }, (_, w) => binLabel(w))], [
     ...roles.map((r) => [`${r} (${species.filter((t) => role(t) === r).length} species; uniform ${f2(species.filter((t) => role(t) === r).length / n)})`, ...Array.from({ length: nWin }, (_, w) => f2(share(r, w)))]),
     ["HHI", ...Array.from({ length: nWin }, (_, w) => f2(hhi(w)))]]);
   // Prevalence against percent: per species, over its minutes; and pooled over every species-minute.
@@ -310,7 +316,7 @@ async function prevalenceReport({ g, gp, teams, ents, role, T, S }) {
   for (const t of species) {
     const own = [];
     for (let w = 0; w < nWin; w++) {
-      const pc = T.filter((x) => x.flower === t && x.answered && x.percent != null && Math.floor(x.atMs / 60000) === w).map((x) => x.percent);
+      const pc = T.filter((x) => x.flower === t && x.answered && x.percent != null && Math.floor(x.atMs / BIN) === w).map((x) => x.percent);
       const pw = pAt(t, w);
       if (pw != null && pc.length) { const med = quantile(pc, 0.5); own.push([pw, med]); pairs.push([pw, med]); }
     }
@@ -334,6 +340,61 @@ async function prevalenceReport({ g, gp, teams, ents, role, T, S }) {
   else { p("No species sat at its floor for a minute or more."); p(); }
   S.prevalence = { share: Object.fromEntries(roles.map((r) => [r, mean(Array.from({ length: nWin }, (_, w) => share(r, w)))])),
     hhi: mean(Array.from({ length: nWin }, (_, w) => hhi(w))), extinct: ext.length, rho: spearman(pairs) };
+}
+
+// ---------------------------------------------------------------- coop-eq: prevalence on both sides
+
+/** coop-eq's question, minute by minute: flower success F and bee success B per role (and per team, by bin), the
+ * cooperators' combined share of flower and bee prevalence, the defector's F and B, each bee's dud feeds (a feed whose
+ * nectar was less than its price) and their cost, and the verdict: did the cooperators' shares hold or grow in the last
+ * ten minutes? (The bee side's fields are PROVISIONAL until the engine reports them: lib/prevalence.js.) */
+async function coopReport({ g, gp, teams, ents, role, T, S }) {
+  const config = g.config || {}, co = coopRules(config);
+  const samples = await prevalenceSamples(gp, teams);
+  const flower = samples.filter((x) => x.side === "flower"), bee = samples.filter((x) => x.side === "bee");
+  const name = Object.fromEntries(ents.map((e) => [e.team_id, e.team_name]));
+  const duration = Math.max((config.minutes ?? 0) * 60000, ...samples.map((x) => x.atMs), 1), nMin = Math.ceil(duration / 60000);
+  const at = (xs, team, w, f) => mean(xs.filter((x) => x.team === team && Math.floor(x.atMs / 60000) === w).map(f));
+  const roles = ["honest", "defector", "veteran"];
+  const teamsOf = (r) => ents.filter((e) => role(e.team_id) === r).map((e) => e.team_id);
+  const sumP = (xs, r, w) => { const v = teamsOf(r).map((t) => at(xs, t, w, (x) => x.p)).filter((x) => x != null); return v.length ? v.reduce((a, b) => a + b, 0) : null; };
+  const meanS = (xs, r, w) => mean(teamsOf(r).map((t) => at(xs, t, w, (x) => x.P)));
+  p(`## coop-eq, game ${g.generation}: prevalence on both sides`);
+  p();
+  if (!samples.length) { p("(No prevalence samples: the game publishes none, or its query entity has another name.)"); p(); return; }
+  if (!bee.length) { p("(No bee-side samples: the engine's bee prevalence isn't published under the provisional names yet.)"); p(); }
+  const coopN = teamsOf("honest").length, N = ents.length;
+  p(`Minute by minute: the cooperators' combined share of flower and bee prevalence (uniform: ${f2(coopN / N)}), and F (flower success) and B (bee success), par 1, per role:`);
+  table(["min", "coop flower share", "coop bee share", "coop F / B (mean)", "defector F / B", "veterans F / B (mean)"],
+    Array.from({ length: nMin }, (_, w) => [w + 1, f2(sumP(flower, "honest", w)), f2(sumP(bee, "honest", w)), `${f2(meanS(flower, "honest", w))} / ${f2(meanS(bee, "honest", w))}`,
+      `${f2(meanS(flower, "defector", w))} / ${f2(meanS(bee, "defector", w))}`, `${f2(meanS(flower, "veteran", w))} / ${f2(meanS(bee, "veteran", w))}`]));
+  // Per team, by bin.
+  const nBin = Math.ceil(duration / BIN);
+  const binAt = (xs, team, b) => mean(xs.filter((x) => x.team === team && Math.floor(x.atMs / BIN) === b).map((x) => x.P));
+  p("F / B per team, over time:");
+  table(["team", "role", ...Array.from({ length: nBin }, (_, b) => binLabel(b))],
+    ents.map((e) => [e.team_name, role(e.team_id), ...Array.from({ length: nBin }, (_, b) => `${f2(binAt(flower, e.team_id, b))} / ${f2(binAt(bee, e.team_id, b))}`)]));
+  // Dud feeds: a feed whose nectar was less than its price (the turn's price, else the config's amount).
+  const priceOf = (x) => x.price ?? co.price?.amount ?? null;
+  const drows = ents.map((e) => {
+    const feeds = T.filter((x) => x.bee === e.team_id && x.fed);
+    const priced = feeds.filter((x) => priceOf(x) != null && x.nectar != null);
+    const duds = priced.filter((x) => x.nectar < priceOf(x));
+    const cost = duds.reduce((a, x) => a + (priceOf(x) - x.nectar), 0);
+    return [e.team_name, role(e.team_id), feeds.length, priced.length ? `${duds.length} (${pct(duds.length / priced.length)})` : "price unknown", priced.length ? n0(cost) : "-"];
+  });
+  p("Each bee's dud feeds (nectar below the feed's price: a net loss) and what they cost in nectar:");
+  table(["bee of", "role", "feeds", "dud feeds", "their cost"], drows);
+  // The verdict: the cooperators' shares in the last ten minutes against minutes 10 to 30 (the middle of the game).
+  const span = (xs, from, to) => mean(Array.from({ length: Math.max(0, to - from) }, (_, i) => sumP(xs, "honest", from + i)));
+  const last = Math.max(0, nMin - 10), mid0 = Math.min(10, last), mid1 = Math.max(mid0 + 1, last);
+  const verdict = (xs) => { const a = span(xs, mid0, mid1), b = span(xs, last, nMin); if (a == null || b == null) return { a, b, v: "-" };
+    return { a, b, v: b >= a + 0.02 ? "grew" : b >= a - 0.02 ? "held" : "fell" }; };
+  const vf = verdict(flower), vb = verdict(bee);
+  p(`Stability: the cooperators' flower share ${vf.v} (${f2(vf.a)} in minutes ${mid0 + 1}–${mid1}, ${f2(vf.b)} in the last ten), and their bee share ${vb.v} (${f2(vb.a)} → ${f2(vb.b)}). ` +
+    `Uniform would be ${f2(coopN / N)}.`);
+  p();
+  S.coop = { flower: vf, bee: vb };
 }
 
 // ---------------------------------------------------------------- cooperators' spend and generosity (adapt-hi)
@@ -360,19 +421,19 @@ function cooperatorTrajectories({ T, honestEnts, vs, copies, role, teamIdByName 
   }
   p("Cooperators by version (burn b: median CPU ms ÷ R, p10–p90 in brackets, one fixed b per version keeps it narrow; median percent; rival feed rate; defector copies of the version):");
   table(["cooperator", "version", "live from", "turns", "burn b", "percent", "rival feed rate", "defector copies"], vrows);
-  const end = Math.max(...T.map((x) => x.atMs), 1), nWin = Math.ceil(end / 60000);
+  const end = Math.max(...T.map((x) => x.atMs), 1), nWin = Math.ceil(end / BIN);
   const mrows = honestEnts.map((e) => {
     const tid = e.team_id;
-    const copied = new Set(copies.filter((c) => c.model === e.team_name && role(teamIdByName[c.copier]) === "defector").map((c) => Math.floor(c.atMs / 60000)));
+    const copied = new Set(copies.filter((c) => c.model === e.team_name && role(teamIdByName[c.copier]) === "defector").map((c) => Math.floor(c.atMs / BIN)));
     return [e.team_name, ...Array.from({ length: nWin }, (_, w) => {
-      const ts = T.filter((x) => x.flower === tid && Math.floor(x.atMs / 60000) === w);
+      const ts = T.filter((x) => x.flower === tid && Math.floor(x.atMs / BIN) === w);
       if (!ts.length) return "-";
       const st = stats(ts);
       return `b ${f2(st.b)} · ${st.percent ?? "-"}% · ${pct(rate(ts.filter((x) => x.bee !== tid)))}${copied.has(w) ? " ←copied" : ""}`;
     })];
   });
   p("Cooperators minute by minute (burn b · median percent · rival feed rate; \"←copied\" where a defector's close copy of it began):");
-  table(["cooperator", ...Array.from({ length: nWin }, (_, w) => `min ${w + 1}`)], mrows);
+  table(["cooperator", ...Array.from({ length: nWin }, (_, w) => binLabel(w))], mrows);
 }
 
 // ---------------------------------------------------------------- fingerprints (adapt-hi's cooperators)
@@ -415,7 +476,7 @@ function fingerprintReport({ T, ents, role, copies, teamIdByName, gen, S }) {
     const perWin = new Map();
     for (const [i, x] of T.entries()) {
       if (x.flower !== e.team_id || !x.answered || !isFingerprint(x.r)) continue;
-      const w = Math.floor(x.atMs / 60000), n = perWin.get(w) || 0;
+      const w = Math.floor(x.atMs / BIN), n = perWin.get(w) || 0;
       if (n >= PER_WINDOW) continue;
       perWin.set(w, n + 1);
       items.push({ k: String(i), c: x.c, r: x.r, team: e.team_id, w, f: (x.r.labels[0].charCodeAt(48) - 35) / 50 });
@@ -433,7 +494,7 @@ function fingerprintReport({ T, ents, role, copies, teamIdByName, gen, S }) {
     const mine = items.filter((x) => x.team === e.team_id);
     if (!mine.length) continue;
     const all = prof(mine.map((x) => z.get(x.k)));
-    const imit = copies.filter((c) => c.model === e.team_name && role(teamIdByName[c.copier]) === "defector").map((c) => Math.floor(c.atMs / 60000));
+    const imit = copies.filter((c) => c.model === e.team_name && role(teamIdByName[c.copier]) === "defector").map((c) => Math.floor(c.atMs / BIN));
     const cells = Array.from({ length: nWin }, (_, w) => {
       const q = prof(mine.filter((x) => x.w === w).map((x) => z.get(x.k)));
       return `${q ? q.p.map((x) => x.toFixed(2)).join(" ") : "-"}${imit.includes(w) ? " ←copied" : ""}`;
@@ -443,8 +504,8 @@ function fingerprintReport({ T, ents, role, copies, teamIdByName, gen, S }) {
   }
   S.fingerprints = summary;
   p(`Fingerprints, game ${gen} (the integrated format, scored by the starter bee's levels(): profile z / Σz over its four properties, ` +
-    `U = Σz; f the spend share it claims; minute by minute, "←copied" where a defector's close copy of it began; at most ${PER_WINDOW} responses a minute):`);
-  table(["flower", "role", "profile (U), whole game", "f", ...Array.from({ length: nWin }, (_, w) => `min ${w + 1}`)], rows);
+    `U = Σz; f the spend share it claims; over time, "←copied" where a defector's close copy of it began; at most ${PER_WINDOW} responses a bin):`);
+  table(["flower", "role", "profile (U), whole game", "f", ...Array.from({ length: nWin }, (_, w) => binLabel(w))], rows);
 }
 
 /** The agents' effort per game: team sessions (lobby and in play), their turns, output tokens and spend, per team. */
@@ -492,6 +553,8 @@ function sideBySide(A, B) {
     ["prevalence held: veteran / honest / defector (game mean)", (x) => seq(x, (s) => (s.prevalence ? ["veteran", "honest", "defector"].map((r) => f2(s.prevalence.share[r])).join("/") : null))],
     ["prevalence HHI (game mean); species extinct a minute or more", (x) => seq(x, (s) => (s.prevalence ? `${f2(s.prevalence.hhi)}; ${s.prevalence.extinct}` : null))],
     ["prevalence against percent (pooled rho)", (x) => seq(x, (s) => (s.prevalence ? f2(s.prevalence.rho) : null))],
+    ["coop-eq: cooperators' flower share, minutes 10–30 → last ten (verdict)", (x) => seq(x, (s) => (s.coop ? `${f2(s.coop.flower.a)} → ${f2(s.coop.flower.b)} (${s.coop.flower.v})` : null))],
+    ["coop-eq: cooperators' bee share, minutes 10–30 → last ten (verdict)", (x) => seq(x, (s) => (s.coop ? `${f2(s.coop.bee.a)} → ${f2(s.coop.bee.b)} (${s.coop.bee.v})` : null))],
     ["all bees at honest / defector flowers", (x) => seq(x, (s) => `${pct(mean(["veteran", "honest", "defector"].map((b) => s.feeds?.[b]?.honest)))}/${pct(mean(["veteran", "honest", "defector"].map((b) => s.feeds?.[b]?.defector)))}`)],
     ["mean fitness: veteran / honest / defector", (x) => seq(x, (s) => `${f2(mean(s.vet.map((v) => v.fitness)))}/${f2(mean(s.honest.map((h) => h.fitness)))}/${f2(mean(s.defector.map((d) => d.fitness)))}`)],
   ];

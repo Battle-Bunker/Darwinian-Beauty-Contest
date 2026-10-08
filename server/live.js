@@ -3,8 +3,8 @@
 // to the game, and every few seconds), so a game survives its process dying (its bees start afresh, and
 // the rounds carry on from the stored round, clock, turn counts, sit-outs and bees' MEMORY). Live gardens
 // are paced: a round lasts at least its 200 ms of game time on the wall clock.
-// Every FLUSH_MS the garden's new actions, round, clock, ledgers, changed memories and species prevalence
-// samples are written and
+// Every FLUSH_MS the garden's new actions, round, clock, ledgers, changed memories, prevalence samples and
+// fitness sums are written and
 // announced (a response over INLINE_BYTES into `responses`, its action keeping its size, hash and preview);
 // arrivals are written at once. Submissions,
 // pauses and finishes are written to the database by whichever process got the request; the change
@@ -97,16 +97,17 @@ async function adopt(g) {
   for (const r of (await query("SELECT bee_team, max(turn) AS n FROM actions WHERE game_id = $1 GROUP BY bee_team", [g.id])).rows) {
     if (index.has(r.bee_team)) turns[index.get(r.bee_team)] = Number(r.n);
   }
-  // Species prevalence is rebuilt from the feeds so far (exactly: its ledgers are sums of decayed feeds).
+  // Prevalence ledgers are rebuilt from the feeds so far (exactly: they are sums of decayed feeds); the fitness
+  // sums are stored.
   const feeds = prevalenceOf(g.config)
-    ? (await query("SELECT round, bee_team, flower_team, pollen, nectar FROM actions WHERE game_id = $1 AND action = 'feed' AND round <= $2", [g.id, g.round])).rows
+    ? (await query("SELECT round, bee_team, flower_team, pollen, nectar, price FROM actions WHERE game_id = $1 AND action = 'feed' AND round <= $2", [g.id, g.round])).rows
       .filter((r) => index.has(r.bee_team) && index.has(r.flower_team))
-      .map((r) => ({ round: Number(r.round), bee: index.get(r.bee_team), flower: index.get(r.flower_team), pollen: r.pollen, nectar: r.nectar }))
+      .map((r) => ({ round: Number(r.round), bee: index.get(r.bee_team), flower: index.get(r.flower_team), pollen: r.pollen, net: (r.nectar ?? 0) - (r.price ?? 0) }))
     : [];
   const garden = new Garden({
     config: g.config, teams: g.participants.length, clockMs: Number(g.clock_ms), round: Number(g.round), lastSeq: Number(g.last_seq),
     ledgers: { feeds: g.feeds, nectar: g.nectar, pollen: g.pollen ?? zeroLedger(g.participants.length) },
-    lastFed, turns, memories, game, paced: true, feeds,
+    lastFed, turns, memories, game, paced: true, feeds, fitness: g.fitness,
   });
   if (g.status === "paused") garden.pause();
   const run = { id: g.id, room: g.room_id, participants: g.participants, index, garden, versions: new Map(), flushing: null, again: false, abandoned: false };
@@ -135,7 +136,7 @@ async function loadPrograms(run) {
 
 const ACTION_COLUMNS = ["game_id", "seq", "at_ms", "round", "turn", "bee_team", "flower_team", "action", "c", "r", "percent", "energy",
   "cpu_ms", "pollen", "flower_error", "nectar", "bee_ms", "bee_error", "log", "bee_version", "flower_version", "r_bytes", "r_hash", "r_preview",
-  "grain", "grain_version", "grain_code_length", "budget_ms"];
+  "grain", "grain_version", "grain_code_length", "budget_ms", "price"];
 const json = (v) => (v === null || v === undefined ? null : JSON.stringify(v));
 
 /**
@@ -151,7 +152,8 @@ export async function insertActions(c, gameId, actions, ids) {
       const end = a.action !== "arrive";
       params.push(gameId, a.seq, a.atMs, a.round, a.turn, ids[a.bee], ids[a.flower], a.action, end ? json(a.c) : null, end ? json(a.r) : null,
         a.percent, a.energy, a.ms, a.pollen, a.flowerError, a.nectar, a.beeMs, a.beeError, a.log, a.beeVersion, a.flowerVersion,
-        end ? a.rBytes ?? null : null, a.rHash ?? null, a.rPreview ?? null, a.grain ?? null, a.grainVersion ?? null, a.grainCodeLength ?? null, end ? a.budgetMs ?? null : null);
+        end ? a.rBytes ?? null : null, a.rHash ?? null, a.rPreview ?? null, a.grain ?? null, a.grainVersion ?? null, a.grainCodeLength ?? null, end ? a.budgetMs ?? null : null,
+        a.price ?? null);
     });
     await c.query(`INSERT INTO actions (${cols.join(",")}) VALUES ${rows.join(",")}`, params);
   }
@@ -167,15 +169,16 @@ export async function insertActions(c, gameId, actions, ids) {
   }
 }
 
-/** Write prevalence samples ({ round, atMs, c, p, P }, arrays in participants order). */
+/** Write prevalence samples ({ round, atMs, c, slots, F, B, pF, pB, fitness }, arrays in participants order). */
 export async function insertSamples(c, gameId, samples) {
+  const cols = ["game_id", "round", "at_ms", "c", "slots", "flower_success", "bee_success", "flower_p", "bee_p", "fitness"];
   for (let i = 0; i < samples.length; i += 200) {
     const chunk = samples.slice(i, i + 200), params = [];
     const rows = chunk.map((x, j) => {
-      params.push(gameId, x.round, x.atMs, x.c, JSON.stringify(x.p), JSON.stringify(x.P));
-      return `(${[1, 2, 3, 4, 5, 6].map((k) => `$${j * 6 + k}`).join(",")})`;
+      params.push(gameId, x.round, x.atMs, x.c, x.slots, ...[x.F, x.B, x.pF, x.pB, x.fitness].map((v) => JSON.stringify(v)));
+      return `(${cols.map((_, k) => `$${j * cols.length + k + 1}`).join(",")})`;
     });
-    await c.query(`INSERT INTO prevalence (game_id, round, at_ms, c, p, success) VALUES ${rows.join(",")} ON CONFLICT (game_id, round) DO NOTHING`, params);
+    await c.query(`INSERT INTO prevalence (${cols.join(",")}) VALUES ${rows.join(",")} ON CONFLICT (game_id, round) DO NOTHING`, params);
   }
 }
 
@@ -195,8 +198,10 @@ async function flush(run) {
     try {
       await tx(async (c) => {
         await insertActions(c, run.id, d.actions, ids);
-        await c.query("UPDATE games SET clock_ms = $2, round = $3, last_seq = $4, feeds = $5, nectar = $6, pollen = $7, prevalence = COALESCE($8, prevalence) WHERE id = $1",
-          [run.id, d.clockMs, d.round, d.lastSeq, JSON.stringify(d.feeds), JSON.stringify(d.nectar), JSON.stringify(d.pollen), d.sample ? JSON.stringify(d.sample) : null]);
+        await c.query(`UPDATE games SET clock_ms = $2, round = $3, last_seq = $4, feeds = $5, nectar = $6, pollen = $7, prevalence = COALESCE($8, prevalence),
+                         fitness = COALESCE($9, fitness) WHERE id = $1`,
+          [run.id, d.clockMs, d.round, d.lastSeq, JSON.stringify(d.feeds), JSON.stringify(d.nectar), JSON.stringify(d.pollen), d.sample ? JSON.stringify(d.sample) : null,
+            d.fitness ? JSON.stringify(d.fitness) : null]);
         await insertSamples(c, run.id, d.samples);
         for (const m of d.memories) {
           await c.query(

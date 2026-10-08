@@ -175,9 +175,11 @@ export function statusOf(view, teamId, { afford = null, code = false, memory = f
   const prev = prevalenceOf(config) ? currentOf(view) : null;
   if (prev?.length) {
     const nameOfSpecies = (t) => name[t] ?? (Number.isInteger(Number(t)) ? view.teams[Number(t)]?.name : null) ?? String(t);
-    out.prevalence = prev.map((x) => ({ species: nameOfSpecies(x.team), teamId: name[x.team] ? x.team : view.teams[Number(x.team)]?.id ?? null, p: x.p, P: x.P }));
-    lines.push(`Species prevalence now (p_s: the chance a turn draws the species; P_s: its recent pollination success):\n` +
-      [...out.prevalence].sort((a, b) => b.p - a.p).map((x) => `  ${x.species}${x.teamId === teamId ? " (you)" : ""}: p ${x.p.toFixed(3)}, P ${x.P == null ? "-" : x.P.toFixed(2)}`).join("\n"));
+    out.prevalence = prev.map((x) => ({ side: x.side, species: nameOfSpecies(x.team), teamId: name[x.team] ? x.team : view.teams[Number(x.team)]?.id ?? null, p: x.p, P: x.P }));
+    const list = (side) => [...out.prevalence].filter((x) => x.side === side).sort((a, b) => b.p - a.p)
+      .map((x) => `  ${x.species}${x.teamId === teamId ? " (you)" : ""}: p ${x.p.toFixed(3)}, ${side === "bee" ? "B" : "P"} ${x.P == null ? "-" : x.P.toFixed(2)}`).join("\n");
+    lines.push(`Species prevalence now (p_s: the chance a turn's flower is of the species; P_s: its recent success, par 1):\n${list("flower")}`);
+    if (out.prevalence.some((x) => x.side === "bee")) lines.push(`Bee prevalence now (the chance a round draws the team's bee; B: its recent success, par 1):\n${list("bee")}`);
   }
   out.text = lines.join("\n");
   return out;

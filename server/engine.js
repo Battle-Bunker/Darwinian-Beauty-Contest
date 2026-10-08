@@ -2,22 +2,26 @@
 // be replaced at any moment), actions, the ledgers and the bees' MEMORY come out.
 //
 // Every team has one flower species and one bee. Time runs in rounds, in lockstep: a round lasts exactly
-// roundMs (flower.ms + bee.ms = 150 + 50 = 200 ms) of game time; game time is rounds × roundMs. A live game
-// paces rounds to real time (each lasts at least roundMs of wall time, longer if the machine is short of
-// cores: game time stays virtual, so that's still fair). Every bee that isn't feeding gets one TURN per round:
-//   0 ms   Each bee with a challenge QUEUED (and no call in flight) takes its turn; one with nothing
-//          queued loses it. The engine draws a flower at random among all N species, the bee's own
-//          included: uniformly, or by species prevalence (server/lib/prevalence.js) when the game has it
-//          (a public `arrive`, flushed at once), pins both versions, and calls
+// roundMs (the flower window + bee.ms = 150 + 50 = 200 ms) of game time; game time is rounds × roundMs. A live
+// game paces rounds to real time (each lasts at least roundMs of wall time, longer if the machine is short of
+// cores: game time stays virtual, so that's still fair). Each round, bees take TURNS:
+//   0 ms   The bees that may visit are those with a challenge QUEUED, no call in flight and no rounds to
+//          sit out (one with nothing queued loses the round). In a game with prevalence
+//          (server/lib/prevalence.js), ceil(slots × N) of them are drawn without replacement, weighted by
+//          their bees' success, and visit; the others' challenges wait. Without it, every one visits. For
+//          each visit the engine draws a flower among all N species, the bee's own included: by flower
+//          success with prevalence, else uniformly (a public `arrive`, flushed at once), pins both
+//          versions, and calls
 //          flower(challenge), which has its hidden budget R (drawn from [flower.minMs, flower.ms]) to
 //          return [response, percent]. The runner reports the CPU time of the call; excess energy E =
 //          (flower size cap − the flower's size) × max(0, R − CPU ms), and with energy.bytes × (maxResponseBytes
 //          − response bytes) (node·ms·bytes). A late answer, an error, a malformed return or a response over
 //          maxResponseBytes: response null, E = 0. The response goes to the bee's process at once.
-//   150 ms Every response is delivered at once, however fast its flower was. Each bee that took a turn
-//          is called: decide(challenge, response), with bee.ms to return ["feed" | "leave", next].
+//   150 ms (the flower window) Every response is delivered at once, however fast its flower was. Each bee
+//          that took a turn is called: decide(challenge, response), with bee.ms to return ["feed" | "leave", next].
 //   200 ms The turn is settled. A feed: the flower gives the bee nectar = percent/100 × E and pollen =
-//          (1 − percent/100) × E, and the bee sits out feedCost rounds, starting with fed(nectar).
+//          (1 − percent/100) × E, the bee pays the feed price out of its nectar (net = nectar − feedPrice,
+//          which can be negative), and sits out feedCost rounds (0 by default), starting with fed(nectar).
 //          No feed: nothing is given. `next` is queued for the bee's next turn (after a feed, a valid
 //          challenge that fed returns replaces it).
 // A late reply doesn't stop the round: at the deadline the turn is settled without it (never a feed), but
@@ -49,9 +53,9 @@ import { ProgramProcess } from "./runners/proc.js";
 import { createHash, randomInt } from "node:crypto";
 import { checkValue, parseType } from "./lib/types.js";
 import { zeroLedger } from "./lib/scoring.js";
-import { KINDS, drawBudget, excessEnergy, limitsOf, responseLimits, roundMs, wallLimits } from "./lib/gameConfig.js";
+import { KINDS, drawBudget, excessEnergy, feedPriceOf, limitsOf, responseLimits, roundMs, wallLimits, windowMsOf } from "./lib/gameConfig.js";
 import { size as measure } from "./lib/measure.js";
-import { Prevalence, drawWeighted } from "./lib/prevalence.js";
+import { Prevalence, drawWeighted, sampleWithout } from "./lib/prevalence.js";
 
 export { KINDS };
 
@@ -61,7 +65,8 @@ export function gameInfo(config, team, teams) {
   return {
     team, teams, feed_cost: config.feedCost, challenge_type: config.challengeType, response_type: config.responseType,
     max_len: maxLen, max_nodes: maxNodes, max_response_bytes: config.maxResponseBytes, round_ms: roundMs(config),
-    flower_ms: config.budgets.flower.ms, flower_size_cap: config.budgets.flower.size,
+    flower_ms: config.budgets.flower.ms, flower_window_ms: windowMsOf(config), flower_size_cap: config.budgets.flower.size,
+    feed_price: feedPriceOf(config),
   };
 }
 
@@ -305,18 +310,19 @@ export class Garden {
    * its bee's saved MEMORY, { version, memory (canonical JSON), error }, or null. game: the game's short id
    * (turn records' `game`). keepHistory: keep every finished turn's `turns` record in `history` (tests).
    * paced: rounds last at least roundMs of wall time (false: back to back, for tests and the "try" tool).
-   * feeds: the game's feeds so far ({ round, bee, flower, pollen, nectar }, team indices), from which an adopted
-   * garden rebuilds its species prevalence.
+   * feeds: the game's feeds so far ({ round, bee, flower, pollen, net }, team indices), from which an adopted
+   * garden rebuilds its prevalence ledgers; fitness: its fitness sums so far ({ sum, rounds }).
    */
   constructor({ config, teams, clockMs = 0, round = 0, endMs = config.minutes * 60000, maxRounds = Infinity, lastSeq = 0,
-    ledgers = null, lastFed = null, turns = null, memories = null, game = "", keepHistory = false, paced = true, feeds = [] }) {
+    ledgers = null, lastFed = null, turns = null, memories = null, game = "", keepHistory = false, paced = true, feeds = [], fitness = null }) {
     this.config = config;
     this.n = teams;
     this.cType = parseType(config.challengeType);
     this.rType = parseType(config.responseType);
     this.limits = limitsOf(config);
     this.roundMs = roundMs(config);
-    this.windowMs = config.budgets.flower.ms; // the flower window: responses are delivered at its end
+    this.windowMs = windowMsOf(config);       // the flower window: responses are delivered at its end
+    this.feedPrice = feedPriceOf(config);     // what a feed costs the bee, out of its nectar
     this.beeMs = config.budgets.bee.ms;       // the bees' decision window: CPU time
     this.beeWallMs = wallLimits(config).bee; // when a decision with no reply is judged (wall)
     this.paced = paced;
@@ -349,10 +355,10 @@ export class Garden {
     this.feeds = ledgers?.feeds ?? zeroLedger(teams);
     this.nectar = ledgers?.nectar ?? zeroLedger(teams);
     this.pollen = ledgers?.pollen ?? zeroLedger(teams); // pollen[b][f]: the pollen f's species gave b's bee
-    // Species prevalence (null: species are drawn uniformly). `weights` is the round's: its draws use it.
-    this.prevalence = Prevalence.rebuild(config, teams, round, feeds);
+    // Prevalence (null: every bee visits, species drawn uniformly). `weights` is the round's: its draws use it.
+    this.prevalence = Prevalence.rebuild(config, teams, round, feeds, fitness);
     this.weights = null;
-    this.samples = [];                // prevalence samples not yet drained: { round, atMs, c, p, P }
+    this.samples = [];                // prevalence samples not yet drained: { round, atMs, c, slots, F, B, pF, pB, fitness }
     this.sample = null;               // the latest
     this.sampleEvery = Math.max(1, Math.round(1000 / this.roundMs)); // rounds: about once a second of game time
     this.out = [];                    // actions not yet drained
@@ -432,6 +438,7 @@ export class Garden {
       actions: this.out.splice(0), problems: this.problems.splice(0), clockMs: Math.round(this.clockMs()), round: this.round,
       lastSeq: this.seq, feeds: this.feeds, nectar: this.nectar, pollen: this.pollen, memories,
       samples: this.samples.splice(0), sample: this.sample,
+      fitness: this.prevalence ? { sum: [...this.prevalence.sum], rounds: this.prevalence.rounds } : null,
     };
   }
 
@@ -466,11 +473,19 @@ export class Garden {
     for (const b of this.bees) this.#boundary(b);
     if (!this.paced) await this.#awaitRequests();
     this.#prevalenceAt(r, start);
-    // Turns. Feeding bees sit out; a bee with nothing queued (or a call still in flight) loses its turn.
-    const turns = [];
+    // Turns. Feeding bees sit out; a bee with nothing queued (or a call still in flight) loses its turn. With
+    // prevalence, the round's slots are filled from the others by bee success; the rest wait.
+    const ready = [];
     for (const b of this.bees) {
       if (b.sitOut > 0) { b.sitOut--; continue; } // feeding rounds pass whatever the bee is doing
       if (!b.proc || b.broken || b.loading || !b.queued || b.busy) continue;
+      ready.push(b);
+    }
+    const visiting = this.weights
+      ? sampleWithout(this.weights.wB, ready.map((b) => b.ti), this.weights.slots).sort((x, y) => x - y).map((ti) => this.bees[ti])
+      : ready;
+    const turns = [];
+    for (const b of visiting) {
       const slot = this.#draw();
       if (!slot) continue;
       const t = {
@@ -525,18 +540,25 @@ export class Garden {
     const live = this.flowers.filter(Boolean);
     if (!live.length) return null;
     if (!this.weights) return live[Math.floor(Math.random() * live.length)];
-    return this.flowers[drawWeighted(this.weights.w, live.map((f) => f.team))];
+    return this.flowers[drawWeighted(this.weights.wF, live.map((f) => f.team))];
   }
 
-  /** A round begins: species prevalence decays and gives the round's weights; sampled about once a second. */
+  /**
+   * A round begins: the prevalence ledgers decay and give the round's weights, and each team's F × B goes into
+   * its fitness; sampled about once a second.
+   */
   #prevalenceAt(r, start) {
     const m = this.prevalence;
     if (!m) return;
     m.decay();
     this.weights = m.weights(start);
+    m.tally(this.weights.F, this.weights.B);
     if ((r - 1) % this.sampleEvery === 0) {
-      const round6 = (x) => Math.round(x * 1e6) / 1e6;
-      this.sample = { round: r, atMs: Math.round(start), c: round6(this.weights.c), p: this.weights.p.map(round6), P: this.weights.P.map(round6) };
+      const r6 = (x) => Math.round(x * 1e6) / 1e6, w = this.weights;
+      this.sample = {
+        round: r, atMs: Math.round(start), c: r6(w.c), slots: w.slots,
+        F: w.F.map(r6), B: w.B.map(r6), pF: w.pF.map(r6), pB: w.pB.map(r6), fitness: m.fitness().map(r6),
+      };
       this.samples.push(this.sample);
     }
   }
@@ -559,8 +581,8 @@ export class Garden {
     this.out.push({
       seq: ++this.seq, atMs: Math.round(atMs), round: t.round, turn: t.no, bee: t.b.ti, flower: t.flower, action,
       beeVersion: t.beeVersion, flowerVersion: t.flowerVersion,
-      c: null, r: null, rBytes: null, percent: null, energy: null, ms: null, budgetMs: null, pollen: null, nectar: null, flowerError: null,
-      beeMs: null, beeError: null, log: null, grain: null, grainVersion: null, grainCodeLength: null, ...fields,
+      c: null, r: null, rBytes: null, percent: null, energy: null, ms: null, budgetMs: null, pollen: null, nectar: null, price: null, net: null,
+      flowerError: null, beeMs: null, beeError: null, log: null, grain: null, grainVersion: null, grainCodeLength: null, ...fields,
     });
   }
 
@@ -859,10 +881,12 @@ export class Garden {
     if (t.fed) {
       t.nectar = ((t.percent ?? 0) / 100) * t.energy;
       t.pollen = t.energy - t.nectar;
+      t.price = this.feedPrice;
+      t.net = t.nectar - t.price;
       this.feeds[b.ti][f]++;
       this.nectar[b.ti][f] += t.nectar;
       this.pollen[b.ti][f] += t.pollen;
-      this.prevalence?.feed(b.ti, f, t.pollen, t.nectar);
+      this.prevalence?.feed(b.ti, f, t.pollen, t.net);
       // Pollen carries genes: a grain of the code of the flower version that answered.
       const g = grainOf(t.flowerCode, grainLength(this.config, t.pollen));
       if (g.grain !== null) grain = { grain: g.grain, grainVersion: t.flowerVersion, grainCodeLength: g.grainCodeLength };
@@ -873,6 +897,7 @@ export class Garden {
     this.#record(t, t.fed ? "feed" : "leave", {
       c: t.c, r: t.rFull !== undefined ? null : t.r, rBytes: t.rBytes ?? null, ...large,
       percent: t.percent, energy: t.energy, ms: t.ms, budgetMs: t.budgetMs, pollen: t.pollen, nectar: t.fed ? t.nectar : null,
+      price: t.fed ? t.price : null, net: t.fed ? t.net : null,
       flowerError: t.flowerError, beeMs: t.beeMs, beeError: t.beeError, log: t.log, ...grain,
     }, t.start + this.windowMs);
     // The turn as a `turns` record (server/query/schema.js), unmasked.
@@ -880,7 +905,8 @@ export class Garden {
       t.record = {
         game: this.game, seq: this.seq, round: t.round, atMs: Math.round(t.start), turn: t.no, bee: b.ti, flower: f,
         challenge: t.c, response: t.rFull !== undefined ? null : t.r, responseBytes: t.rBytes ?? null, responseHash: t.rHash ?? null,
-        fed: t.fed, percent: t.percent, energy: t.energy, nectar: t.fed ? t.nectar : null, pollen: t.pollen, ms: t.ms, budgetMs: t.budgetMs,
+        fed: t.fed, percent: t.percent, energy: t.energy, nectar: t.fed ? t.nectar : null, price: t.fed ? t.price : null, net: t.fed ? t.net : null,
+        pollen: t.pollen, ms: t.ms, budgetMs: t.budgetMs,
         flowerVersion: t.flowerVersion, flowerError: t.flowerError, beeMs: t.beeMs, beeVersion: t.beeVersion, beeError: t.beeError,
         grain: grain.grain ?? null, grainVersion: grain.grainVersion ?? null, grainCodeLength: grain.grainCodeLength ?? null,
       };

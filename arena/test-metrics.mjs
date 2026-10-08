@@ -230,13 +230,17 @@ check("handshakes: two teams favouring each other both ways are mutual", h.hands
 // the engine may give them.
 {
   const { prevalenceOf, cAt, floorAt, samplesOf, currentOf } = await import("./lib/prevalence.js");
-  const cfg = { prevalence: { on: true, basis: "pollination", halfLifeS: 60, cStart: 1, cEnd: 0.1 } };
+  const cfg = { prevalence: { on: true, basis: "pollination", halfLifeS: 90, cStart: 1, cEnd: 0.1, prior: null, cap: 4 } };
   check("prevalence: off without the key; c falls linearly from 1 to 0.1; the floor is c / (N (c + 1))",
     prevalenceOf({}) === null && prevalenceOf({ prevalence: { on: false } }) === null && cAt(cfg, 0, 600000) === 1 && Math.abs(cAt(cfg, 600000, 600000) - 0.1) < 1e-12
     && Math.abs(cAt(cfg, 300000, 600000) - 0.55) < 1e-12 && Math.abs(floorAt(cfg, 0, 600000, 14) - 1 / 28) < 1e-12);
-  const s = samplesOf([{ atMs: 1000, team: "A", p: 0.1, P: 1.2 }, { atMs: 2000, species: [{ teamId: "A", p_s: 0.2, P_s: 2 }, { index: 1, prob: 0.05 }] }]);
-  check("prevalence: samples from flat rows or one row per instant", s.length === 3 && s[1].p === 0.2 && s[1].P === 2 && s[1].atMs === 2000 && s[2].team === 1 && s[2].P === null, s);
-  check("prevalence: the view's current values, as a list or a map", currentOf({ prevalence: [{ team: "A", p: 0.3, P: 1 }] })[0].p === 0.3 && currentOf({ game: { prevalence: { A: { p: 0.4, P: 2 } } } })[0].team === "A");
+  // The engine's shapes: query rows { round, atMs, team (index), p, success, c }; samples { round, atMs, c, species: [{ team
+  // (id), index, p, P }] } (and, provisionally, coop-eq's bee side as `bees`).
+  const s = samplesOf([{ round: 5, atMs: 800, team: 2, p: 0.1, success: 1.2, c: 0.98 }, { round: 10, atMs: 1800, c: 0.97, species: [{ team: "A", index: 0, p: 0.2, P: 2 }], bees: [{ team: "A", index: 0, p: 0.3, P: 1.5 }] }]);
+  check("prevalence: samples from query rows and from whole samples (both sides)", s.length === 3 && s[0].team === 2 && s[0].P === 1.2 && s[0].side === "flower"
+    && s[1].team === "A" && s[1].P === 2 && s[1].atMs === 1800 && s[2].side === "bee" && s[2].p === 0.3, s);
+  check("prevalence: the view's latest sample", currentOf({ prevalence: { on: true, round: 3, atMs: 400, c: 0.99, species: [{ team: "A", index: 0, p: 0.4, P: 2 }] } })[0].p === 0.4
+    && currentOf({ prevalence: null }) === null);
 }
 
 // lib/energy.js: E from the game's own config (old games without the byte factor keep their formula).

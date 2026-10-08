@@ -3,9 +3,10 @@
 import crypto from "node:crypto";
 import { query, tx } from "./db/pool.js";
 import { allocatePrefixLen, normalizeCode, shortId, uuidToCode } from "./lib/shortid.js";
-import { DEFAULT_CONFIG, KINDS, available, energyBytes, normalizeConfig, prevalenceConfig, prevalenceOf } from "./lib/gameConfig.js";
+import { DEFAULT_CONFIG, KINDS, available, energyBytes, feedPriceOf, normalizeConfig, prevalenceConfig, prevalenceOf, windowMsOf } from "./lib/gameConfig.js";
+import { scoreboard } from "./lib/prevalence.js";
 import { changes, size } from "./lib/measure.js";
-import { score, scoringOf, zeroLedger } from "./lib/scoring.js";
+import { scoringOf, zeroLedger } from "./lib/scoring.js";
 import { programInterface } from "./lib/interface.js";
 import { ruleBreaches } from "./lib/pyRules.js";
 import { canonicalJson, memoryShapeError, memorySize, tryBee, tryFlower } from "./engine.js";
@@ -357,27 +358,34 @@ export async function tryProgram(game, user, { kind, code, challenges, budgetMs,
 const ledgersView = (g) => (g.participants ? { feeds: g.feeds, nectar: g.nectar, pollen: g.pollen } : null);
 
 /**
- * A prevalence sample as published (view, scores, the action stream, GET .../prevalence): { round, atMs, c,
- * species: [{ team (id), index, p, P }] } in participants order. Stored samples have p and P as arrays.
+ * A prevalence sample as published (view, scores, the action stream, GET .../prevalence): { round, atMs, c, slots,
+ * species: [{ team (id), index, flowerSuccess, beeSuccess, flowerP, beeP, fitness }] } in participants order.
+ * Stored samples hold arrays (F, B, pF, pB, fitness on the game row; columns in the prevalence table).
  */
-export const sampleView = (x, participants) => ({
-  round: Number(x.round), atMs: Number(x.atMs ?? x.at_ms), c: x.c,
-  species: participants.map((team, index) => ({ team, index, p: x.p[index] ?? null, P: (x.P ?? x.success)[index] ?? null })),
-});
+export const sampleView = (x, participants) => {
+  const col = (k, alt) => x[k] ?? x[alt] ?? [];
+  const F = col("F", "flower_success"), B = col("B", "bee_success"), pF = col("pF", "flower_p"), pB = col("pB", "bee_p"), fit = col("fitness", "fitness");
+  return {
+    round: Number(x.round), atMs: Number(x.atMs ?? x.at_ms), c: x.c, slots: x.slots ?? null,
+    species: participants.map((team, index) => ({
+      team, index, flowerSuccess: F[index] ?? null, beeSuccess: B[index] ?? null, flowerP: pF[index] ?? null, beeP: pB[index] ?? null, fitness: fit[index] ?? null,
+    })),
+  };
+};
 
 /**
- * A game's species prevalence (public): its settings and latest sample, { on, basis, halfLifeS, cStart, cEnd,
- * prior, cap, round, atMs, c, species } (round, atMs and c null and species [] before the first sample); null
- * when its species are drawn uniformly.
+ * A game's prevalence (public): its settings and latest sample, { on, halfLifeS, cStart, cEnd, cap, slots,
+ * prior, feedPrice, sample } (sample null before the first); null when the game has none.
  */
 function prevalenceView(g) {
   const settings = prevalenceOf(g.config);
   if (!settings) return null;
-  return { ...settings, ...(g.prevalence && g.participants ? sampleView(g.prevalence, g.participants) : { round: null, atMs: null, c: null, species: [] }) };
+  return { ...settings, feedPrice: feedPriceOf(g.config), sample: g.prevalence && g.participants ? sampleView(g.prevalence, g.participants) : null };
 }
 
-// Scored with the game's own exponents: a game stored without them was scored with √, and still is.
-const scoresOf = (g) => (g.participants ? score(g.participants, g.feeds, g.nectar, g.pollen, scoringOf(g.config)) : null);
+// Scored with the game's own rule and exponents: with prevalence, the time-average of F × B; else N² ×
+// pollination share × forage share (√ in games stored without exponents).
+const scoresOf = (g) => (g.participants ? scoreboard(g.config, g.participants, g.feeds, g.nectar, g.pollen, g.fitness, g.prevalence) : null);
 
 /**
  * Everything about a game but its turns. During play, each team sees only its own program versions and
@@ -421,7 +429,10 @@ export async function viewGame(room, game, user) {
       // The config as stored, with the scoring exponents it is scored with (√, 0.5, if it has none) and its
       // energy formula (no byte factor if it has none).
       id: g.id, shortId: shortId(g), url: `/room/${shortId(room)}/game/${shortId(g)}`, status: g.status,
-      config: { ...cfg, scoring: scoringOf(cfg), energy: { bytes: energyBytes(cfg) }, prevalence: prevalenceConfig(cfg) },
+      config: { ...cfg, scoring: scoringOf(cfg), energy: { bytes: energyBytes(cfg) }, prevalence: prevalenceConfig(cfg),
+        flowerWindowMs: cfg.flowerWindowMs ?? null, feedPrice: cfg.feedPrice === undefined ? 0 : cfg.feedPrice },
+      // what they come to: the flower window (ms) and the feed price (E's unit) the game plays with
+      windowMs: windowMsOf(cfg), feedPrice: feedPriceOf(cfg),
       clockMs: g.clock_ms, endMs: Math.round(cfg.minutes * 60000), round: g.round, lastSeq: g.last_seq, version: g.version, lastError: g.last_error,
       createdAt: g.created_at, startedAt: g.started_at, finishedAt: g.finished_at, revealed, isOwner,
     },
@@ -461,15 +472,16 @@ export async function viewScores(game) {
 }
 
 /**
- * A game's species prevalence samples (public), oldest first: those of rounds after `after`, at most `limit`
- * (default and most 5000). { prevalence (settings, as in the view, without a sample), samples: [sample] }.
+ * A game's prevalence samples (public), oldest first: those of rounds after `after`, at most `limit` (default
+ * and most 5000). { prevalence (its settings, null for a game without), samples: [sample] }.
  */
 export async function viewPrevalence(game, { after = 0, limit = 5000 } = {}) {
   const g = (await query("SELECT config, participants FROM games WHERE id = $1", [game.id])).rows[0];
   const settings = prevalenceOf(g.config);
   if (!settings || !g.participants) return { prevalence: settings, samples: [] };
   const n = Math.max(1, Math.min(5000, Number(limit) || 5000));
-  const { rows } = await query("SELECT round, at_ms, c, p, success FROM prevalence WHERE game_id = $1 AND round > $2 ORDER BY round LIMIT $3",
+  const { rows } = await query(`SELECT round, at_ms, c, slots, flower_success, bee_success, flower_p, bee_p, fitness FROM prevalence
+    WHERE game_id = $1 AND round > $2 ORDER BY round LIMIT $3`,
     [game.id, Math.max(0, Number(after) || 0), n]);
   return { prevalence: settings, samples: rows.map((r) => sampleView(r, g.participants)) };
 }
@@ -504,7 +516,7 @@ export async function viewActions(game, user, { after = 0, before = null, limit 
  * One action as a viewer (a member of team `me`, or nobody) may see it. Fields the viewer may not see are
  * absent. Public: the arrival (whose bee, whose flower); on the turn's end the challenge, the response,
  * whether the bee fed (the action itself) and the pollen (0 on a leave); on a feed also the percent,
- * energy and nectar.
+ * energy, nectar, the feed price the bee paid and its net (nectar − price).
  */
 export function actionView(a, me, over, revealed, grainsPublic = false) {
   const myBee = over || (!!me && a.bee_team === me), myFlower = over || (!!me && a.flower_team === me);
@@ -516,7 +528,7 @@ export function actionView(a, me, over, revealed, grainsPublic = false) {
     Object.assign(out, { c: a.c, r: a.r, rBytes: a.r_bytes ?? null, pollen: a.pollen });
     // A response over INLINE_BYTES: its size, hash and first INLINE_BYTES; the whole of it from GET .../responses/:seq.
     if (a.r_hash) Object.assign(out, { rHash: a.r_hash, rPreview: a.r_preview });
-    if (fed) out.nectar = a.nectar;
+    if (fed) Object.assign(out, { nectar: a.nectar, price: a.price ?? 0, net: a.nectar - (a.price ?? 0) });
     if (fed || myFlower) Object.assign(out, { percent: a.percent, energy: a.energy });
     if (myFlower) Object.assign(out, { ms: a.cpu_ms, budgetMs: a.budget_ms ?? null, flowerError: a.flower_error });
     if (myBee) Object.assign(out, { beeMs: a.bee_ms, beeError: a.bee_error });
@@ -546,7 +558,7 @@ export async function viewLedger(game, user, { after = 0, limit = 1000 } = {}) {
     [game.id, Math.max(0, Number(after) || 0), n]);
   const idx = new Map(participants.map((id, i) => [id, i]));
   const over = g.status === "finished";
-  const opts = { game: shortId(g), flowerMs: g.config.budgets.flower.ms };
+  const opts = { game: shortId(g), flowerMs: windowMsOf(g.config) };
   return {
     participants, team, lastSeq: g.last_seq, round: g.round, status: g.status,
     entries: rows.map((a) => mask("turns", turnOf(a, idx, opts), team, { over, grainsPublic: g.config.grains === "public" })),
@@ -557,7 +569,8 @@ export async function viewLedger(game, user, { after = 0, limit = 1000 } = {}) {
 export const turnOf = (a, idx, { game, flowerMs }) => ({
   game, seq: Number(a.seq), round: Number(a.round), atMs: Number(a.at_ms) - flowerMs, turn: a.turn, bee: idx.get(a.bee_team), flower: idx.get(a.flower_team),
   challenge: a.c, response: a.r, responseBytes: a.r_bytes ?? null, responseHash: a.r_hash ?? null,
-  fed: a.action === "feed", percent: a.percent, energy: a.energy, nectar: a.nectar, pollen: a.pollen ?? 0,
+  fed: a.action === "feed", percent: a.percent, energy: a.energy, nectar: a.nectar,
+  price: a.action === "feed" ? a.price ?? 0 : null, net: a.action === "feed" ? a.nectar - (a.price ?? 0) : null, pollen: a.pollen ?? 0,
   ms: a.cpu_ms, budgetMs: a.budget_ms ?? null, flowerVersion: a.flower_version, flowerError: a.flower_error, beeMs: a.bee_ms, beeVersion: a.bee_version, beeError: a.bee_error,
   grain: a.grain ?? null, grainVersion: a.grain_version ?? null, grainCodeLength: a.grain_code_length ?? null,
 });

@@ -36,6 +36,10 @@ export interface Turn {
   readonly energy: number | null;
   /** the nectar the flower gave the bee: percent/100 × E on a feed, else null */
   readonly nectar: number | null;
+  /** on a feed, the feed price the bee paid out of its nectar (0 in games without one), else null */
+  readonly price: number | null;
+  /** on a feed, the bee's net nectar: nectar - price (it can be negative), else null */
+  readonly net: number | null;
   /** the pollen the flower gave the bee: (1 − percent/100) × E on a feed, else 0 */
   readonly pollen: number;
   /** the flower's CPU time for the call (ms) */
@@ -126,7 +130,7 @@ export interface Pair {
   readonly pollen: number;
 }
 
-/** Species prevalence (games that have it): every species' chance of being drawn and its recent success, sampled about once a second of game time. (entity "prevalence") */
+/** Prevalence on both sides (games that have it): every team's flower and bee success and draw chances, and its fitness so far, sampled about once a second of game time. (entity "prevalence") */
 export interface Prevalence {
   /** the game's short id */
   readonly game: string;
@@ -134,17 +138,25 @@ export interface Prevalence {
   readonly round: number;
   /** game time that round began: (round - 1) × round_ms */
   readonly atMs: number;
-  /** the species' (its team's) index */
+  /** the team's index (its species and its bee) */
   readonly team: number;
-  /** p_s: the chance a turn's flower is of this species, (c + P_s) / Σ (c + P_k) */
-  readonly p: number;
-  /** P_s: N × its share of recent success (the game's prevalence basis, decayed), capped; par 1 */
-  readonly success: number;
-  /** c(t): the weight every species has whatever its success (cStart to cEnd over the game) */
+  /** F_s: N × its species' share of recent pollination (Σ over bee teams of decayed pollen^beta), capped; par 1 */
+  readonly flowerSuccess: number;
+  /** B_b: N × its bee's share of recent net nectar (max(0, Σ over species of signed decayed (nectar - price)^alpha)), capped; par 1 */
+  readonly beeSuccess: number;
+  /** p^F_s: the chance a visit is to its species, (c + F_s) / Σ (c + F_k) */
+  readonly flowerP: number;
+  /** p^B_b: its bee's share of the bee weights, (c + B_b) / Σ (c + B_k): the chance it fills a given slot first */
+  readonly beeP: number;
+  /** its fitness so far: the time-average of F × B over the rounds played */
+  readonly fitness: number | null;
+  /** c(t): the weight every species and bee has whatever its success (cStart to cEnd over the game) */
   readonly c: number;
+  /** bees visiting each round: ceil(slots × N) */
+  readonly slots: number | null;
 }
 
-/** The scoreboard: each team's pollination, forage, shares and fitness over the whole game. (entity "scores") */
+/** The scoreboard: each team's fitness (the game's rule), pollination, forage and shares over the whole game, and its latest prevalence. (entity "scores") */
 export interface Score {
   /** the game's short id */
   readonly game: string;
@@ -158,8 +170,16 @@ export interface Score {
   readonly pollinationShare: number;
   /** forage ÷ everyone's (1/N if that is 0) */
   readonly forageShare: number;
-  /** N² × pollination share × forage share (par 1) */
+  /** with prevalence, the time-average of F × B over the rounds played; else N² × pollination share × forage share (par 1) */
   readonly fitness: number;
+  /** with prevalence, F_s at the latest sample, else null */
+  readonly flowerSuccess: number | null;
+  /** with prevalence, B_b at the latest sample, else null */
+  readonly beeSuccess: number | null;
+  /** with prevalence, p^F_s at the latest sample, else null */
+  readonly flowerP: number | null;
+  /** with prevalence, p^B_b at the latest sample, else null */
+  readonly beeP: number | null;
   /** all the pollen this species gave */
   readonly pollen: number;
   /** feeds at this flower */
@@ -393,6 +413,16 @@ export const SCHEMA: Schema = {
         },
         {
           "name": "nectar",
+          "type": "float",
+          "nullable": true
+        },
+        {
+          "name": "price",
+          "type": "float",
+          "nullable": true
+        },
+        {
+          "name": "net",
           "type": "float",
           "nullable": true
         },
@@ -712,19 +742,39 @@ export const SCHEMA: Schema = {
           "nullable": false
         },
         {
-          "name": "p",
+          "name": "flowerSuccess",
           "type": "float",
           "nullable": false
         },
         {
-          "name": "success",
+          "name": "beeSuccess",
           "type": "float",
           "nullable": false
+        },
+        {
+          "name": "flowerP",
+          "type": "float",
+          "nullable": false
+        },
+        {
+          "name": "beeP",
+          "type": "float",
+          "nullable": false
+        },
+        {
+          "name": "fitness",
+          "type": "float",
+          "nullable": true
         },
         {
           "name": "c",
           "type": "float",
           "nullable": false
+        },
+        {
+          "name": "slots",
+          "type": "int",
+          "nullable": true
         }
       ]
     },
@@ -779,6 +829,26 @@ export const SCHEMA: Schema = {
           "name": "fitness",
           "type": "float",
           "nullable": false
+        },
+        {
+          "name": "flowerSuccess",
+          "type": "float",
+          "nullable": true
+        },
+        {
+          "name": "beeSuccess",
+          "type": "float",
+          "nullable": true
+        },
+        {
+          "name": "flowerP",
+          "type": "float",
+          "nullable": true
+        },
+        {
+          "name": "beeP",
+          "type": "float",
+          "nullable": true
         },
         {
           "name": "pollen",

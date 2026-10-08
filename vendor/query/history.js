@@ -39,6 +39,10 @@ var DbcHistory = (function () {
                                  
                                                                                  
                                  
+                                                                                                     
+                                
+                                                                                        
+                              
                                                                                     
                           
                                                 
@@ -129,7 +133,7 @@ var DbcHistory = (function () {
                           
  
 
-/** Species prevalence (games that have it): every species' chance of being drawn and its recent success, sampled about once a second of game time. (entity "prevalence") */
+/** Prevalence on both sides (games that have it): every team's flower and bee success and draw chances, and its fitness so far, sampled about once a second of game time. (entity "prevalence") */
                              
                             
                         
@@ -137,17 +141,25 @@ var DbcHistory = (function () {
                          
                                                            
                         
-                                        
+                                                   
                         
-                                                                                    
-                     
-                                                                                                   
+                                                                                                                   
+                                 
+                                                                                                                                       
+                              
+                                                                             
                            
-                                                                                               
+                                                                                                                   
+                        
+                                                                             
+                                  
+                                                                                                       
                      
+                                                  
+                                
  
 
-/** The scoreboard: each team's pollination, forage, shares and fitness over the whole game. (entity "scores") */
+/** The scoreboard: each team's fitness (the game's rule), pollination, forage and shares over the whole game, and its latest prevalence. (entity "scores") */
                         
                             
                         
@@ -161,8 +173,16 @@ var DbcHistory = (function () {
                                     
                                                
                                
-                                                      
+                                                                                                                              
                            
+                                                             
+                                        
+                                                             
+                                     
+                                                               
+                                  
+                                                               
+                               
                                          
                           
                              
@@ -396,6 +416,16 @@ const SCHEMA         = {
         },
         {
           "name": "nectar",
+          "type": "float",
+          "nullable": true
+        },
+        {
+          "name": "price",
+          "type": "float",
+          "nullable": true
+        },
+        {
+          "name": "net",
           "type": "float",
           "nullable": true
         },
@@ -715,19 +745,39 @@ const SCHEMA         = {
           "nullable": false
         },
         {
-          "name": "p",
+          "name": "flowerSuccess",
           "type": "float",
           "nullable": false
         },
         {
-          "name": "success",
+          "name": "beeSuccess",
           "type": "float",
           "nullable": false
+        },
+        {
+          "name": "flowerP",
+          "type": "float",
+          "nullable": false
+        },
+        {
+          "name": "beeP",
+          "type": "float",
+          "nullable": false
+        },
+        {
+          "name": "fitness",
+          "type": "float",
+          "nullable": true
         },
         {
           "name": "c",
           "type": "float",
           "nullable": false
+        },
+        {
+          "name": "slots",
+          "type": "int",
+          "nullable": true
         }
       ]
     },
@@ -782,6 +832,26 @@ const SCHEMA         = {
           "name": "fitness",
           "type": "float",
           "nullable": false
+        },
+        {
+          "name": "flowerSuccess",
+          "type": "float",
+          "nullable": true
+        },
+        {
+          "name": "beeSuccess",
+          "type": "float",
+          "nullable": true
+        },
+        {
+          "name": "flowerP",
+          "type": "float",
+          "nullable": true
+        },
+        {
+          "name": "beeP",
+          "type": "float",
+          "nullable": true
         },
         {
           "name": "pollen",

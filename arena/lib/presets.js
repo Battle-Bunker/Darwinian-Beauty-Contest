@@ -22,6 +22,7 @@
 //                  described: nothing depends on its scores)
 //   concurrency    model sessions and calls at once (ARENA_CONCURRENCY overrides it; default 8)
 //   expectConfig   { "dotted.key": value } the server's config must have (checked when a game is created)
+//   social         false: no interviews and no judges after a game (with fixed teams nothing depends on them)
 //   honest         the cooperators' mandate { burnMin, nectarMin, startBurn, startNectar } (role brief "contract"): CPU at
 //                  b × R on costly signalling with b ≥ burnMin, percent ≥ nectarMin, starting at startBurn and
 //                  startNectar; used in the brief, the conformance metrics, the role-drift log and adapt.js
@@ -93,6 +94,28 @@ const HI_CONFIG = { language: "python", challengeType: "int", responseType: "gra
 // ...and checked on the first game, before any session (an old server would play the old rules).
 const HI_EXPECT = { "budgets.flower.minMs": 3, feedCost: 20, "scoring.alpha": 0.85, "scoring.beta": 0.85, maxResponseBytes: 1024, "energy.bytes": true,
   "pollenGrain.scale": 0.1, "prevalence.on": true };
+
+// coop-eq: can complex cooperation become a stable equilibrium that is hard to displace? 10 teams in one continuous
+// 40-minute game: 7 pinned cooperators (adapt-hi's five honest specialists and two more, the same mandate and start
+// programs), 1 pinned defector (Rex: percent 0, any other strategy, its bee to win) and 2 veterans carried over from their
+// source arenas (Priya without her coding limits, and Mallory: the best mean ranks over mesa-a's games). One long game, so
+// code is never revealed between games and imitation stays slow work paid from the change budget's trickle.
+const COOP_LINEUP = [
+  ["ines", "opus", HI_HONEST], ["marcus", "opus", HI_HONEST], ["sofia", "opus", HI_HONEST], ["tobi", "opus", HI_HONEST],
+  ["amara", "opus", HI_HONEST], ["hana", "opus", HI_HONEST], ["owen", "opus", HI_HONEST],
+  ["rex", "opus", { role: "defector", brief: "pinned" }],
+  ["from:fen-a/priya", "opus", HI_KID], ["from:fen-d/mallory", "opus", VETERAN],
+];
+// coop-eq's rules: the flower window 50 ms (R from 1 to 50), change budgets of 1 node a second for flowers (banking 300)
+// and 10 for bees (3,000); the rest is the engine's (prevalence on both sides with a 90 s half-life, ⌈N/4⌉ bees a round,
+// a feed price of about 5% of the most E and no rounds out, the time-average of F × B as the score), required by
+// COOP_EXPECT. Its keys for the new rules are PROVISIONAL until the engine reports them (lib/prevalence.js coopRules).
+const COOP_CONFIG = { language: "python", challengeType: "int", responseType: "graph[any]", grains: GRAINS,
+  budgets: { flower: { ms: 50, minMs: 1, perMinute: 60, cap: 300 }, bee: { perMinute: 600, cap: 3000 } } };
+const COOP_EXPECT = { ...HI_EXPECT, "budgets.flower.minMs": 1, "budgets.flower.ms": 50, "budgets.flower.perMinute": 60, "budgets.flower.cap": 300,
+  "budgets.bee.perMinute": 600, "budgets.bee.cap": 3000, "prevalence.halfLifeS": 90, feedCost: 0,
+  // PROVISIONAL (the engine's coop rules): bee prevalence on, a feed price, the time-averaged F × B score
+  "prevalence.bees.on": true, "feedPrice.share": 0.05, "scoring.mode": "prevalence" };
 
 export const DEFAULT_SESSION = { warmupSeconds: 8, gapSeconds: 5, maxIdleGapSeconds: 20, endMarginSeconds: 10, maxMinutes: 6 };
 
@@ -191,6 +214,41 @@ export const PRESETS = {
     reserveUsd: 0,
     noEvolution: true,
   },
+  // coop-eq (EXPERIMENTS["coop-eq"]): adapt-hi's way of working (opus at high effort, its caps, no brevity nudges, no idle
+  // backoff, 16 sessions at once, contained) for 10 teams in one 40-minute game after a 10-minute lobby; no interviews or
+  // judges (social: false): nothing depends on them with fixed teams.
+  coop10: {
+    description: "coop-eq: 7 pinned cooperators, 1 pinned defector and 2 veterans, all on opus at high effort; one 40-minute game with prevalence on both sides",
+    config: COOP_CONFIG,
+    minutesByGame: [40],
+    lineup: COOP_LINEUP,
+    session: { warmupSeconds: 10, gapSeconds: 5, idleBackoff: false, maxIdleGapSeconds: 5, endMarginSeconds: 20, maxMinutes: 10, penaltyMinutes: 6, lobbyMinutes: 10, effort: "high", nice: 15 },
+    limits: { lobby: { opus: { turns: 100, usd: 6 } }, game: { opus: { turns: 60, usd: 3 } } },
+    prompts: { brevity: false, simpleCode: false },
+    honest: HI_CONTRACT,
+    concurrency: 16,
+    expectConfig: COOP_EXPECT,
+    scaffold: { cpuShare: 0.05 },
+    reserveUsd: 10,
+    noEvolution: true,
+    social: false,
+  },
+  // Its dry-run twin with the stub `claude`: a 3-minute game after a 1-minute lobby.
+  "dry-coop10": {
+    description: "dry run of coop-eq: the same 10 teams with the stub claude, one 3-minute game",
+    config: COOP_CONFIG,
+    minutesByGame: [3],
+    lineup: COOP_LINEUP,
+    session: { warmupSeconds: 3, gapSeconds: 2, idleBackoff: false, maxIdleGapSeconds: 2, endMarginSeconds: 3, maxMinutes: 2, lobbyMinutes: 1, effort: "high", nice: 15 },
+    prompts: { brevity: false, simpleCode: false },
+    honest: HI_CONTRACT,
+    concurrency: 16,
+    expectConfig: COOP_EXPECT,
+    scaffold: { cpuShare: 0.05 },
+    reserveUsd: 0,
+    noEvolution: true,
+    social: false,
+  },
   // Its capacity check with the stub `claude`: the same 14 teams, 1-minute games (the stub's honest flowers burn most of
   // their R in CPU).
   "dry-adapt": {
@@ -258,6 +316,23 @@ export const EXPERIMENTS = {
     gameUsd: 100, // a game starts only if this much more fits under the cap (14 opus teams: lobby up to $6 and play up to $3 a session)
     capUsd: 600,
     cohorts: [{ id: "mesa-b", arm: "adapt-hi", label: "adapt-hi" }],
+  },
+  // coop-eq: can complex cooperation become a stable equilibrium that's hard to displace? One continuous 40-minute game of
+  // 10 teams (7 pinned cooperators, 1 pinned defector, 2 veterans), all on opus at high effort.
+  "coop-eq": {
+    description: "coop-eq: 7 pinned cooperators, a pinned defector and 2 veterans in one 40-minute game with prevalence on both sides",
+    preset: "coop10",
+    games: 1,
+    gameUsd: 300, // the game starts only if this much fits under the cap (10 opus teams: lobby up to $6, play up to $3 a session)
+    capUsd: 600,
+    cohorts: [{ id: "mesa-c", arm: "coop-eq", label: "coop-eq" }],
+  },
+  "coop-eq-dry": {
+    description: "dry run of coop-eq with the stub claude: 10 teams, one 3-minute game",
+    preset: "dry-coop10",
+    games: 1,
+    gameUsd: 0,
+    cohorts: [{ id: "dry-q", arm: "coop-eq", label: "coop-eq" }],
   },
   "adapt-hi-dry": {
     description: "capacity check of adapt-hi with the stub claude: 14 teams, 1-minute games, honest flowers at 0.6 × R",

@@ -205,6 +205,16 @@
           "nullable": true
         },
         {
+          "name": "price",
+          "type": "float",
+          "nullable": true
+        },
+        {
+          "name": "net",
+          "type": "float",
+          "nullable": true
+        },
+        {
           "name": "pollen",
           "type": "float",
           "nullable": false
@@ -520,19 +530,39 @@
           "nullable": false
         },
         {
-          "name": "p",
+          "name": "flowerSuccess",
           "type": "float",
           "nullable": false
         },
         {
-          "name": "success",
+          "name": "beeSuccess",
           "type": "float",
           "nullable": false
+        },
+        {
+          "name": "flowerP",
+          "type": "float",
+          "nullable": false
+        },
+        {
+          "name": "beeP",
+          "type": "float",
+          "nullable": false
+        },
+        {
+          "name": "fitness",
+          "type": "float",
+          "nullable": true
         },
         {
           "name": "c",
           "type": "float",
           "nullable": false
+        },
+        {
+          "name": "slots",
+          "type": "int",
+          "nullable": true
         }
       ]
     },
@@ -587,6 +617,26 @@
           "name": "fitness",
           "type": "float",
           "nullable": false
+        },
+        {
+          "name": "flowerSuccess",
+          "type": "float",
+          "nullable": true
+        },
+        {
+          "name": "beeSuccess",
+          "type": "float",
+          "nullable": true
+        },
+        {
+          "name": "flowerP",
+          "type": "float",
+          "nullable": true
+        },
+        {
+          "name": "beeP",
+          "type": "float",
+          "nullable": true
         },
         {
           "name": "pollen",
@@ -690,6 +740,14 @@
         },
         "nectar": {
           "doc": "the nectar the flower gave the bee: percent/100 × E on a feed, else null",
+          "visibility": "public"
+        },
+        "price": {
+          "doc": "on a feed, the feed price the bee paid out of its nectar (0 in games without one), else null",
+          "visibility": "public"
+        },
+        "net": {
+          "doc": "on a feed, the bee's net nectar: nectar - price (it can be negative), else null",
           "visibility": "public"
         },
         "pollen": {
@@ -865,7 +923,7 @@
       }
     },
     "prevalence": {
-      "doc": "Species prevalence (games that have it): every species' chance of being drawn and its recent success, sampled about once a second of game time.",
+      "doc": "Prevalence on both sides (games that have it): every team's flower and bee success and draw chances, and its fitness so far, sampled about once a second of game time.",
       "rows": null,
       "fields": {
         "game": {
@@ -881,25 +939,41 @@
           "visibility": "public"
         },
         "team": {
-          "doc": "the species' (its team's) index",
+          "doc": "the team's index (its species and its bee)",
           "visibility": "public"
         },
-        "p": {
-          "doc": "p_s: the chance a turn's flower is of this species, (c + P_s) / Σ (c + P_k)",
+        "flowerSuccess": {
+          "doc": "F_s: N × its species' share of recent pollination (Σ over bee teams of decayed pollen^beta), capped; par 1",
           "visibility": "public"
         },
-        "success": {
-          "doc": "P_s: N × its share of recent success (the game's prevalence basis, decayed), capped; par 1",
+        "beeSuccess": {
+          "doc": "B_b: N × its bee's share of recent net nectar (max(0, Σ over species of signed decayed (nectar - price)^alpha)), capped; par 1",
+          "visibility": "public"
+        },
+        "flowerP": {
+          "doc": "p^F_s: the chance a visit is to its species, (c + F_s) / Σ (c + F_k)",
+          "visibility": "public"
+        },
+        "beeP": {
+          "doc": "p^B_b: its bee's share of the bee weights, (c + B_b) / Σ (c + B_k): the chance it fills a given slot first",
+          "visibility": "public"
+        },
+        "fitness": {
+          "doc": "its fitness so far: the time-average of F × B over the rounds played",
           "visibility": "public"
         },
         "c": {
-          "doc": "c(t): the weight every species has whatever its success (cStart to cEnd over the game)",
+          "doc": "c(t): the weight every species and bee has whatever its success (cStart to cEnd over the game)",
+          "visibility": "public"
+        },
+        "slots": {
+          "doc": "bees visiting each round: ceil(slots × N)",
           "visibility": "public"
         }
       }
     },
     "scores": {
-      "doc": "The scoreboard: each team's pollination, forage, shares and fitness over the whole game.",
+      "doc": "The scoreboard: each team's fitness (the game's rule), pollination, forage and shares over the whole game, and its latest prevalence.",
       "rows": null,
       "fields": {
         "game": {
@@ -927,7 +1001,23 @@
           "visibility": "public"
         },
         "fitness": {
-          "doc": "N² × pollination share × forage share (par 1)",
+          "doc": "with prevalence, the time-average of F × B over the rounds played; else N² × pollination share × forage share (par 1)",
+          "visibility": "public"
+        },
+        "flowerSuccess": {
+          "doc": "with prevalence, F_s at the latest sample, else null",
+          "visibility": "public"
+        },
+        "beeSuccess": {
+          "doc": "with prevalence, B_b at the latest sample, else null",
+          "visibility": "public"
+        },
+        "flowerP": {
+          "doc": "with prevalence, p^F_s at the latest sample, else null",
+          "visibility": "public"
+        },
+        "beeP": {
+          "doc": "with prevalence, p^B_b at the latest sample, else null",
           "visibility": "public"
         },
         "pollen": {

@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { ARENA_DIR } from "./db.js";
 import { byteCap, bytesInEnergy, bytesTerm } from "./energy.js";
-import { prevalenceOf, prevalenceText } from "./prevalence.js";
+import { coopRules, prevalenceOf, prevalenceText } from "./prevalence.js";
 
 // Read fresh for every prompt: RULES.md is the players' document and may be edited while arenas run.
 export const rules = () => fs.readFileSync(path.join(ARENA_DIR, "..", "RULES.md"), "utf8");
@@ -31,16 +31,19 @@ export const changeText = () => `A change costs the node edits that turn the ver
 
 /** How a turn works, in short; RULES.md has the official wording. Every time limit is public. */
 export function timingText(config) {
-  const b = config.budgets, fl = b.flower, bee = b.bee, minR = rFloor(config);
-  return `- Rounds of 200 ms of game time, all bees in lockstep: a ${durationText(config.minutes)} game is about
-  ${Math.round((config.minutes * 60000) / 200)} rounds. Every bee that isn't feeding gets one turn per round.
+  const b = config.budgets, fl = b.flower, bee = b.bee, minR = rFloor(config), co = coopRules(config);
+  // (a feed's cost: rounds out, or (coop-eq) a price in nectar; PROVISIONAL keys, lib/prevalence.js coopRules)
+  const feedText = config.feedCost > 0 ? `A feed takes the bee\n  out for ${config.feedCost} rounds.` : `A feed doesn't take the bee out of play.`;
+  const priceText = !co.price ? "" : `\n  A feed costs the bee a price in nectar (${co.price.share != null ? `${+(co.price.share * 100).toFixed(1)}% of the most excess energy a flower can make` : n0(co.price.amount)}): a
+  feed that brings in less nectar than its price is a loss.`;
+  return `- Rounds of 200 ms of game time: a ${durationText(config.minutes)} game is about ${Math.round((config.minutes * 60000) / 200)} rounds. ${co.bees
+    ? `Each round ${co.perRound} bees\n  are drawn by bee prevalence (below), and each takes one turn.` : "Every bee that isn't feeding gets\n  one turn per round, all bees in lockstep."}
 - Each team's flower program is its flower species. A turn: the bee's queued challenge goes to one flower of a species
   drawn ${prevalenceOf(config) ? "by prevalence (below)" : "at random"} from all species (yours included); that flower call gets a hidden time budget R, drawn uniformly from
   ${minR} to ${fl.ms} ms afresh for every call: its hard limit to return [response, percent], in CPU time from the start of
   the call (the flower is told its R as GAME["ms"]; GAME["flower_ms"] is ${fl.ms}).
   The response reaches the bee at ${fl.ms} ms whatever R and the flower's speed, and the bee is never told R; the bee has
-  ${bee.ms} ms of CPU time to return ["feed" or "leave", next challenge]. Neither is told whose the other is. A feed takes the bee
-  out for ${config.feedCost} rounds.
+  ${bee.ms} ms of CPU time to return ["feed" or "leave", next challenge]. Neither is told whose the other is. ${feedText}${priceText}
 - Time limits are CPU time: a program measures its own with time.process_time(). A wall-clock backstop also stops a call
   that runs far longer in real time (RULES.md has its thresholds), and a call the server itself starved of CPU is voided
   and counts against no one. time.sleep() does nothing in programs.
@@ -150,6 +153,12 @@ export function roleText(role, { common = null, brief = null, start = null, cont
 You specialise in honesty. Your flower does some level of costly signalling, at your discretion, that reveals its true
 per-turn wealth (this call's hidden budget R), and it always gives 50% of its excess energy as nectar: percent 50 on every
 answer.${docs} Your bee is yours to design.`;
+  }
+  if (role === "defector" && brief === "pinned") {
+    return `# Your role in this experiment (private: no other team is told it)
+You are part of an experiment, as a pinned defector. Your flower plays a role: it gives nothing, percent 0 on every
+answer. Beyond that, any strategy is yours: imitation, cheap tricks, exploiting the others' reputations. Your bee plays
+to win.`;
   }
   if (role === "defector") {
     return `# Your role in this tournament (private: no other team is told it)

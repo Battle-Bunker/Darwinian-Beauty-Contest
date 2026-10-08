@@ -224,6 +224,38 @@ ARENA_BUDGET_USD=800 nohup node arena/run.js --experiment adapt-hi >> arena/runs
 node arena/adapt.js --arena mesa-b > arena/runs/analysis-adapt-hi.md            # afterwards, no spend
 ```
 
+### The `coop-eq` experiment
+
+Can complex cooperation become a stable equilibrium that is hard to displace? One arena (`mesa-c`, preset `coop10`) of
+10 teams in **one continuous 40-minute game** after a 10-minute lobby, evolution off, no interviews or judges
+(`social: false`), capped at $600. One long game rather than several short ones: between games lobby rewrites are free and
+all code is revealed, which would let the defector copy the cooperators for nothing; within one game imitation is slow
+work paid from the change budget's trickle.
+
+| who | how many | what they get |
+|---|---|---|
+| pinned cooperators | 7 | adapt-hi's five honest specialists and two new personas (Dr. Hana Kimura, epidemiologist; Owen Fairweather, civil engineer), with adapt-hi's mandate (`honest`: floors of 0.2 on burn and 20 on percent, exploring both and their fingerprint profile) and start programs from `arena/priming/fingerprints/` |
+| pinned defector | 1 | Rex (`brief: "pinned"`): percent 0 on every answer; any other strategy (imitation, cheap tricks, exploiting reputations); its bee plays to win |
+| veterans | 2 | Priya (without her coding limits) and Mallory, the best mean ranks over mesa-a, carried over from their source arenas as in adapt-hi |
+
+Everyone is on opus at high effort with adapt-hi's caps, prompts, constant gaps, 16 sessions at once, containment, the
+busy-wait warning and no cryptography priming. The rules (the engine's; `COOP_EXPECT` checks them on the game): the flower
+window 50 ms (R from 1 to 50), change budgets of 1 node a second for flowers (banking 300) and 10 for bees (3,000),
+prevalence on both sides (flower success F from recent pollen, bee success B from recent net nectar, par 1, a 90 s
+half-life; each round ⌈N/4⌉ bees drawn ∝ c + B, each visiting a flower drawn ∝ c + F; c from 1 to 0.1), a feed price in
+nectar of about 5% of the most E and no rounds out, and the time-average of F × B as the score. The keys of the new rules
+are provisional until the engine reports them (`lib/prevalence.js` coopRules, `COOP_EXPECT`). `adapt.js --arena mesa-c`
+adds, minute by minute, the cooperators' combined share of flower and bee prevalence, F and B per role (and per team by
+five-minute bins), the defector's F and B, each bee's dud feeds (nectar below the price) and their cost, and the verdict:
+did the cooperators' shares hold or grow in the last ten minutes, against minutes 10–30? Spend: a team's lobby is at most
+$6 and each in-game session at most $3 and 10 minutes, so a team costs about $15–30 for the game and the arena $150–300.
+
+```
+CPU_SLOTS=2 arena/server.sh                                                      # with the engine's coop rules in place
+ARENA_BUDGET_USD=800 nohup node arena/run.js --experiment coop-eq >> arena/runs/coop-eq.out 2>&1 &
+node arena/adapt.js --arena mesa-c --compare none > arena/runs/analysis-coop-eq.md                       # afterwards, no spend
+```
+
 ## How a game runs
 
 1. **Setup.** The arena's room owner creates the game with the preset's config (and this game's duration). Every active
