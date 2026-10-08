@@ -369,10 +369,10 @@ async function coopReport({ g, gp, teams, ents, role, T, S }) {
   table(["min", "coop Σ pF", "coop Σ pB", "coop F / B", "defector pF / pB", "defector F / B", "veterans F / B"],
     Array.from({ length: nMin }, (_, w) => [w + 1, f2(sumOf("honest", w, (x) => x.pF)), f2(sumOf("honest", w, (x) => x.pB)), FB("honest", w),
       `${f2(sumOf("defector", w, (x) => x.pF))} / ${f2(sumOf("defector", w, (x) => x.pB))}`, FB("defector", w), FB("veteran", w)]));
-  // Per team, by bin; and its fitness at the end (the last sample's, else the scoreboard's).
+  // Per team, by bin; and its fitness at the end (the final scoreboard's, else the last sample's).
   const nBin = Math.ceil(duration / BIN);
   const binAt = (team, b, f) => mean(samples.filter((x) => x.team === team && Math.floor(x.atMs / BIN) === b).map(f).filter((v) => v != null));
-  const lastOf = (team) => samples.filter((x) => x.team === team && x.fitness != null).sort((a, b) => b.atMs - a.atMs)[0]?.fitness ?? g.metrics?.teams?.[team]?.fitness ?? null;
+  const lastOf = (team) => g.metrics?.final?.find((f) => f.teamId === team)?.fitness ?? samples.filter((x) => x.team === team && x.fitness != null).sort((a, b) => b.atMs - a.atMs)[0]?.fitness ?? null;
   p("F / B per team, over time, and its fitness (F × B's time-average) at the end:");
   table(["team", "role", ...Array.from({ length: nBin }, (_, b) => binLabel(b)), "fitness"],
     ents.map((e) => [e.team_name, role(e.team_id), ...Array.from({ length: nBin }, (_, b) => `${f2(binAt(e.team_id, b, (x) => x.F))} / ${f2(binAt(e.team_id, b, (x) => x.B))}`), f2(lastOf(e.team_id))]));
