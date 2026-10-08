@@ -303,7 +303,7 @@ const round3 = (x) => Math.round(x * 1000) / 1000;
 export class Garden {
   /**
    * teams: number of teams (team indices are participants order). round: rounds already played; clockMs:
-   * the game time they took. endMs: game time at which run() stops (default config.minutes). maxRounds:
+   * the game time they took. endMs: game time at which run() stops (default config.minutes; a live game: its drawn end, games.end_ms). maxRounds:
    * stop after this many rounds instead (for trying a bee). lastSeq: the last action number already used.
    * ledgers: { feeds, nectar, pollen } so far. lastFed: per team, the round its bee last fed in (null:
    * never), so an adopted garden keeps it sitting out. turns: each bee's turns so far. memories: per team,
@@ -311,7 +311,7 @@ export class Garden {
    * (turn records' `game`). keepHistory: keep every finished turn's `turns` record in `history` (tests).
    * paced: rounds last at least roundMs of wall time (false: back to back, for tests and the "try" tool).
    * feeds: the game's feeds so far ({ round, bee, flower, pollen, net }, team indices), from which an adopted
-   * garden rebuilds its prevalence ledgers; fitness: its fitness sums so far ({ sum, rounds }).
+   * garden rebuilds its prevalence ledgers; fitness: its fitness sums so far ({ sum, rounds, last }).
    */
   constructor({ config, teams, clockMs = 0, round = 0, endMs = config.minutes * 60000, maxRounds = Infinity, lastSeq = 0,
     ledgers = null, lastFed = null, turns = null, memories = null, game = "", keepHistory = false, paced = true, feeds = [], fitness = null }) {
@@ -443,7 +443,7 @@ export class Garden {
       actions: this.out.splice(0), problems: this.problems.splice(0), clockMs: Math.round(this.clockMs()), round: this.round,
       lastSeq: this.seq, feeds: this.feeds, nectar: this.nectar, pollen: this.pollen, memories,
       samples: this.samples.splice(0), sample: this.sample,
-      fitness: this.prevalence ? { sum: [...this.prevalence.sum], rounds: this.prevalence.rounds } : null,
+      fitness: this.prevalence ? this.prevalence.sums() : null,
     };
   }
 
@@ -554,15 +554,15 @@ export class Garden {
   }
 
   /**
-   * A round begins: the prevalence ledgers decay and give the round's weights, and each team's F × B goes into
-   * its fitness; sampled about once a second.
+   * A round begins: the prevalence ledgers decay and give the round's weights, which go into each team's
+   * fitness (F × B, and N² × p^F × p^B); sampled about once a second.
    */
   #prevalenceAt(r, start) {
     const m = this.prevalence;
     if (!m) return;
     m.decay();
     this.weights = m.weights(start);
-    m.tally(this.weights.F, this.weights.B);
+    m.tally(this.weights);
     if ((r - 1) % this.sampleEvery === 0) {
       const r6 = (x) => Math.round(x * 1e6) / 1e6, w = this.weights;
       const balances = m.balances();

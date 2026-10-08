@@ -104,8 +104,10 @@ async function adopt(g) {
       .filter((r) => index.has(r.bee_team) && index.has(r.flower_team))
       .map((r) => ({ round: Number(r.round), bee: index.get(r.bee_team), flower: index.get(r.flower_team), pollen: r.pollen, net: (r.nectar ?? 0) - (r.price ?? 0) }))
     : [];
+  // The game ends at its drawn end (games.end_ms, hidden from the teams until then); a game from before it, at minutes.
+  const endMs = g.end_ms != null ? Number(g.end_ms) : g.config.minutes * 60000;
   const garden = new Garden({
-    config: g.config, teams: g.participants.length, clockMs: Number(g.clock_ms), round: Number(g.round), lastSeq: Number(g.last_seq),
+    config: g.config, teams: g.participants.length, clockMs: Number(g.clock_ms), round: Number(g.round), lastSeq: Number(g.last_seq), endMs,
     ledgers: { feeds: g.feeds, nectar: g.nectar, pollen: g.pollen ?? zeroLedger(g.participants.length) },
     lastFed, turns, memories, game, paced: true, feeds, fitness: g.fitness,
   });

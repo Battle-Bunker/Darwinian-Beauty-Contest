@@ -14,13 +14,22 @@
 //        (balance − b0) d: metabolism above b0, recovery below). A bee whose balance is below the price can't
 //        feed (its feed becomes a leave). Without `pools` (v2): N × Q^B_b / Σ_k Q^B_k, Q^B_b = max(0, Σ_s
 //        sign(D) |D^B_{b,s}|^α), D^B the decayed per-(bee, species) net nectar (α the game's scoring.alpha).
-// Each of F and B is 1 for every team when its total is 0, and capped at `cap`: par 1. c(t) runs linearly from
-// cStart at the start of the game to cEnd at its end. The draw probabilities published are p^F_s = (c + F_s) /
-// Σ_k (c + F_k) and p^B_b = (c + B_b) / Σ_k (c + B_k) (the chance of filling a given slot first).
-// A team's fitness is the time-average, over the rounds played, of F_s × B_s (its species' and its bee's), par 1.
+// Each of F and B is 1 for every team when its total is 0, and capped at `cap`: par 1. c(t) = cEnd + (cStart −
+// cEnd) × 2^(−t / cHalfLifeS), t in seconds of game time: it doesn't depend on the game's length, which is
+// hidden (cHalfLifeS null, as in v2 and v3 configs: linear from cStart at the start to cEnd at `minutes`, then
+// cEnd). The draw probabilities published are p^F_s = (c + F_s) / Σ_k (c + F_k) and p^B_b = (c + B_b) /
+// Σ_k (c + B_k) (the chance of filling a given slot first).
+// A team's fitness, by the game's scoring.mode, par 1:
+//   "final"        N² × p^F_s × p^B_s of the latest round played (of the final round, once the game is over):
+//                  the instantaneous product of its species' and its bee's draw probabilities, c and cap included
+//   "timeAverage"  (v2, v3) the time-average, over the rounds played, of F_s × B_s
+// Both are kept every round (fitness sums: { sum, rounds, last }), so a game can be read either way.
 // The garden samples them (and the bees' balances) about once a second of game time (public); programs never see them.
 import { feedPriceOf, prevalenceOf, roundMs } from "./gameConfig.js";
 import { score, scoringOf } from "./scoring.js";
+
+/** N² × p^F × p^B for each team: the "final" fitness of a round's draw probabilities (1 at par). */
+export const instantFitness = (pF, pB) => pF.map((p, i) => pF.length * pF.length * p * pB[i]);
 
 const matrix = (n, v) => Array.from({ length: n }, () => new Array(n).fill(v));
 const signedPow = (x, e) => (x > 0 ? Math.pow(x, e) : x < 0 ? -Math.pow(-x, e) : 0);
@@ -43,7 +52,8 @@ export class Prevalence {
     this.n = n;
     this.alpha = scoringOf(config).alpha;
     this.beta = scoringOf(config).beta;
-    this.durationMs = config.minutes * 60000;
+    this.mode = scoringOf(config).mode;
+    this.durationMs = config.minutes * 60000;   // c's span when it is linear (cHalfLifeS null): the game's minimum length
     this.d = s.halfLifeS ? Math.pow(2, -roundMs(config) / 1000 / s.halfLifeS) : 1;
     this.slots = Math.min(n, Math.max(1, Math.ceil(s.slots * n - 1e-9)));
     this.pools = s.pools;
@@ -54,6 +64,7 @@ export class Prevalence {
     this.net = this.pools ? null : matrix(n, s.prior); // [bee team][species]: D^B, the net nectar b got at s (v2)
     this.sum = new Array(n).fill(0);           // Σ over rounds of F_s × B_s
     this.rounds = 0;
+    this.last = new Array(n).fill(1);          // N² × p^F_s × p^B_s of the latest round (par before any)
   }
 
   /** The model for a game, or null when it has no prevalence. */
@@ -64,7 +75,7 @@ export class Prevalence {
   /**
    * The model as it stands after `rounds` rounds, rebuilt: its ledgers from the game's feeds so far (each
    * { round, bee, flower, pollen, net }, team indices), exactly what playing them would have left; its fitness
-   * sums as stored ({ sum, rounds }).
+   * sums as stored ({ sum, rounds, last }).
    */
   static rebuild(config, n, rounds, feeds = [], fitness = null) {
     const m = Prevalence.of(config, n);
@@ -84,6 +95,7 @@ export class Prevalence {
       m.sum = fitness.sum.map(Number);
       m.rounds = Number(fitness.rounds) || 0;
     }
+    if (fitness && Array.isArray(fitness.last) && fitness.last.length === n) m.last = fitness.last.map(Number);
     return m;
   }
 
@@ -107,9 +119,10 @@ export class Prevalence {
     else this.net[b][s] += net || 0;
   }
 
-  /** c at game time tMs. */
+  /** c at game time tMs: decaying exponentially from cStart toward cEnd (cHalfLifeS null: linearly, over `minutes`). */
   c(tMs) {
-    const { cStart, cEnd } = this.settings;
+    const { cStart, cEnd, cHalfLifeS } = this.settings;
+    if (cHalfLifeS) return cEnd + (cStart - cEnd) * Math.pow(2, -Math.max(0, tMs) / 1000 / cHalfLifeS);
     const x = this.durationMs > 0 ? Math.min(1, Math.max(0, tMs / this.durationMs)) : 0;
     return cStart + (cEnd - cStart) * x;
   }
@@ -136,15 +149,21 @@ export class Prevalence {
     return this.pools ? [...this.balance] : null;
   }
 
-  /** A round's F × B goes into each team's fitness. */
-  tally(F, B) {
+  /** A round's weights ({ F, B, pF, pB }, from weights()) go into each team's fitness: F × B, and N² × p^F × p^B. */
+  tally({ F, B, pF, pB }) {
     for (let i = 0; i < this.n; i++) this.sum[i] += F[i] * B[i];
     this.rounds++;
+    this.last = instantFitness(pF, pB);
   }
 
-  /** Each team's fitness so far: the time-average of F × B (1, par, before any round). */
+  /** Each team's fitness so far, by the game's mode (1, par, before any round). */
   fitness() {
-    return this.sum.map((x) => (this.rounds > 0 ? x / this.rounds : 1));
+    return this.mode === "final" ? [...this.last] : this.sum.map((x) => (this.rounds > 0 ? x / this.rounds : 1));
+  }
+
+  /** The fitness sums, as stored (games.fitness): { sum, rounds, last }. */
+  sums() {
+    return { sum: [...this.sum], rounds: this.rounds, last: [...this.last] };
   }
 }
 
@@ -172,18 +191,27 @@ export function sampleWithout(weights, allowed, k, rand = Math.random) {
   return out;
 }
 
+/** A game's fitness by its stored sums ({ sum, rounds, last }; null before any round: par) and mode, team i. */
+export function fitnessOf(mode, fitness, i) {
+  if (mode === "final") return Array.isArray(fitness?.last) ? Number(fitness.last[i] ?? 1) : 1;
+  return fitness && fitness.rounds > 0 ? fitness.sum[i] / fitness.rounds : 1;
+}
+
 /**
  * A game's scoreboard rows (participants order): the ledgers' totals (scoring.js), and its fitness. A game with
- * prevalence: fitness is the time-average of F × B (`fitness`, its stored { sum, rounds }; 1 before any round),
- * with each team's latest F, B, p^F and p^B (`sample`, as stored; null before the first). A game without it:
+ * prevalence: fitness by its scoring.mode from `fitness`, its stored sums (fitnessOf; 1 before any round), with
+ * each team's latest F, B, p^F and p^B (`sample`, as stored; null before the first). A game without it:
  * N² × pollination share × forage share, those four null.
  */
 export function scoreboard(config, participants, feeds, nectar, pollen, fitness = null, sample = null) {
-  const rows = score(participants, feeds, nectar, pollen, scoringOf(config));
+  const scoring = scoringOf(config);
+  const rows = score(participants, feeds, nectar, pollen, scoring);
   const on = !!prevalenceOf(config);
   return rows.map((r, i) => {
     const at = (k) => (on && sample && Array.isArray(sample[k]) ? sample[k][i] ?? null : null);
-    const avg = fitness && fitness.rounds > 0 ? fitness.sum[i] / fitness.rounds : 1;
-    return { ...r, fitness: on ? avg : r.fitness, flowerSuccess: at("F"), beeSuccess: at("B"), flowerP: at("pF"), beeP: at("pB") };
+    return { ...r, fitness: on ? fitnessOf(scoring.mode, fitness, i) : r.fitness, flowerSuccess: at("F"), beeSuccess: at("B"), flowerP: at("pF"), beeP: at("pB") };
   });
 }
+
+/** How a game's scoreboard fitness is reckoned: "final" or "timeAverage" (prevalence), else "shares". */
+export const fitnessBasisOf = (config) => (prevalenceOf(config) ? scoringOf(config).mode : "shares");

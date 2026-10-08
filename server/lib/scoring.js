@@ -15,14 +15,26 @@
 //
 // The exponents are the game's config.scoring (0.85 and 0.85 by default). Games stored without them are from
 // before they existed and were scored with √: scoringOf gives them 0.5, so their scores never change.
+//
+// That is the score of a game without prevalence. A game with it is scored by config.scoring.mode
+// (server/lib/prevalence.js): "final" (new games), N² × p^F_s × p^B_s at the game's final round, the product of
+// the team's draw probabilities; "timeAverage" (games stored without a mode: v2 and v3), the time-average over
+// the rounds played of F_s × B_s.
 
-/** The exponents of games whose config has none: they were scored with √. */
-export const LEGACY_SCORING = Object.freeze({ alpha: 0.5, beta: 0.5 });
+/** The scoring modes of a game with prevalence. */
+export const SCORING_MODES = ["final", "timeAverage"];
 
-/** A game's scoring exponents { alpha (forage), beta (pollination) }, from its stored config. */
+/** The exponents (and mode) of games whose config has none: they were scored with √ (and, with prevalence, by time-average). */
+export const LEGACY_SCORING = Object.freeze({ alpha: 0.5, beta: 0.5, mode: "timeAverage" });
+
+/**
+ * A game's scoring rule from its stored config: its exponents { alpha (forage), beta (pollination) } and its
+ * mode ("final" or "timeAverage": only a config that says "final" is; one stored without a mode is "timeAverage").
+ */
 export const scoringOf = (config) => ({
   alpha: config?.scoring?.alpha ?? LEGACY_SCORING.alpha,
   beta: config?.scoring?.beta ?? LEGACY_SCORING.beta,
+  mode: config?.scoring?.mode === "final" ? "final" : LEGACY_SCORING.mode,
 });
 
 /** Σ max(0, v_i)^p. At p = 0.5 it is exactly Σ √v_i, as games were scored before the exponents. */

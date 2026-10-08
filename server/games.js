@@ -3,8 +3,8 @@
 import crypto from "node:crypto";
 import { query, tx } from "./db/pool.js";
 import { allocatePrefixLen, normalizeCode, shortId, uuidToCode } from "./lib/shortid.js";
-import { DEFAULT_CONFIG, KINDS, available, energyBytes, feedPriceOf, normalizeConfig, prevalenceConfig, prevalenceOf, windowMsOf } from "./lib/gameConfig.js";
-import { scoreboard } from "./lib/prevalence.js";
+import { DEFAULT_CONFIG, KINDS, available, drawEndMs, endFactorOf, energyBytes, feedPriceOf, lengthOf, normalizeConfig, prevalenceConfig, prevalenceOf, windowMsOf } from "./lib/gameConfig.js";
+import { fitnessBasisOf, scoreboard } from "./lib/prevalence.js";
 import { changes, size } from "./lib/measure.js";
 import { scoringOf, zeroLedger } from "./lib/scoring.js";
 import { programInterface } from "./lib/interface.js";
@@ -35,6 +35,22 @@ async function touch(client, gameId) {
 // doesn't bump the public version: the garden (live.js) and the team's own viewers hear about it.
 async function touchPrograms(client, gameId, teamId) {
   await client.query("SELECT pg_notify('dbc', $1)", [JSON.stringify({ game: gameId, team: teamId, programs: true })]);
+}
+
+// ---------- the game's length: its end is drawn at the start and hidden until the game is over ----------
+
+/**
+ * A game's timing as a viewer may see it, in ms of game time. minMs, maxMs: the range its end is drawn from
+ * (public). endMs: its end, null while that is hidden (a game whose range is wider than a point, until it is
+ * finished); a game with a fixed end (maxMs = minMs, as every game from before random ends) shows it all
+ * along. With `owner` (the room owner, with no team in the game) also drawnEndMs: the drawn end (null before
+ * the start). Nothing else a team can read depends on the drawn end.
+ */
+export function timingOf(g, owner = false) {
+  const { minMs, maxMs } = lengthOf(g.config);
+  const drawn = g.end_ms != null ? Number(g.end_ms) : null;
+  const hidden = maxMs > minMs && g.status !== "finished";
+  return { minMs, maxMs, endMs: hidden ? null : drawn ?? minMs, ...(owner ? { drawnEndMs: drawn } : {}) };
 }
 
 // ---------- rooms ----------
@@ -71,7 +87,7 @@ export async function viewRoom(room, user) {
     ownerName: owner?.name,
     games: rows.map((g) => ({
       id: g.id, shortId: shortId(g), url: `/room/${shortId(room)}/game/${shortId(g)}`, status: g.status,
-      clockMs: g.clock_ms, endMs: Math.round(g.config.minutes * 60000), teamCount: g.team_count, createdAt: g.created_at,
+      clockMs: g.clock_ms, ...timingOf(g), teamCount: g.team_count, createdAt: g.created_at,
     })),
   };
 }
@@ -132,7 +148,10 @@ export async function updateConfig(room, game, user, config) {
   });
 }
 
-/** The owner starts the garden: teams with both programs play; the clock and change budgets start. */
+/**
+ * The owner starts the garden: teams with both programs play; the clock and change budgets start, and the
+ * game's end is drawn (drawEndMs: uniform in [minutes, endFactor × minutes], hidden until it is over).
+ */
 export async function startGame(room, game, user) {
   if (room.owner_id !== user.id) fail(403, "Only the room owner can start the game");
   return tx(async (c) => {
@@ -145,8 +164,8 @@ export async function startGame(room, game, user) {
     const zero = JSON.stringify(zeroLedger(participants.length));
     await c.query(
       `UPDATE games SET status = 'running', participants = $2, feeds = $3, nectar = $3, pollen = $3, clock_ms = 0, round = 0,
-              started_at = now(), last_error = NULL
-        WHERE id = $1`, [g.id, participants, zero]);
+              started_at = now(), last_error = NULL, end_ms = $4
+        WHERE id = $1`, [g.id, participants, zero, drawEndMs(g.config)]);
     for (const teamId of participants) for (const kind of KINDS) {
       await c.query("INSERT INTO banks (game_id, team_id, kind, bank, at_ms) VALUES ($1, $2, $3, 0, 0)", [g.id, teamId, kind]);
     }
@@ -377,8 +396,8 @@ export const sampleView = (x, participants) => {
 };
 
 /**
- * A game's prevalence (public): its settings and latest sample, { on, halfLifeS, cStart, cEnd, cap, slots,
- * prior, feedPrice, sample } (sample null before the first); null when the game has none.
+ * A game's prevalence (public): its settings and latest sample, { on, halfLifeS, cStart, cEnd, cHalfLifeS, cap,
+ * slots, prior, pools, endowment, feedPrice, sample } (sample null before the first); null when the game has none.
  */
 function prevalenceView(g) {
   const settings = prevalenceOf(g.config);
@@ -386,8 +405,9 @@ function prevalenceView(g) {
   return { ...settings, feedPrice: feedPriceOf(g.config), sample: g.prevalence && g.participants ? sampleView(g.prevalence, g.participants) : null };
 }
 
-// Scored with the game's own rule and exponents: with prevalence, the time-average of F × B; else N² ×
-// pollination share × forage share (√ in games stored without exponents).
+// Scored with the game's own rule and exponents: with prevalence, by its scoring.mode (N² × p^F × p^B of the
+// latest round, or the time-average of F × B); else N² × pollination share × forage share (√ in games stored
+// without exponents).
 const scoresOf = (g) => (g.participants ? scoreboard(g.config, g.participants, g.feeds, g.nectar, g.pollen, g.fitness, g.prevalence) : null);
 
 /**
@@ -429,14 +449,17 @@ export async function viewGame(room, game, user) {
   return {
     room: { id: room.id, shortId: shortId(room), url: `/room/${shortId(room)}`, isOwner },
     game: {
-      // The config as stored, with the scoring exponents it is scored with (√, 0.5, if it has none) and its
-      // energy formula (no byte factor if it has none).
+      // The config as stored, with the scoring rule it is scored with (exponents √, 0.5, and mode "timeAverage",
+      // if it has none), its end factor (1 if it has none) and its energy formula (no byte factor if it has none).
       id: g.id, shortId: shortId(g), url: `/room/${shortId(room)}/game/${shortId(g)}`, status: g.status,
-      config: { ...cfg, scoring: scoringOf(cfg), energy: { bytes: energyBytes(cfg) }, prevalence: prevalenceConfig(cfg),
+      config: { ...cfg, endFactor: endFactorOf(cfg), scoring: scoringOf(cfg), energy: { bytes: energyBytes(cfg) }, prevalence: prevalenceConfig(cfg),
         flowerWindowMs: cfg.flowerWindowMs ?? null, feedPrice: cfg.feedPrice === undefined ? 0 : cfg.feedPrice },
       // what they come to: the flower window (ms) and the feed price (E's unit) the game plays with
       windowMs: windowMsOf(cfg), feedPrice: feedPriceOf(cfg),
-      clockMs: g.clock_ms, endMs: Math.round(cfg.minutes * 60000), round: g.round, lastSeq: g.last_seq, version: g.version, lastError: g.last_error,
+      // how the scoreboard's fitness is reckoned: "final" (N² × p^F × p^B now), "timeAverage" or "shares"
+      fitnessBasis: fitnessBasisOf(cfg),
+      // minMs, maxMs, endMs (null while hidden) and, for the owner with no team here, drawnEndMs
+      clockMs: g.clock_ms, ...timingOf(g, isOwner && !mine), round: g.round, lastSeq: g.last_seq, version: g.version, lastError: g.last_error,
       createdAt: g.created_at, startedAt: g.started_at, finishedAt: g.finished_at, revealed, isOwner,
     },
     me: user ? { id: user.id, name: user.name, teamId: mine?.id ?? null } : null,
@@ -465,11 +488,14 @@ export async function viewGame(room, game, user) {
   };
 }
 
-/** Just the live numbers (cheap enough to poll every second): clock, round, the scoreboard and the ledgers. */
+/**
+ * Just the live numbers (cheap enough to poll every second): clock, the length range (and the end, once it may
+ * be seen: timingOf), round, the scoreboard and the ledgers. Public: nobody gets the hidden end here.
+ */
 export async function viewScores(game) {
   const g = (await query("SELECT * FROM games WHERE id = $1", [game.id])).rows[0];
   return {
-    status: g.status, clockMs: g.clock_ms, endMs: Math.round(g.config.minutes * 60000), round: g.round, lastSeq: g.last_seq,
+    status: g.status, clockMs: g.clock_ms, ...timingOf(g), round: g.round, lastSeq: g.last_seq, fitnessBasis: fitnessBasisOf(g.config),
     participants: g.participants || null, scores: scoresOf(g), ledgers: ledgersView(g), prevalence: prevalenceView(g),
   };
 }

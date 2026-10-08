@@ -1,6 +1,6 @@
 // Per-game parameters, chosen by the room owner in the lobby and locked once the game starts.
 import { parseType, typeToString } from "./types.js";
-import { scoringOf } from "./scoring.js";
+import { SCORING_MODES, scoringOf } from "./scoring.js";
 
 // Budgets per program kind, in weighted syntax-tree nodes of the minified program (vendor/measure.js).
 //   flower: small (1,100 nodes) and slow to change (60 a minute, banking up to 300), and a hidden CPU budget R
@@ -39,7 +39,12 @@ export const PREVALENCE_ENDOWMENT_FEEDS = 10;
 
 export const DEFAULT_CONFIG = Object.freeze({
   language: "python",          // "python" | "typescript"
-  minutes: 2,                  // how long the game runs (game time: it stops while paused)
+  // How long the game runs, in game time (it stops while paused): at least `minutes`, at most endFactor ×
+  // minutes. At the start the server draws the real end uniformly from that range and keeps it hidden until the
+  // game is over (games.end_ms; lengthOf, drawEndMs). A config stored without endFactor is from before: its game
+  // ends at `minutes` exactly, and so does one with endFactor 1.
+  minutes: 5,
+  endFactor: 2,
   feedCost: 0,                 // rounds a bee sits out after the round it feeds in (none: a feed has a price instead)
   // The flower window: every response is delivered this long into the round, whatever R was. A config stored
   // without it is from before: its window is budgets.flower.ms.
@@ -60,7 +65,9 @@ export const DEFAULT_CONFIG = Object.freeze({
   pollenGrain: Object.freeze({ exponent: 1 / 3, scale: 0.1 }),
   // forage = Σ nectar^alpha (over flower teams), pollination = Σ pollen^beta (over bee teams); each in (0, 1].
   // A config stored without `scoring` is from before it existed: those games were scored with √ (scoring.js).
-  scoring: Object.freeze({ alpha: 0.85, beta: 0.85 }),
+  // mode (games with prevalence): "final", fitness = N² × p^F × p^B at the final round; "timeAverage", the
+  // time-average of F × B. A config stored without a mode is a v2 or v3 game: "timeAverage".
+  scoring: Object.freeze({ alpha: 0.85, beta: 0.85, mode: "final" }),
   // bytes: E has a third factor, (maxResponseBytes − response bytes), and is in node·ms·bytes. A config stored
   // without `energy` (or with bytes false) has the two-factor formula, in node·ms: E = (cap − size) × max(0, R − CPU ms).
   energy: Object.freeze({ bytes: true }),
@@ -72,11 +79,13 @@ export const DEFAULT_CONFIG = Object.freeze({
   // endowment (null: 10 × the feed price), each feed adds nectar − price, and it relaxes toward the endowment
   // with the half-life (metabolism above it, recovery below); a bee below the price can't feed. Ledgers decay
   // with `halfLifeS` seconds of game time (null: cumulative); the pollen prior is `prior` (null: 0.12 × Emax).
-  // c(t) runs from cStart to cEnd over the game; fitness is the time-average of F × B. With pools false, B is
+  // c(t) = cEnd + (cStart − cEnd) × 2^(−t / cHalfLifeS), t in seconds of game time (cHalfLifeS null: linear from
+  // cStart to cEnd over `minutes`, then cEnd; a v2/v3 config stored without cHalfLifeS is that). Fitness follows
+  // scoring.mode. With pools false, B is
   // the v2 per-(species, bee) formula (N × share of max(0, Σ_s signed (decayed net nectar)^alpha)). A config
   // stored without prevalence (or an earlier form, without `slots`) is from before: every bee takes a turn
   // each round, species are drawn uniformly, and it is scored with pollination × forage.
-  prevalence: Object.freeze({ on: true, halfLifeS: 90, cStart: 1, cEnd: 0.1, cap: 4, slots: 0.25, prior: null, pools: true, endowment: null }),
+  prevalence: Object.freeze({ on: true, halfLifeS: 90, cStart: 1, cEnd: 0.1, cHalfLifeS: 60, cap: 4, slots: 0.25, prior: null, pools: true, endowment: null }),
   budgets: BUDGETS,
 });
 
@@ -95,8 +104,13 @@ export const feedPriceOf = (config) =>
 export function prevalenceConfig(config) {
   const p = config?.prevalence;
   const current = p && typeof p === "object" && "slots" in p;
-  // A stored v2 config (has `slots`, no `pools`) keeps the v2 per-cell bee formula, for reproducibility.
-  return { ...DEFAULT_CONFIG.prevalence, on: false, ...(current ? p : {}), pools: current ? p.pools === true : DEFAULT_CONFIG.prevalence.pools };
+  // A stored v2 config (has `slots`, no `pools`) keeps the v2 per-cell bee formula, and a v2 or v3 one (no
+  // `cHalfLifeS`) its linear c, for reproducibility.
+  return {
+    ...DEFAULT_CONFIG.prevalence, on: false, ...(current ? p : {}),
+    pools: current ? p.pools === true : DEFAULT_CONFIG.prevalence.pools,
+    cHalfLifeS: current ? (p.cHalfLifeS ?? null) : DEFAULT_CONFIG.prevalence.cHalfLifeS,
+  };
 }
 
 /**
@@ -108,7 +122,25 @@ export function prevalenceOf(config) {
   if (p.on !== true) return null;
   const prior = p.prior ?? PREVALENCE_PRIOR_SHARE * emaxOf(config);
   const endowment = p.endowment ?? PREVALENCE_ENDOWMENT_FEEDS * feedPriceOf(config);
-  return { on: true, halfLifeS: p.halfLifeS, cStart: p.cStart, cEnd: p.cEnd, cap: p.cap, slots: p.slots, prior, pools: p.pools === true, endowment };
+  return { on: true, halfLifeS: p.halfLifeS, cStart: p.cStart, cEnd: p.cEnd, cHalfLifeS: p.cHalfLifeS, cap: p.cap, slots: p.slots, prior, pools: p.pools === true, endowment };
+}
+
+/** A config's endFactor: the most its game can last, as a multiple of `minutes` (1 for a config stored without one). */
+export const endFactorOf = (config) => (Number.isFinite(config?.endFactor) && config.endFactor >= 1 ? config.endFactor : 1);
+
+/** A game's length range, in ms of game time: { minMs, maxMs } (equal: it ends at minMs). Public. */
+export function lengthOf(config) {
+  const minMs = Math.round(config.minutes * 60000);
+  return { minMs, maxMs: Math.round(minMs * endFactorOf(config)) };
+}
+
+/**
+ * Draw a game's end, in ms of game time (at its start; kept hidden until it is over): uniform in [minMs, maxMs],
+ * rounded up to a whole round, so the game's clock stops exactly there.
+ */
+export function drawEndMs(config, rand = Math.random) {
+  const { minMs, maxMs } = lengthOf(config), r = roundMs(config);
+  return Math.ceil((minMs + rand() * (maxMs - minMs)) / r - 1e-9) * r;
 }
 
 const int = (v, lo, hi, dflt) => {
@@ -128,6 +160,13 @@ const exponent = (v, name, dflt) => {
   return x;
 };
 
+/** A scoring mode: "final" or "timeAverage", else an error; left out, `dflt`. */
+const scoringMode = (v, dflt) => {
+  if (v === null || v === undefined || v === "") return dflt;
+  if (!SCORING_MODES.includes(v)) throw new Error(`scoring.mode must be ${SCORING_MODES.map((m) => `"${m}"`).join(" or ")}`);
+  return v;
+};
+
 /** A number, or null when the input is explicitly null (meaning "none"); left out, `dflt`. */
 const numOrNull = (v, lo, hi, dflt) => (v === null ? null : num(v, lo, hi, dflt));
 
@@ -138,6 +177,7 @@ function normalizePrevalence(input, b) {
     halfLifeS: numOrNull(p.halfLifeS, 1, 86400, b.halfLifeS),   // null: cumulative (no decay)
     cStart: num(p.cStart, 0, 100, b.cStart),
     cEnd: num(p.cEnd, 0, 100, b.cEnd),
+    cHalfLifeS: numOrNull(p.cHalfLifeS, 0.1, 86400, b.cHalfLifeS),  // null: linear over `minutes` (v2, v3)
     cap: numOrNull(p.cap, 1, 1e6, b.cap),                       // null: no cap
     slots: num(p.slots, 0.01, 1, b.slots),                      // ceil(slots × N) bees visit each round
     prior: numOrNull(p.prior, 0, 1e15, b.prior),                // null: 0.12 × Emax
@@ -152,6 +192,8 @@ export function normalizeConfig(input = {}, base = DEFAULT_CONFIG) {
   const out = {
     language: c.language === "typescript" ? "typescript" : c.language === "python" ? "python" : base.language,
     minutes: num(c.minutes, 0.1, 24 * 60, base.minutes),
+    // Left out, the base's: 1 (a fixed end) for a base stored without it.
+    endFactor: num(c.endFactor, 1, 100, endFactorOf(base)),
     feedCost: int(c.feedCost, 0, 1000, base.feedCost),
     // Left out, the base's: null (follows the flower's ms) for a base stored without it.
     flowerWindowMs: c.flowerWindowMs === undefined || c.flowerWindowMs === "" ? (base.flowerWindowMs ?? null) : c.flowerWindowMs === null ? null : int(c.flowerWindowMs, 1, 10000, base.flowerWindowMs ?? null),
@@ -168,8 +210,12 @@ export function normalizeConfig(input = {}, base = DEFAULT_CONFIG) {
       exponent: num(c.pollenGrain?.exponent, 0.01, 1, base.pollenGrain?.exponent ?? DEFAULT_CONFIG.pollenGrain.exponent),
       scale: num(c.pollenGrain?.scale, 0, 1000, base.pollenGrain?.scale ?? (energyBytes(base) ? DEFAULT_CONFIG.pollenGrain.scale : 1)),
     },
-    // Left out, the base's (a base stored without them is a √ game: it stays one unless they are set).
-    scoring: { alpha: exponent(c.scoring?.alpha, "alpha", scoringOf(base).alpha), beta: exponent(c.scoring?.beta, "beta", scoringOf(base).beta) },
+    // Left out, the base's (a base stored without them is a √ game: it stays one unless they are set; one
+    // stored without a mode is scored by time-average).
+    scoring: {
+      alpha: exponent(c.scoring?.alpha, "alpha", scoringOf(base).alpha), beta: exponent(c.scoring?.beta, "beta", scoringOf(base).beta),
+      mode: scoringMode(c.scoring?.mode, scoringOf(base).mode),
+    },
     // Left out, the base's (a base stored without it has the two-factor formula, and keeps it).
     energy: { bytes: bool(c.energy?.bytes, energyBytes(base)) },
     // Left out, the base's (a base stored without it draws uniformly, and keeps doing so unless it is turned on).
