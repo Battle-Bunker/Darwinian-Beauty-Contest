@@ -64,13 +64,17 @@ export const DEFAULT_CONFIG = Object.freeze({
   energy: Object.freeze({ bytes: true }),
   // Prevalence on both sides (server/lib/prevalence.js): flower species and bees that have done well lately
   // are drawn more often. Each round ceil(slots × N) bees are drawn without replacement (weights c(t) + B_b),
-  // and each visits a species drawn with weights c(t) + F_s. F_s and B_b are N × a share of recent success
-  // (pollen given; net nectar got), every ledger cell starting at `prior` (null: 0.12 × Emax) and decaying with
-  // a half-life of `halfLifeS` seconds of game time (null: cumulative), capped at `cap` (null: none); c(t)
-  // runs from cStart to cEnd over the game. Fitness is the time-average of F × B. A config stored without
-  // prevalence (or with an earlier form of it, without `slots`) is from before: every bee takes a turn each
-  // round, species are drawn uniformly, and it is scored with pollination × forage.
-  prevalence: Object.freeze({ on: true, halfLifeS: 90, cStart: 1, cEnd: 0.1, cap: 4, slots: 0.25, prior: null }),
+  // and each visits a species drawn with weights c(t) + F_s. F_s = N × share of Σ_b (decayed pollen it gave
+  // bee b)^beta, capped: diverse dissemination counts for more, so no flower–bee pair can go singleton. B_b
+  // (pools, the default): N × share of the bee's single nectar balance, capped. The balance starts at the
+  // endowment (null: 10 × the feed price), each feed adds nectar − price, and it relaxes toward the endowment
+  // with the half-life (metabolism above it, recovery below); a bee below the price can't feed. Ledgers decay
+  // with `halfLifeS` seconds of game time (null: cumulative); the pollen prior is `prior` (null: 0.12 × Emax).
+  // c(t) runs from cStart to cEnd over the game; fitness is the time-average of F × B. With pools false, B is
+  // the v2 per-(species, bee) formula (N × share of max(0, Σ_s signed (decayed net nectar)^alpha)). A config
+  // stored without prevalence (or an earlier form, without `slots`) is from before: every bee takes a turn
+  // each round, species are drawn uniformly, and it is scored with pollination × forage.
+  prevalence: Object.freeze({ on: true, halfLifeS: 90, cStart: 1, cEnd: 0.1, cap: 4, slots: 0.25, prior: null, pools: true, endowment: null }),
   budgets: BUDGETS,
 });
 
@@ -89,18 +93,20 @@ export const feedPriceOf = (config) =>
 export function prevalenceConfig(config) {
   const p = config?.prevalence;
   const current = p && typeof p === "object" && "slots" in p;
-  return { ...DEFAULT_CONFIG.prevalence, on: false, ...(current ? p : {}) };
+  // A stored v2 config (has `slots`, no `pools`) keeps the v2 per-cell bee formula, for reproducibility.
+  return { ...DEFAULT_CONFIG.prevalence, on: false, ...(current ? p : {}), pools: current ? p.pools === true : DEFAULT_CONFIG.prevalence.pools };
 }
 
 /**
- * A config's prevalence settings, resolved (the prior's default filled in), or null when it has none: every bee
- * takes a turn each round and species are drawn uniformly.
+ * A config's prevalence settings, resolved (the prior's and endowment's defaults filled in), or null when it
+ * has none: every bee takes a turn each round and species are drawn uniformly.
  */
 export function prevalenceOf(config) {
   const p = prevalenceConfig(config);
   if (p.on !== true) return null;
   const prior = p.prior ?? PREVALENCE_PRIOR_SHARE * emaxOf(config);
-  return { on: true, halfLifeS: p.halfLifeS, cStart: p.cStart, cEnd: p.cEnd, cap: p.cap, slots: p.slots, prior };
+  const endowment = p.endowment ?? PREVALENCE_ENDOWMENT_FEEDS * feedPriceOf(config);
+  return { on: true, halfLifeS: p.halfLifeS, cStart: p.cStart, cEnd: p.cEnd, cap: p.cap, slots: p.slots, prior, pools: p.pools === true, endowment };
 }
 
 const int = (v, lo, hi, dflt) => {
@@ -133,6 +139,8 @@ function normalizePrevalence(input, b) {
     cap: numOrNull(p.cap, 1, 1e6, b.cap),                       // null: no cap
     slots: num(p.slots, 0.01, 1, b.slots),                      // ceil(slots × N) bees visit each round
     prior: numOrNull(p.prior, 0, 1e15, b.prior),                // null: 0.12 × Emax
+    pools: bool(p.pools, b.pools),                              // the bee's nectar is a single balance (false: v2 per-cell)
+    endowment: numOrNull(p.endowment, 0, 1e15, b.endowment),    // a bee's starting balance (null: 10 × the feed price)
   };
 }
 
