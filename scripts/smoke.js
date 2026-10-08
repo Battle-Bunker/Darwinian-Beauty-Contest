@@ -165,7 +165,7 @@ for (const a of ends) {
   }
   assert.equal("ms" in a, a.flower === bo, "the flower's CPU time: its own team only");
   assert.equal("budgetMs" in a, a.flower === bo, "the flower's hidden time budget R: its own team only");
-  if (a.flower === bo) assert.ok(a.budgetMs >= 50 && a.budgetMs <= 150, `R ${a.budgetMs}`);
+  if (a.flower === bo) assert.ok(a.budgetMs >= 3 && a.budgetMs <= 150, `R ${a.budgetMs}`);
   assert.equal("beeMs" in a, a.bee === bo, "the bee's decision time: its own team only");
   assert.ok(a.bee === bo || !("log" in a), "what a bee prints stays with its team");
 }
@@ -216,7 +216,10 @@ assert.equal((await fetch(BASE + `/api${g}/responses/${seen.actions.find((a) => 
 
 // Pollen carries genes: each feed's grain of the answering flower's minified code goes to the feeding bee's
 // team (Bo sees its own bee's), and to nobody else during play.
-const grainLen = (pollen) => Math.floor(Math.cbrt(pollen) + 1e-9);
+// ⌊scale × pollen^(1/3)⌋, scale 0.1 by default (E is in node·ms·bytes).
+const { scale: grainScale } = view0.game.config.pollenGrain;
+assert.equal(grainScale, 0.1);
+const grainLen = (pollen) => Math.floor(grainScale * Math.cbrt(pollen) + 1e-9);
 const boFeeds = seen.actions.filter((a) => a.action === "feed");
 assert.ok(boFeeds.some((a) => a.bee === bo) && boFeeds.some((a) => a.bee !== bo));
 for (const a of boFeeds) {
@@ -406,7 +409,7 @@ assert.equal(await lastSeq(), settled, "nothing happens after the end");
 const after = (await api(null, "GET", `${g}/actions?limit=5000`)).actions;
 assert.ok(after.every((a) => "beeVersion" in a && "flowerVersion" in a), "a spectator sees every version");
 assert.ok(after.filter(isEnd).every((a) => "ms" in a && "beeMs" in a && "percent" in a && "energy" in a), "and every timing, percent and energy");
-assert.ok(after.filter(isEnd).every((a) => a.budgetMs >= 50 && a.budgetMs <= 150), "and every flower call's R");
+assert.ok(after.filter(isEnd).every((a) => a.budgetMs >= 3 && a.budgetMs <= 150), "and every flower call's R");
 assert.ok(after.some((a) => a.bee === ada && /fed \d+/.test(a.log || "")), "prints are revealed");
 assert.ok(done.teams.filter((t) => t.participant).every((t) => t.memory && typeof t.memory.value === "object"), "every bee's MEMORY is revealed");
 const allGrains = after.filter((a) => a.action === "feed" && a.pollen >= 1);

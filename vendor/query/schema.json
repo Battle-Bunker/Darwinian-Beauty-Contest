@@ -614,7 +614,7 @@
           "visibility": "public"
         },
         "responseHash": {
-          "doc": "for a response over 4 KB: the SHA-256 (hex) of its JSON text, else null",
+          "doc": "an identifier of the full response; null unless the response is over 4 KB",
           "visibility": "public"
         },
         "fed": {

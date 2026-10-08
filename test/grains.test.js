@@ -25,7 +25,7 @@ test("a grain's length: ⌊scale × pollen^exponent⌋ characters (scale 0.1 by 
   assert.deepEqual([27000, 26999, 1000, 8, 1, 0.5, 0, -5].map((p) => grainLength(c, p)), [30, 29, 10, 2, 1, 0, 0, 0]);
   assert.equal(grainLength(c, 150000), 53);
   assert.equal(grainLength(normalizeConfig({ pollenGrain: { scale: 2 } }), 27000), 60);
-  assert.equal(grainLength(normalizeConfig({ pollenGrain: { exponent: 0.5 } }), 10000), 100);
+  assert.equal(grainLength(normalizeConfig({ pollenGrain: { exponent: 0.5, scale: 1 } }), 10000), 100);
   assert.equal(grainLength(normalizeConfig({ grains: "off" }), 27000), 0);
   assert.equal(grainLength(normalizeConfig({ pollenGrain: { scale: 0 } }), 27000), 0);
   assert.equal(normalizeConfig({ grains: "public" }).grains, "public");

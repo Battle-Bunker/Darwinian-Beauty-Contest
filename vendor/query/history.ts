@@ -26,7 +26,7 @@ export interface Turn {
   readonly response: Json;
   /** the response's size: UTF-8 bytes of its JSON text (null if it failed) */
   readonly responseBytes: number | null;
-  /** for a response over 4 KB: the SHA-256 (hex) of its JSON text, else null */
+  /** an identifier of the full response; null unless the response is over 4 KB */
   readonly responseHash: string | null;
   /** whether the bee fed */
   readonly fed: boolean;

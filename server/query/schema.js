@@ -68,7 +68,7 @@ export const SCHEMA = {
         f("challenge", "json", "public", "the bee's challenge"),
         f("response", "json", "public", "the flower's response (null if it failed, or if its JSON is over 4 KB: see responseBytes)", true),
         f("responseBytes", "int", "public", "the response's size: UTF-8 bytes of its JSON text (null if it failed)", true),
-        f("responseHash", "str", "public", "for a response over 4 KB: the SHA-256 (hex) of its JSON text, else null", true),
+        f("responseHash", "str", "public", "an identifier of the full response; null unless the response is over 4 KB", true),
         f("fed", "bool", "public", "whether the bee fed"),
         f("percent", "float", "publicOnFeed", "the share of E the flower offered, 0-100 (null if it failed)", true),
         f("energy", "float", "publicOnFeed", "E, the flower's excess energy (node·ms·bytes with the game's byte factor, else node·ms; 0 if it failed)", true),

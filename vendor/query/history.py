@@ -21,7 +21,7 @@ class Turn(NamedTuple):
     challenge: Json  # the bee's challenge
     response: Json  # the flower's response (null if it failed, or if its JSON is over 4 KB: see responseBytes)
     response_bytes: Optional[int]  # the response's size: UTF-8 bytes of its JSON text (null if it failed)
-    response_hash: Optional[str]  # for a response over 4 KB: the SHA-256 (hex) of its JSON text, else null
+    response_hash: Optional[str]  # an identifier of the full response; null unless the response is over 4 KB
     fed: bool  # whether the bee fed
     percent: Optional[float]  # the share of E the flower offered, 0-100 (null if it failed)
     energy: Optional[float]  # E, the flower's excess energy (node·ms·bytes with the game's byte factor, else node·ms; 0 if it failed)
